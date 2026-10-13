@@ -6,7 +6,22 @@ culture atlas turns photos into cultural discoveries, lets people save mixed int
 
 ## Current status
 
-This repository contains the planning and visual design handoff. It does not yet contain a working application.
+The repository contains the planning and visual design handoff plus the application foundation: a pnpm TypeScript monorepo with the database schema, shared contracts (schemas, authorization, jobs, idempotency), provider interfaces and the REST/MCP wiring. Most domain services and provider adapters are still typed stubs that return `501 not_implemented`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for module ownership and conventions, and [docs/capability-matrix.md](docs/capability-matrix.md) for provider status (the Qloo key is still pending).
+
+## Development
+
+Requirements: Node 22, pnpm 10, PostgreSQL 16.
+
+```sh
+pnpm install
+pnpm db:setup      # start PostgreSQL, create role + databases
+pnpm db:migrate    # apply db/migrations
+cp .env.example .env         # fill in what you have; empty values and absent keys degrade gracefully
+pnpm dev           # web + REST + MCP on http://localhost:3000
+pnpm worker        # job worker
+pnpm test          # unit + integration tests (isolated database per run)
+pnpm typecheck && pnpm lint && pnpm build
+```
 
 ## Start here
 

@@ -1,0 +1,16 @@
+{
+  "name": "@culture-atlas/sensor-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Outbound World Sensor bridge. Runs beside the private relay; uploads to the public app with a restricted capture-write token. Must not import @culture-atlas/domain.",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "mock-relay": "tsx src/mock-relay.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  }
+}

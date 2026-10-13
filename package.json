@@ -1,0 +1,38 @@
+{
+  "name": "culture-atlas",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @culture-atlas/web dev",
+    "build": "pnpm -r --filter=!culture-atlas run build",
+    "typecheck": "pnpm -r --filter=!culture-atlas run typecheck && tsc -p tsconfig.scripts.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "pnpm --filter @culture-atlas/web test:e2e",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "db:setup": "bash scripts/dev-db.sh",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "worker": "pnpm --filter @culture-atlas/worker start",
+    "sensor-bridge": "pnpm --filter @culture-atlas/sensor-bridge start",
+    "demo-agent": "pnpm --filter @culture-atlas/demo-agent start"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.4",
+    "@types/pg": "8.23.1",
+    "eslint": "10.11.0",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.12.0",
+    "pg": "8.23.0",
+    "prettier": "3.9.9",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.0",
+    "vitest": "5.0.2"
+  }
+}

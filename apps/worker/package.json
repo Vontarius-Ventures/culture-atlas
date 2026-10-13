@@ -1,0 +1,16 @@
+{
+  "name": "@culture-atlas/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@culture-atlas/domain": "workspace:*",
+    "@culture-atlas/providers": "workspace:*"
+  }
+}
