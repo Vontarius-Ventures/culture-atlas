@@ -14,6 +14,8 @@ const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${port}`;
 
 export default defineConfig({
   testDir: './e2e',
+  // e2e/real drives a running app + worker; see playwright.real.config.ts.
+  testIgnore: ['real/**'],
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
