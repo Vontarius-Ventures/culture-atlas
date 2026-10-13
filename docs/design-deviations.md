@@ -47,6 +47,9 @@ Unpictured states were also captured (`state-first-visit`, `state-processing`, `
 12. **Settings entry point.** Agent connections, World Sensor status and privacy notes live at `/settings`, linked from a quiet footer. This keeps them outside primary discovery, and the header stays free of extra icons.
 13. **Screenshot artifact.** Full-page mobile captures (`03-plan-mobile`, `state-partial-*`, `state-settings-*`) show the fixed bottom navigation partway down the page. That is how Playwright stitches fixed elements, not a layout bug.
 
+14. **Real-stack screenshots.** `real-*.png` come from `e2e/real/journey.spec.ts` against the production build and worker with no provider keys. They show the honest states the mockups do not: "Example result" labels, "Related discoveries are taking longer.", unavailable plan sections, and text-treatment cards for films and artists (no licensed images). Sample items whose subject a project illustration actually shows (sesame noodles, linen, a tetsubin, a record player) carry that illustration and lead the first-visit feed. Agent credentials are masked in screenshots.
+15. **Toasts over sheets.** While a dialog or bottom sheet is open, the toast moves to the top of the screen so it never covers the sheet's Save button.
+
 ## Accessibility checks
 
 The checks below run in `e2e/item-settings.spec.ts`, `e2e/save.spec.ts` and `components/components.dom.test.tsx`:

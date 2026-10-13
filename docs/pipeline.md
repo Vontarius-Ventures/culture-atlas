@@ -23,6 +23,12 @@ Each stage runs through `ctx.runStage`, so a retried attempt (lost lease, crash,
 
 Job outcome is `partial` whenever a section is `failed`, `unavailable` or `partial`. When Qloo is unavailable, references are still published, Wear, Play and Watch are `unavailable`, and the analysis carries `discoveries_delayed` ("Related discoveries are taking longer."). Research failures omit historical text.
 
+### Example replays
+
+`packages/domain/src/feed/examples.ts` holds a hand-reviewed reading for each "Try an example" photo (`outfit`, `room`, `cafe`). It is used only when an example capture is analyzed while the VLM is unavailable; uploaded photos are never replayed. The observe stage records a `vlm` provider query with `is_replay = true` and model `reviewed-example`, so the inspector shows it as a replay. Resolution, Qloo categories and research then run as usual, so without a Qloo key Wear/Play/Watch still report `unavailable` and the "Related discoveries are taking longer." warning stays.
+
+After that, the example's reviewed picks (public sample items from `feed/samples.ts`) fill categories that have no live results. They are stored with `origin = 'sample'` and no provider query ids, cite the example references they were chosen for as a creative rationale, and their sections become `partial`. Cards and the capture are labeled "Example result". Live results always take precedence.
+
 ### Budgets and resilience
 
 - `JobBudget` (`compiler/budget.ts`): Qloo requests per job (default 12; every HTTP attempt counts, including retries, across job attempts via `provider_queries.query_context.attempts`), and two retries per provider stage. The compiler prepays one request per Qloo call, so the limit holds even for adapters that ignore the budget. Lower-priority categories are `skipped` once it is spent.

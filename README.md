@@ -10,7 +10,7 @@ It uses a vision model to read the photo, Qloo's cultural graph for related disc
 
 | Piece | Status |
 | --- | --- |
-| Vision and text models (Anthropic) | Implemented. Needs `ANTHROPIC_API_KEY`. Without it, photos are kept but analysis reports unavailable. |
+| Vision and text models (Anthropic) | Implemented. Needs `ANTHROPIC_API_KEY`. Without it, uploaded photos are kept and show "We can’t look at this photo yet" with a retry. The three "Try an example" photos instead replay a hand-reviewed reading with reviewed sample picks, labeled "Example result" and never presented as Qloo results ([docs/pipeline.md](docs/pipeline.md#example-replays)). |
 | Qloo | Adapter implemented against the documented API (`/search`, `/v2/tags`, `/v2/insights`, `/v2/trending`, `/trends/entity`). **The hackathon key has not been issued yet**, so every Qloo capability reports `unavailable` and Wear/Play/Watch show "Related discoveries are taking longer". Results are never invented. Replayed fixtures are labeled "Example result". Run `pnpm qloo:probe` when the key arrives ([docs/qloo-probes.md](docs/qloo-probes.md)). |
 | Reference research | Wikipedia/Wikimedia REST with real source URLs; claims extracted by the text model. |
 | World Sensor import | Implemented (server polling and an outbound bridge). The relay runs only on the operator's machine and was not reachable during development, so it is tested against a mock relay modeled on the Sensor asset API. Route names still need checking against the real relay ([docs/sensor.md](docs/sensor.md)). |
@@ -36,8 +36,18 @@ Checks:
 ```sh
 pnpm test                # unit, integration and contract tests (each run creates and drops its own database)
 pnpm typecheck && pnpm lint && pnpm build
-pnpm test:e2e            # Playwright browser journeys (uses the preinstalled Chromium)
+pnpm test:e2e            # Playwright browser journeys against a contract-checked mock API
 ```
+
+The main journey also runs against the real stack (no mocks) at 1440, 390 and 360 px. Start the production build and the worker first:
+
+```sh
+pnpm build && (cd apps/web && pnpm exec next start --port 3200) &  # SESSION_SECRET, DATABASE_URL set
+pnpm worker &
+E2E_BASE_URL=http://localhost:3200 pnpm --filter @culture-atlas/web test:e2e:real
+```
+
+It browses, tries an example, uploads, creates an account, saves into a collection, makes a movie night from mixed items and connects an agent to one collection. Screenshots land in `apps/web/e2e/screenshots/real-*.png` (credentials masked). The desktop run writes the agent token to `apps/web/test-results/agent-token.txt` (git-ignored), so you can then run `DEMO_AGENT_TOKEN=$(cat apps/web/test-results/agent-token.txt) pnpm demo-agent -- --url http://localhost:3200/mcp --collection "Slow Sunday"`.
 
 ## Environment
 

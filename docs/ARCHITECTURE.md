@@ -73,6 +73,7 @@ Sessions and credentials (`services/auth.ts`, implemented): the `ca_session` Htt
 Accounts and sign-in (demo mechanism, `services/accounts.ts`):
 
 - `POST /v1/accounts` creates an account. `email` + `password` are optional together: with them the account can sign in anywhere (password stored only as a scrypt hash in `account_credentials`, migration `030`); without them it is a "device account" bound to this browser's session.
+- The web account prompt offers optional email + password on creation and a "Sign in" mode; Settings has "Sign out".
 - `POST /v1/session/sign-in` (`{email, password}`) and `POST /v1/session/sign-out` are extension routes. Failed sign-ins are limited per email (10/day, `rate_limited`) and unknown emails take the same time as wrong passwords.
 - Creating an account or signing in from an anonymous session **claims** it: captures (which then persist until deletion), uploads, saved items, hides, preference events, discovery items (merged by `canonical_key`, with recommendations/saves/related contexts remapped), discovery jobs, jobs and the taste profile move to the account, and the taste revision moves forward. Then the visitor's intended save runs: `pending_save` = `{target_type, target_id, collection_id? | new_collection_name?}`; the result is returned as `pending_save` in the response.
 - The session token rotates on every privilege change (account creation, sign-in, sign-out): the old cookie is revoked, a new `ca_session` cookie is set through `HandlerArgs.setSession`, and the response carries the new `csrf_token`.
