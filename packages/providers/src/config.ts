@@ -9,11 +9,28 @@ const optional = z
  * Provider configuration from environment variables (all documented in .env.example).
  * Absent keys never throw: the matching capability reports 'unavailable/not_configured'.
  */
-export const ProviderConfigSchema = z.object({
+/** Default models per LLM provider (override with VLM_MODEL / RESEARCH_MODEL / COMPOSER_MODEL). */
+export const DEFAULT_MODELS = {
+  // Featherless serves vision on Gemma- and Mistral-class models; Gemma 3 27B handles both image and text.
+  featherless: { vlm: 'google/gemma-3-27b-it', text: 'google/gemma-3-27b-it' },
+  anthropic: { vlm: 'claude-sonnet-5-5', text: 'claude-sonnet-5-5' },
+} as const;
+
+const BaseProviderConfigSchema = z.object({
+  /** Which LLM service backs the VLM and text models. */
+  LLM_PROVIDER: z.enum(['featherless', 'anthropic']).default('featherless'),
+  FEATHERLESS_API_KEY: optional,
+  FEATHERLESS_BASE_URL: z.string().default('https://api.featherless.ai/v1'),
+  /**
+   * How structured output is requested from Featherless (OpenAI-compatible):
+   * json_schema (guided decoding against the zod schema), json_object, or
+   * none (schema in the prompt only). Output is always re-validated with zod.
+   */
+  FEATHERLESS_JSON_MODE: z.enum(['json_schema', 'json_object', 'none']).default('json_object'),
   ANTHROPIC_API_KEY: optional,
   ANTHROPIC_BASE_URL: optional,
-  VLM_MODEL: z.string().default('claude-sonnet-5-5'),
-  RESEARCH_MODEL: z.string().default('claude-sonnet-5-5'),
+  VLM_MODEL: optional,
+  RESEARCH_MODEL: optional,
   COMPOSER_MODEL: optional,
   VLM_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
@@ -58,7 +75,13 @@ export const ProviderConfigSchema = z.object({
   APP_BASE_URL: z.string().default('http://localhost:3000'),
 });
 
-export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
+export const ProviderConfigSchema = BaseProviderConfigSchema.transform((c) => ({
+  ...c,
+  VLM_MODEL: c.VLM_MODEL ?? DEFAULT_MODELS[c.LLM_PROVIDER].vlm,
+  RESEARCH_MODEL: c.RESEARCH_MODEL ?? DEFAULT_MODELS[c.LLM_PROVIDER].text,
+}));
+
+export type ProviderConfig = z.output<typeof ProviderConfigSchema>;
 
 export function loadProviderConfig(env: Record<string, string | undefined> = process.env): ProviderConfig {
   // Empty strings (e.g. `NAME=` copied from .env.example) count as unset.

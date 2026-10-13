@@ -13,7 +13,7 @@ import { VLM_SYSTEM_PROMPT } from './prompt';
 const VLM_FIXTURES = path.resolve(import.meta.dirname, '../../../../fixtures/vlm');
 const vlmFixture = (name: string) => JSON.parse(readFileSync(path.join(VLM_FIXTURES, name), 'utf8')) as unknown;
 
-const config = loadProviderConfig({ ANTHROPIC_API_KEY: 'test', VLM_TIMEOUT_MS: '50' });
+const config = loadProviderConfig({ LLM_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'test', VLM_TIMEOUT_MS: '50' });
 const image = { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), mediaType: 'image/jpeg' as const };
 
 function transport(steps: (unknown | Error | 'hang')[]) {
@@ -117,7 +117,7 @@ describe('Anthropic error mapping', () => {
 describe('Anthropic text model adapter', () => {
   it('returns schema-validated structured data using RESEARCH_MODEL', async () => {
     const { t, requests } = transport([ok({ answer: 'yes' })]);
-    const text = createAnthropicTextModel(loadProviderConfig({ ANTHROPIC_API_KEY: 'k', RESEARCH_MODEL: 'claude-opus-5-5' }), undefined, t);
+    const text = createAnthropicTextModel(loadProviderConfig({ LLM_PROVIDER: 'anthropic', ANTHROPIC_API_KEY: 'k', RESEARCH_MODEL: 'claude-opus-5-5' }), undefined, t);
     const res = await text.generateStructured({ system: 's', prompt: 'p', schema: z.object({ answer: z.string() }), schemaName: 'x' });
     expect(res.data).toEqual({ answer: 'yes' });
     expect(requests[0]!.model).toBe('claude-opus-5-5');

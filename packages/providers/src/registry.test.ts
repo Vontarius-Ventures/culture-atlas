@@ -17,7 +17,9 @@ describe('provider registry', () => {
   it('uses the configured base URL and model defaults', () => {
     const reg = createProviderRegistry({ QLOO_API_URL: 'https://qloo.example.test' });
     expect(reg.config.QLOO_API_URL).toBe('https://qloo.example.test');
-    expect(reg.config.VLM_MODEL).toBe('claude-sonnet-5-5');
+    expect(reg.config.LLM_PROVIDER).toBe('featherless');
+    expect(reg.config.VLM_MODEL).toBe('google/gemma-3-27b-it');
+    expect(createProviderRegistry({ LLM_PROVIDER: 'anthropic' }).config.VLM_MODEL).toBe('claude-sonnet-5-5');
   });
 
   it('accepts overrides; fake Qloo results are marked as replays unless live', async () => {

@@ -10,7 +10,7 @@ It uses a vision model to read the photo, Qloo's cultural graph for related disc
 
 | Piece | Status |
 | --- | --- |
-| Vision and text models (Anthropic) | Implemented. Needs `ANTHROPIC_API_KEY`. Without it, uploaded photos are kept and show "We can’t look at this photo yet" with a retry. The three "Try an example" photos instead replay a hand-reviewed reading with reviewed sample picks, labeled "Example result" and never presented as Qloo results ([docs/pipeline.md](docs/pipeline.md#example-replays)). |
+| Vision and text models (Featherless) | Implemented. Needs `FEATHERLESS_API_KEY` (or `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`). Not yet run against the live API. Without it, uploaded photos are kept and show "We can’t look at this photo yet" with a retry. The three "Try an example" photos instead replay a hand-reviewed reading with reviewed sample picks, labeled "Example result" and never presented as Qloo results ([docs/pipeline.md](docs/pipeline.md#example-replays)). |
 | Qloo | Adapter implemented against the documented API (`/search`, `/v2/tags`, `/v2/insights`, `/v2/trending`, `/trends/entity`). **The hackathon key has not been issued yet**, so every Qloo capability reports `unavailable` and Wear/Play/Watch show "Related discoveries are taking longer". Results are never invented. Replayed fixtures are labeled "Example result". Run `pnpm qloo:probe` when the key arrives ([docs/qloo-probes.md](docs/qloo-probes.md)). |
 | Reference research | Wikipedia/Wikimedia REST with real source URLs; claims extracted by the text model. |
 | World Sensor import | Implemented (server polling and an outbound bridge). The relay runs only on the operator's machine and was not reachable during development, so it is tested against a mock relay modeled on the Sensor asset API. Route names still need checking against the real relay ([docs/sensor.md](docs/sensor.md)). |
@@ -58,7 +58,7 @@ All names are in [.env.example](.env.example) with defaults in comments. The one
 | `DATABASE_URL` | everything | default `postgres://culture_atlas:culture_atlas@localhost:5432/culture_atlas` |
 | `SESSION_SECRET` | production | Session and CSRF HMAC secret; required when `NODE_ENV=production` |
 | `APP_BASE_URL` | production | Public URL; cookies are `Secure` when it is https |
-| `ANTHROPIC_API_KEY` | photo analysis, research, plans | Models: `VLM_MODEL`, `RESEARCH_MODEL`, `COMPOSER_MODEL` (default `claude-sonnet-5-5`) |
+| `FEATHERLESS_API_KEY` | photo analysis, research, plans | `LLM_PROVIDER` defaults to `featherless`. Models: `VLM_MODEL`, `RESEARCH_MODEL`, `COMPOSER_MODEL` (default `google/gemma-3-27b-it`; the VLM model must accept images). `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` is the alternative. |
 | `QLOO_API_KEY`, `QLOO_API_URL` | related discoveries | Key pending; default URL `https://hackathon.api.qloo.com` |
 | `WIKIMEDIA_USER_AGENT` | reference research | Descriptive User-Agent with contact info |
 | `STORAGE_DRIVER` | media | `local` (default, `.data/objects`, needs `STORAGE_SIGNING_SECRET`), `s3` (deployments) or `memory` (tests) |

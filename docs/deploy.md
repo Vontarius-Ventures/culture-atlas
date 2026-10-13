@@ -43,7 +43,7 @@ Every name is listed in `.env.example`. An empty value counts as unset.
 | `APP_BASE_URL` | yes | Public https URL |
 | `SESSION_SECRET` | yes | Same value on web and worker; startup fails in production without it |
 | `STORAGE_DRIVER` + `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE` | yes | `s3` for any multi-machine deploy. Private bucket; disable versioning or expire old versions (see [privacy.md](privacy.md)). |
-| `ANTHROPIC_API_KEY` | for analysis | Without it, captures are kept but analysis reports unavailable. `VLM_MODEL` / `RESEARCH_MODEL` / `COMPOSER_MODEL` default to `claude-sonnet-5-5`. |
+| `FEATHERLESS_API_KEY` | for analysis | Without it, captures are kept but analysis reports unavailable. `VLM_MODEL` / `RESEARCH_MODEL` / `COMPOSER_MODEL` default to `google/gemma-3-27b-it`. Set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` to use Anthropic instead. |
 | `QLOO_API_KEY` | for Qloo discoveries | Pending. Without it every Qloo capability is `unavailable` and discovery categories show partial states, never invented results. Run `pnpm qloo:probe` once it arrives ([qloo-probes.md](qloo-probes.md)). |
 | `WIKIMEDIA_USER_AGENT` | recommended | Descriptive User-Agent with contact info (Wikimedia policy) |
 | `CREDENTIAL_ENCRYPTION_KEY` | for Sensor poll mode | `openssl rand -base64 32`. Not needed for bridge mode. Changing it makes stored viewer credentials unreadable (connections report `credential_key_mismatch`). |

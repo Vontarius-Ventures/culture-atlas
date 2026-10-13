@@ -6,7 +6,7 @@ import { sampleBySlug, type SampleItem } from './samples';
  * Reviewed example replays for the three "Try an example" photos
  * (apps/web/public/samples/{outfit,room,cafe}.jpg, project-original
  * illustrations). Used ONLY when an example capture is analyzed while the
- * VLM is unavailable (no ANTHROPIC_API_KEY): the compiler replays this
+ * VLM is unavailable (no LLM key): the compiler replays this
  * hand-reviewed reading instead of failing, and the capture is labeled
  * "Example result" in the UI.
  *

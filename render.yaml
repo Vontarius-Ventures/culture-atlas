@@ -21,7 +21,7 @@ envVarGroups:
       # base64 of 32 random bytes (openssl rand -base64 32). Needed for World Sensor poll mode.
       - key: CREDENTIAL_ENCRYPTION_KEY
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: FEATHERLESS_API_KEY
         sync: false
       # Leave empty until the hackathon key arrives: Qloo then reports "unavailable", never fake data.
       - key: QLOO_API_KEY

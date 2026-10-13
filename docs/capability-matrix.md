@@ -34,8 +34,8 @@ Adapter behavior (`packages/providers/src/qloo/client.ts`): `X-Api-Key` header, 
 
 | Capability | Provider | Status today | Notes |
 | --- | --- | --- | --- |
-| `vlm.analyze_image` | Anthropic (`VLM_MODEL`, default `claude-sonnet-5-5`) | `unavailable / not_configured` without `ANTHROPIC_API_KEY`; `unverified` with a key until the first success | Native structured outputs (`output_config.format` via `zodOutputFormat`), re-validated with zod; no tools; image text and user strings passed as data; SDK retries off, budgeted retries in the adapter; server-side refusal fallback on supported models (`ANTHROPIC_REFUSAL_FALLBACK`) |
-| `text.generate` | Anthropic (`RESEARCH_MODEL` / `COMPOSER_MODEL`) | as above | Claim extraction and dish ideas (plans use the same adapter) |
+| `vlm.analyze_image` | Featherless (`VLM_MODEL`, default `google/gemma-3-27b-it`); Anthropic with `LLM_PROVIDER=anthropic` | `unavailable / not_configured` without the provider's key; `unverified` with a key until the first success | Featherless: OpenAI-compatible chat completions, JSON Schema in the system prompt plus `response_format` (`FEATHERLESS_JSON_MODE`), fenced JSON tolerated, re-validated with zod. Anthropic: native structured outputs. Both: no tools; image text and user strings passed as data; budgeted retries in the adapter |
+| `text.generate` | Featherless or Anthropic (`RESEARCH_MODEL` / `COMPOSER_MODEL`) | as above | Claim extraction and dish ideas (plans use the same adapter) |
 | `research.sources` | Wikipedia Action API search + REST `/page/summary` | `unverified` until first call (no key needed) | Real canonical page URLs, CC BY-SA 4.0 text license, disambiguation skipped; `WIKIMEDIA_USER_AGENT` sent. Not reachable from this build sandbox (egress proxy 403), so tests use documented response shapes |
 | `research.claims` | text model over research sources | follows `text.generate` | Factual claims without a supplied source URL are dropped; overview and section text are assembled only from kept claims |
 | `catalog.tracks` | none | unavailable (no catalog adapter this release) | Music falls back to artist recommendations |

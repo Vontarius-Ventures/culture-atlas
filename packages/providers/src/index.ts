@@ -12,6 +12,8 @@ export { backoffDelay, CircuitBreaker, parseRetryAfter, withRetries, type Breake
 export { createAnthropicVlm, AnthropicVlm } from './vlm/anthropic';
 export { VLM_SYSTEM_PROMPT } from './vlm/prompt';
 export { createAnthropicTextModel, AnthropicTextModel } from './text/anthropic';
+export { createVlm, createTextModel } from './llm';
+export { createFeatherlessTransport, type FeatherlessJsonMode } from './featherless/transport';
 export type { MessagesTransport, TransportRequest, TransportResult } from './anthropic/transport';
 export { createQlooProvider, QlooHttpProvider } from './qloo/client';
 export { ReplayQloo, createReplayQloo, recordingKey, type QlooRecording } from './qloo/replay';

@@ -61,7 +61,7 @@ The agent prints every service call as it:
 4. Creates a movie night.
 5. Replaces only its film section.
 
-With `ANTHROPIC_API_KEY` set, the agent's own model (`DEMO_AGENT_MODEL`) writes the replacement instruction. Without Qloo or model keys, sections come back `partial` instead of being invented.
+With `FEATHERLESS_API_KEY` (or `ANTHROPIC_API_KEY`) set, the agent's own model (`DEMO_AGENT_MODEL`) writes the replacement instruction. Without Qloo or model keys, sections come back `partial` instead of being invented.
 
 ## 4. Show how it works
 

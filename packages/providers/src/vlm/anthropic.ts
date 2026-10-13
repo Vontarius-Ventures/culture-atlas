@@ -20,10 +20,10 @@ export class AnthropicVlm implements VlmProvider {
   constructor(
     model: string,
     transport: MessagesTransport,
-    private readonly opts: { timeoutMs: number; effort: 'low' | 'medium' | 'high'; refusalFallback: boolean },
+    private readonly opts: { timeoutMs: number; effort: 'low' | 'medium' | 'high'; refusalFallback: boolean; vendor?: string },
   ) {
-    this.id = `vlm:anthropic:${model}`;
-    this.runner = new AnthropicRunner('vlm', model, transport, { timeoutMs: opts.timeoutMs });
+    this.id = `vlm:${opts.vendor ?? 'anthropic'}:${model}`;
+    this.runner = new AnthropicRunner('vlm', model, transport, { timeoutMs: opts.timeoutMs, vendor: opts.vendor });
   }
 
   capability(): CapabilityEntry {

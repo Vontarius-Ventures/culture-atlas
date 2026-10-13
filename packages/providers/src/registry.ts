@@ -1,14 +1,13 @@
 import { CAPABILITY_NAMES, type CapabilityMatrix } from './capabilities';
 import { loadProviderConfig, type ProviderConfig } from './config';
+import { createTextModel, createVlm } from './llm';
 import { createQlooProvider } from './qloo/client';
 import type { QlooProvider } from './qloo/types';
 import { createWikipediaResearch } from './research/wikipedia';
 import type { ResearchProvider } from './research/types';
 import { createObjectStorage } from './storage';
 import type { ObjectStorage } from './storage/types';
-import { createAnthropicTextModel } from './text/anthropic';
 import type { TextModelProvider } from './text/types';
-import { createAnthropicVlm } from './vlm/anthropic';
 import type { VlmProvider } from './vlm/types';
 
 /** Every provider the domain uses, selected from environment configuration. */
@@ -32,9 +31,9 @@ export function createProviderRegistry(
   overrides: ProviderOverrides = {},
 ): ProviderRegistry {
   const config = loadProviderConfig(env);
-  const vlm = overrides.vlm ?? createAnthropicVlm(config);
-  const text = overrides.text ?? createAnthropicTextModel(config, config.RESEARCH_MODEL);
-  const composer = overrides.composer ?? createAnthropicTextModel(config, config.COMPOSER_MODEL ?? config.RESEARCH_MODEL);
+  const vlm = overrides.vlm ?? createVlm(config);
+  const text = overrides.text ?? createTextModel(config, config.RESEARCH_MODEL);
+  const composer = overrides.composer ?? createTextModel(config, config.COMPOSER_MODEL ?? config.RESEARCH_MODEL);
   const research = overrides.research ?? createWikipediaResearch(config, text);
   const qloo = overrides.qloo ?? createQlooProvider(config);
   const storage = overrides.storage ?? createObjectStorage(config);

@@ -19,10 +19,10 @@ export class AnthropicTextModel implements TextModelProvider {
   constructor(
     model: string,
     transport: MessagesTransport,
-    private readonly opts: { timeoutMs: number; effort: 'low' | 'medium' | 'high'; refusalFallback: boolean },
+    private readonly opts: { timeoutMs: number; effort: 'low' | 'medium' | 'high'; refusalFallback: boolean; vendor?: string },
   ) {
-    this.id = `text:anthropic:${model}`;
-    this.runner = new AnthropicRunner('text', model, transport, { timeoutMs: opts.timeoutMs });
+    this.id = `text:${opts.vendor ?? 'anthropic'}:${model}`;
+    this.runner = new AnthropicRunner('text', model, transport, { timeoutMs: opts.timeoutMs, vendor: opts.vendor });
   }
 
   capability(): CapabilityEntry {
