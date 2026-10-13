@@ -3,9 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Outbound World Sensor bridge. Runs beside the private relay; uploads to the public app with a restricted capture-write token. Must not import @culture-atlas/domain.",
+  "description": "Outbound World Sensor bridge. Runs beside the private relay; uploads to the public app with a restricted capture-write token. Must not import @culture-atlas/domain or @culture-atlas/providers.",
   "scripts": {
-    "start": "tsx src/main.ts",
+    "start": "tsx src/main.ts start",
+    "once": "tsx src/main.ts once",
+    "list": "tsx src/main.ts list",
     "mock-relay": "tsx src/mock-relay.ts",
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.json"

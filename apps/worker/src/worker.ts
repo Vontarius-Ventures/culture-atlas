@@ -12,6 +12,7 @@ import {
   markJobCancelled,
   reapJobs,
   runStageOnce,
+  sensorConnections,
   setJobStage,
   stillOwnsJob,
   traces,
@@ -48,6 +49,9 @@ export interface WorkerOptions {
   /** Enqueue the purge job periodically (default: on unless jobIds is set). */
   schedulePurge?: boolean;
   purgeEveryMs?: number;
+  /** Re-create broken World Sensor poll chains periodically (default: on unless jobIds is set). */
+  scheduleSensorPolls?: boolean;
+  sensorSweepEveryMs?: number;
 }
 
 /** One purge per hour bucket at most: the dedupe key makes concurrent workers agree. */
@@ -76,6 +80,7 @@ export class Worker {
   private loop?: Promise<void>;
   private lastReap = 0;
   private lastPurge = 0;
+  private lastSensorSweep = 0;
 
   constructor(private readonly opts: WorkerOptions) {
     this.workerId = opts.workerId ?? `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
@@ -105,6 +110,10 @@ export class Worker {
       await enqueueJob(this.opts.db, { type: 'purge_deleted', owner: null, payload: {}, dedupeKey: purgeDedupeKey(new Date()), maxAttempts: 3 }).catch((e: Error) =>
         this.log('purge enqueue failed', { error: e.message }),
       );
+    }
+    if ((this.opts.scheduleSensorPolls ?? !this.opts.jobIds) && Date.now() - this.lastSensorSweep > (this.opts.sensorSweepEveryMs ?? 60_000)) {
+      this.lastSensorSweep = Date.now();
+      await sensorConnections.ensureSensorPollJobs(this.opts.db).catch((e: Error) => this.log('sensor sweep failed', { error: e.message }));
     }
     const free = this.concurrency - this.running.size;
     if (free <= 0 || this.stopped) return 0;
