@@ -1259,6 +1259,12 @@ export class MockApi {
           expires_at: new Date(Date.now() + body.expires_in_days * 86_400_000).toISOString(),
           revoked_at: null,
           last_used_at: null,
+          status: 'active',
+          access_summary: {
+            reads: ['Items in the collections you selected'],
+            writes: [],
+            limits: ['Cannot see unfiled saves or other collections'],
+          },
         };
         this.agents.push(conn);
         return {
