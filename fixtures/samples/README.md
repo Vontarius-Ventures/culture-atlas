@@ -7,7 +7,7 @@ Review rules applied to every entry:
 - Short factual text only: title, year, creator or a neutral one-line description.
 - One real public reference page per item (`destination_url`, Wikipedia).
 - No claimed relationships between samples. "Related" samples on an item page are simply other examples from different categories.
-- No bundled images. Cards use the text treatment until licensed images are added under `apps/web/public/samples/` with their source and license recorded in this file.
+- Images only where a project-original illustration (`apps/web/public/samples/feed/`, licenses in `fixtures/images/LICENSES.md`) shows the subject itself. Films and artists never get a stand-in picture; those cards use the text treatment.
 
 Before release, have a person re-check each description against its reference page.
 
@@ -31,3 +31,13 @@ Before release, have a person re-check each description against its reference pa
 | style-workwear | style | https://en.wikipedia.org/wiki/Workwear |
 | food-pastel-de-nata | food | https://en.wikipedia.org/wiki/Pastel_de_nata |
 | reference-memphis-group | reference | https://en.wikipedia.org/wiki/Memphis_Group |
+| food-sesame-noodles | food | https://en.wikipedia.org/wiki/Sesame_noodles (image: `samples/feed/sesame-noodles.jpg`) |
+| style-linen | style | https://en.wikipedia.org/wiki/Linen (image: `samples/feed/linen-days.jpg`) |
+| reference-tetsubin | reference | https://en.wikipedia.org/wiki/Tetsubin (image: `samples/feed/tea-rituals.jpg`) |
+| reference-phonograph-record | reference | https://en.wikipedia.org/wiki/Phonograph_record (image: `samples/feed/sunday-listening.jpg`) |
+| film-le-mans | film | https://en.wikipedia.org/wiki/Le_Mans_(film) (example: outfit) |
+| film-grand-prix | film | https://en.wikipedia.org/wiki/Grand_Prix_(1966_film) (example: outfit) |
+| film-tokyo-story | film | https://en.wikipedia.org/wiki/Tokyo_Story (example: room) |
+| artist-ryuichi-sakamoto | artist | https://en.wikipedia.org/wiki/Ryuichi_Sakamoto (example: room) |
+
+The last four rows, plus some of the earlier ones, are also the reviewed picks of the example replays in `fixtures/examples/` (see its README).

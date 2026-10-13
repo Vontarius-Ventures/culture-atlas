@@ -179,8 +179,13 @@ export class ApiClient {
     };
     const headers: Record<string, string> = { accept: 'application/json' };
     const isMutation = contract.method !== 'GET';
-    if (isMutation) {
-      const session = await this.getSession();
+    // Every call waits for the session first: parallel first-visit requests
+    // without a cookie would otherwise each mint their own anonymous session,
+    // and the last Set-Cookie would not match the CSRF token we hold.
+    const sessionReady = name === 'getSession' ? null : this.getSession();
+    if (sessionReady && !isMutation) await sessionReady.catch(() => undefined);
+    if (isMutation && sessionReady) {
+      const session = await sessionReady;
       headers[CSRF_HEADER] = session.csrf_token;
       if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
     }

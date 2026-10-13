@@ -12,6 +12,8 @@ import {
 } from '@culture-atlas/providers';
 import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionStatus, type SectionStatus } from '../enums';
 import { AppError } from '../errors';
+import { EXAMPLE_REPLAY_MODEL, examplePickItems, exampleReplay, type ExampleReplay } from '../feed/examples';
+import { ensureSampleItems, sampleKey } from '../feed/samples';
 import type { JobContext } from '../jobs/handler';
 import type { JobOutcome } from '../jobs/types';
 import type { Owner } from '../principal';
@@ -149,6 +151,8 @@ export class CaptureCompiler {
   private readonly warnings = new Map<string, { code: string; message: string }>();
   private readonly sections = new Map<string, SectionStatus>();
   private readonly traceId: string | null;
+  /** Reviewed replay for an example photo when the VLM is unavailable (feed/examples.ts). */
+  private example: ExampleReplay | null = null;
 
   constructor(private readonly ctx: JobContext<'analyze_capture'>) {
     this.softDeadlineAt = this.startedAt + Math.floor(ctx.budget.deadlineMs * 0.75);
@@ -211,6 +215,7 @@ export class CaptureCompiler {
     }
     this.capture = capture;
     this.owner = ownerFromRow(capture);
+    this.example = capture.source === 'sample' && !isUsable(ctx.providers.vlm.capability()) ? exampleReplay(capture.sample_id) : null;
 
     const row = await ensureAnalysisRow(ctx.db, {
       captureId: capture.id,
@@ -308,6 +313,12 @@ export class CaptureCompiler {
     const eatStatus = await this.composeEat(resolved.refs, order, excluded, usedKeys);
     await this.traceStage('recommend:eat', t0, { status: eatStatus });
 
+    if (this.example) {
+      t0 = Date.now();
+      const added = await this.composeExample(this.example, resolved.refs, order, excluded, usedKeys);
+      await this.traceStage('example', t0, { sample_id: this.example.sampleId, picks: added, origin: 'sample' });
+    }
+
     return this.finish();
   }
 
@@ -355,6 +366,7 @@ export class CaptureCompiler {
     }
     const replacement = (ctx.payload.correction as Correction | undefined)?.replacement?.name;
     const confirmedInterests = [confirmed?.name, replacement].filter((v): v is string => !!v);
+    if (this.example) return this.observeExample(this.example);
     const counter = attemptCounter();
     const started = Date.now();
     const request = {
@@ -412,6 +424,86 @@ export class CaptureCompiler {
       });
       throw err;
     }
+  }
+
+  /**
+   * Example photo without a VLM: replay the reviewed reading (never a model
+   * output) and record it as a replayed observe query for the inspector.
+   */
+  private async observeExample(example: ExampleReplay): Promise<ObserveOutput> {
+    await recordProviderQuery(this.ctx.db, {
+      parent: { analysisId: this.analysisId },
+      provider: 'vlm',
+      operation: 'analyze_image',
+      request: { example: example.sampleId, reason: 'vlm_unavailable' },
+      results: {
+        model: EXAMPLE_REPLAY_MODEL,
+        reviewed_at: example.reviewedAt,
+        observations: example.analysis.observations.length,
+        candidates: example.analysis.candidates.map((c) => ({ id: c.id, name: c.name, type: c.type, relation: c.relation, certainty: c.certainty })),
+        quality: example.analysis.quality,
+        uncertainty: example.analysis.uncertainty.overall,
+      },
+      status: 'ok',
+      durationMs: 0,
+      isReplay: true,
+      queryContext: { stage: 'observe', example: example.sampleId },
+      traceId: this.traceId,
+    });
+    return { analysis: example.analysis, model: EXAMPLE_REPLAY_MODEL };
+  }
+
+  /**
+   * Adds the example's reviewed picks (public sample items, origin 'sample')
+   * to categories that have no live results. Live provider results always
+   * win; picks are never labeled as provider results.
+   */
+  private async composeExample(example: ExampleReplay, refs: readonly ResolvedRef[], order: readonly Category[], excluded: Set<string>, usedKeys: Set<string>): Promise<number> {
+    const { ctx } = this;
+    await ensureSampleItems(ctx.db);
+    const picks = examplePickItems(example);
+    const { rows } = await ctx.db.query<{ id: string; canonical_key: string }>(
+      'SELECT id, canonical_key FROM discovery_items WHERE is_sample AND canonical_key = ANY($1::text[])',
+      [picks.map((p) => sampleKey(p.item.slug))],
+    );
+    const idByKey = new Map(rows.map((r) => [r.canonical_key, r.id]));
+    let added = 0;
+    await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
+      const { rows: live } = await tx.query<{ category: Category }>('SELECT DISTINCT category FROM recommendations WHERE analysis_id = $1 AND category IS NOT NULL', [this.analysisId]);
+      const liveCategories = new Set(live.map((r) => r.category));
+      const positions = new Map<Category, number>();
+      for (const { pick, item } of picks) {
+        const key = sampleKey(item.slug);
+        const itemId = idByKey.get(key);
+        if (!itemId || liveCategories.has(pick.category) || excluded.has(key) || usedKeys.has(key)) continue;
+        const position = positions.get(pick.category) ?? 0;
+        if (position >= LIMITS.recommendationsPerCategory) continue;
+        positions.set(pick.category, position + 1);
+        const contributors = pick.references
+          .map((name) => refs.find((r) => normalizeName(r.candidateName) === normalizeName(name)))
+          .filter((r): r is ResolvedRef => !!r);
+        await insertRecommendation(tx, {
+          analysisId: this.analysisId,
+          discoveryItemId: itemId,
+          category: pick.category,
+          rank: this.rankFor(order, pick.category, position),
+          title: item.title,
+          externalIds: {},
+          displayReason: pick.reason,
+          origin: 'sample',
+          providerQueryIds: [],
+          contributingReferenceIds: contributors.map((r) => r.referenceId),
+          destinationUrl: item.destination_url,
+        });
+        usedKeys.add(key);
+        added++;
+      }
+      for (const category of positions.keys()) {
+        await setAnalysisSection(tx, this.analysisId, category, 'partial');
+        this.sections.set(category, 'partial');
+      }
+    });
+    return added;
   }
 
   private async publishObserve(analysis: VlmAnalysis): Promise<void> {

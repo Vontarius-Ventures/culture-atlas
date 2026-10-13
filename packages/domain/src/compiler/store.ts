@@ -12,6 +12,8 @@ export interface CaptureForCompile {
   owner_session_id: string | null;
   private_object_key: string | null;
   image_sha256: string;
+  source: string;
+  sample_id: string | null;
   focus: unknown;
   status: string;
   active_analysis_id: string | null;
@@ -24,7 +26,7 @@ export function ownerFromRow(row: { owner_account_id: string | null; owner_sessi
 
 export async function loadCapture(db: Queryable, captureId: string): Promise<CaptureForCompile | null> {
   const { rows } = await db.query<CaptureForCompile>(
-    `SELECT id, owner_account_id, owner_session_id, private_object_key, image_sha256, focus, status,
+    `SELECT id, owner_account_id, owner_session_id, private_object_key, image_sha256, source, sample_id, focus, status,
             active_analysis_id, deleted_at
        FROM captures WHERE id = $1`,
     [captureId],
@@ -40,7 +42,7 @@ export async function loadCapture(db: Queryable, captureId: string): Promise<Cap
  */
 export async function lockLiveCapture(tx: Queryable, captureId: string): Promise<CaptureForCompile | null> {
   const { rows } = await tx.query<CaptureForCompile>(
-    `SELECT id, owner_account_id, owner_session_id, private_object_key, image_sha256, focus, status,
+    `SELECT id, owner_account_id, owner_session_id, private_object_key, image_sha256, source, sample_id, focus, status,
             active_analysis_id, deleted_at
        FROM captures WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
     [captureId],

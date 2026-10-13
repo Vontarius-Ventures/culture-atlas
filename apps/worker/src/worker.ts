@@ -65,8 +65,16 @@ export function toFailure(err: unknown): { failure: JobFailure; retryAfterMs?: n
   }
   if (isProviderError(err)) {
     const code = err.kind === 'rate_limited' ? 'rate_limited' : 'provider_unavailable';
+    // Job errors are shown to consumers: never name providers or error kinds
+    // (those stay in provider_queries and traces for the inspector).
+    const message =
+      err.kind === 'rate_limited'
+        ? 'We’re a little busy right now. Try again shortly.'
+        : err.provider === 'vlm'
+          ? 'We can’t look at photos right now. Try again in a little while.'
+          : 'Part of this is taking longer than usual. Try again in a little while.';
     return {
-      failure: { code, message: `${err.provider} ${err.kind}`, retryable: err.retryable },
+      failure: { code, message, retryable: err.retryable },
       retryAfterMs: err.retryAfterMs,
     };
   }

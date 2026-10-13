@@ -11,10 +11,10 @@ import type { DisplayMetadata } from '../services/display';
  * Content rules: short factual descriptions only (title, year, creator or a
  * neutral one-line description), each with a real public reference page as the
  * destination. No claims of relationships between samples: "related" samples
- * are simply other examples from different categories. No images are bundled
- * (the UI renders its text treatment) until licensed sample images are added
- * under apps/web/public/samples with their license recorded in
- * fixtures/samples/README.md.
+ * are simply other examples from different categories. Items whose subject a
+ * project-original illustration actually shows carry that image
+ * (apps/web/public/samples, licenses in fixtures/images/LICENSES.md); the rest
+ * use the UI's text treatment. Never a stand-in picture of a performer or film.
  */
 export interface SampleItem {
   slug: string;
@@ -25,6 +25,12 @@ export interface SampleItem {
   year?: number;
   description: string;
   destination_url: string;
+  /**
+   * Optional project-original illustration under apps/web/public (license:
+   * fixtures/images/LICENSES.md). Only set when the picture genuinely shows
+   * the subject; artists and films never get a stand-in picture.
+   */
+  image?: { url: string; alt: string };
 }
 
 export const SAMPLE_ITEMS: readonly SampleItem[] = [
@@ -46,7 +52,22 @@ export const SAMPLE_ITEMS: readonly SampleItem[] = [
   { slug: 'style-workwear', kind: 'style', category: 'wear', title: 'Workwear', subtitle: 'Style direction', description: 'Durable clothing first made for manual work.', destination_url: 'https://en.wikipedia.org/wiki/Workwear' },
   { slug: 'food-pastel-de-nata', kind: 'food', category: 'eat', title: 'Pastel de nata', subtitle: 'Portuguese custard tart', description: 'Portuguese custard tart with a flaky pastry shell.', destination_url: 'https://en.wikipedia.org/wiki/Pastel_de_nata' },
   { slug: 'reference-memphis-group', kind: 'reference', category: null, title: 'Memphis Group', subtitle: 'Design collective, 1981–1987', description: 'Milan design collective known for bold color and pattern.', destination_url: 'https://en.wikipedia.org/wiki/Memphis_Group' },
+  // Illustrated samples: the picture shows the subject itself.
+  { slug: 'food-sesame-noodles', kind: 'food', category: 'eat', title: 'Sesame noodles', subtitle: 'Cold noodle dish', description: 'Noodles tossed in a sesame sauce, often served cold.', destination_url: 'https://en.wikipedia.org/wiki/Sesame_noodles', image: { url: '/samples/feed/sesame-noodles.jpg', alt: 'A bowl of noodles with chopsticks' } },
+  { slug: 'style-linen', kind: 'style', category: 'wear', title: 'Summer linen', subtitle: 'Style direction', description: 'Light clothing woven from flax, made for warm days.', destination_url: 'https://en.wikipedia.org/wiki/Linen', image: { url: '/samples/feed/linen-days.jpg', alt: 'A linen shirt on a hanger in leaf shadows' } },
+  { slug: 'reference-tetsubin', kind: 'reference', category: null, title: 'Tetsubin', subtitle: 'Japanese cast-iron kettle', description: 'Japanese cast-iron kettle used to heat water for tea.', destination_url: 'https://en.wikipedia.org/wiki/Tetsubin', image: { url: '/samples/feed/tea-rituals.jpg', alt: 'A cast-iron teapot and cup beside a blossom branch' } },
+  { slug: 'reference-phonograph-record', kind: 'reference', category: null, title: 'The vinyl record', subtitle: 'Listening at home', description: 'The grooved disc that carried recorded music for most of the 20th century.', destination_url: 'https://en.wikipedia.org/wiki/Phonograph_record', image: { url: '/samples/feed/sunday-listening.jpg', alt: 'A record player with records and a lamp' } },
+  // Example-photo discoveries (fixtures/examples): reviewed picks used when an
+  // example is replayed without live providers. Never presented as Qloo results.
+  { slug: 'film-le-mans', kind: 'film', category: 'watch', title: 'Le Mans', subtitle: 'Lee H. Katzin', year: 1971, description: 'Steve McQueen stars in this film about the 24 Hours of Le Mans race.', destination_url: 'https://en.wikipedia.org/wiki/Le_Mans_(film)' },
+  { slug: 'film-grand-prix', kind: 'film', category: 'watch', title: 'Grand Prix', subtitle: 'John Frankenheimer', year: 1966, description: 'John Frankenheimer’s film following Formula One drivers through a season.', destination_url: 'https://en.wikipedia.org/wiki/Grand_Prix_(1966_film)' },
+  { slug: 'film-tokyo-story', kind: 'film', category: 'watch', title: 'Tokyo Story', subtitle: 'Yasujirō Ozu', year: 1953, description: 'Yasujirō Ozu’s quiet family drama, much of it set in calm domestic rooms.', destination_url: 'https://en.wikipedia.org/wiki/Tokyo_Story' },
+  { slug: 'artist-ryuichi-sakamoto', kind: 'artist', category: 'play', title: 'Ryuichi Sakamoto', subtitle: 'Composer and pianist', description: 'Japanese composer, pianist and producer.', destination_url: 'https://en.wikipedia.org/wiki/Ryuichi_Sakamoto' },
 ];
+
+export function sampleBySlug(slug: string): SampleItem | undefined {
+  return SAMPLE_ITEMS.find((s) => s.slug === slug);
+}
 
 export const sampleKey = (slug: string) => `sample:${slug}`;
 
@@ -55,7 +76,7 @@ export function sampleDisplay(s: SampleItem): DisplayMetadata {
     subtitle: s.year ? `${s.year} · ${s.subtitle}` : s.subtitle,
     year: s.year ?? null,
     description: s.description,
-    image: null,
+    image: s.image ? { url: s.image.url, alt: s.image.alt, width: 1000, height: 1250, license: 'project-original' } : null,
     destination_url: s.destination_url,
   };
 }

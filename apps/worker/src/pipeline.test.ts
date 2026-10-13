@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { analyses, captures, getJobById, references, type ServiceContext } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
-import { ProviderError, type VlmProvider } from '@culture-atlas/providers';
+import { ProviderError, UnavailableVlm, type VlmProvider } from '@culture-atlas/providers';
 import { anonCtx, accountCtx, runJobs, testJpeg, vlmFixture, world } from './test-world';
 
 const db = getTestDb();
@@ -285,5 +285,38 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(job).toMatchObject({ state: 'failed', error_code: 'provider_unavailable', attempt: 1 });
     const view = await captures.getCapture(ctx, { id: capture_id });
     expect(view).toMatchObject({ status: 'failed', analysis: null, recommendations: [] });
+  });
+
+  it('replays the reviewed example reading for an example photo when the VLM is unavailable (labeled, never Qloo)', async () => {
+    const { providers } = world({ qloo: null, composer: false, overrides: { vlm: new UnavailableVlm('not_configured') } });
+    const ctx = await anonCtx(providers);
+    const { capture_id, job_id } = await captures.createCapture(ctx, { kind: 'json', body: { sample_id: 'outfit' } as never });
+    await runJobs(ctx, [job_id]);
+    expect((await getJobById(db, job_id))?.state).toBe('partial');
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    expect(view).toMatchObject({ is_example: true, status: 'partial' });
+    expect(view.analysis).toMatchObject({ title: 'Vintage racing references' });
+    expect(view.analysis!.warnings).toContainEqual({ code: 'discoveries_delayed', message: 'Related discoveries are taking longer.' });
+    expect(view.references.every((r) => r.qualified)).toBe(true);
+    expect(view.recommendations.map((r) => r.title)).toEqual(expect.arrayContaining(['Le Mans', 'Mod tailoring']));
+    expect(view.recommendations.every((r) => r.is_example)).toBe(true);
+    const rows = await recRows(capture_id);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.origin === 'sample' && r.provider_query_ids.length === 0)).toBe(true);
+    const { rows: pq } = await db.query<{ provider: string; is_replay: boolean }>(
+      `SELECT pq.provider, pq.is_replay FROM provider_queries pq JOIN analyses a ON a.id = pq.analysis_id WHERE a.capture_id = $1`,
+      [capture_id],
+    );
+    expect(pq.filter((q) => q.provider === 'vlm')).toEqual([{ provider: 'vlm', is_replay: true }]);
+    expect(pq.some((q) => q.provider === 'qloo')).toBe(false);
+  });
+
+  it('never replays an example reading for an uploaded photo', async () => {
+    const { providers } = world({ qloo: null, overrides: { vlm: new UnavailableVlm('not_configured') } });
+    const ctx = await anonCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    expect(await getJobById(db, job_id)).toMatchObject({ state: 'failed', error_code: 'provider_unavailable' });
+    expect(await captures.getCapture(ctx, { id: capture_id })).toMatchObject({ status: 'failed', analysis: null, recommendations: [] });
   });
 });
