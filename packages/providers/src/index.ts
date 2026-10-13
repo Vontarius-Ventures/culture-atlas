@@ -25,3 +25,4 @@ export {
   verifySignedMedia,
   type MediaVerification,
 } from './storage';
+export { serveSignedMedia } from './storage/media';

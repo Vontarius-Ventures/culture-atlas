@@ -5,6 +5,7 @@ import { DeleteObjectsCommand, GetObjectCommand, ListObjectsV2Command, PutObject
 import { afterAll, describe, expect, it } from 'vitest';
 import { loadProviderConfig } from '../config';
 import { createObjectStorage } from './index';
+import { serveSignedMedia } from './media';
 import { LocalFsStorage } from './local';
 import { S3Storage } from './s3';
 import { isSafeObjectKey, verifySignedMedia } from './signing';
@@ -55,6 +56,23 @@ describe('LocalFsStorage', () => {
     expect(s.verifySignedRequest(tampered)).toEqual({ ok: false, reason: 'bad_signature' });
     expect(verifySignedMedia('different-secret', params)).toEqual({ ok: false, reason: 'bad_signature' });
     expect(s.verifySignedRequest(new URLSearchParams())).toEqual({ ok: false, reason: 'missing' });
+  });
+
+  it('serves signed media privately and returns a uniform 404 otherwise', async () => {
+    const s = await localStorage();
+    await s.put('captures/o/c/derivative.jpg', new Uint8Array([7, 7]), { contentType: 'image/jpeg' });
+    const url = new URL(await s.signedUrl('captures/o/c/derivative.jpg'));
+    const ok = await serveSignedMedia(s, url);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('content-type')).toBe('image/jpeg');
+    expect(ok.headers.get('cache-control')).toMatch(/^private, max-age=\d+$/);
+    expect(new Uint8Array(await ok.arrayBuffer())).toEqual(new Uint8Array([7, 7]));
+    expect((await serveSignedMedia(s, url, Date.now() + 3_600_000)).status).toBe(404); // expired
+    const tampered = new URL(url);
+    tampered.searchParams.set('sig', 'x');
+    expect((await serveSignedMedia(s, tampered)).status).toBe(404);
+    await s.delete('captures/o/c/derivative.jpg');
+    expect((await serveSignedMedia(s, url)).status).toBe(404); // deletion revokes access immediately
   });
 
   it('factory: local without a signing secret is degraded (process-local links)', () => {
