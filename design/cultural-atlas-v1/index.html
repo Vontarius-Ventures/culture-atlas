@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cultural Atlas Visual Mockups</title>
+  <link rel="stylesheet" href="tokens.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--font-ui); }
+    header, main { max-width: 1440px; margin: auto; padding: 32px; }
+    header { padding-bottom: 8px; }
+    h1 { font: 400 clamp(32px, 4vw, 52px)/1.1 var(--font-display); margin: 12px 0; }
+    p { color: var(--muted); line-height: 1.6; }
+    a { color: var(--accent); }
+    nav { display: flex; gap: 24px; flex-wrap: wrap; }
+    .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
+    figure { margin: 0; min-width: 0; }
+    figure a { display: block; border-radius: 16px; overflow: hidden; background: var(--quiet); }
+    img { display: block; width: 100%; height: auto; }
+    .mobile a { max-width: 420px; margin: auto; }
+    figcaption { padding: 16px 0; font-size: 16px; font-weight: 500; }
+    a:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
+    @media (max-width: 800px) { .gallery { grid-template-columns: 1fr; } header, main { padding: 20px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cultural Atlas visual mockups</h1>
+    <p>Seven concept screens for the consumer experience. Select an image to see it at full size.</p>
+    <nav aria-label="Design documents"><a href="DESIGN-GUIDE.md">Design guide</a><a href="../../specs/cultural-discovery-build-spec.md">Build spec</a><a href="tokens.css">Design tokens</a></nav>
+  </header>
+  <main class="gallery">
+    <figure><a href="mockups/01-discover-desktop.png"><img src="mockups/01-discover-desktop.png" alt="Desktop discovery with mixed photographic cards and Save controls"></a><figcaption>01 · Discover</figcaption></figure>
+    <figure><a href="mockups/07-collections-desktop.png"><img src="mockups/07-collections-desktop.png" alt="Collections index with photographic mosaics"></a><figcaption>02 · Your collections</figcaption></figure>
+    <figure><a href="mockups/02-collection-desktop.png"><img src="mockups/02-collection-desktop.png" alt="Slow Sunday collection with selected music and film inspirations"></a><figcaption>03 · Inside a collection</figcaption></figure>
+    <figure><a href="mockups/06-item-desktop.png"><img src="mockups/06-item-desktop.png" alt="Vintage racing item detail with related discoveries and optional reference links"></a><figcaption>04 · Explore an item</figcaption></figure>
+    <figure><a href="mockups/03-plan-desktop.png"><img src="mockups/03-plan-desktop.png" alt="Movie-night plan with film, food and music"></a><figcaption>05 · Make a movie night</figcaption></figure>
+    <figure class="mobile"><a href="mockups/04-discover-mobile-v2.png"><img src="mockups/04-discover-mobile-v2.png" alt="Mobile discovery feed with two columns and bottom navigation"></a><figcaption>06 · Mobile discovery</figcaption></figure>
+    <figure class="mobile"><a href="mockups/05-save-mobile-v2.png"><img src="mockups/05-save-mobile-v2.png" alt="Mobile sheet for saving an item to a collection"></a><figcaption>07 · Save to a collection</figcaption></figure>
+  </main>
+</body>
+</html>
