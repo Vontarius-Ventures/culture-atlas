@@ -11,3 +11,8 @@ playwright-report/
 *.tsbuildinfo
 next-env.d.ts
 .data/
+
+# Local agent worktrees and Next.js-generated agent notes
+.claude/
+apps/web/AGENTS.md
+apps/web/CLAUDE.md
