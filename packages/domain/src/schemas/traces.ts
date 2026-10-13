@@ -19,6 +19,19 @@ export const TraceResponse = z.object({
     finished_at: Timestamp.nullable(),
   }),
   capture: z.object({ id: Uuid, image: Image.nullable() }).nullable(),
+  /** Plan jobs: the plan, the version this job produced and its snapshotted inputs (additive). */
+  plan: z
+    .object({
+      id: Uuid,
+      version: z.number().int().nullable(),
+      section: z.string().nullable(),
+      title: z.string().nullable(),
+      inputs: z.array(z.object({ item_id: Uuid, title: z.string(), kind: z.string() })),
+    })
+    .nullable()
+    .optional(),
+  /** Related-discovery jobs: the item the exploration started from (additive). */
+  related_origin: z.object({ item_id: Uuid, title: z.string(), kind: z.string() }).nullable().optional(),
   observations: z.array(z.unknown()),
   resolved_entities: z.array(
     z.object({

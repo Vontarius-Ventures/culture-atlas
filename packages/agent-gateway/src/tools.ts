@@ -190,6 +190,43 @@ export const TOOLS = [
 
 export type ToolName = (typeof TOOLS)[number]['name'];
 
+/** MCP tool annotations (hints for clients; authorization never relies on them). */
+export interface ToolAnnotations {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+}
+
+const READ_ONLY = new Set<string>(['get_job', 'get_capture', 'explore_reference', 'get_taste', 'list_collections', 'get_collection', 'get_plan']);
+const DESTRUCTIVE = new Set<string>(['record_preference', 'remove_collection_item', 'replace_plan_section']);
+const IDEMPOTENT = new Set<string>([...READ_ONLY, 'add_collection_item', 'remove_collection_item']);
+
+export function toolAnnotations(name: string): ToolAnnotations {
+  return {
+    readOnlyHint: READ_ONLY.has(name),
+    destructiveHint: DESTRUCTIVE.has(name),
+    idempotentHint: IDEMPOTENT.has(name),
+    openWorldHint: false,
+  };
+}
+
+/**
+ * The REST contract each tool mirrors. The gateway authorizes a tool call with
+ * exactly this contract (`authorizeOperation(principal, route, 'mcp')`) and
+ * validates its output with the route's response schema, which is what makes
+ * REST and MCP behave identically for scopes, tokens and payload shapes.
+ */
+export function routeForTool(name: string): schemas.RouteContract {
+  const route = Object.values(schemas.ROUTES).find((r) => 'mcpTool' in r && r.mcpTool === name);
+  if (!route) throw new Error(`No REST route mirrors MCP tool ${name}`);
+  return route;
+}
+
+export function findTool(name: string): ToolDefinition | undefined {
+  return (TOOLS as readonly ToolDefinition[]).find((t) => t.name === name);
+}
+
 export const SPEC_TOOL_NAMES = [
   'analyze_capture', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'record_preference',
   'list_collections', 'get_collection', 'create_collection', 'add_collection_item', 'remove_collection_item',

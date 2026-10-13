@@ -111,7 +111,17 @@ Service functions are typed stubs that throw `not_implemented` (HTTP 501) until 
 
 ### MCP
 
-`packages/agent-gateway/src/tools.ts` defines the 15 spec tools. Each tool's input mirrors the REST schema and its `run` calls the same domain service as the REST route, so authorization is identical. `server.ts#handleMcpRequest` (mounted at `apps/web/app/mcp/route.ts`) is the transport stub for the gateway owner: resolve the bearer principal with `auth.resolvePrincipal`, build a `ServiceContext` with `surface: 'mcp'`, register `TOOLS`, map `AppError` to tool errors with the same codes, and record an `agent_tool_call` trace event for each call.
+`packages/agent-gateway/src/tools.ts` defines the 15 spec tools. Each tool's input mirrors the REST schema and its `run` calls the same domain service as the REST route. `routeForTool(name)` returns the mirrored `ROUTES` contract.
+
+`server.ts` (`createMcpHandler` / `handleMcpRequest`, mounted at `apps/web/app/mcp/route.ts`) is a stateless Streamable HTTP endpoint (POST only, JSON responses, low-level SDK `Server` per request). Per request it resolves the bearer token with `auth.resolvePrincipal` (missing, unknown, expired or revoked tokens return the REST HTTP status and error body, plus `WWW-Authenticate: Bearer`; cookies are ignored; sensor-bridge tokens get 403). Per tool call it runs `authorizeOperation(principal, routeForTool(name), 'mcp')`, validates input with the tool's zod schema, calls the service, validates output against the route's response schema outside production, and records a redacted `agent_tool_call` trace event (args, outcome, error code, one-line summary, and `refs` of the ids touched, which the inspector uses to link calls to jobs). Errors are tool results with `isError: true` and `structuredContent.error` equal to the REST error body. Mutating tools accept `_meta.idempotency_key`. Client setup is in [agents.md](agents.md).
+
+### Authorization entry point (REST and MCP)
+
+`authz/operations.ts#authorizeOperation(principal, contract, surface)` is the single operation-level check. `apiRoute` (`enforceAuth`) and the MCP gateway both call it with the same `ROUTES` contract, so the two surfaces refuse a token with the same code. It covers the sensor-bridge restriction (three REST routes only, nothing over MCP), the auth level (`owner` and `demo` are browser account sessions only) and scopes. Grant and ownership checks stay in the services (`authz/index.ts` pure checks plus `library/access.ts` SQL visibility), which re-read the CURRENT grant on every call. `authz/connection-access.ts#describeConnectionAccess` produces the plain-language reads, writes and limits shown at connection setup (`access_summary` on `AgentConnectionDto`).
+
+### Demo inspector
+
+`services/traces.ts#getTrace` backs both `GET /v1/demo/traces/{job_id}` and the server-rendered page `/inspector/{jobId}` (`apps/web/app/inspector/[jobId]`). It is available only to the job's owning account when that account is a demo owner (`accounts.is_demo_owner` or `DEMO_INSPECTOR_ACCOUNT_IDS`); everyone else gets 404. It assembles the photo (short-lived signed URL), observations, resolved provider ids, provider queries (sanitized request plus the top-10 ranked results), references with claim and source counts, recommendations with origin and query ids, preference events on the involved items, the agent's tool calls and pipeline events. A second redaction pass removes credentials, storage keys and private-network URLs. No consumer screen links to it.
 
 ### Idempotency
 

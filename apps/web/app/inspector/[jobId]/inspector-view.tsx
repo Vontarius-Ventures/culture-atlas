@@ -1,0 +1,326 @@
+import type { ReactNode } from 'react';
+import type { TraceResponse } from '@culture-atlas/domain/schemas';
+import styles from './inspector.module.css';
+
+/**
+ * Demo inspector ("Show how it works"). Developer/demo-owner view of one job:
+ * the photo, visual observations, resolved provider ids, provider queries with
+ * their inputs and ranked results, sourced references, recommendations with
+ * provenance, saved taste changes and the separate agent's service calls.
+ * Unlike consumer screens this view intentionally shows provider names, ids
+ * and scores. It is never linked from the consumer flow.
+ */
+
+const JOB_LABEL: Record<string, string> = {
+  analyze_capture: 'Photo analysis',
+  discover_related: 'Related discovery',
+  generate_plan: 'Movie night plan',
+  replace_plan_section: 'Plan section replacement',
+  sensor_poll: 'Sensor import',
+  purge_deleted: 'Purge',
+};
+
+const ORIGIN_LABEL: Record<string, string> = {
+  qloo: 'Qloo result',
+  research: 'Sourced research',
+  catalog: 'Catalog',
+  vlm_creative: 'Creative suggestion (not from Qloo)',
+  sample: 'Example result',
+  replay: 'Example result (replayed)',
+};
+
+function time(at: string | null): string {
+  if (!at) return '—';
+  return new Date(at).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+}
+
+function Json({ value }: { value: unknown }) {
+  return <pre className={styles.json}>{JSON.stringify(value, null, 2)}</pre>;
+}
+
+function Section({ id, title, count, children }: { id: string; title: string; count?: number; children: ReactNode }) {
+  return (
+    <section className={styles.section} aria-labelledby={`${id}-title`}>
+      <h2 id={`${id}-title`} className={styles.sectionTitle}>
+        {title}
+        {count !== undefined ? <span className={styles.count}>{count}</span> : null}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function Empty({ children }: { children: ReactNode }) {
+  return <p className={styles.empty}>{children}</p>;
+}
+
+function observationText(o: unknown): { label: string; detail: string | null } {
+  if (o && typeof o === 'object') {
+    const r = o as Record<string, unknown>;
+    const label = [r.label, r.name, r.text, r.description, r.title].find((v) => typeof v === 'string') as string | undefined;
+    const detailParts = [r.kind, r.type, r.category].filter((v) => typeof v === 'string') as string[];
+    if (typeof r.certainty === 'number') detailParts.push(`certainty ${r.certainty.toFixed(2)}`);
+    if (label) return { label, detail: detailParts.join(' · ') || null };
+  }
+  return { label: typeof o === 'string' ? o : JSON.stringify(o), detail: null };
+}
+
+export function InspectorView({ trace }: { trace: TraceResponse }) {
+  const qlooQueries = trace.provider_queries.filter((q) => q.provider === 'qloo');
+  const liveQloo = qlooQueries.filter((q) => q.status === 'ok' && !q.is_replay).length;
+  return (
+    <main className={styles.page}>
+      <header className={styles.header}>
+        <p className={styles.eyebrow}>culture atlas · how it works</p>
+        <h1 className={styles.title}>{JOB_LABEL[trace.job.type] ?? trace.job.type}</h1>
+        <dl className={styles.meta}>
+          <div>
+            <dt>Job</dt>
+            <dd className={styles.mono}>{trace.job.id}</dd>
+          </div>
+          <div>
+            <dt>State</dt>
+            <dd>{trace.job.state}</dd>
+          </div>
+          <div>
+            <dt>Started</dt>
+            <dd>{time(trace.job.created_at)}</dd>
+          </div>
+          <div>
+            <dt>Finished</dt>
+            <dd>{time(trace.job.finished_at)}</dd>
+          </div>
+          <div>
+            <dt>Qloo queries</dt>
+            <dd>
+              {liveQloo} live of {qlooQueries.length}
+            </dd>
+          </div>
+        </dl>
+        <p className={styles.note}>Developer view. Tokens, credentials and private deployment details are redacted.</p>
+      </header>
+
+      <div className={styles.grid}>
+        <div className={styles.column}>
+          {trace.capture ? (
+            <Section id="photo" title="Photo">
+              {trace.capture.image ? (
+                // Short-lived signed URL for the owner's private photo (plain img: no image optimizer cache).
+                <img className={styles.photo} src={trace.capture.image.url} alt={trace.capture.image.alt || 'The analyzed photo'} />
+              ) : (
+                <Empty>The photo is no longer stored.</Empty>
+              )}
+            </Section>
+          ) : null}
+
+          {trace.plan ? (
+            <Section id="plan" title="Plan inputs" count={trace.plan.inputs.length}>
+              <p className={styles.small}>
+                {trace.plan.title ?? 'Untitled plan'} · version {trace.plan.version ?? '—'}
+                {trace.plan.section ? ` · replaced section: ${trace.plan.section}` : ''}
+              </p>
+              <ul className={styles.list}>
+                {trace.plan.inputs.map((i) => (
+                  <li key={i.item_id}>
+                    {i.title} <span className={styles.tag}>{i.kind}</span>
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          ) : null}
+
+          {trace.related_origin ? (
+            <Section id="origin" title="Explored from">
+              <p>
+                {trace.related_origin.title} <span className={styles.tag}>{trace.related_origin.kind}</span>
+              </p>
+            </Section>
+          ) : null}
+
+          <Section id="observations" title="Visual observations" count={trace.observations.length}>
+            {trace.observations.length === 0 ? (
+              <Empty>No visual observations for this job.</Empty>
+            ) : (
+              <ul className={styles.list}>
+                {trace.observations.map((o, i) => {
+                  const { label, detail } = observationText(o);
+                  return (
+                    <li key={i}>
+                      {label}
+                      {detail ? <span className={styles.small}> · {detail}</span> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Section>
+
+          <Section id="entities" title="Resolved IDs" count={trace.resolved_entities.length}>
+            {trace.resolved_entities.length === 0 ? (
+              <Empty>Nothing was resolved to a provider id.</Empty>
+            ) : (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Provider</th>
+                    <th scope="col">ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trace.resolved_entities.map((e) => (
+                    <tr key={`${e.provider}:${e.provider_id}:${e.reference_id ?? ''}`}>
+                      <td>
+                        {e.name}
+                        {e.type ? <span className={styles.small}> · {e.type}</span> : null}
+                      </td>
+                      <td>{e.provider}</td>
+                      <td className={styles.mono}>{e.provider_id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Section>
+
+          <Section id="references" title="Sourced references" count={trace.references.length}>
+            {trace.references.length === 0 ? (
+              <Empty>No references for this job.</Empty>
+            ) : (
+              <ul className={styles.list}>
+                {trace.references.map((r) => (
+                  <li key={r.id}>
+                    {r.name}{' '}
+                    <span className={styles.small}>
+                      · {r.claim_count} claim{r.claim_count === 1 ? '' : 's'}, {r.source_count} source{r.source_count === 1 ? '' : 's'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          <Section id="taste" title="Saved taste changes" count={trace.taste_changes.length}>
+            {trace.taste_changes.length === 0 ? (
+              <Empty>No saves, hides or removals on these items.</Empty>
+            ) : (
+              <ul className={styles.list}>
+                {trace.taste_changes.map((t, i) => (
+                  <li key={i}>
+                    <span className={styles.tag}>{t.action}</span> <span className={styles.mono}>{t.target_id}</span>{' '}
+                    <span className={styles.small}>· {time(t.at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+        </div>
+
+        <div className={styles.column}>
+          <Section id="queries" title="Provider queries" count={trace.provider_queries.length}>
+            {trace.provider_queries.length === 0 ? (
+              <Empty>No provider queries were made.</Empty>
+            ) : (
+              <ol className={styles.queries}>
+                {trace.provider_queries.map((q) => (
+                  <li key={q.id} className={styles.query}>
+                    <details>
+                      <summary>
+                        <span className={styles.queryName}>
+                          {q.provider} · {q.operation}
+                        </span>
+                        <span className={q.status === 'ok' ? styles.ok : styles.warn}>{q.status}</span>
+                        {q.is_replay ? <span className={styles.example}>Example result</span> : null}
+                        {q.duration_ms !== null ? <span className={styles.small}>{q.duration_ms} ms</span> : null}
+                      </summary>
+                      <p className={styles.label}>Query input</p>
+                      <Json value={q.request} />
+                      <p className={styles.label}>Results</p>
+                      <Json value={q.result_summary} />
+                      <p className={styles.small}>
+                        <span className={styles.mono}>{q.id}</span> · {time(q.retrieved_at)}
+                      </p>
+                    </details>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </Section>
+
+          <Section id="recommendations" title="Recommendations" count={trace.recommendations.length}>
+            {trace.recommendations.length === 0 ? (
+              <Empty>No recommendations were published.</Empty>
+            ) : (
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">Title</th>
+                    <th scope="col">Provenance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trace.recommendations.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.rank}</td>
+                      <td>
+                        {r.title}
+                        {r.category ? <span className={styles.small}> · {r.category}</span> : null}
+                      </td>
+                      <td>
+                        {ORIGIN_LABEL[r.origin] ?? r.origin}
+                        {r.provider_query_ids.length > 0 ? (
+                          <span className={styles.small}>
+                            {' '}
+                            · {r.provider_query_ids.length} quer{r.provider_query_ids.length === 1 ? 'y' : 'ies'}
+                          </span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Section>
+
+          <Section id="agent" title="Agent service calls" count={trace.agent_calls.length}>
+            {trace.agent_calls.length === 0 ? (
+              <Empty>No connected agent called the service for this job.</Empty>
+            ) : (
+              <ol className={styles.calls}>
+                {trace.agent_calls.map((a, i) => (
+                  <li key={i}>
+                    <span className={styles.mono}>{a.tool}</span> <span className={styles.small}>· {a.client_name}</span>
+                    <br />
+                    <span className={styles.small}>
+                      {time(a.at)} — {a.summary}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </Section>
+
+          <Section id="events" title="Pipeline events" count={trace.events.length}>
+            {trace.events.length === 0 ? (
+              <Empty>No pipeline events were recorded.</Empty>
+            ) : (
+              <details>
+                <summary className={styles.small}>Show {trace.events.length} events</summary>
+                <ol className={styles.calls}>
+                  {trace.events.map((e, i) => (
+                    <li key={i}>
+                      <span className={styles.tag}>{e.kind}</span> {e.name}
+                      {e.duration_ms !== null ? <span className={styles.small}> · {e.duration_ms} ms</span> : null}
+                      <Json value={e.data} />
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            )}
+          </Section>
+        </div>
+      </div>
+    </main>
+  );
+}

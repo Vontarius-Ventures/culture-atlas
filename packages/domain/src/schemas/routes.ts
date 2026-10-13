@@ -84,6 +84,7 @@ export const ROUTES = {
   listAgentConnections: { method: 'GET', path: '/v1/agent-connections', auth: 'owner', scopes: [], response: A.AgentConnectionsListResponse, status: 200, idempotent: false, extension: true },
   createAgentConnection: { method: 'POST', path: '/v1/agent-connections', auth: 'owner', scopes: [], body: A.CreateAgentConnectionRequest, response: A.CreateAgentConnectionResponse, status: 201, idempotent: true },
   revokeAgentConnection: { method: 'DELETE', path: '/v1/agent-connections/{id}', auth: 'owner', scopes: [], params: IdParams, response: null, status: 204, idempotent: true },
+  updateAgentConnection: { method: 'PATCH', path: '/v1/agent-connections/{id}', auth: 'owner', scopes: [], params: IdParams, body: A.UpdateAgentConnectionRequest, response: A.AgentConnectionDto, status: 200, idempotent: true, extension: true },
   listSensorConnections: { method: 'GET', path: '/v1/sensor-connections', auth: 'owner', scopes: [], response: S.SensorConnectionsListResponse, status: 200, idempotent: false, extension: true },
   createSensorConnection: { method: 'POST', path: '/v1/sensor-connections', auth: 'owner', scopes: [], body: S.CreateSensorConnectionRequest, response: S.CreateSensorConnectionResponse, status: 201, idempotent: true },
   deleteSensorConnection: { method: 'DELETE', path: '/v1/sensor-connections/{id}', auth: 'owner', scopes: [], params: IdParams, response: null, status: 204, idempotent: true },

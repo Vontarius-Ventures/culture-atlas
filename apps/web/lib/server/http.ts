@@ -9,10 +9,8 @@ import {
   enforceIpLimit,
   getDb,
   getDomainConfig,
+  authorizeOperation,
   invalidInput,
-  requireAccount,
-  requireAccountOwner,
-  requireScopes,
   toErrorBody,
   withIdempotency,
   type Principal,
@@ -65,8 +63,6 @@ type ResponseOf<C extends RouteContract> = C['response'] extends z.ZodType ? z.i
 
 type Segment = { params: Promise<Record<string, string | string[] | undefined>> };
 
-const SENSOR_BRIDGE_ROUTES = new Set(['POST /v1/uploads', 'POST /v1/captures', 'GET /v1/jobs/{id}']);
-
 /** HttpOnly, SameSite=Lax; Secure in production or whenever the app is served over HTTPS. */
 export function cookieOptions(maxAgeSeconds: number) {
   const config = getDomainConfig();
@@ -117,23 +113,14 @@ function parseWith<T extends z.ZodType>(schema: T | undefined, value: unknown): 
   return r.data;
 }
 
+/**
+ * Auth level, scopes and the sensor-bridge restriction. Delegates to the shared
+ * `authorizeOperation` (packages/domain/src/authz/operations.ts), which the MCP
+ * gateway also calls with the same contract, so REST and MCP refuse a token
+ * with the same error code.
+ */
 function enforceAuth(contract: RouteContract, principal: Principal): void {
-  const routeKey = `${contract.method} ${contract.path}`;
-  if (principal.kind === 'agent' && principal.purpose === 'sensor_bridge' && !SENSOR_BRIDGE_ROUTES.has(routeKey)) {
-    throw new AppError('scope_denied');
-  }
-  switch (contract.auth) {
-    case 'account':
-    case 'demo':
-      requireAccount(principal);
-      break;
-    case 'owner':
-      requireAccountOwner(principal);
-      break;
-    default:
-      break;
-  }
-  if (contract.scopes.length > 0) requireScopes(principal, ...contract.scopes);
+  authorizeOperation(principal, contract, 'rest');
 }
 
 export function apiRoute<C extends RouteContract>(

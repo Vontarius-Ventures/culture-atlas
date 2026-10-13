@@ -1,0 +1,222 @@
+import { afterAll, describe, expect, it } from 'vitest';
+import { agentConnections, collections } from '@culture-atlas/domain';
+import { closeTestDb, getTestDb, insertAccount, insertAgentConnection } from '@culture-atlas/domain/testing';
+import { ConnectionRefusedError } from '../../../apps/demo-agent/src/client';
+import { SPEC_TOOL_NAMES } from './tools';
+import { buildLibrary, connect, mcpClient, rawMcp } from './test-helpers';
+
+const db = getTestDb();
+const errBody = async (r: Response) => (await r.json()) as { code: string };
+afterAll(closeTestDb);
+
+const INIT = {
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '0' } },
+};
+
+describe('MCP transport and bearer auth', () => {
+  it('lists exactly the spec tools with JSON input schemas', async () => {
+    const lib = await buildLibrary();
+    const { credential } = await connect(lib);
+    const client = await mcpClient(credential);
+    try {
+      expect((await client.listTools()).sort()).toEqual([...SPEC_TOOL_NAMES].sort());
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('refuses missing, unknown, revoked and expired tokens at the HTTP layer with REST codes', async () => {
+    const none = await rawMcp(null, INIT);
+    expect(none.status).toBe(401);
+    expect(none.headers.get('www-authenticate')).toMatch(/^Bearer/);
+    expect(await none.json()).toMatchObject({ code: 'unauthenticated', retryable: false });
+
+    const unknown = await rawMcp('cat_deadbeef_notarealtoken0000000000', INIT);
+    expect(unknown.status).toBe(401);
+    expect((await errBody(unknown)).code).toBe('unauthenticated');
+
+    const lib = await buildLibrary();
+    const c = await connect(lib);
+    expect((await rawMcp(c.credential, INIT)).status).toBe(200);
+    await agentConnections.revokeAgentConnection(lib.ownerCtx, { id: c.id });
+    const revoked = await rawMcp(c.credential, INIT);
+    expect(revoked.status).toBe(401);
+    expect((await errBody(revoked)).code).toBe('token_revoked');
+
+    const e = await connect(lib);
+    await db.query(`UPDATE agent_connections SET expires_at = now() - interval '1 minute' WHERE id = $1`, [e.id]);
+    const expired = await rawMcp(e.credential, INIT);
+    expect(expired.status).toBe(401);
+    expect((await errBody(expired)).code).toBe('token_expired');
+  });
+
+  it('refuses the sensor-bridge token entirely and allows only POST', async () => {
+    const account = await insertAccount();
+    const { credential, principal } = await insertAgentConnection(account, { scopes: ['captures:write'], libraryAccess: 'none' });
+    await db.query(`UPDATE agent_connections SET purpose = 'sensor_bridge' WHERE id = $1`, [principal.connectionId]);
+    const res = await rawMcp(credential, INIT);
+    expect(res.status).toBe(403);
+    expect((await errBody(res)).code).toBe('scope_denied');
+
+    const lib = await buildLibrary();
+    const c = await connect(lib);
+    const { mcpFetch, MCP_URL } = await import('./test-helpers');
+    const get = await mcpFetch()(MCP_URL, { method: 'GET', headers: { authorization: `Bearer ${c.credential}` } });
+    expect(get.status).toBe(405);
+  });
+});
+
+describe('selected-collection grant over MCP', () => {
+  it('sees only granted collections and items; unfiled saves, other collections and global taste stay private', async () => {
+    const lib = await buildLibrary();
+    const { credential } = await connect(lib);
+    const client = await mcpClient(credential);
+    try {
+      const list = await client.callTool<{ collections: { id: string }[]; unfiled: unknown }>('list_collections', {});
+      expect(list.ok && list.data.collections.map((c) => c.id)).toEqual([lib.granted.id]);
+      expect(list.ok && list.data.unfiled).toBeNull();
+
+      const granted = await client.callTool<{ items: { item: { id: string } }[] }>('get_collection', { collection_id: lib.granted.id });
+      expect(granted.ok && granted.data.items.map((m) => m.item.id).sort()).toEqual([lib.captureItem, lib.artist, lib.film].sort());
+
+      const other = await client.callTool('get_collection', { collection_id: lib.other.id });
+      expect(other).toMatchObject({ ok: false, error: { code: 'not_found' } });
+
+      const globalTaste = await client.callTool('get_taste', {});
+      expect(globalTaste).toMatchObject({ ok: false, error: { code: 'scope_denied' } });
+      const scoped = await client.callTool<{ scope: string; interests: { item_id: string | null }[] }>('get_taste', { collection_id: lib.granted.id });
+      expect(scoped.ok && scoped.data.scope).toBe('collection');
+      const tasteItems = scoped.ok ? scoped.data.interests.map((i) => i.item_id) : [];
+      expect(tasteItems).not.toContain(lib.unfiledItem);
+      expect(tasteItems).not.toContain(lib.otherItem);
+      expect(await client.callTool('get_taste', { collection_id: lib.other.id })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+
+      // Related discovery from an unfiled or ungranted item is indistinguishable from a missing item.
+      for (const item of [lib.unfiledItem, lib.otherItem]) {
+        expect(await client.callTool('discover_related', { item_id: item, collection_id: lib.granted.id })).toMatchObject({
+          ok: false,
+          error: { code: 'not_found' },
+        });
+      }
+      expect(await client.callTool('discover_related', { item_id: lib.otherItem, collection_id: lib.other.id })).toMatchObject({
+        ok: false,
+        error: { code: 'not_found' },
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('new collections are not auto-granted; destructive/global actions need whole-library access', async () => {
+    const lib = await buildLibrary();
+    const { credential } = await connect(lib, {
+      scopes: ['collections:read', 'collections:write', 'taste:read', 'taste:write', 'captures:read', 'captures:write'],
+    });
+    const later = await collections.createCollection(lib.ownerCtx, { name: 'Made later' });
+    const client = await mcpClient(credential);
+    try {
+      const list = await client.callTool<{ collections: { id: string }[] }>('list_collections', {});
+      expect(list.ok && list.data.collections.map((c) => c.id)).not.toContain(later.id);
+      expect(await client.callTool('get_collection', { collection_id: later.id })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+      expect(await client.callTool('create_collection', { name: 'Agent made' })).toMatchObject({ ok: false, error: { code: 'scope_denied' } });
+      expect(await client.callTool('record_preference', { action: 'remove', target_id: lib.artist })).toMatchObject({
+        ok: false,
+        error: { code: 'scope_denied' },
+      });
+      expect(await client.callTool('record_preference', { action: 'hide', target_id: lib.artist })).toMatchObject({
+        ok: false,
+        error: { code: 'scope_denied' },
+      });
+      // Membership removal inside a granted collection is allowed with collections:write.
+      const removed = await client.callTool('remove_collection_item', { collection_id: lib.granted.id, item_id: lib.film });
+      expect(removed.ok).toBe(true);
+      // Adding an item from outside the grant is refused as not found.
+      expect(await client.callTool('add_collection_item', { collection_id: lib.granted.id, item_id: lib.unfiledItem })).toMatchObject({
+        ok: false,
+        error: { code: 'not_found' },
+      });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('whole-library agents can create a collection that their grant then covers', async () => {
+    const lib = await buildLibrary();
+    const { credential } = await connect(lib, { library_access: 'all', scopes: ['collections:read', 'collections:write'] });
+    const client = await mcpClient(credential);
+    try {
+      const made = await client.callTool<{ id: string }>('create_collection', { name: 'Agent picks' });
+      expect(made.ok).toBe(true);
+      const id = made.ok ? made.data.id : '';
+      expect((await client.callTool('get_collection', { collection_id: id })).ok).toBe(true);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('revoking a collection grant or the connection takes effect on the next call', async () => {
+    const lib = await buildLibrary();
+    const c = await connect(lib, { collection_ids: [lib.granted.id, lib.other.id] });
+    const client = await mcpClient(c.credential);
+    try {
+      expect((await client.callTool('get_collection', { collection_id: lib.other.id })).ok).toBe(true);
+      await agentConnections.updateAgentConnection(lib.ownerCtx, { id: c.id, body: { collection_ids: [lib.granted.id] } });
+      expect(await client.callTool('get_collection', { collection_id: lib.other.id })).toMatchObject({ ok: false, error: { code: 'not_found' } });
+      expect((await client.callTool('get_collection', { collection_id: lib.granted.id })).ok).toBe(true);
+
+      await agentConnections.revokeAgentConnection(lib.ownerCtx, { id: c.id });
+      await expect(client.callTool('list_collections', {})).rejects.toSatisfy(
+        (err: unknown) => err instanceof ConnectionRefusedError && err.code === 'token_revoked' && err.status === 401,
+      );
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+
+  it('validates tool input with the REST schema and treats argument text as data', async () => {
+    const lib = await buildLibrary();
+    const { credential } = await connect(lib);
+    const client = await mcpClient(credential);
+    try {
+      expect(await client.callTool('get_collection', { collection_id: 'not-a-uuid' })).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
+      expect(await client.callTool('get_collection', { collection_id: lib.granted.id, extra: 1 })).toMatchObject({
+        ok: false,
+        error: { code: 'invalid_input' },
+      });
+      expect(await client.callTool('analyze_capture', { url: 'http://169.254.169.254/latest' })).toMatchObject({ ok: false });
+      expect(await client.callTool('no_such_tool', {})).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe('agent tool-call traces', () => {
+  it('records each call with redacted arguments and no credentials', async () => {
+    const lib = await buildLibrary();
+    const c = await connect(lib);
+    const client = await mcpClient(c.credential);
+    try {
+      await client.callTool('get_collection', { collection_id: lib.granted.id });
+      await client.callTool('get_collection', { collection_id: lib.other.id });
+    } finally {
+      await client.close();
+    }
+    const { rows } = await db.query<{ name: string; data: Record<string, unknown>; owner_account_id: string; job_id: string | null }>(
+      `SELECT name, data, owner_account_id, job_id FROM trace_events WHERE agent_connection_id = $1 AND kind = 'agent_tool_call' ORDER BY created_at`,
+      [c.id],
+    );
+    expect(rows.map((r) => [r.name, r.data.outcome])).toEqual([
+      ['get_collection', 'ok'],
+      ['get_collection', 'error'],
+    ]);
+    expect(rows[1]!.data).toMatchObject({ error_code: 'not_found', refs: [] });
+    expect(rows[0]!.data.refs).toContain(lib.granted.id);
+    expect(rows.every((r) => r.owner_account_id === lib.owner.accountId)).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain(c.credential);
+  });
+});
+

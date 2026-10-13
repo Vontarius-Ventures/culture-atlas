@@ -9,6 +9,10 @@ import { defineConfig } from 'vitest/config';
  *    get a handle with `getTestDb()` from '@culture-atlas/domain/testing'.
  */
 export default defineConfig({
+  // apps/web compiles JSX with Next (tsconfig "jsx": "preserve"); tests need the automatic runtime.
+  oxc: { jsx: { runtime: 'automatic', importSource: 'react' } },
+  // Same "@/..." alias as apps/web/tsconfig.json, so route files and components resolve in tests.
+  resolve: { alias: { '@/': `${new URL('./apps/web/', import.meta.url).pathname}` } },
   test: {
     globalSetup: ['./vitest.global-setup.ts'],
     testTimeout: 20_000,

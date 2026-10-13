@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@culture-atlas/domain": "workspace:*",
+    "@culture-atlas/providers": "workspace:*",
     "@modelcontextprotocol/sdk": "1.31.0",
     "zod": "4.6.5"
   }

@@ -20,6 +20,13 @@ export const CreateAgentConnectionRequest = z
   );
 export type CreateAgentConnectionRequest = z.infer<typeof CreateAgentConnectionRequest>;
 
+/** Plain-language summary of readable/writable data (authz/connection-access.ts). */
+export const ConnectionAccessSummary = z.object({
+  reads: z.array(z.string()),
+  writes: z.array(z.string()),
+  limits: z.array(z.string()),
+});
+
 export const AgentConnectionDto = z.object({
   id: Uuid,
   client_name: z.string(),
@@ -31,7 +38,24 @@ export const AgentConnectionDto = z.object({
   expires_at: Timestamp,
   revoked_at: Timestamp.nullable(),
   last_used_at: Timestamp.nullable(),
+  /** 'active' | 'expired' | 'revoked' — derived from expires_at / revoked_at. */
+  status: z.enum(['active', 'expired', 'revoked']),
+  access_summary: ConnectionAccessSummary,
 });
+
+/**
+ * PATCH /v1/agent-connections/{id} (extension) — rename or change the
+ * collection grant of a selected_collections connection. Removing a
+ * collection takes effect on the agent's very next call. Scopes and library
+ * mode cannot be widened here; create a new connection instead.
+ */
+export const UpdateAgentConnectionRequest = z
+  .strictObject({
+    client_name: z.string().trim().min(1).max(80).optional(),
+    collection_ids: z.array(Uuid).min(1).max(100).optional(),
+  })
+  .refine((v) => v.client_name !== undefined || v.collection_ids !== undefined, { message: 'Nothing to update' });
+export type UpdateAgentConnectionRequest = z.infer<typeof UpdateAgentConnectionRequest>;
 export type AgentConnectionDto = z.infer<typeof AgentConnectionDto>;
 
 export const CreateAgentConnectionResponse = z.object({

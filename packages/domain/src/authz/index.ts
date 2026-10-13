@@ -140,6 +140,14 @@ export function resolveTasteScope(principal: Principal, collectionId?: string): 
   return { kind: 'global' };
 }
 
+/**
+ * Operation-level authorization used by BOTH the REST middleware and the MCP
+ * gateway (same contract, same error codes), plus the connection-access
+ * summary shown during agent connection setup.
+ */
+export * from './operations';
+export * from './connection-access';
+
 /** The sensor-bridge token may only create captures for its own sensor connection. */
 export function requireNotSensorBridge(principal: Principal): void {
   if (principal.kind === 'agent' && principal.purpose === 'sensor_bridge') {
