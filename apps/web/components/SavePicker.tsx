@@ -36,7 +36,6 @@ export interface SavePickerProps {
   returnFocus: HTMLElement | null;
   onClose: () => void;
   onSave: (destination: Destination) => Promise<void>;
-  onSaveTemporarily: () => Promise<void>;
   onUnsave: () => Promise<void>;
   onAccountCreated: () => void;
 }
@@ -97,12 +96,12 @@ function TargetThumb({ target }: { target: SaveTarget }) {
   );
 }
 
-function AnonymousBody({
-  target,
-  onSaveTemporarily,
-  onAccountCreated,
-}: SavePickerProps & { target: SaveTarget }) {
-  const [busy, setBusy] = useState(false);
+/**
+ * Visitors cannot save without an account (the service answers 403
+ * account_required), so the only path is account creation, which claims the
+ * session and carries the intended save along.
+ */
+function AnonymousBody({ target, onAccountCreated }: SavePickerProps & { target: SaveTarget }) {
   return (
     <div className="picker">
       <TargetThumb target={target} />
@@ -114,18 +113,6 @@ function AnonymousBody({
           target_id: target.captureId ?? target.itemId,
         }}
         onCreated={onAccountCreated}
-        secondary={{
-          label: 'Save for this visit',
-          busy,
-          onClick: async () => {
-            setBusy(true);
-            try {
-              await onSaveTemporarily();
-            } finally {
-              setBusy(false);
-            }
-          },
-        }}
       />
     </div>
   );

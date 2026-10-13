@@ -13,6 +13,7 @@ import {
   invalidInput,
   toErrorBody,
   withIdempotency,
+  type DomainConfig,
   type Principal,
   type ServiceContext,
 } from '@culture-atlas/domain';
@@ -71,12 +72,31 @@ export function cookieOptions(maxAgeSeconds: number) {
 }
 
 /**
- * Client address for per-IP abuse limits: the first X-Forwarded-For hop (set
- * by the deployment proxy), else X-Real-IP. Only a salted hash is stored.
+ * Client address for per-IP abuse limits. Proxies APPEND the address they saw
+ * to X-Forwarded-For, so the left-most entries are whatever the client sent.
+ * We take the entry TRUSTED_PROXY_HOPS from the right (the address our own
+ * outermost proxy observed), or CLIENT_IP_HEADER when the platform sets a
+ * verified one. Returns null when the header did not pass through the
+ * configured proxies. Only a salted hash is stored.
  */
-export function clientIp(request: Request): string | null {
-  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-  return forwarded || request.headers.get('x-real-ip')?.trim() || null;
+export function clientIp(
+  request: Request,
+  config: Pick<DomainConfig, 'TRUSTED_PROXY_HOPS' | 'CLIENT_IP_HEADER'> = getDomainConfig(),
+): string | null {
+  if (config.CLIENT_IP_HEADER) {
+    return request.headers.get(config.CLIENT_IP_HEADER)?.split(',')[0]?.trim() || null;
+  }
+  const hops = (request.headers.get('x-forwarded-for') ?? '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+  if (hops.length < config.TRUSTED_PROXY_HOPS) return null;
+  return hops[hops.length - config.TRUSTED_PROXY_HOPS] ?? null;
+}
+
+/** Address bucket for abuse limits; in production a missing address shares one strict bucket (fail closed). */
+export function abuseLimitIp(request: Request, config: DomainConfig = getDomainConfig()): string | null {
+  return clientIp(request, config) ?? (config.NODE_ENV === 'production' ? 'unknown' : null);
 }
 
 async function readRawBody(request: NextRequest, contract: RouteContract): Promise<{ raw: RawBody; digest: string }> {
@@ -137,7 +157,7 @@ export function apiRoute<C extends RouteContract>(
       const authorization = request.headers.get('authorization');
       let principal = await auth.resolvePrincipal(db, { sessionToken, authorization });
       const isMutation = contract.method !== 'GET';
-      const ip = clientIp(request);
+      const ip = abuseLimitIp(request, config);
 
       // Per-IP abuse limit on anything that creates state (never merges users' data).
       if (isMutation) await enforceIpLimit(db, { ip, config, now: new Date() });
@@ -194,7 +214,7 @@ export function apiRoute<C extends RouteContract>(
       const idemKey = request.headers.get('idempotency-key');
       const result =
         contract.idempotent && idemKey
-          ? await withIdempotency(db, { principal, route: `${contract.method} ${contract.path}`, key: idemKey, request: { params, query, digest } }, run)
+          ? await withIdempotency(db, { principal, route: `${contract.method} ${contract.path}`, key: idemKey, request: { params, query, digest }, secretFields: contract.oneTimeSecrets }, run)
           : { ...(await run()), replayed: false };
 
       const response =

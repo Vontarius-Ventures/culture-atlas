@@ -485,6 +485,7 @@ export class MockApi {
         reason: 'Quiet piano for the opening.',
         verified: false,
         destination_url: null,
+        is_example: false,
       },
       {
         item_id: pick('nina-simone').id,
@@ -495,6 +496,7 @@ export class MockApi {
         reason: null,
         verified: false,
         destination_url: null,
+        is_example: false,
       },
       {
         item_id: null,
@@ -505,6 +507,7 @@ export class MockApi {
         reason: null,
         verified: false,
         destination_url: null,
+        is_example: false,
       },
     ];
     return {
@@ -526,6 +529,7 @@ export class MockApi {
           reason: 'Lantern-lit evenings and unhurried longing.',
           destination_url: null,
           is_fixed: false,
+          is_example: false,
         },
         alternates: [
           {
@@ -536,6 +540,7 @@ export class MockApi {
             reason: null,
             destination_url: null,
             is_fixed: false,
+            is_example: false,
           },
           {
             item_id: pick('night-wanderings').id,
@@ -545,6 +550,7 @@ export class MockApi {
             reason: null,
             destination_url: null,
             is_fixed: false,
+            is_example: false,
           },
         ],
       },
@@ -557,6 +563,7 @@ export class MockApi {
             cuisine: 'Chinese-inspired',
             reason: null,
             image: { url: '/samples/feed/sesame-noodles.jpg', width: 1000, height: 1250, alt: '' },
+            is_example: false,
           },
           {
             item_id: pick('cucumber-salad').id,
@@ -565,6 +572,7 @@ export class MockApi {
             cuisine: 'Chinese-inspired',
             reason: null,
             image: { url: '/samples/feed/cucumber-salad.jpg', width: 1000, height: 1250, alt: '' },
+            is_example: false,
           },
         ],
       },
@@ -950,6 +958,9 @@ export class MockApi {
         let savedItem = null;
         let undo = null;
         if (body.action === 'save') {
+          // Same rule as the domain service: visitors must create an account to save.
+          const denied = this.requireAccount();
+          if (denied) return denied;
           const s = this.save(itemId);
           savedItem = { id: s.saved_item_id, discovery_item_id: itemId, saved_at: s.saved_at };
           undo = { action: 'remove', target_type: body.target_type, target_id: body.target_id };
@@ -1194,6 +1205,7 @@ export class MockApi {
                   reason: null,
                   verified: false,
                   destination_url: null,
+                  is_example: false,
                 },
                 {
                   item_id: null,
@@ -1204,6 +1216,7 @@ export class MockApi {
                   reason: null,
                   verified: false,
                   destination_url: null,
+                  is_example: false,
                 },
                 {
                   item_id: null,
@@ -1214,6 +1227,7 @@ export class MockApi {
                   reason: null,
                   verified: false,
                   destination_url: null,
+                  is_example: false,
                 },
               ],
               after: [],
@@ -1228,6 +1242,7 @@ export class MockApi {
                   cuisine: 'Chinese-inspired',
                   reason: null,
                   image: null,
+                  is_example: false,
                 },
               ],
             };

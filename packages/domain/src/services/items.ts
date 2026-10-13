@@ -12,6 +12,7 @@ import {
   hiddenKeys,
   isGrantLimited,
   loadAccessibleCollection,
+  memberItemsSql,
   membershipsFor,
   requireVisibleItem,
   visibleItemIds,
@@ -70,12 +71,35 @@ async function loadItem(db: Queryable, id: string): Promise<ItemRow> {
   return rows[0];
 }
 
-/** A recommendation for the item in one of the owner's own contexts (capture, plan, related job). */
-async function ownedRecommendation(db: Queryable, owner: Owner, itemId: string, recommendationId?: string): Promise<RecRow | null> {
+/**
+ * A recommendation for the item in one of the owner's own contexts (capture,
+ * plan, related job). Grant-limited agents only see recommendations whose
+ * parent is visible under the CURRENT grant: the analysis of a capture in a
+ * granted collection (or one this connection uploaded), a discovery job that
+ * originated from a granted collection item, or a plan derived entirely from
+ * granted items. Anything else could carry private context from outside the
+ * grant (e.g. "Connected to <brand> in your photo.").
+ */
+async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: string, recommendationId?: string): Promise<RecRow | null> {
   const own = (alias: string) => ownerPredicate(owner, alias, 3).sql;
-  const params = [itemId, recommendationId ?? null, ...ownerPredicate(owner, '', 3).params];
+  const params: unknown[] = [itemId, recommendationId ?? null, ...ownerPredicate(owner, '', 3).params];
   const planOwner = owner.kind === 'account' ? `pl.owner_account_id = $3` : 'false';
-  const { rows } = await db.query<RecRow>(
+  let captureGrant = '';
+  let jobGrant = '';
+  let planGrant = '';
+  const p = ctx.principal;
+  if (isGrantLimited(p)) {
+    params.push(grantedIds(p), p.kind === 'agent' ? p.connectionId : null);
+    const g = `$${params.length - 1}`;
+    const conn = `$${params.length}`;
+    const members = `(${memberItemsSql('$3', g)})`;
+    captureGrant = `AND (c.created_by_agent_connection_id = ${conn}::uuid
+                      OR EXISTS (SELECT 1 FROM discovery_items cdi
+                                  WHERE cdi.capture_id = c.id AND cdi.owner_account_id = $3 AND cdi.id IN ${members}))`;
+    jobGrant = `AND dj.origin_collection_id = ANY(${g}::uuid[]) AND dj.origin_item_id IN ${members}`;
+    planGrant = `AND pl.selected_item_ids <@ ARRAY${members}`;
+  }
+  const { rows } = await ctx.db.query<RecRow>(
     `SELECT r.id, r.origin, r.display_reason, r.source_ids, r.destination_url
        FROM recommendations r
        LEFT JOIN analyses a ON a.id = r.analysis_id
@@ -83,9 +107,9 @@ async function ownedRecommendation(db: Queryable, owner: Owner, itemId: string, 
        LEFT JOIN discovery_jobs dj ON dj.id = r.discovery_job_id
        LEFT JOIN plans pl ON pl.id = r.plan_id
       WHERE r.discovery_item_id = $1 AND ($2::uuid IS NULL OR r.id = $2)
-        AND ((c.id IS NOT NULL AND c.deleted_at IS NULL AND ${own('c')})
-          OR (dj.id IS NOT NULL AND ${own('dj')})
-          OR (pl.id IS NOT NULL AND ${planOwner}))
+        AND ((c.id IS NOT NULL AND c.deleted_at IS NULL AND ${own('c')} ${captureGrant})
+          OR (dj.id IS NOT NULL AND ${own('dj')} ${jobGrant})
+          OR (pl.id IS NOT NULL AND ${planOwner} ${planGrant}))
       ORDER BY r.created_at DESC LIMIT 1`,
     params,
   );
@@ -164,7 +188,7 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   const item = await loadItem(ctx.db, input.id);
   const meta = readDisplayMetadata(item.display_metadata);
 
-  const rec = item.is_sample ? null : await ownedRecommendation(ctx.db, owner, item.id, input.query.recommendation_id);
+  const rec = item.is_sample ? null : await ownedRecommendation(ctx, owner, item.id, input.query.recommendation_id);
   const recContext = new Map<string, CardRecommendationContext>();
   if (rec) recContext.set(item.id, { id: rec.id, origin: rec.origin, display_reason: rec.display_reason });
   const [card] = await loadCards(ctx, [item.id], { recommendations: recContext });

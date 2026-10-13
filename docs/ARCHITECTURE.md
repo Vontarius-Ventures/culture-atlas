@@ -80,7 +80,7 @@ Accounts and sign-in (demo mechanism, `services/accounts.ts`):
 - Anonymous visitors cannot save (`403 account_required`, the UI then sends the save as `pending_save`); they can hide/unhide and browse.
 - Cookies are HttpOnly, SameSite=Lax, and Secure in production or whenever `APP_BASE_URL` is https. `SESSION_SECRET` is required in production.
 
-Quotas and abuse limits (`quotas.ts`, counters in `usage_counters`): daily `analyses` / `plans` per anonymous session or per account (agents count against their account), consumed only when new work is created (reused jobs are free), inside the same transaction. Capture intake should call `consumeDailyQuota(db, {principal, metric: 'analyses', config, now})`. `apiRoute` applies a per-IP daily limit (`IP_DAILY_REQUESTS`, salted-hash bucket, never the raw address) to every mutation and to anonymous-session creation.
+Quotas and abuse limits (`quotas.ts`, counters in `usage_counters`): daily `analyses` / `plans` per anonymous session or per account (agents count against their account), consumed only when new work is created (reused jobs are free), inside the same transaction. Capture intake should call `consumeDailyQuota(db, {principal, metric: 'analyses', config, now})`. `apiRoute` applies a per-IP daily limit (`IP_DAILY_REQUESTS`, salted-hash bucket, never the raw address) to every mutation and to anonymous-session creation. The address comes from the right end of `X-Forwarded-For` (`TRUSTED_PROXY_HOPS`) or `CLIENT_IP_HEADER`, never the client-supplied left-most entry; with no address in production, requests share one bucket.
 
 ### Errors
 

@@ -50,6 +50,8 @@ export const FilmPick = z.object({
   destination_url: z.url().nullable(),
   /** True when this is the user's "Use this movie" choice. */
   is_fixed: z.boolean(),
+  /** Replayed or sample provider data: shown with an "Example result" label. */
+  is_example: z.boolean().default(false),
 });
 export type FilmPick = z.infer<typeof FilmPick>;
 
@@ -60,6 +62,8 @@ export const DishIdea = z.object({
   cuisine: z.string().nullable(),
   reason: z.string().nullable(),
   image: Image.nullable(),
+  /** Replayed or sample provider data: shown with an "Example result" label. */
+  is_example: z.boolean().default(false),
 });
 export type DishIdea = z.infer<typeof DishIdea>;
 
@@ -73,6 +77,8 @@ export const MusicPick = z.object({
   /** Tracks only when verified through a catalog adapter. */
   verified: z.boolean(),
   destination_url: z.url().nullable(),
+  /** Replayed or sample provider data: shown with an "Example result" label. */
+  is_example: z.boolean().default(false),
 });
 export type MusicPick = z.infer<typeof MusicPick>;
 

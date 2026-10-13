@@ -9,8 +9,6 @@ export interface AccountPromptProps {
   lead?: string;
   pendingSave?: CreateAccountRequest['pending_save'];
   onCreated: (result: { claimedSaved: number }) => void;
-  /** Optional secondary action (e.g. "Save for this visit"). */
-  secondary?: { label: string; onClick: () => void; busy?: boolean };
   compact?: boolean;
 }
 
@@ -23,7 +21,6 @@ export function AccountPrompt({
   lead,
   pendingSave,
   onCreated,
-  secondary,
   compact,
 }: AccountPromptProps) {
   const nameId = useId();
@@ -157,16 +154,6 @@ export function AccountPrompt({
                 ? 'Creating account…'
                 : 'Create account'}
           </button>
-          {secondary && !signingIn && (
-            <button
-              type="button"
-              className="button button--quiet button--wide"
-              onClick={secondary.onClick}
-              disabled={busy || secondary.busy}
-            >
-              {secondary.label}
-            </button>
-          )}
         </div>
         <p className="account-prompt__switch">
           {signingIn ? 'New here? ' : 'Already have an account? '}

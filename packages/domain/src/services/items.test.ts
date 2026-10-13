@@ -4,17 +4,17 @@ import { ProviderError, type QlooEntity } from '@culture-atlas/providers';
 import { afterAll, describe, expect, it } from 'vitest';
 import { accountCtx, ctxFor, insertItem, runJob } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAgentConnection, testProviders } from '../testing';
-import { addCollectionItem, createCollection, removeCollectionItem } from './collections';
+import { addCollectionItem, createCollection, getCollection, listCollections, removeCollectionItem } from './collections';
 import { getJob } from './jobs';
 import { getItem, startRelatedDiscovery } from './items';
-import { recordPreference } from './preferences';
+import { listSaved, recordPreference } from './preferences';
 
 const db = getTestDb();
 afterAll(closeTestDb);
 
 const e = (id: string, name: string): QlooEntity => ({ entity_id: id, name, types: [], properties: {}, tags: [] });
 
-function qloo(prefix: string, opts: { failArtists?: boolean } = {}) {
+function qloo(prefix: string, opts: { failArtists?: boolean; replay?: boolean } = {}) {
   return new FakeQloo(
     {
       insights: (req) => {
@@ -23,7 +23,7 @@ function qloo(prefix: string, opts: { failArtists?: boolean } = {}) {
         return { entities: Array.from({ length: 4 }, (_, i) => e(`${prefix}-${kind}-${i}`, `${kind} ${prefix} ${i}`)), tags: [] };
       },
     },
-    { live: true },
+    { live: !opts.replay },
   );
 }
 
@@ -93,5 +93,36 @@ describe('related discovery job', () => {
     await expect(getJob(actx, { id: started.job_id })).rejects.toMatchObject({ code: 'not_found' });
     // The owner still sees everything.
     expect((await getItem(ctx, { id: relatedId, query: {} })).item.id).toBe(relatedId);
+  });
+
+  it('replayed results stay labeled "Example result" wherever they show up later', async () => {
+    const { principal, ctx } = await accountCtx();
+    const prefix = randomUUID().slice(0, 6);
+    const film = await insertItem({ accountId: principal.accountId }, { kind: 'film', title: 'Playtime', qloo: `${prefix}-origin` });
+    const started = await startRelatedDiscovery(ctx, { id: film, body: { category: 'watch' } });
+    await runJob(started.job_id, { providers: testProviders({ qloo: qloo(prefix, { replay: true }) }) });
+
+    const detail = await getItem(ctx, { id: film, query: {} });
+    expect(detail.related.length).toBeGreaterThan(0);
+    expect(detail.related.every((r) => r.is_example)).toBe(true);
+    const replayed = detail.related[0]!;
+    // Opened on its own (no recommendation context) it is still an example.
+    expect((await getItem(ctx, { id: replayed.id, query: {} })).item.is_example).toBe(true);
+
+    // Saved into a collection: the collection, its cover source and the saved list keep the label.
+    const col = await createCollection(ctx, { name: 'Replays' });
+    await addCollectionItem(ctx, { id: col.id, item_id: replayed.id, body: {} });
+    const inCollection = await getCollection(ctx, { id: col.id, query: {} });
+    expect(inCollection.items.find((m) => m.item.id === replayed.id)?.item.is_example).toBe(true);
+    expect((await listCollections(ctx)).collections.some((c) => c.id === col.id)).toBe(true);
+    const saved = await listSaved(ctx, { filter: 'all' });
+    expect(saved.items.find((e) => e.item.id === replayed.id)?.item.is_example).toBe(true);
+
+    // The original item and live results are not labeled.
+    expect(detail.item.is_example).toBe(false);
+    const live = await startRelatedDiscovery(ctx, { id: film, body: {} });
+    await runJob(live.job_id, { providers: testProviders({ qloo: qloo(prefix) }) });
+    const after = await getItem(ctx, { id: replayed.id, query: {} });
+    expect(after.item.is_example).toBe(false);
   });
 });

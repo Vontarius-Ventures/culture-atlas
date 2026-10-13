@@ -419,7 +419,6 @@ describe('SavePicker (account)', () => {
           returnFocus={null}
           onClose={() => undefined}
           onSave={onSave}
-          onSaveTemporarily={async () => undefined}
           onUnsave={async () => undefined}
           onAccountCreated={() => undefined}
         />
@@ -439,5 +438,28 @@ describe('SavePicker (account)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSave).toHaveBeenCalledWith({ kind: 'new', name: 'Weekend' });
     spy.mockRestore();
+  });
+});
+
+describe('SavePicker (visitor)', () => {
+  it('offers account creation only: no temporary save the service would refuse', async () => {
+    const { SavePicker } = await import('./SavePicker');
+    render(
+      <>
+        <div id="app-root" />
+        <SavePicker
+          open
+          isAccount={false}
+          target={{ itemId: 'i1', title: 'Vintage racing', image: null, saved: false }}
+          returnFocus={null}
+          onClose={() => undefined}
+          onSave={async () => undefined}
+          onUnsave={async () => undefined}
+          onAccountCreated={() => undefined}
+        />
+      </>,
+    );
+    expect(screen.getByRole('button', { name: 'Create account' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /for this visit/i })).toBeNull();
   });
 });

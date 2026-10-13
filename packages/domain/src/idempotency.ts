@@ -11,7 +11,13 @@ import { stableStringify } from './util/stable-json';
  * Same key + different payload -> 409 idempotency_conflict.
  * Same key while the first request is still running -> 409 idempotency_in_progress (retryable).
  * If the handler throws, the key is released so the client can retry.
+ * Shown-once secrets (`secretFields`, e.g. an agent bearer credential) are
+ * stripped before the response is stored, and a replay of such a response is
+ * refused with 409 rather than served without (or with) the secret.
  */
+
+/** Marker stored in place of withheld one-time secrets. */
+const WITHHELD_MARKER = '__one_time_secret_withheld';
 
 export interface StoredResponse {
   status: number;
@@ -25,6 +31,23 @@ export interface IdempotencyInput {
   key: string;
   /** Anything identifying the request: params + body. */
   request: unknown;
+  /** Top-level response fields that must never be persisted (shown once). */
+  secretFields?: readonly string[];
+}
+
+/** The body as stored for replay: one-time secrets removed and marked. */
+export function storableBody(body: unknown, secretFields: readonly string[] | undefined): unknown {
+  if (!secretFields?.length || !body || typeof body !== 'object' || Array.isArray(body)) return body ?? null;
+  const copy: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+  let withheld = false;
+  for (const f of secretFields) {
+    if (f in copy) {
+      delete copy[f];
+      withheld = true;
+    }
+  }
+  if (withheld) copy[WITHHELD_MARKER] = true;
+  return copy;
 }
 
 export function hashRequest(request: unknown): string {
@@ -72,6 +95,12 @@ export async function withIdempotency(
     if (!existing) throw new AppError('idempotency_in_progress');
     if (existing.request_hash !== requestHash) throw new AppError('idempotency_conflict');
     if (existing.state !== 'complete') throw new AppError('idempotency_in_progress');
+    const stored = existing.response_body as Record<string, unknown> | null;
+    if (stored && typeof stored === 'object' && stored[WITHHELD_MARKER] === true) {
+      throw new AppError('idempotency_conflict', {
+        message: 'This request already succeeded. Its one-time secret cannot be shown again.',
+      });
+    }
     return { status: existing.response_status ?? 200, body: existing.response_body, replayed: true };
   }
 
@@ -89,7 +118,7 @@ export async function withIdempotency(
   await db.query(
     `UPDATE idempotency_keys SET state = 'complete', response_status = $4, response_body = $5::jsonb
       WHERE principal_key = $1 AND route = $2 AND key = $3`,
-    [pKey, input.route, input.key, response.status, JSON.stringify(response.body ?? null)],
+    [pKey, input.route, input.key, response.status, JSON.stringify(storableBody(response.body, input.secretFields))],
   );
   return { ...response, replayed: false };
 }

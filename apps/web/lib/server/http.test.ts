@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { auth, collections, preferences, setDbForTesting, setDomainConfigForTesting } from '@culture-atlas/domain';
+import { agentConnections, auth, collections, preferences, setDbForTesting, setDomainConfigForTesting } from '@culture-atlas/domain';
 import { ROUTES } from '@culture-atlas/domain/schemas';
 import { closeTestDb, getTestDb, insertAccount, insertAgentConnection, testConfig, testProviders } from '@culture-atlas/domain/testing';
 import { setProvidersForTesting } from '@culture-atlas/providers';
 
 vi.mock('server-only', () => ({}));
 
-const { apiRoute } = await import('./http');
+const { abuseLimitIp, apiRoute, clientIp } = await import('./http');
 
 /**
  * Route-level checks of the shared /v1 middleware: anonymous session cookies,
@@ -31,6 +31,7 @@ const signOutRoute = apiRoute(ROUTES.signOut, async ({ ctx, setSession }) => {
 const listCollectionsRoute = apiRoute(ROUTES.listCollections, ({ ctx }) => collections.listCollections(ctx));
 const createCollectionRoute = apiRoute(ROUTES.createCollection, ({ ctx, body }) => collections.createCollection(ctx, body));
 const savedRoute = apiRoute(ROUTES.listSaved, ({ ctx, query }) => preferences.listSaved(ctx, query));
+const createConnectionRoute = apiRoute(ROUTES.createAgentConnection, ({ ctx, body }) => agentConnections.createAgentConnection(ctx, body));
 
 const noParams = { params: Promise.resolve({}) };
 let ipCounter = 0;
@@ -185,5 +186,76 @@ describe('apiRoute middleware', () => {
     } finally {
       setDomainConfigForTesting(testConfig());
     }
+  });
+
+  it('a client cannot escape the per-IP limit by sending its own X-Forwarded-For entries', async () => {
+    setDomainConfigForTesting(testConfig({ IP_DAILY_REQUESTS: '2' }));
+    try {
+      const real = `192.0.2.${Math.floor(Math.random() * 250)}-${randomUUID()}`;
+      const { cookie, csrf } = await anonymous();
+      // The proxy appends the address it saw; the left entries are whatever the client sent.
+      const spoofed = () => ({ ip: `${randomUUID()}, ${real}` });
+      for (let i = 0; i < 2; i++) {
+        const r = await createCollectionRoute(req('/v1/collections', { method: 'POST', cookie, csrf, body: { name: 'x' }, ...spoofed() }), noParams);
+        expect(r.status).toBe(403);
+      }
+      const limited = await createCollectionRoute(req('/v1/collections', { method: 'POST', cookie, csrf, body: { name: 'x' }, ...spoofed() }), noParams);
+      expect(limited.status).toBe(429);
+    } finally {
+      setDomainConfigForTesting(testConfig());
+    }
+  });
+
+  it('creating an agent connection with an Idempotency-Key never stores or replays the credential', async () => {
+    const { cookie, csrf } = await anonymous();
+    const created = await createAccountRoute(req('/v1/accounts', { method: 'POST', cookie, csrf, body: {} }), noParams);
+    const acctCookie = cookieFrom(created)!;
+    const acctCsrf = ((await created.json()) as { csrf_token: string }).csrf_token;
+    const key = randomUUID();
+    const make = () =>
+      createConnectionRoute(
+        req('/v1/agent-connections', {
+          method: 'POST',
+          cookie: acctCookie,
+          csrf: acctCsrf,
+          body: { client_name: 'Demo agent', library_access: 'all' },
+          headers: { 'idempotency-key': key },
+        }),
+        noParams,
+      );
+    const first = await make();
+    expect(first.status).toBe(201);
+    const credential = ((await first.json()) as { credential: string }).credential;
+    expect(credential).toMatch(/^cat_/);
+    const stored = await getTestDb().query<{ b: string }>(`SELECT response_body::text AS b FROM idempotency_keys WHERE key = $1`, [key]);
+    expect(stored.rows[0]!.b).not.toContain(credential);
+    const replay = await make();
+    expect(replay.status).toBe(409);
+    expect(JSON.stringify(await replay.json())).not.toContain(credential);
+  });
+});
+
+describe('clientIp', () => {
+  const r = (headers: Record<string, string>) => new Request('http://localhost:3000/v1/session', { headers });
+  const cfg = (hops = 1, header?: string) => ({ TRUSTED_PROXY_HOPS: hops, CLIENT_IP_HEADER: header });
+
+  it('reads the entry appended by the trusted proxy, never the client-supplied left-most one', () => {
+    expect(clientIp(r({ 'x-forwarded-for': '203.0.113.9' }), cfg())).toBe('203.0.113.9');
+    expect(clientIp(r({ 'x-forwarded-for': '6.6.6.6, 203.0.113.9' }), cfg())).toBe('203.0.113.9');
+    expect(clientIp(r({ 'x-forwarded-for': '6.6.6.6, 203.0.113.9, 10.0.0.2' }), cfg(2))).toBe('203.0.113.9');
+    // Fewer hops than configured proxies: the header did not come through them.
+    expect(clientIp(r({ 'x-forwarded-for': '203.0.113.9' }), cfg(2))).toBeNull();
+    // X-Real-IP is client-controllable unless the platform sets it: ignored by default.
+    expect(clientIp(r({ 'x-real-ip': '6.6.6.6' }), cfg())).toBeNull();
+  });
+
+  it('prefers a configured platform header', () => {
+    expect(clientIp(r({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '6.6.6.6' }), cfg(1, 'cf-connecting-ip'))).toBe('203.0.113.7');
+    expect(clientIp(r({ 'x-forwarded-for': '6.6.6.6' }), cfg(1, 'cf-connecting-ip'))).toBeNull();
+  });
+
+  it('fails closed in production when no address is available', () => {
+    expect(abuseLimitIp(r({}), testConfig({ NODE_ENV: 'production', SESSION_SECRET: 'prod-secret-for-test' }))).toBe('unknown');
+    expect(abuseLimitIp(r({}), testConfig())).toBeNull();
   });
 });

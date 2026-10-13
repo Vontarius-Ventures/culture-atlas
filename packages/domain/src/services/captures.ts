@@ -7,6 +7,7 @@ import type { Db, Queryable } from '../db/pool';
 import { CATEGORIES, LIMITS, type CaptureSource, type Category } from '../enums';
 import { AppError } from '../errors';
 import { analysisDedupeKey } from '../jobs/dedupe';
+import { isGrantLimited } from '../library/access';
 import { cancelJobsForResult, enqueueJob } from '../jobs/queue';
 import type { JobRecord } from '../jobs/types';
 import { normalizeImage } from '../media/image';
@@ -21,7 +22,7 @@ import type {
 import type { Focus, ReferenceSummary } from '../schemas/common';
 import type { UploadResponse } from '../schemas/uploads';
 import { iso } from '../util/time';
-import { loadCards, resolveImage, type CardRecommendationContext } from './cards';
+import { loadCards, mayViewCaptureImage, resolveImage, type CardRecommendationContext } from './cards';
 import { bumpTasteRevision, rebuildTasteProfile } from './taste';
 
 /**
@@ -287,7 +288,10 @@ export async function createCapture(ctx: ServiceContext, input: CreateCaptureInp
   if (resolved.sensor) await checkSensorImport(ctx, resolved.sensor, resolved.image.sha256);
 
   const compilerVersion = ctx.config.COMPILER_VERSION;
-  const dedupeKey = analysisDedupeKey({ owner, imageSha256: resolved.image.sha256, focus: resolved.focus, compilerVersion });
+  // Grant-limited agents can read only captures in granted collections or their own uploads,
+  // so they reuse only their own analyses (no existence oracle for the owner's other photos).
+  const grantContext = p.kind === 'agent' && isGrantLimited(p) ? `connection:${p.connectionId}` : null;
+  const dedupeKey = analysisDedupeKey({ owner, imageSha256: resolved.image.sha256, focus: resolved.focus, compilerVersion, grantContext });
 
   // Sensor ledger: the same connection + asset never imports twice.
   if (resolved.sensor) {
@@ -587,7 +591,8 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
     status: capture.status,
     received_at: iso(capture.received_at),
     captured_at: iso(capture.captured_at),
-    image: capture.private_object_key
+    // Agents get compiled results only, never the photo itself (see mayViewCaptureImage).
+    image: capture.private_object_key && mayViewCaptureImage(ctx)
       ? await resolveImage(ctx, { object_key: capture.private_object_key, width: capture.width, height: capture.height, alt: 'Your photo' })
       : null,
     focus: capture.focus,

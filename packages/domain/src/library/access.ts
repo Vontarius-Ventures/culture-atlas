@@ -67,9 +67,14 @@ export async function loadAccessibleCollection(
   return rows[0];
 }
 
-const MEMBER_ITEMS = `SELECT si.discovery_item_id AS id
+/** Discovery item ids saved into the granted collections (account param, granted-ids param). */
+export function memberItemsSql(accountParam: string, grantParam: string): string {
+  return `SELECT si.discovery_item_id AS id
    FROM collection_items ci JOIN saved_items si ON si.id = ci.saved_item_id
-  WHERE ci.owner_account_id = $1 AND ci.collection_id = ANY($2::uuid[])`;
+  WHERE ci.owner_account_id = ${accountParam} AND ci.collection_id = ANY(${grantParam}::uuid[])`;
+}
+
+const MEMBER_ITEMS = memberItemsSql('$1', '$2');
 
 /**
  * Discovery item ids (subset of `ids`) visible to the principal: owned or

@@ -266,6 +266,7 @@ export function PlanView({ planId }: { planId: string }) {
                       {f.title}
                       {f.year ? ` (${f.year})` : ''}
                     </Link>
+                    {f.is_example && <span className="card__example"> · Example result</span>}
                   </span>
                 ))}
               </p>
@@ -506,6 +507,7 @@ function FilmFeature({
           </Link>
         </h3>
         {film.year && <p className="film-feature__meta">{film.year}</p>}
+        {film.is_example && <p className="example-label">Example result</p>}
         {film.reason && <p className="film-feature__reason">{film.reason}</p>}
         <div className="film-feature__actions">
           <button
@@ -553,6 +555,7 @@ function Dish({ dish }: { dish: DishIdea }) {
         )}
       </h3>
       <p className="dish__desc">{dish.description}</p>
+      {dish.is_example && <p className="card__example">Example result</p>}
     </li>
   );
 }
@@ -577,6 +580,7 @@ function Music({ pick }: { pick: MusicPick }) {
         ) : (
           title
         )}
+        {pick.is_example && <span className="card__example"> · Example result</span>}
       </span>
     </li>
   );

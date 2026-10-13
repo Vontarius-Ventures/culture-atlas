@@ -67,6 +67,10 @@ services:
       # Public https URL of this service (cookies are Secure when it starts with https://).
       - key: APP_BASE_URL
         sync: false
+      # Per-IP limits read the client address from the right end of X-Forwarded-For.
+      # Render's proxy appends one hop; verify against Render's current docs (see docs/deploy.md).
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
 
   - type: worker
     name: culture-atlas-worker

@@ -252,19 +252,21 @@ export async function createPlan(ctx: ServiceContext, body: CreatePlanRequest): 
 interface ItemDisplay {
   image: Image | null;
   destination_url: string | null;
+  /** Item came from replayed/sample provider data (durable flag on the item). */
+  example: boolean;
 }
 
 async function itemDisplays(ctx: ServiceContext, ids: string[]): Promise<Map<string, ItemDisplay>> {
   const out = new Map<string, ItemDisplay>();
   if (ids.length === 0) return out;
-  const { rows } = await ctx.db.query<{ id: string; display_metadata: unknown }>(
-    'SELECT id, display_metadata FROM discovery_items WHERE id = ANY($1::uuid[])',
+  const { rows } = await ctx.db.query<{ id: string; display_metadata: unknown; is_sample: boolean }>(
+    'SELECT id, display_metadata, is_sample FROM discovery_items WHERE id = ANY($1::uuid[])',
     [ids],
   );
   for (const r of rows) {
     const meta = readDisplayMetadata(r.display_metadata);
     const url = meta.destination_url && z.url().safeParse(meta.destination_url).success ? meta.destination_url : null;
-    out.set(r.id, { image: await resolveImage(ctx, meta.image), destination_url: url });
+    out.set(r.id, { image: await resolveImage(ctx, meta.image), destination_url: url, example: r.is_sample || meta.example === true });
   }
   return out;
 }
@@ -295,6 +297,9 @@ export async function toPlanVersionDto(ctx: ServiceContext, v: PlanVersionRow): 
   const food = parseOr(StoredFood, v.food);
   const music = parseOr(StoredMusic, v.music);
   const displays = await itemDisplays(ctx, picksOf(v).flatMap((p) => (p.item_id ? [p.item_id] : [])));
+  /** "Example result" when the pick itself was replayed/sample, or its item came from replayed data. */
+  const isExample = (p: StoredPick): boolean =>
+    p.origin === 'replay' || p.origin === 'sample' || (p.item_id ? (displays.get(p.item_id)?.example ?? false) : false);
   const filmPick = (p: StoredPick): FilmPick | null =>
     p.item_id
       ? {
@@ -305,6 +310,7 @@ export async function toPlanVersionDto(ctx: ServiceContext, v: PlanVersionRow): 
           reason: p.reason,
           destination_url: displays.get(p.item_id)?.destination_url ?? null,
           is_fixed: p.is_fixed,
+          is_example: isExample(p),
         }
       : null;
   const dish = (p: StoredPick): DishIdea => ({
@@ -314,6 +320,7 @@ export async function toPlanVersionDto(ctx: ServiceContext, v: PlanVersionRow): 
     cuisine: p.detail,
     reason: p.reason,
     image: p.item_id ? (displays.get(p.item_id)?.image ?? null) : null,
+    is_example: isExample(p),
   });
   const musicPick = (p: StoredPick): MusicPick => ({
     item_id: p.item_id,
@@ -325,6 +332,7 @@ export async function toPlanVersionDto(ctx: ServiceContext, v: PlanVersionRow): 
     // No track catalog adapter in this release: nothing is marked verified.
     verified: false,
     destination_url: p.item_id ? (displays.get(p.item_id)?.destination_url ?? null) : null,
+    is_example: isExample(p),
   });
   const contributions = parseOr(z.array(InputContribution), v.input_contributions) ?? [];
   const byItem = new Map(contributions.map((c) => [c.item_id, c]));

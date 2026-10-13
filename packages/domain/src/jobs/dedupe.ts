@@ -21,8 +21,16 @@ export function analysisDedupeKey(input: {
   focus: unknown;
   compilerVersion: string;
   correctionOf?: string;
+  /**
+   * Set for grant-limited agents (their connection id): they may only reuse
+   * their own uploads, so an identical photo the owner analyzed outside the
+   * grant is neither revealed (reused: true + id) nor returned unreadable.
+   */
+  grantContext?: string | null;
 }): string {
-  return `analyze_capture:${digest([ownerKey(input.owner), input.imageSha256, input.focus, input.compilerVersion, input.correctionOf ?? null])}`;
+  const parts: unknown[] = [ownerKey(input.owner), input.imageSha256, input.focus, input.compilerVersion, input.correctionOf ?? null];
+  if (input.grantContext) parts.push(`grant:${input.grantContext}`);
+  return `analyze_capture:${digest(parts)}`;
 }
 
 export function relatedDiscoveryDedupeKey(input: {

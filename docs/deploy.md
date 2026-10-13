@@ -50,6 +50,7 @@ Every name is listed in `.env.example`. An empty value counts as unset.
 | `SENSOR_ALLOWED_ORIGINS` | for Sensor poll mode | Comma-separated https relay origins the server may poll. Keep it empty if you only use the bridge. Never list internal or loopback addresses on a public server. |
 | `DEMO_INSPECTOR_ACCOUNT_IDS` | for the demo | Accounts allowed to open the inspector for their own jobs |
 | Quotas and limits | optional | `ANON_DAILY_ANALYSES` (10), `ACCOUNT_DAILY_ANALYSES` (100), `IP_DAILY_REQUESTS` (2000), `WORKER_CONCURRENCY` (5)… |
+| Client address | check | `TRUSTED_PROXY_HOPS` (1): proxies that append to `X-Forwarded-For`; the address is read that many entries from the right, so a client cannot pick its own by sending the header. `CLIENT_IP_HEADER`: a platform header that carries the verified client address, if your host sets one. Check both against your host's proxy chain before launch: too few hops lets clients choose their address, too many makes everyone share the proxy's address. In production a request with no usable address falls into one shared, strict bucket. |
 
 ## Releasing
 

@@ -262,7 +262,13 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
         category: p.category,
         canonical_key: p.key,
         title: p.title,
-        display_metadata: { subtitle: p.year ? String(p.year) : null, year: p.year, description: p.description },
+        display_metadata: {
+          subtitle: p.year ? String(p.year) : null,
+          year: p.year,
+          description: p.description,
+          // Provider picks record whether they came from a replay; creative ideas leave it unchanged.
+          ...(p.origin === 'vlm_creative' ? {} : { example: p.origin === 'replay' }),
+        },
         external_ids: p.qloo_id ? { qloo: p.qloo_id } : {},
         resolved_anchor_ids: p.origin === 'vlm_creative' ? anchorIds : [],
       });

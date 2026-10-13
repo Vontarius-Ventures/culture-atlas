@@ -42,6 +42,15 @@ export async function resolveImage(ctx: ServiceContext, image: DisplayImage | nu
   return { url, width: image.width ?? null, height: image.height ?? null, alt: image.alt ?? '' };
 }
 
+/**
+ * Agents receive compiled results only: the user's photo (a capture's stored
+ * derivative, the only copy kept by default) needs a separate explicit image
+ * grant, which this release does not offer.
+ */
+export function mayViewCaptureImage(ctx: Pick<ServiceContext, 'principal'>): boolean {
+  return ctx.principal.kind !== 'agent';
+}
+
 export async function loadCards(
   ctx: ServiceContext,
   itemIds: readonly string[],
@@ -73,8 +82,8 @@ export async function loadCards(
       category: row.category,
       title: row.title,
       subtitle: subtitle ?? null,
-      image: await resolveImage(ctx, meta.image),
-      is_example: row.is_sample || rec?.origin === 'sample' || rec?.origin === 'replay',
+      image: row.kind === 'capture' && !mayViewCaptureImage(ctx) ? null : await resolveImage(ctx, meta.image),
+      is_example: row.is_sample || meta.example === true || rec?.origin === 'sample' || rec?.origin === 'replay',
       saved: row.saved_item_id !== null,
       saved_item_id: row.saved_item_id,
       recommendation_id: rec?.id ?? null,

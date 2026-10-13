@@ -41,6 +41,12 @@ export interface RouteContract {
   status: 200 | 201 | 202 | 204;
   /** Accepts Idempotency-Key (all mutations do). */
   idempotent: boolean;
+  /**
+   * Response fields that are shown once (bearer credentials, CSRF tokens). They
+   * are never written to the idempotency replay store; replaying the same key
+   * is refused with 409 instead of returning the secret again.
+   */
+  oneTimeSecrets?: readonly string[];
   /** Matching MCP tool name, if any. */
   mcpTool?: string;
   /** True for routes added beyond the spec REST table. */
@@ -51,7 +57,7 @@ const JobParams = z.object({ id: Uuid });
 
 export const ROUTES = {
   getSession: { method: 'GET', path: '/v1/session', auth: 'public', scopes: [], response: Auth.SessionResponse, status: 200, idempotent: false, extension: true },
-  createAccount: { method: 'POST', path: '/v1/accounts', auth: 'any', scopes: [], body: Auth.CreateAccountRequest, response: Auth.CreateAccountResponse, status: 201, idempotent: true, extension: true },
+  createAccount: { method: 'POST', path: '/v1/accounts', auth: 'any', scopes: [], body: Auth.CreateAccountRequest, response: Auth.CreateAccountResponse, status: 201, idempotent: true, oneTimeSecrets: ['csrf_token'], extension: true },
   signIn: { method: 'POST', path: '/v1/session/sign-in', auth: 'any', scopes: [], body: Auth.SignInRequest, response: Auth.SignInResponse, status: 200, idempotent: false, extension: true },
   signOut: { method: 'POST', path: '/v1/session/sign-out', auth: 'any', scopes: [], body: Auth.SignOutRequest, response: Auth.SessionResponse, status: 200, idempotent: false, extension: true },
   createUpload: { method: 'POST', path: '/v1/uploads', auth: 'any', scopes: ['captures:write'], body: 'multipart', response: U.UploadResponse, status: 201, idempotent: true, extension: true },
@@ -82,7 +88,7 @@ export const ROUTES = {
   replacePlanSection: { method: 'POST', path: '/v1/plans/{id}/replacements', auth: 'account', scopes: ['plans:write'], params: IdParams, body: P.PlanReplacementRequest, response: P.PlanReplacementResponse, status: 202, idempotent: true, mcpTool: 'replace_plan_section' },
   deletePlan: { method: 'DELETE', path: '/v1/plans/{id}', auth: 'account', scopes: ['plans:write'], params: IdParams, response: null, status: 204, idempotent: true },
   listAgentConnections: { method: 'GET', path: '/v1/agent-connections', auth: 'owner', scopes: [], response: A.AgentConnectionsListResponse, status: 200, idempotent: false, extension: true },
-  createAgentConnection: { method: 'POST', path: '/v1/agent-connections', auth: 'owner', scopes: [], body: A.CreateAgentConnectionRequest, response: A.CreateAgentConnectionResponse, status: 201, idempotent: true },
+  createAgentConnection: { method: 'POST', path: '/v1/agent-connections', auth: 'owner', scopes: [], body: A.CreateAgentConnectionRequest, response: A.CreateAgentConnectionResponse, status: 201, idempotent: true, oneTimeSecrets: ['credential'] },
   revokeAgentConnection: { method: 'DELETE', path: '/v1/agent-connections/{id}', auth: 'owner', scopes: [], params: IdParams, response: null, status: 204, idempotent: true },
   updateAgentConnection: { method: 'PATCH', path: '/v1/agent-connections/{id}', auth: 'owner', scopes: [], params: IdParams, body: A.UpdateAgentConnectionRequest, response: A.AgentConnectionDto, status: 200, idempotent: true, extension: true },
   listSensorConnections: { method: 'GET', path: '/v1/sensor-connections', auth: 'owner', scopes: [], response: S.SensorConnectionsListResponse, status: 200, idempotent: false, extension: true },

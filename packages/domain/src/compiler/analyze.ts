@@ -864,7 +864,7 @@ export class CaptureCompiler {
             category,
             canonicalKey: p.key,
             title: c.name,
-            displayMetadata: { subtitle: kind === 'film' && c.year ? String(c.year) : null, year: kind === 'film' ? c.year : null, image: null },
+            displayMetadata: { subtitle: kind === 'film' && c.year ? String(c.year) : null, year: kind === 'film' ? c.year : null, image: null, example: Boolean(rec.isReplay) },
             externalIds: { qloo: c.entityId },
             resolvedAnchorIds: contributors.map((r) => r.referenceId),
           });
@@ -887,7 +887,7 @@ export class CaptureCompiler {
             category: 'wear',
             canonicalKey: p.key,
             title: r.name,
-            displayMetadata: { subtitle: 'Style direction', image: null },
+            displayMetadata: { subtitle: 'Style direction', image: null, example: Boolean(r.isReplay) },
             externalIds: { qloo_tag: r.qloo!.tagId },
             referenceId: r.referenceId,
             resolvedAnchorIds: [r.referenceId],

@@ -6,6 +6,7 @@ import { accountCtx, ctxFor, insertCaptureWithAnalysis, insertItem, insertRefere
 import { closeTestDb, getTestDb, insertAgentConnection, testProviders } from '../testing';
 import { addCollectionItem, createCollection, deleteCollection, removeCollectionItem, updateCollection } from './collections';
 import { getJob } from './jobs';
+import { getItem } from './items';
 import { createPlan, deletePlan, getPlan, listPlans, replacePlanSection } from './plans';
 
 const db = getTestDb();
@@ -21,7 +22,7 @@ const entity = (id: string, name: string, extra: Partial<QlooEntity> = {}): Qloo
 });
 
 /** Live-mode fake Qloo: deterministic insights per filter type, explainability pointing at the first signal. */
-function liveQloo(prefix = randomUUID().slice(0, 6)) {
+function liveQloo(prefix = randomUUID().slice(0, 6), live = true) {
   return new FakeQloo(
     {
       search: (q) => [entity(`ent-${q.toLowerCase().replace(/\W+/g, '-')}`, q)],
@@ -47,7 +48,7 @@ function liveQloo(prefix = randomUUID().slice(0, 6)) {
         };
       },
     },
-    { live: true },
+    { live },
   );
 }
 
@@ -212,6 +213,9 @@ describe('movie-night composition', () => {
     expect(v.food!.dishes.find((d) => d.title === 'Miso glazed eggplant')!.description).toBe('Roasted eggplant.');
     expect(v.title).toBe('A warm night in');
     expect(v.inputs.map((i) => i.contribution)).toEqual(['strong', 'strong', 'strong']);
+    // Live Qloo picks are not examples.
+    expect(v.film!.feature!.is_example).toBe(false);
+    expect([...v.music!.before, ...v.music!.after].some((m) => m.is_example)).toBe(false);
 
     // Every Qloo-origin recommendation cites a real stored provider query.
     const recs = await db.query<{ origin: string; provider_query_ids: string[]; section: string }>(
@@ -231,6 +235,31 @@ describe('movie-night composition', () => {
     expect(budget.rows[0]!.n).toBeLessThanOrEqual(12);
     const job = await getJob(s.ctx, { id: res.job_id });
     expect(job).toMatchObject({ state: 'complete', poll_after_ms: null, result: { type: 'plan', id: res.plan_id } });
+  });
+
+  it('replayed Qloo picks are labeled "Example result" in the plan and when opened later', async () => {
+    const s = await setupCollection();
+    const providers = testProviders({ qloo: liveQloo(randomUUID().slice(0, 6), false), composer: composerModel() });
+    const res = await createPlan(s.ctx, {
+      collection_id: s.col.id,
+      expected_revision: s.revision,
+      item_ids: [s.cap.itemId, s.artist, s.film],
+      template: 'movie_night',
+      constraints: { dietary_exclusions: [] },
+      exploration: 'familiar',
+    });
+    await runJob(res.job_id, { providers });
+    const v = (await getPlan(ctxFor(s.principal, { providers }), { id: res.plan_id })).active_version!;
+    const feature = v.film!.feature!;
+    expect(feature.title).toMatch(/^Film /);
+    expect(feature.is_example).toBe(true);
+    expect(v.film!.alternates.every((a) => a.is_example)).toBe(true);
+    const music = [...v.music!.before, ...v.music!.after];
+    expect(music.filter((m) => m.title.startsWith('Artist ')).every((m) => m.is_example)).toBe(true);
+    // Creative dish ideas are not provider results, so they carry no example label.
+    expect(v.food!.dishes.every((d) => !d.is_example)).toBe(true);
+    // The film opened on its own keeps the label.
+    expect((await getItem(s.ctx, { id: feature.item_id, query: {} })).item.is_example).toBe(true);
   });
 
   it('without Qloo, falls back to creative suggestions flagged internally (never Qloo-labeled)', async () => {

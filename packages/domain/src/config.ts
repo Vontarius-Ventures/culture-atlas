@@ -44,6 +44,18 @@ export const DomainConfigSchema = z.object({
   ACCOUNT_DAILY_ANALYSES: int(100),
   ACCOUNT_DAILY_PLANS: int(50),
   IP_DAILY_REQUESTS: int(2000),
+  /**
+   * Reverse proxies in front of the web app that append to X-Forwarded-For.
+   * The client address is the entry that many hops from the right; entries
+   * further left are client-supplied and never trusted.
+   */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(1).max(10).default(1),
+  /**
+   * Optional header the edge platform sets to the verified client address
+   * (e.g. cf-connecting-ip). Only set this when the platform overwrites any
+   * client-supplied value; it then takes precedence over X-Forwarded-For.
+   */
+  CLIENT_IP_HEADER: z.string().optional(),
   SENSOR_ALLOWED_ORIGINS: z
     .string()
     .default('')

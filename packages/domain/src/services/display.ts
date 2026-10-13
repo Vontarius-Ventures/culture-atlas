@@ -26,6 +26,12 @@ export const DisplayMetadata = z.object({
   destination_url: z.string().nullable().optional(),
   /** For food ideas: cuisine label. For tracks: artist name. */
   detail: z.string().nullable().optional(),
+  /**
+   * True when the item came from replayed/sample provider data, false once a
+   * live provider response produced it. Durable, so every later view (saved,
+   * collections, related, plans) keeps the "Example result" label.
+   */
+  example: z.boolean().optional(),
 });
 export type DisplayMetadata = z.infer<typeof DisplayMetadata>;
 

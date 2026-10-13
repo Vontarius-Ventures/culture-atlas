@@ -18,6 +18,13 @@ const REC_SECTIONS: Record<PlanSection, string[]> = {
   music: ['music_before', 'music_after'],
 };
 
+/** Provider-backed picks record whether they came from replayed/sample data; others leave the flag alone. */
+function exampleFlag(pick: ComposedPick): { example?: boolean } {
+  if (pick.origin === 'replay' || pick.origin === 'sample') return { example: true };
+  if (pick.origin === 'qloo') return { example: false };
+  return {};
+}
+
 async function itemIdFor(db: Queryable, owner: Owner, pick: ComposedPick): Promise<string> {
   if (pick.existing_item_id) return pick.existing_item_id;
   return upsertDiscoveryItem(db, owner, {
@@ -30,6 +37,7 @@ async function itemIdFor(db: Queryable, owner: Owner, pick: ComposedPick): Promi
       year: pick.year,
       description: pick.description,
       detail: pick.detail,
+      ...exampleFlag(pick),
     },
     external_ids: pick.qloo_id ? { qloo: pick.qloo_id } : {},
     resolved_anchor_ids: pick.contributing_reference_ids,
@@ -48,6 +56,7 @@ function stored(pick: ComposedPick, itemId: string): StoredPick {
     is_fixed: pick.is_fixed,
     key: pick.key,
     contributing_input_ids: pick.contributing_input_ids,
+    origin: pick.origin,
   };
 }
 

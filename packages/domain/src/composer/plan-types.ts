@@ -93,6 +93,8 @@ export const StoredPick = z.object({
   is_fixed: z.boolean().default(false),
   key: z.string(),
   contributing_input_ids: z.array(z.string()).default([]),
+  /** Where the pick came from (absent on versions stored before this field existed). */
+  origin: ComposedPick.shape.origin.optional(),
 });
 export type StoredPick = z.infer<typeof StoredPick>;
 

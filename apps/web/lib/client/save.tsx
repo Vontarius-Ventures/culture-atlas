@@ -31,8 +31,8 @@ export function cardToTarget(card: DiscoveryCard): SaveTarget {
  *  - Save for later: POST /v1/preferences {action: save} (unfiled);
  *  - New collection: POST /v1/collections, then add;
  *  - Undo reverses exactly what this save did (membership, and the SavedItem if it was created);
- *  - anonymous visitors are offered account creation (claims the session and the intended save)
- *    or a temporary save for this visit.
+ *  - anonymous visitors are offered account creation, which claims the session and the
+ *    intended save (the service refuses anonymous saves with 403 account_required).
  */
 export function SaveProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
@@ -128,30 +128,6 @@ export function SaveProvider({ children }: { children: ReactNode }) {
     [target, preference, toast],
   );
 
-  const onSaveTemporarily = useCallback(async () => {
-    const t = target;
-    if (!t) return;
-    const res = await preference('save', t);
-    setItemOverride(t.itemId, { saved: true, saved_item_id: res.saved_item?.id ?? null });
-    setTarget(null);
-    toast.show({
-      message: 'Saved for 24 hours',
-      action: res.undo
-        ? {
-            label: 'Undo',
-            onAction: async () => {
-              await api.request('recordPreference', {
-                body: res.undo!,
-                idempotencyKey: newIdempotencyKey(),
-              });
-              setItemOverride(t.itemId, { saved: false, saved_item_id: null });
-              toast.announce('Save undone');
-            },
-          }
-        : undefined,
-    });
-  }, [target, preference, toast]);
-
   const onUnsave = useCallback(async () => {
     const t = target;
     if (!t) return;
@@ -240,7 +216,6 @@ export function SaveProvider({ children }: { children: ReactNode }) {
         returnFocus={trigger}
         onClose={close}
         onSave={onSave}
-        onSaveTemporarily={onSaveTemporarily}
         onUnsave={onUnsave}
         onAccountCreated={onAccountCreated}
       />

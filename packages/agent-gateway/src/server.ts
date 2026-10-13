@@ -162,7 +162,7 @@ export function buildMcpServer(
       };
       const key = route.idempotent ? idempotencyKeyFrom(request.params._meta) : null;
       const stored = key
-        ? await withIdempotency(deps.db, { principal, route: `mcp:${tool.name}`, key, request: parsed.data }, run)
+        ? await withIdempotency(deps.db, { principal, route: `mcp:${tool.name}`, key, request: parsed.data, secretFields: route.oneTimeSecrets }, run)
         : await run();
       result = stored.body;
     } catch (err) {

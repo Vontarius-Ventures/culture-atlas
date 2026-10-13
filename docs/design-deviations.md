@@ -43,7 +43,7 @@ Unpictured states were also captured (`state-first-visit`, `state-processing`, `
    - Collection cards have a small "More" menu beside the title for "Move earlier", "Move later" and "Remove from collection". This keeps reordering keyboard-accessible without drag and drop.
    - The selection bar adds a quiet "Clear".
 10. **Quick save.** The picker always opens, with the remembered last destination preselected, so saving there is one tap on Save; the current target is always visible and can be changed in place. The design guide's separate "Change destination" affordance is therefore covered by the picker itself.
-11. **Anonymous saving.** For visitors without an account, the save sheet shows the account prompt ("Create account", which claims the session and the intended save) and a secondary "Save for this visit" (24 hours), instead of the collection list.
+11. **Anonymous saving.** For visitors without an account, the save sheet shows the account prompt ("Create account", which claims the session and the intended save) instead of the collection list. There is no temporary save: the service requires an account to save (403 account_required).
 12. **Settings entry point.** Agent connections, World Sensor status and privacy notes live at `/settings`, linked from a quiet footer. This keeps them outside primary discovery, and the header stays free of extra icons.
 13. **Screenshot artifact.** Full-page mobile captures (`03-plan-mobile`, `state-partial-*`, `state-settings-*`) show the fixed bottom navigation partway down the page. That is how Playwright stitches fixed elements, not a layout bug.
 
