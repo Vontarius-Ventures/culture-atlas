@@ -1,0 +1,53 @@
+{
+  "success": true,
+  "results": {
+    "entities": [
+      {
+        "name": "Fixture Film One",
+        "entity_id": "FIXTURE-MOVIE-0001",
+        "type": "urn:entity",
+        "subtype": "urn:entity:movie",
+        "popularity": 0.97,
+        "properties": {
+          "release_year": 1968,
+          "description": "Shape-only fixture film"
+        },
+        "query": {
+          "affinity": 0.981,
+          "explainability": {
+            "signal.interests.entities": [
+              {
+                "entity_id": "FIXTURE-BRAND-0001",
+                "score": 0.71
+              },
+              {
+                "entity_id": "FIXTURE-BRAND-0002",
+                "score": 0.29
+              }
+            ]
+          }
+        },
+        "tags": [
+          {
+            "id": "urn:tag:genre:media:fixture_drama",
+            "name": "Fixture Drama",
+            "type": "urn:tag:genre:media"
+          }
+        ]
+      },
+      {
+        "name": "Fixture Film Two",
+        "entity_id": "FIXTURE-MOVIE-0002",
+        "type": "urn:entity",
+        "subtype": "urn:entity:movie",
+        "properties": {
+          "release_year": 1971
+        },
+        "query": {
+          "affinity": 0.944
+        }
+      }
+    ]
+  },
+  "duration": 31
+}

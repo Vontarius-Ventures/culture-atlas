@@ -1,0 +1,26 @@
+{
+  "title": "A soft-focus moment",
+  "interpretation": "The photo is too blurred to read clearly.",
+  "observations": [
+    {
+      "id": "o1",
+      "text": "Heavily blurred indoor scene",
+      "kind": "composition",
+      "region_ids": []
+    }
+  ],
+  "visible_text": [],
+  "candidates": [],
+  "regions": [],
+  "uncertainty": {
+    "overall": "high",
+    "notes": [
+      "motion blur"
+    ]
+  },
+  "competing_subjects": [],
+  "quality": {
+    "usable": false,
+    "issue": "blurred"
+  }
+}

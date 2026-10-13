@@ -25,6 +25,16 @@ export const ProviderConfigSchema = z.object({
     .enum(['true', 'false', '1', '0'])
     .default('false')
     .transform((v) => v === 'true' || v === '1'),
+  /** Directory of sanitized recordings captured by scripts/probe-qloo.ts --record (replay only). */
+  QLOO_REPLAY_DIR: optional,
+  /** Effort for VLM / text calls (low|medium|high). Default medium: latency target is a first section within 10 s. */
+  ANTHROPIC_EFFORT: z.enum(['low', 'medium', 'high']).default('medium'),
+  /** Server-side refusal fallback on supported models (Claude API only; disable behind proxies that reject it). */
+  ANTHROPIC_REFUSAL_FALLBACK: z
+    .enum(['true', 'false', '1', '0'])
+    .default('true')
+    .transform((v) => v === 'true' || v === '1'),
+  RESEARCH_TIMEOUT_MS: z.coerce.number().int().positive().default(8_000),
 
   WIKIPEDIA_API_URL: z.string().default('https://en.wikipedia.org/api/rest_v1'),
   WIKIPEDIA_ACTION_API_URL: z.string().default('https://en.wikipedia.org/w/api.php'),

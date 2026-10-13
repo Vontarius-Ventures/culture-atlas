@@ -1,0 +1,20 @@
+{
+  "success": true,
+  "results": {
+    "trends": [
+      {
+        "date": "2026-09-01",
+        "population_percentile": 0.82,
+        "population_rank": 1200,
+        "velocity": 0.03
+      },
+      {
+        "week": "2026-09-08",
+        "population_percentile": 0.85
+      },
+      {
+        "population_rank": 5
+      }
+    ]
+  }
+}

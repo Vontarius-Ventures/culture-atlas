@@ -1,0 +1,127 @@
+{
+  "title": "Vintage racing references",
+  "interpretation": "A few vintage racing references stood out.",
+  "observations": [
+    {
+      "id": "o1",
+      "text": "Cream knit polo with contrast collar",
+      "kind": "garment",
+      "region_ids": [
+        "r1"
+      ]
+    },
+    {
+      "id": "o2",
+      "text": "Leather driving gloves",
+      "kind": "garment",
+      "region_ids": [
+        "r2"
+      ]
+    },
+    {
+      "id": "o3",
+      "text": "Embroidered wordmark on the chest reads 'FIXTURE DENIM'",
+      "kind": "text",
+      "region_ids": [
+        "r3"
+      ]
+    }
+  ],
+  "visible_text": [
+    {
+      "text": "FIXTURE DENIM",
+      "region_id": "r3"
+    }
+  ],
+  "candidates": [
+    {
+      "id": "c1",
+      "name": "Fixture Denim Co",
+      "type": "brand",
+      "relation": "depicted",
+      "rationale": "Legible chest wordmark",
+      "certainty": 0.9,
+      "region_ids": [
+        "r3"
+      ],
+      "suggested_categories": [
+        "wear"
+      ],
+      "tag_queries": []
+    },
+    {
+      "id": "c2",
+      "name": "1960s motor racing style",
+      "type": "style",
+      "relation": "resembles",
+      "rationale": "Driving gloves and knit polo",
+      "certainty": 0.6,
+      "region_ids": [
+        "r1",
+        "r2"
+      ],
+      "suggested_categories": [
+        "wear",
+        "watch",
+        "play"
+      ],
+      "tag_queries": [
+        "vintage racing"
+      ]
+    },
+    {
+      "id": "c3",
+      "name": "Italian aperitivo culture",
+      "type": "tradition",
+      "relation": "resembles",
+      "rationale": "Spritz glass on the table",
+      "certainty": 0.4,
+      "region_ids": [],
+      "suggested_categories": [
+        "eat"
+      ],
+      "tag_queries": []
+    }
+  ],
+  "regions": [
+    {
+      "id": "r1",
+      "label": "polo",
+      "box": {
+        "x": 0.3,
+        "y": 0.2,
+        "w": 0.4,
+        "h": 0.4
+      }
+    },
+    {
+      "id": "r2",
+      "label": "gloves",
+      "box": {
+        "x": 0.2,
+        "y": 0.6,
+        "w": 0.2,
+        "h": 0.2
+      }
+    },
+    {
+      "id": "r3",
+      "label": "wordmark",
+      "box": {
+        "x": 0.45,
+        "y": 0.3,
+        "w": 0.1,
+        "h": 0.05
+      }
+    }
+  ],
+  "uncertainty": {
+    "overall": "low",
+    "notes": []
+  },
+  "competing_subjects": [],
+  "quality": {
+    "usable": true,
+    "issue": null
+  }
+}

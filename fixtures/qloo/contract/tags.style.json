@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "results": {
+    "tags": [
+      {
+        "id": "urn:tag:style:qloo:fixture_mid_century_modern",
+        "name": "Fixture Mid-Century Modern",
+        "type": "urn:tag:style:qloo",
+        "parents": [
+          {
+            "id": "urn:tag:style:qloo:fixture_modernism"
+          }
+        ]
+      },
+      {
+        "tag_id": "urn:tag:style:qloo:fixture_atomic_age",
+        "name": "Fixture Atomic Age",
+        "subtype": "urn:tag:style:qloo"
+      }
+    ]
+  }
+}

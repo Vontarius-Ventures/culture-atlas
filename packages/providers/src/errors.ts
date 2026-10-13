@@ -13,7 +13,8 @@ export type ProviderErrorKind =
   | 'server' // 5xx
   | 'invalid_response' // response failed schema validation
   | 'content_rejected' // model refused / unsupported content
-  | 'aborted';
+  | 'aborted'
+  | 'budget_exhausted'; // per-job request/retry budget reached (never retried)
 
 export class ProviderError extends Error {
   readonly provider: string;
@@ -45,10 +46,29 @@ export function isProviderError(err: unknown): err is ProviderError {
   return err instanceof ProviderError;
 }
 
+/**
+ * Per-job request budget (build spec: at most 12 Qloo requests per job and two
+ * retries per provider stage). Adapters call `take` before EVERY HTTP attempt;
+ * `kind` is 'retry' for attempts after the first. Returning false stops the
+ * call with ProviderError('budget_exhausted').
+ */
+export interface RequestBudget {
+  take(provider: string, kind: 'request' | 'retry'): boolean;
+}
+
+/** Observes each HTTP attempt (for provider_queries / traces). Never receives secrets. */
+export interface AttemptObserver {
+  (event: { provider: string; operation: string; attempt: number; status: number | null; durationMs: number; error?: ProviderErrorKind }): void;
+}
+
 /** Common per-call options. */
 export interface CallOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   /** Correlates provider_queries / trace_events. */
   traceId?: string;
+  /** Retries for transient errors (429/timeout/5xx). Default: adapter-specific (2). */
+  maxRetries?: number;
+  budget?: RequestBudget;
+  onAttempt?: AttemptObserver;
 }
