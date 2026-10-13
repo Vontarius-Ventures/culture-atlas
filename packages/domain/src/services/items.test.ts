@@ -1,0 +1,97 @@
+import { randomUUID } from 'node:crypto';
+import { FakeQloo } from '@culture-atlas/providers/testing';
+import { ProviderError, type QlooEntity } from '@culture-atlas/providers';
+import { afterAll, describe, expect, it } from 'vitest';
+import { accountCtx, ctxFor, insertItem, runJob } from '../test-support/library';
+import { closeTestDb, getTestDb, insertAgentConnection, testProviders } from '../testing';
+import { addCollectionItem, createCollection, removeCollectionItem } from './collections';
+import { getJob } from './jobs';
+import { getItem, startRelatedDiscovery } from './items';
+import { recordPreference } from './preferences';
+
+const db = getTestDb();
+afterAll(closeTestDb);
+
+const e = (id: string, name: string): QlooEntity => ({ entity_id: id, name, types: [], properties: {}, tags: [] });
+
+function qloo(prefix: string, opts: { failArtists?: boolean } = {}) {
+  return new FakeQloo(
+    {
+      insights: (req) => {
+        if (req.filterType === 'urn:entity:artist' && opts.failArtists) return new ProviderError('qloo', 'server', 'down');
+        const kind = req.filterType.split(':').pop();
+        return { entities: Array.from({ length: 4 }, (_, i) => e(`${prefix}-${kind}-${i}`, `${kind} ${prefix} ${i}`)), tags: [] };
+      },
+    },
+    { live: true },
+  );
+}
+
+describe('related discovery job', () => {
+  it('stores at most six Qloo-traceable results across categories and serves them from cache', async () => {
+    const { principal, ctx } = await accountCtx();
+    const prefix = randomUUID().slice(0, 6);
+    const film = await insertItem({ accountId: principal.accountId }, { kind: 'film', title: 'Playtime', qloo: `${prefix}-origin` });
+    const providers = testProviders({ qloo: qloo(prefix, { failArtists: true }) });
+    const started = await startRelatedDiscovery(ctx, { id: film, body: {} });
+    expect((await runJob(started.job_id, { providers, config: undefined })).state).toBe('partial');
+    const job = await getJob(ctx, { id: started.job_id });
+    expect(job.result).toEqual({ type: 'discovery_job', id: started.discovery_job_id });
+
+    const detail = await getItem(ctx, { id: film, query: {} });
+    expect(detail.related_state).toBe('cached');
+    expect(detail.related.length).toBe(4);
+    expect(detail.related.map((r) => r.category).sort()).toEqual(['watch', 'watch', 'wear', 'wear']);
+    expect(detail.related.every((r) => !r.is_example)).toBe(true);
+    const recs = await db.query<{ origin: string; provider_query_ids: string[] }>(
+      'SELECT origin, provider_query_ids FROM recommendations WHERE discovery_job_id = $1',
+      [started.discovery_job_id],
+    );
+    expect(recs.rows.every((r) => r.origin === 'qloo' && r.provider_query_ids.length === 1)).toBe(true);
+    const failed = await db.query(`SELECT 1 FROM provider_queries WHERE discovery_job_id = $1 AND status = 'error'`, [started.discovery_job_id]);
+    expect(failed.rowCount).toBeGreaterThan(0);
+
+    // Hidden results disappear from the cached set immediately.
+    await recordPreference(ctx, { action: 'hide', target_type: 'discovery_item', target_id: detail.related[0]!.id });
+    expect((await getItem(ctx, { id: film, query: {} })).related.map((r) => r.id)).not.toContain(detail.related[0]!.id);
+  });
+
+  it('with Qloo unavailable, finishes partial with nothing fabricated', async () => {
+    const { principal, ctx } = await accountCtx();
+    const film = await insertItem({ accountId: principal.accountId }, { kind: 'film', qloo: `x-${randomUUID()}` });
+    const started = await startRelatedDiscovery(ctx, { id: film, body: { category: 'watch' } });
+    expect((await runJob(started.job_id)).state).toBe('partial');
+    const recs = await db.query('SELECT 1 FROM recommendations WHERE discovery_job_id = $1', [started.discovery_job_id]);
+    expect(recs.rowCount).toBe(0);
+    expect((await getItem(ctx, { id: film, query: {} })).related_state).toBe('none');
+  });
+
+  it('agent related discoveries stay tied to their granted origin', async () => {
+    const { principal, ctx } = await accountCtx();
+    const prefix = randomUUID().slice(0, 6);
+    const film = await insertItem({ accountId: principal.accountId }, { kind: 'film', qloo: `${prefix}-o` });
+    const col = await createCollection(ctx, { name: 'Shared' });
+    await addCollectionItem(ctx, { id: col.id, item_id: film, body: {} });
+    const { principal: agent } = await insertAgentConnection(principal, {
+      scopes: ['collections:read'],
+      libraryAccess: 'selected_collections',
+      collectionIds: [col.id],
+    });
+    const actx = ctxFor(agent);
+    await expect(startRelatedDiscovery(actx, { id: film, body: {} })).rejects.toMatchObject({ code: 'invalid_input' });
+    const started = await startRelatedDiscovery(actx, { id: film, body: { collection_id: col.id, category: 'watch' } });
+    await runJob(started.job_id, { providers: testProviders({ qloo: qloo(prefix) }) });
+    const detail = await getItem(actx, { id: film, query: { collection_id: col.id } });
+    expect(detail.related.length).toBe(4);
+    const relatedId = detail.related[0]!.id;
+    expect((await getItem(actx, { id: relatedId, query: {} })).item.id).toBe(relatedId);
+
+    // Removing the origin from the granted collection removes access immediately.
+    await removeCollectionItem(ctx, { id: col.id, item_id: film });
+    await expect(getItem(actx, { id: relatedId, query: {} })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(getItem(actx, { id: film, query: {} })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(getJob(actx, { id: started.job_id })).rejects.toMatchObject({ code: 'not_found' });
+    // The owner still sees everything.
+    expect((await getItem(ctx, { id: relatedId, query: {} })).item.id).toBe(relatedId);
+  });
+});

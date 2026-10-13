@@ -70,7 +70,16 @@ The stream assignment given by the orchestrator wins over this table.
 
 Sessions and credentials (`services/auth.ts`, implemented): the `ca_session` HttpOnly cookie holds a random token whose sha256 is stored in `sessions.token_hash`. `GET /v1/session` (and any GET route) creates an anonymous session when none exists and returns a `csrf_token` (HMAC of the session id). Every cookie-authenticated mutation must send it as `x-csrf-token`; bearer calls skip CSRF. Mutations without any session get `401` ("Start a session first"). Agent tokens are stored as sha256 + display prefix; revoked or expired tokens fail with `token_revoked` / `token_expired` (401) on the very next call.
 
-How returning users sign in is not decided yet (the spec only requires account creation that claims the anonymous session). The accounts owner documents the chosen mechanism here.
+Accounts and sign-in (demo mechanism, `services/accounts.ts`):
+
+- `POST /v1/accounts` creates an account. `email` + `password` are optional together: with them the account can sign in anywhere (password stored only as a scrypt hash in `account_credentials`, migration `030`); without them it is a "device account" bound to this browser's session.
+- `POST /v1/session/sign-in` (`{email, password}`) and `POST /v1/session/sign-out` are extension routes. Failed sign-ins are limited per email (10/day, `rate_limited`) and unknown emails take the same time as wrong passwords.
+- Creating an account or signing in from an anonymous session **claims** it: captures (which then persist until deletion), uploads, saved items, hides, preference events, discovery items (merged by `canonical_key`, with recommendations/saves/related contexts remapped), discovery jobs, jobs and the taste profile move to the account, and the taste revision moves forward. Then the visitor's intended save runs: `pending_save` = `{target_type, target_id, collection_id? | new_collection_name?}`; the result is returned as `pending_save` in the response.
+- The session token rotates on every privilege change (account creation, sign-in, sign-out): the old cookie is revoked, a new `ca_session` cookie is set through `HandlerArgs.setSession`, and the response carries the new `csrf_token`.
+- Anonymous visitors cannot save (`403 account_required`, the UI then sends the save as `pending_save`); they can hide/unhide and browse.
+- Cookies are HttpOnly, SameSite=Lax, and Secure in production or whenever `APP_BASE_URL` is https. `SESSION_SECRET` is required in production.
+
+Quotas and abuse limits (`quotas.ts`, counters in `usage_counters`): daily `analyses` / `plans` per anonymous session or per account (agents count against their account), consumed only when new work is created (reused jobs are free), inside the same transaction. Capture intake should call `consumeDailyQuota(db, {principal, metric: 'analyses', config, now})`. `apiRoute` applies a per-IP daily limit (`IP_DAILY_REQUESTS`, salted-hash bucket, never the raw address) to every mutation and to anonymous-session creation.
 
 ### Errors
 
@@ -131,6 +140,15 @@ States are `queued`/`running` while active, then terminal `complete`, `partial` 
 Handlers must call `ctx.ensureActive()` right before publishing anything. That is how a deletion during a running job prevents publication.
 
 To add a job type, add it to `JOB_TYPES` (`enums.ts`), add its payload schema to `JobPayloads` (`jobs/types.ts`), and register its handler in `pipeline/index.ts`. TypeScript then rejects the build until all three agree.
+
+### Library, feed and plans
+
+- **Access** (`library/access.ts`): `visibleItemIds` / `requireVisibleItem` decide which discovery items a principal can see (owned or sample; for selected-collection agents only the CURRENT grant: members of granted collections, the compiled context of granted captures, related discoveries whose origin is still a granted member, items of plans derived entirely from granted items, and captures the connection created). `loadAccessibleCollection` and `planWithinGrant` apply the same rule to collections and plans. Everything outside is `404`.
+- **Taste** (`library/taste-fold.ts`): `foldPreferences` is a pure function of current saved items + hides. An item save endorses that item (weight 1) and lends its anchors 0.5; an inspiration (capture) save contributes its anchors (0.6, user-selected/confirmed 1.0); a saved item counts once however many collections hold it; hide removes only that item. Every effective save/remove/hide/unhide bumps `taste_profiles.revision` and rebuilds `summary` in the same transaction.
+- **Feed** (`services/discovery.ts`): new users (no saves) get the reviewed samples in `feed/samples.ts`; returning users get a bounded pool (120) of recommendations connected to explicit saves (saved inspirations, captures they saved results from, related jobs from saved items), fused with RRF, already-saved and hidden items removed, interleaved by category (`interleaveFeed`: dedupe, ≤2 consecutive of one category while alternatives exist). Pages read a `feed_snapshots` row; the cursor carries snapshot id + taste revision + position; Load more never generates. Hides take effect inside existing snapshots.
+- **Composer** (`composer/`): `fusion.ts` (exclusions first, reciprocal rank fusion, diversity, `familiar`/`balanced`/`adventurous` windows that always keep the strongest anchor), `dietary.ts` (exclusion matching with common forms; safety claims stripped), `movie-night.ts` (Qloo insights with real resolved ids, every Qloo pick cites its provider queries; composer-model creative fallback flagged `vlm_creative`; otherwise the section is `unavailable`), `provider-calls.ts` (≤ `JOB_MAX_QLOO_REQUESTS` per job, ≤ `JOB_MAX_PROVIDER_RETRIES` with backoff + jitter; Retry-After over 5 s re-queues the job), `store.ts` (stable identities: `qloo:<id>`, `film:<title>|<year>`, `food:<title>|<reference ids>`).
+- **Plans**: `POST /v1/plans` snapshots selected items, anchors (with revisions), constraints and collection revision into `plan_versions.input_snapshot`; the pipelines read only the snapshot. Replacement creates a new version copying the other sections and never re-proposes earlier picks of that section; all versions are kept. Collection deletion detaches `source_collection_id` but keeps the plan.
+- **Test support**: `packages/domain/src/test-support/library.ts` has factories (items, references, captures with analyses, saves) and `runJob(jobId, {providers})`, which runs a queued job through `JOB_HANDLERS` with the worker contract.
 
 ### Providers and capabilities
 

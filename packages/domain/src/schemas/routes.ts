@@ -52,6 +52,8 @@ const JobParams = z.object({ id: Uuid });
 export const ROUTES = {
   getSession: { method: 'GET', path: '/v1/session', auth: 'public', scopes: [], response: Auth.SessionResponse, status: 200, idempotent: false, extension: true },
   createAccount: { method: 'POST', path: '/v1/accounts', auth: 'any', scopes: [], body: Auth.CreateAccountRequest, response: Auth.CreateAccountResponse, status: 201, idempotent: true, extension: true },
+  signIn: { method: 'POST', path: '/v1/session/sign-in', auth: 'any', scopes: [], body: Auth.SignInRequest, response: Auth.SignInResponse, status: 200, idempotent: false, extension: true },
+  signOut: { method: 'POST', path: '/v1/session/sign-out', auth: 'any', scopes: [], body: Auth.SignOutRequest, response: Auth.SessionResponse, status: 200, idempotent: false, extension: true },
   createUpload: { method: 'POST', path: '/v1/uploads', auth: 'any', scopes: ['captures:write'], body: 'multipart', response: U.UploadResponse, status: 201, idempotent: true, extension: true },
 
   createCapture: { method: 'POST', path: '/v1/captures', auth: 'any', scopes: ['captures:write'], body: 'json_or_multipart', response: Cap.CreateCaptureResponse, status: 202, idempotent: true, mcpTool: 'analyze_capture' },

@@ -6,6 +6,7 @@ import {
   AppError,
   auth,
   createServiceContext,
+  enforceIpLimit,
   getDb,
   getDomainConfig,
   invalidInput,
@@ -53,6 +54,11 @@ export interface HandlerArgs<C extends RouteContract> {
   query: Out<C['query']>;
   body: BodyOf<C>;
   request: NextRequest;
+  /**
+   * Replace the browser session cookie (account creation, sign-in, sign-out).
+   * The session id rotates on every privilege change.
+   */
+  setSession(token: string, expiresAt: Date): void;
 }
 
 type ResponseOf<C extends RouteContract> = C['response'] extends z.ZodType ? z.input<C['response']> : void;
@@ -61,9 +67,20 @@ type Segment = { params: Promise<Record<string, string | string[] | undefined>> 
 
 const SENSOR_BRIDGE_ROUTES = new Set(['POST /v1/uploads', 'POST /v1/captures', 'GET /v1/jobs/{id}']);
 
-function cookieOptions(maxAgeSeconds: number) {
-  const secure = getDomainConfig().APP_BASE_URL.startsWith('https://');
-  return { httpOnly: true, sameSite: 'lax' as const, secure, path: '/', maxAge: maxAgeSeconds };
+/** HttpOnly, SameSite=Lax; Secure in production or whenever the app is served over HTTPS. */
+export function cookieOptions(maxAgeSeconds: number) {
+  const config = getDomainConfig();
+  const secure = config.NODE_ENV === 'production' || config.APP_BASE_URL.startsWith('https://');
+  return { httpOnly: true, sameSite: 'lax' as const, secure, path: '/', maxAge: Math.max(0, Math.floor(maxAgeSeconds)) };
+}
+
+/**
+ * Client address for per-IP abuse limits: the first X-Forwarded-For hop (set
+ * by the deployment proxy), else X-Real-IP. Only a salted hash is stored.
+ */
+export function clientIp(request: Request): string | null {
+  const forwarded = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  return forwarded || request.headers.get('x-real-ip')?.trim() || null;
 }
 
 async function readRawBody(request: NextRequest, contract: RouteContract): Promise<{ raw: RawBody; digest: string }> {
@@ -133,11 +150,16 @@ export function apiRoute<C extends RouteContract>(
       const authorization = request.headers.get('authorization');
       let principal = await auth.resolvePrincipal(db, { sessionToken, authorization });
       const isMutation = contract.method !== 'GET';
+      const ip = clientIp(request);
+
+      // Per-IP abuse limit on anything that creates state (never merges users' data).
+      if (isMutation) await enforceIpLimit(db, { ip, config, now: new Date() });
 
       if (!principal) {
         if (isMutation) {
           throw new AppError('unauthenticated', { message: 'Start a session first (GET /v1/session).' });
         }
+        await enforceIpLimit(db, { ip, config, now: new Date(), metric: 'sessions', limit: Math.max(50, Math.floor(config.IP_DAILY_REQUESTS / 4)) });
         const s = await auth.createAnonymousSession(db, config);
         newSession = { token: s.token, expiresAt: s.expiresAt };
         principal = { kind: 'anonymous', sessionId: s.sessionId, expiresAt: s.expiresAt };
@@ -164,8 +186,11 @@ export function apiRoute<C extends RouteContract>(
       }
 
       const ctx = createServiceContext(principal, { requestId, db, config, surface: 'rest' });
+      const setSession = (token: string, expiresAt: Date) => {
+        newSession = { token, expiresAt };
+      };
       const run = async () => {
-        const result = await handler({ ctx, params, query, body: body as BodyOf<C>, request });
+        const result = await handler({ ctx, params, query, body: body as BodyOf<C>, request, setSession });
         if (contract.response === null) return { status: 204, body: null };
         let out: unknown = result;
         if (config.NODE_ENV !== 'production') {
@@ -189,8 +214,13 @@ export function apiRoute<C extends RouteContract>(
         result.status === 204 ? new NextResponse(null, { status: 204 }) : NextResponse.json(result.body, { status: result.status });
       response.headers.set('x-request-id', requestId);
       if (result.replayed) response.headers.set('idempotent-replayed', 'true');
-      if (newSession) {
-        response.cookies.set(auth.SESSION_COOKIE, newSession.token, cookieOptions(config.ANON_SESSION_TTL_HOURS * 3600));
+      const issued = newSession as { token: string; expiresAt: Date } | null;
+      if (issued) {
+        response.cookies.set(
+          auth.SESSION_COOKIE,
+          issued.token,
+          cookieOptions((issued.expiresAt.getTime() - Date.now()) / 1000),
+        );
       }
       return response;
     } catch (err) {

@@ -4,6 +4,7 @@ export * from './principal';
 export * from './config';
 export * from './context';
 export * from './idempotency';
+export * from './quotas';
 export * from './authz';
 export * from './db/pool';
 export * from './jobs';

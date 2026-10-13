@@ -2,7 +2,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { DomainConfig } from '../config';
 import type { Db, Queryable } from '../db/pool';
 import type { LibraryAccess, Scope } from '../enums';
-import { AppError, notImplemented } from '../errors';
+import { AppError } from '../errors';
+import { createAccountImpl } from './accounts';
 import type { Principal } from '../principal';
 import type { CreateAccountRequest, CreateAccountResponse, SessionResponse } from '../schemas/auth';
 import type { ServiceContext } from '../context';
@@ -166,16 +167,15 @@ export async function getSessionInfo(ctx: ServiceContext): Promise<SessionRespon
  * session (move its captures, saved items, preference events, taste profile,
  * jobs and discovery items to the account; dedupe by canonical_key), then
  * perform `pending_save` if given. Returns the new session token for the cookie.
- * TODO(accounts owner): implement. Auth mechanism for returning users is a
- * product decision documented in docs/ARCHITECTURE.md (demo: device session).
+ * Returning users sign in with email + password (services/accounts.ts).
  */
 export async function createAccount(
   ctx: ServiceContext,
   input: CreateAccountRequest,
 ): Promise<CreateAccountResponse & { sessionToken: string; expiresAt: Date }> {
-  void ctx;
-  void input;
-  notImplemented('auth.createAccount');
+  return createAccountImpl(ctx, input);
 }
+
+export { signIn, signOut, claimSession } from './accounts';
 
 export type { Db };
