@@ -5,6 +5,7 @@ import {
   JobCancelledError,
   claimJobs,
   completeJob,
+  enqueueJob,
   failJob,
   heartbeatJob,
   isAppError,
@@ -44,6 +45,14 @@ export interface WorkerOptions {
   /** Only claim these job ids (tests / targeted reprocessing). */
   jobIds?: readonly string[];
   log?: (message: string, data?: Record<string, unknown>) => void;
+  /** Enqueue the purge job periodically (default: on unless jobIds is set). */
+  schedulePurge?: boolean;
+  purgeEveryMs?: number;
+}
+
+/** One purge per hour bucket at most: the dedupe key makes concurrent workers agree. */
+export function purgeDedupeKey(now: Date): string {
+  return `purge_deleted:${now.toISOString().slice(0, 13)}`;
 }
 
 export function toFailure(err: unknown): { failure: JobFailure; retryAfterMs?: number } {
@@ -66,6 +75,7 @@ export class Worker {
   private stopped = false;
   private loop?: Promise<void>;
   private lastReap = 0;
+  private lastPurge = 0;
 
   constructor(private readonly opts: WorkerOptions) {
     this.workerId = opts.workerId ?? `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
@@ -89,6 +99,12 @@ export class Worker {
     if (Date.now() - this.lastReap > 15_000) {
       this.lastReap = Date.now();
       await reapJobs(this.opts.db).catch((e: Error) => this.log('reap failed', { error: e.message }));
+    }
+    if ((this.opts.schedulePurge ?? !this.opts.jobIds) && Date.now() - this.lastPurge > (this.opts.purgeEveryMs ?? 600_000)) {
+      this.lastPurge = Date.now();
+      await enqueueJob(this.opts.db, { type: 'purge_deleted', owner: null, payload: {}, dedupeKey: purgeDedupeKey(new Date()), maxAttempts: 3 }).catch((e: Error) =>
+        this.log('purge enqueue failed', { error: e.message }),
+      );
     }
     const free = this.concurrency - this.running.size;
     if (free <= 0 || this.stopped) return 0;

@@ -1,0 +1,88 @@
+{
+  "title": "A table of two cuisines",
+  "interpretation": "This table resembles a mix of Japanese and Peruvian dishes.",
+  "observations": [
+    {
+      "id": "o1",
+      "text": "Raw fish slices with lime and chili",
+      "kind": "food",
+      "region_ids": [
+        "r1"
+      ]
+    },
+    {
+      "id": "o2",
+      "text": "Ceramic sake cups",
+      "kind": "object",
+      "region_ids": [
+        "r2"
+      ]
+    }
+  ],
+  "visible_text": [],
+  "candidates": [
+    {
+      "id": "c1",
+      "name": "Nikkei cuisine",
+      "type": "cuisine",
+      "relation": "resembles",
+      "rationale": "Ceviche-like dish with Japanese serving ware",
+      "certainty": 0.5,
+      "region_ids": [
+        "r1",
+        "r2"
+      ],
+      "suggested_categories": [
+        "eat"
+      ],
+      "tag_queries": []
+    },
+    {
+      "id": "c2",
+      "name": "Japanese ceramics",
+      "type": "tradition",
+      "relation": "resembles",
+      "rationale": "Glazed sake cups",
+      "certainty": 0.45,
+      "region_ids": [
+        "r2"
+      ],
+      "suggested_categories": [
+        "eat",
+        "watch"
+      ],
+      "tag_queries": []
+    }
+  ],
+  "regions": [
+    {
+      "id": "r1",
+      "label": "dish",
+      "box": {
+        "x": 0.2,
+        "y": 0.3,
+        "w": 0.4,
+        "h": 0.3
+      }
+    },
+    {
+      "id": "r2",
+      "label": "cups",
+      "box": {
+        "x": 0.65,
+        "y": 0.3,
+        "w": 0.2,
+        "h": 0.2
+      }
+    }
+  ],
+  "uncertainty": {
+    "overall": "medium",
+    "notes": []
+  },
+  "competing_subjects": [],
+  "quality": {
+    "usable": true,
+    "issue": null
+  }
+}

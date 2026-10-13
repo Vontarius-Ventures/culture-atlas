@@ -12,5 +12,8 @@
   "dependencies": {
     "@culture-atlas/domain": "workspace:*",
     "@culture-atlas/providers": "workspace:*"
+  },
+  "devDependencies": {
+    "sharp": "0.35.5"
   }
 }

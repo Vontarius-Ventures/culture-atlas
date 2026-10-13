@@ -1,0 +1,48 @@
+{
+  "results": [
+    {
+      "entity_id": "FIXTURE-BRAND-0001",
+      "name": "Fixture Denim Co",
+      "types": [
+        "urn:entity:brand"
+      ],
+      "popularity": 0.93,
+      "properties": {
+        "short_description": "Shape-only fixture brand (not real Qloo data)",
+        "image": {
+          "url": "https://images.example.invalid/fixture-brand.jpg"
+        },
+        "external": {
+          "wikidata": [
+            {
+              "id": "Q0"
+            }
+          ]
+        },
+        "internal_scoring_blob": {
+          "dropped": true
+        }
+      },
+      "tags": [
+        {
+          "id": "urn:tag:genre:qloo:fixture_workwear",
+          "name": "Fixture Workwear",
+          "type": "urn:tag:genre:qloo"
+        },
+        {
+          "name": "tag without id is dropped"
+        }
+      ]
+    },
+    {
+      "name": "Result without entity_id is dropped"
+    },
+    {
+      "entity_id": "FIXTURE-BRAND-0002",
+      "name": "Fixture Selvedge Works",
+      "type": "urn:entity",
+      "subtype": "urn:entity:brand",
+      "properties": {}
+    }
+  ]
+}

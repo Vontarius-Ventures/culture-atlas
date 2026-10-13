@@ -1,4 +1,5 @@
 import type { CapabilityEntry } from '../capabilities';
+import type { MediaVerification } from './signing';
 
 /**
  * Private object storage for images. Keys are opaque, e.g.
@@ -23,4 +24,9 @@ export interface ObjectStorage {
    * and served by apps/web; S3 driver: presigned GET.
    */
   signedUrl(key: string, options?: { expiresInSeconds?: number }): Promise<string>;
+  /**
+   * Drivers that sign /v1/media links (local, memory) verify them here;
+   * S3 uses presigned URLs and does not implement it.
+   */
+  verifySignedRequest?(params: URLSearchParams, nowMs?: number): MediaVerification;
 }

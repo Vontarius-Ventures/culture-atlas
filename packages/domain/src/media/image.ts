@@ -1,4 +1,6 @@
-import { notImplemented } from '../errors';
+import { createHash } from 'node:crypto';
+import sharp, { type Metadata, type OutputInfo } from 'sharp';
+import { AppError } from '../errors';
 
 /**
  * Image intake (build spec "Cultural compilation pipeline" step 1):
@@ -8,7 +10,8 @@ import { notImplemented } from '../errors';
  * derivative bounded to IMAGE_MAX_EDGE (2048 px) long edge.
  * Accept JPEG, PNG, WebP; HEIC only when the decoder supports it. NOTE: the
  * prebuilt sharp/libvips used here decodes AVIF but NOT HEVC-based HEIC, so
- * HEIC must return `unsupported_image` with conversion guidance.
+ * HEIC is attempted and otherwise returns `unsupported_image` with conversion
+ * guidance. AVIF is not in the spec's accepted list and is rejected.
  * Errors: payload_too_large (bytes > UPLOAD_MAX_BYTES), unsupported_image
  * (unknown format / undecodable / too many pixels).
  */
@@ -33,6 +36,10 @@ export interface ImageLimits {
   maxEdge: number;
 }
 
+export const ACCEPTED_FORMATS_MESSAGE = 'Use a JPEG, PNG or WebP photo up to 15 MB.';
+export const HEIC_GUIDANCE =
+  'HEIC photos can’t be read here yet. Export the photo as JPEG (on iPhone: Settings › Camera › Formats › Most Compatible) and try again.';
+
 /** Identify the image type from magic bytes; null when not an accepted image. */
 export function sniffImageType(bytes: Uint8Array): SniffedType | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
@@ -48,9 +55,63 @@ export function sniffImageType(bytes: Uint8Array): SniffedType | null {
   return null;
 }
 
-/** TODO(captures owner): implement with sharp as documented above. */
+export function sha256Hex(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function unsupported(message: string, details?: Record<string, unknown>): AppError {
+  return new AppError('unsupported_image', { message, details });
+}
+
+/**
+ * Validates and normalizes an uploaded image. Never trusts the declared
+ * content type or filename. The returned derivative carries no EXIF/XMP/ICC
+ * metadata (so no GPS location) and is already rotated upright.
+ */
 export async function normalizeImage(bytes: Uint8Array, limits: ImageLimits): Promise<NormalizedImage> {
-  void bytes;
-  void limits;
-  notImplemented('media.normalizeImage');
+  if (bytes.byteLength === 0) throw unsupported(ACCEPTED_FORMATS_MESSAGE, { reason: 'empty' });
+  if (bytes.byteLength > limits.maxBytes) {
+    throw new AppError('payload_too_large', { details: { max_bytes: limits.maxBytes } });
+  }
+  const type = sniffImageType(bytes);
+  if (!type) throw unsupported(ACCEPTED_FORMATS_MESSAGE, { reason: 'unknown_format' });
+  if (type === 'image/avif') throw unsupported(ACCEPTED_FORMATS_MESSAGE, { reason: 'format_not_accepted', format: 'avif' });
+  const isHeic = type === 'image/heic' || type === 'image/heif';
+
+  let meta: Metadata;
+  try {
+    // Header-only read; no pixel decode yet.
+    meta = await sharp(bytes, { failOn: 'error', limitInputPixels: false }).metadata();
+  } catch {
+    throw unsupported(isHeic ? HEIC_GUIDANCE : ACCEPTED_FORMATS_MESSAGE, { reason: isHeic ? 'heic_not_supported' : 'undecodable' });
+  }
+  if (!meta.width || !meta.height) throw unsupported(ACCEPTED_FORMATS_MESSAGE, { reason: 'undecodable' });
+  if (meta.width * meta.height > limits.maxPixels) {
+    throw unsupported(`Photos can be up to ${Math.floor(limits.maxPixels / 1_000_000)} megapixels.`, {
+      reason: 'too_many_pixels',
+      max_pixels: limits.maxPixels,
+    });
+  }
+
+  let out: { data: Buffer; info: OutputInfo };
+  try {
+    out = await sharp(bytes, { failOn: 'error', limitInputPixels: limits.maxPixels, pages: 1 })
+      .rotate() // apply EXIF orientation, then drop the tag
+      .resize({ width: limits.maxEdge, height: limits.maxEdge, fit: 'inside', withoutEnlargement: true })
+      .flatten({ background: '#ffffff' })
+      .jpeg({ quality: 85, mozjpeg: true })
+      .toBuffer({ resolveWithObject: true });
+  } catch {
+    throw unsupported(isHeic ? HEIC_GUIDANCE : ACCEPTED_FORMATS_MESSAGE, { reason: isHeic ? 'heic_not_supported' : 'undecodable' });
+  }
+
+  return {
+    derivative: new Uint8Array(out.data),
+    derivativeContentType: 'image/jpeg',
+    width: out.info.width,
+    height: out.info.height,
+    sha256: sha256Hex(bytes),
+    originalContentType: type,
+    originalByteSize: bytes.byteLength,
+  };
 }

@@ -1,0 +1,57 @@
+{
+  "title": "Quiet minimalist tailoring",
+  "interpretation": "A few minimalist tailoring references stood out.",
+  "observations": [
+    {
+      "id": "o1",
+      "text": "Unbranded charcoal wool coat with clean lines",
+      "kind": "garment",
+      "region_ids": [
+        "r1"
+      ]
+    }
+  ],
+  "visible_text": [],
+  "candidates": [
+    {
+      "id": "c1",
+      "name": "Minimalist tailoring",
+      "type": "style",
+      "relation": "resembles",
+      "rationale": "Clean lines and no visible branding",
+      "certainty": 0.5,
+      "region_ids": [
+        "r1"
+      ],
+      "suggested_categories": [
+        "wear"
+      ],
+      "tag_queries": [
+        "minimalist"
+      ]
+    }
+  ],
+  "regions": [
+    {
+      "id": "r1",
+      "label": "coat",
+      "box": {
+        "x": 0.2,
+        "y": 0.1,
+        "w": 0.6,
+        "h": 0.8
+      }
+    }
+  ],
+  "uncertainty": {
+    "overall": "medium",
+    "notes": [
+      "no brand evidence"
+    ]
+  },
+  "competing_subjects": [],
+  "quality": {
+    "usable": true,
+    "issue": null
+  }
+}

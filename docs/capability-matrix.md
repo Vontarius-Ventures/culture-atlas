@@ -4,11 +4,13 @@ What each provider capability can actually do in this deployment. Source of trut
 
 Statuses: **available** (probed and working) · **degraded** (working with limits) · **unverified** (configured, not yet probed; calls attempted, failures mark it unavailable) · **unavailable** (not configured, not implemented, or inaccessible — dependent features show partial states, never simulated data).
 
-Last updated: 2026-10-13 (foundation commit). Qloo key: **not yet issued**.
+Last updated: 2026-10-13 (provider adapters implemented). Qloo key: **not yet issued**.
 
 ## Qloo (hackathon key pending)
 
-Probes to run with the hackathon key (`scripts/probe-qloo.ts`, owned by the Qloo adapter), per the build spec: resolve one brand, look up one relevant tag, request artist/film/brand/place results, inspect explainability, verify rate limits and permitted response storage.
+Probes to run with the hackathon key, per the build spec: resolve one brand, look up one relevant tag, request artist/film/brand/place results, inspect explainability, verify rate limits and permitted response storage. Run `pnpm tsx scripts/probe-qloo.ts [--brand "Levi's"] [--tag streetwear]` and paste its table below; add `--record` to save sanitized real responses for labeled replay (only after confirming storage rights).
+
+Adapter behavior (`packages/providers/src/qloo/client.ts`): `X-Api-Key` header, `QLOO_API_URL` base, `QLOO_TIMEOUT_MS` per attempt, up to two retries for 429/timeouts/5xx with exponential backoff and jitter (Retry-After honored; waits longer than 15 s are not taken in-process and the job re-queues instead), a circuit breaker (5 consecutive transient failures, 30 s cooldown), and the per-job budget (`JOB_MAX_QLOO_REQUESTS`, default 12, every HTTP attempt counts). With a key, capabilities start `unverified / probe_pending` and become `available` after a successful call, `unavailable / access_denied` after 401/403, or `degraded / circuit_open` while the breaker is open. Without a key they are `unavailable / not_configured`. Contract tests (`qloo/client.test.ts`) run against shape-only fixtures in `fixtures/qloo/contract/` with 429, timeout, 5xx, auth, malformed and empty-result injection.
 
 | Capability | Endpoint | Status | Probe | Result / notes |
 | --- | --- | --- | --- | --- |
@@ -32,12 +34,12 @@ Probes to run with the hackathon key (`scripts/probe-qloo.ts`, owned by the Qloo
 
 | Capability | Provider | Status today | Notes |
 | --- | --- | --- | --- |
-| `vlm.analyze_image` | Anthropic (`VLM_MODEL`, default `claude-sonnet-5-5`) | unavailable until `ANTHROPIC_API_KEY` is set and the adapter lands | Structured output via forced tool schema; image text treated as data |
-| `text.generate` | Anthropic (`RESEARCH_MODEL` / `COMPOSER_MODEL`) | as above | Claim extraction and plan composition |
-| `research.sources` | Wikipedia/Wikimedia REST | not implemented | Real source URLs; needs descriptive `WIKIMEDIA_USER_AGENT`; no key required |
-| `research.claims` | text model over research sources | not implemented | Factual claims require a source URL |
+| `vlm.analyze_image` | Anthropic (`VLM_MODEL`, default `claude-sonnet-5-5`) | `unavailable / not_configured` without `ANTHROPIC_API_KEY`; `unverified` with a key until the first success | Native structured outputs (`output_config.format` via `zodOutputFormat`), re-validated with zod; no tools; image text and user strings passed as data; SDK retries off, budgeted retries in the adapter; server-side refusal fallback on supported models (`ANTHROPIC_REFUSAL_FALLBACK`) |
+| `text.generate` | Anthropic (`RESEARCH_MODEL` / `COMPOSER_MODEL`) | as above | Claim extraction and dish ideas (plans use the same adapter) |
+| `research.sources` | Wikipedia Action API search + REST `/page/summary` | `unverified` until first call (no key needed) | Real canonical page URLs, CC BY-SA 4.0 text license, disambiguation skipped; `WIKIMEDIA_USER_AGENT` sent. Not reachable from this build sandbox (egress proxy 403), so tests use documented response shapes |
+| `research.claims` | text model over research sources | follows `text.generate` | Factual claims without a supplied source URL are dropped; overview and section text are assembled only from kept claims |
 | `catalog.tracks` | none | unavailable (no catalog adapter this release) | Music falls back to artist recommendations |
-| `storage.objects` / `storage.signed_urls` | local fs / S3 / memory | memory available; local and S3 not implemented | Private storage, short-lived links |
+| `storage.objects` / `storage.signed_urls` | local fs / S3 / memory | local: available (signed URLs `degraded` without `STORAGE_SIGNING_SECRET`); S3: available when `S3_BUCKET` is set, else `unavailable / not_configured` | Local links are HMAC-signed `/v1/media` URLs (`SIGNED_URL_TTL_SECONDS`, default 300); S3 links are presigned GETs capped at 1 hour |
 | Sensor relay | World Sensor relay (user's machine) | unreachable from CI | Tested against `apps/sensor-bridge` mock relay; relay routes in `apps/sensor-bridge/src/relay-contract.ts` are assumptions to verify |
 
 ## Image decoding
@@ -46,4 +48,5 @@ Probes to run with the hackathon key (`scripts/probe-qloo.ts`, owned by the Qloo
 | --- | --- | --- |
 | JPEG / PNG / WebP | supported by sharp 0.35.5 (libvips 8.18.7) | |
 | AVIF | decodable | not in the spec's accepted list; treat as accepted only if product agrees |
-| HEIC (HEVC) | **not supported** by the prebuilt libvips | return `unsupported_image` with conversion guidance |
+| HEIC (HEVC) | **not supported** by the prebuilt libvips | decode is attempted; on failure `unsupported_image` with JPEG export guidance |
+| AVIF | decodable but not accepted | rejected with `unsupported_image` (not in the spec's accepted list) |
