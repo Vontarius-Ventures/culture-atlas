@@ -123,6 +123,30 @@ describe('createPlan validation and snapshots', () => {
     });
   });
 
+  it('a photo whose references stayed unmatched (no Qloo) still counts, using those named references; rejected ones never do', async () => {
+    const s = await setupCollection({ anchorsOnCapture: false });
+    const unmatched = await insertReference({ name: 'Racing stripes', type: 'style' });
+    const rejected = await insertReference({ name: 'Something wrong', type: 'style' });
+    await db.query(
+      `INSERT INTO capture_references (analysis_id, reference_id, relation, certainty, is_anchor, resolution_status)
+       VALUES ($1, $2, 'resembles', 0.7, false, 'unmatched'), ($1, $3, 'resembles', 0.7, false, 'rejected')`,
+      [s.cap.analysisId, unmatched, rejected],
+    );
+    const res = await createPlan(s.ctx, {
+      collection_id: s.col.id,
+      expected_revision: s.revision,
+      item_ids: [s.cap.itemId, s.artist],
+      template: 'movie_night',
+      exploration: 'balanced',
+    });
+    const { rows } = await db.query<{ input_snapshot: { items: { item_id: string; anchors: { reference_id: string }[] }[] } }>(
+      'SELECT input_snapshot FROM plan_versions WHERE plan_id = $1',
+      [res.plan_id],
+    );
+    const capItem = rows[0]!.input_snapshot.items.find((i) => i.item_id === s.cap.itemId)!;
+    expect(capItem.anchors.map((a) => a.reference_id)).toEqual([unmatched]);
+  });
+
   it('a photo plus an artist is a valid input; the snapshot survives later collection edits and deletion', async () => {
     const s = await setupCollection();
     const res = await createPlan(s.ctx, {

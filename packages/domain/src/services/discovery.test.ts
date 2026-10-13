@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { SAMPLE_ITEMS } from '../feed/samples';
 import { accountCtx, anonCtx, ctxFor, insertCaptureWithAnalysis, insertItem, saveDirect } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAgentConnection } from '../testing';
-import { getDiscoveries, interleaveFeed, longestCategoryRun } from './discovery';
+import { FEED_TOP_UP_MIN, getDiscoveries, interleaveFeed, longestCategoryRun } from './discovery';
 import { getItem, startRelatedDiscovery } from './items';
 import { recordPreference } from './preferences';
 
@@ -114,10 +114,16 @@ describe('discovery feed', () => {
 
     const feed = await getDiscoveries(ctx, { limit: 24, refresh: true });
     expect(feed.is_example_feed).toBe(false);
-    expect(feed.items.map((c) => c.id).sort()).toEqual([...recs].sort());
-    expect(feed.items.every((c) => !c.is_example && c.recommendation_id)).toBe(true);
+    const connected = feed.items.filter((c) => !c.is_example);
+    expect(connected.map((c) => c.id).sort()).toEqual([...recs].sort());
+    expect(connected.every((c) => c.recommendation_id)).toBe(true);
+    // Few connected results: reviewed samples (labeled examples) fill the grid.
+    const topUp = feed.items.filter((c) => c.is_example);
+    expect(topUp.length).toBe(FEED_TOP_UP_MIN - recs.length);
+    expect(topUp.every((c) => c.recommendation_id === null)).toBe(true);
+    expect(feed.items.findIndex((c) => c.id === recs[0])).toBe(0);
     expect(longestCategoryRun(feed.items)).toBeLessThanOrEqual(2);
-    expect(feed.available_categories).toEqual(['play', 'watch', 'eat']);
+    expect(feed.available_categories).toEqual(['wear', 'play', 'watch', 'eat']);
     expect(feed.feed_revision).toBeGreaterThan(0);
   });
 

@@ -15,7 +15,17 @@ export interface ItemAnchor {
   user_selected: boolean;
 }
 
-export async function loadItemAnchors(db: Queryable, itemIds: readonly string[]): Promise<Map<string, ItemAnchor[]>> {
+export interface LoadAnchorsOptions {
+  /**
+   * Plans only: when a capture's active analysis has no resolved anchor (for
+   * example Qloo was unavailable), fall back to its unmatched references —
+   * the named observations the analysis actually made, never rejected ones.
+   * The composer resolves them by name when a provider is available.
+   */
+  unresolvedCaptureFallback?: boolean;
+}
+
+export async function loadItemAnchors(db: Queryable, itemIds: readonly string[], options: LoadAnchorsOptions = {}): Promise<Map<string, ItemAnchor[]>> {
   const out = new Map<string, ItemAnchor[]>();
   if (itemIds.length === 0) return out;
   const { rows } = await db.query<{ item_id: string } & ItemAnchor>(
@@ -36,6 +46,20 @@ export async function loadItemAnchors(db: Queryable, itemIds: readonly string[])
           WHERE di.id = ANY($1::uuid[])
             AND (cr.is_anchor OR cr.relation = 'user_selected' OR cr.resolution_status = 'user_confirmed')
             AND cr.resolution_status NOT IN ('rejected', 'unmatched')
+         ${
+           options.unresolvedCaptureFallback
+             ? `UNION ALL
+         SELECT di.id, cr.reference_id, false
+           FROM discovery_items di
+           JOIN captures c ON c.id = di.capture_id AND c.deleted_at IS NULL
+           JOIN capture_references cr ON cr.analysis_id = c.active_analysis_id
+          WHERE di.id = ANY($1::uuid[]) AND cr.resolution_status = 'unmatched'
+            AND NOT EXISTS (SELECT 1 FROM capture_references a2
+                             WHERE a2.analysis_id = c.active_analysis_id
+                               AND (a2.is_anchor OR a2.relation = 'user_selected' OR a2.resolution_status = 'user_confirmed')
+                               AND a2.resolution_status NOT IN ('rejected', 'unmatched'))`
+             : ''
+         }
        ) x
        JOIN cultural_references r ON r.id = x.rid
       GROUP BY x.item_id, r.id

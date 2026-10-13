@@ -28,6 +28,8 @@ import { getTasteRevision } from './taste';
 export const FEED_POOL_MAX = 120;
 /** Snapshots stay valid for stable pagination this long. */
 export const FEED_SNAPSHOT_TTL_HOURS = 24;
+/** Returning users with fewer connected results than this get reviewed samples after them. */
+export const FEED_TOP_UP_MIN = 24;
 
 export interface FeedCandidate {
   id: string;
@@ -137,6 +139,12 @@ export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedC
     .map((f) => ({ id: f.item.item_id, canonical_key: f.item.canonical_key, category: f.item.category, kind: f.item.kind }));
 }
 
+async function savedItemIdSet(db: Queryable, owner: Owner): Promise<Set<string>> {
+  const own = ownerPredicate(owner, '', 1);
+  const { rows } = await db.query<{ discovery_item_id: string }>(`SELECT discovery_item_id FROM saved_items WHERE ${own.sql}`, own.params);
+  return new Set(rows.map((r) => r.discovery_item_id));
+}
+
 async function hasSaves(db: Queryable, owner: Owner): Promise<boolean> {
   const own = ownerPredicate(owner, '', 1);
   const { rows } = await db.query(`SELECT 1 FROM saved_items WHERE ${own.sql} LIMIT 1`, own.params);
@@ -162,6 +170,14 @@ async function createSnapshot(ctx: ServiceContext, owner: Owner, revision: numbe
   pool = pool.filter((c) => !hidden.has(c.canonical_key));
   const isExample = pool.length === 0;
   if (isExample) pool = await sampleItemIds(ctx.db);
+  else if (pool.length < FEED_TOP_UP_MIN) {
+    // A returning user with only a few connected results still gets a full
+    // grid: reviewed samples (labeled "Example result") fill in after them.
+    const saved = await savedItemIdSet(ctx.db, owner);
+    const inPool = new Set(pool.map((p) => p.canonical_key));
+    const samples = (await sampleItemIds(ctx.db)).filter((s) => !inPool.has(s.canonical_key) && !hidden.has(s.canonical_key) && !saved.has(s.id));
+    pool = [...pool, ...samples.slice(0, FEED_TOP_UP_MIN - pool.length)];
+  }
   const available = CATEGORIES.filter((c) => pool.some((p) => p.category === c));
   const filtered = category ? pool.filter((p) => p.category === category) : pool;
   const ordered = interleaveFeed(filtered, hidden).map((c) => c.id);

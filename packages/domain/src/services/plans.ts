@@ -190,7 +190,7 @@ export async function createPlan(ctx: ServiceContext, body: CreatePlanRequest): 
     if (body.fixed_film_item_id && byId.get(body.fixed_film_item_id)?.kind !== 'film') {
       throw new AppError('invalid_input', { message: '“Use this movie” must be one of the selected films.' });
     }
-    const anchors = await loadItemAnchors(db, body.item_ids);
+    const anchors = await loadItemAnchors(db, body.item_ids, { unresolvedCaptureFallback: true });
     const items = buildSnapshotItems(ordered, anchors);
     const weak = items.filter((i) => !inputHasAnchors(i)).map((i) => i.item_id);
     if (weak.length) {
