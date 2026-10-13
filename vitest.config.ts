@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -9,10 +10,14 @@ import { defineConfig } from 'vitest/config';
  *    get a handle with `getTestDb()` from '@culture-atlas/domain/testing'.
  */
 export default defineConfig({
-  // apps/web compiles JSX with Next (tsconfig "jsx": "preserve"); tests need the automatic runtime.
+  // apps/web imports use the `@/` path alias from apps/web/tsconfig.json.
+  resolve: {
+    alias: [
+      { find: /^@\//, replacement: `${fileURLToPath(new URL('./apps/web/', import.meta.url))}` },
+    ],
+  },
+  // apps/web/tsconfig.json uses jsx: preserve (Next compiles JSX); tests compile it with the automatic runtime.
   oxc: { jsx: { runtime: 'automatic', importSource: 'react' } },
-  // Same "@/..." alias as apps/web/tsconfig.json, so route files and components resolve in tests.
-  resolve: { alias: { '@/': `${new URL('./apps/web/', import.meta.url).pathname}` } },
   test: {
     globalSetup: ['./vitest.global-setup.ts'],
     testTimeout: 20_000,
@@ -23,7 +28,12 @@ export default defineConfig({
         test: {
           name: 'node',
           environment: 'node',
-          include: ['packages/**/src/**/*.test.ts', 'apps/**/src/**/*.test.ts', 'apps/web/**/*.test.ts', 'scripts/**/*.test.ts'],
+          include: [
+            'packages/**/src/**/*.test.ts',
+            'apps/**/src/**/*.test.ts',
+            'apps/web/**/*.test.ts',
+            'scripts/**/*.test.ts',
+          ],
           exclude: ['**/node_modules/**', '**/.next/**', 'apps/web/e2e/**', '**/*.dom.test.*'],
         },
       },
