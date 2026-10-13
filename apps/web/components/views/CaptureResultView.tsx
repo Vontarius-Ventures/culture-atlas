@@ -258,7 +258,11 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
             </>
           ) : state.phase === 'failed' ? (
             <>
-              <h1 className="display display--medium">We couldn’t read this photo</h1>
+              <h1 className="display display--medium">
+                {job?.error?.code === 'provider_unavailable' || job?.error?.code === 'rate_limited'
+                  ? 'We can’t look at this photo yet'
+                  : 'We couldn’t read this photo'}
+              </h1>
               <Notice tone="error" onRetry={() => void retry()} busy={retrying}>
                 {job?.error?.message ?? 'Something went wrong while looking at this photo.'}
               </Notice>

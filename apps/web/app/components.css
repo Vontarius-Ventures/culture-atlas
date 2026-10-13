@@ -2348,3 +2348,87 @@
 .account-prompt--compact .account-prompt__lead {
   font-size: 19px;
 }
+
+/* ---- Integration fixes (real API) ------------------------------------------------- */
+
+/* Text-treatment tiles for plan inputs without a licensed image. */
+.inspired__img--text {
+  display: flex;
+  align-items: flex-end;
+  padding: var(--space-3);
+}
+
+.plan-placeholder--notice {
+  justify-content: center;
+  align-items: stretch;
+  padding: var(--space-6);
+  border-radius: var(--radius-image);
+  background: var(--quiet);
+}
+
+.plan-placeholder--notice .notice {
+  background: var(--canvas);
+}
+
+/* Small plan-form tiles: kind only; the title is printed under the tile. */
+.input-thumb__img .text-art__title,
+.input-thumb__img .text-art__subtitle {
+  display: none;
+}
+
+.account-prompt__switch {
+  margin-top: var(--space-2);
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.text-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.text-button:hover {
+  text-decoration-color: currentColor;
+}
+
+.settings__account {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* While a dialog or bottom sheet is open, toasts sit at the top so they never
+   cover the sheet's primary action. */
+body:has(.dialog-scrim) .toast {
+  top: calc(var(--space-4) + env(safe-area-inset-top));
+  bottom: auto;
+}
+
+.inspired__img--text.text-art--film,
+.inspired__img--text.text-art--track {
+  background: #2f3329;
+  color: var(--canvas);
+}
+
+.inspired__img--text.text-art--artist {
+  background: var(--accent);
+  color: var(--canvas);
+}
+
+.inspired__img--text.text-art--food {
+  background: #e8dcc8;
+}
+
+.inspired__img--text.text-art--style,
+.inspired__img--text.text-art--brand {
+  background: #ddd6c6;
+}

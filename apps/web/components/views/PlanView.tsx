@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import type { PlanSection } from '@culture-atlas/domain';
+import type { ItemKind, PlanSection } from '@culture-atlas/domain';
 import type {
   DishIdea,
   FilmPick,
@@ -13,7 +13,7 @@ import type {
 } from '@culture-atlas/domain/schemas';
 import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
 import { useAsyncEffect } from '@/lib/client/hooks';
-import { formatDate } from '@/lib/client/format';
+import { formatDate, KIND_LABELS } from '@/lib/client/format';
 import { isTerminal, useJob } from '@/lib/client/jobs';
 import { Icon } from '../Icon';
 import { useToast } from '../Toast';
@@ -33,6 +33,7 @@ const FINDING: Record<PlanSection, string> = {
 interface InputThumb {
   id: string;
   title: string;
+  kind: ItemKind | null;
   image: Image | null;
 }
 
@@ -107,7 +108,7 @@ export function PlanView({ planId }: { planId: string }) {
       ids.map((id) =>
         api
           .request('getItem', { params: { id } })
-          .then((r) => ({ id, title: r.item.title, image: r.item.image }))
+          .then((r): InputThumb => ({ id, title: r.item.title, kind: r.item.kind, image: r.item.image }))
           .catch(() => null),
       ),
     ).then((list) => setInputs(list.filter((x): x is InputThumb => x !== null)));
@@ -153,13 +154,14 @@ export function PlanView({ planId }: { planId: string }) {
   const sectionState = (s: PlanSection) => {
     if (replacing?.section === s) return 'replacing' as const;
     const st = version?.sections[s];
-    if (st === 'failed' || st === 'unavailable') return 'failed' as const;
+    if (st === 'unavailable') return 'unavailable' as const;
+    if (st === 'failed') return 'failed' as const;
     if (st === 'pending' || st === 'running') return 'pending' as const;
     return 'ready' as const;
   };
   const inputThumbs: InputThumb[] = inputs.length
     ? inputs
-    : (version?.inputs ?? []).map((i) => ({ id: i.item_id, title: i.title, image: null }));
+    : (version?.inputs ?? []).map((i) => ({ id: i.item_id, title: i.title, kind: null, image: null }));
   const weak = (version?.inputs ?? []).filter((i) => i.contribution !== 'strong');
 
   return (
@@ -359,7 +361,12 @@ export function PlanView({ planId }: { planId: string }) {
                   {i.image ? (
                     <img src={i.image.url} alt="" className="inspired__img" />
                   ) : (
-                    <span className="inspired__img inspired__img--text" aria-hidden="true" />
+                    <span
+                      className={`inspired__img inspired__img--text${i.kind ? ` text-art--${i.kind}` : ''}`}
+                      aria-hidden="true"
+                    >
+                      {i.kind && <span className="text-art__kind">{KIND_LABELS[i.kind]}</span>}
+                    </span>
                   )}
                   <span className="inspired__title">{i.title}</span>
                 </Link>
@@ -406,6 +413,12 @@ export function PlanView({ planId }: { planId: string }) {
   );
 }
 
+const UNAVAILABLE: Record<PlanSection, string> = {
+  film: 'Film picks are taking longer. Try again in a little while.',
+  food: 'Food ideas are taking longer.',
+  music: 'Music picks are taking longer.',
+};
+
 function ChangeButton({
   section,
   onClick,
@@ -433,21 +446,24 @@ function SectionPlaceholder({
   onRetry,
   large,
 }: {
-  state: 'pending' | 'replacing' | 'failed' | 'ready';
+  state: 'pending' | 'replacing' | 'failed' | 'unavailable' | 'ready';
   section: PlanSection;
   onRetry: () => void;
   large?: boolean;
 }) {
-  if (state === 'failed') {
-    return (
+  if (state === 'failed' || state === 'unavailable') {
+    const notice = (
       <Notice onRetry={onRetry} retryLabel="Try again">
-        {section === 'music'
-          ? 'Music isn’t ready yet.'
-          : section === 'food'
-            ? 'Food ideas aren’t ready yet.'
-            : 'The film isn’t ready yet.'}
+        {state === 'unavailable'
+          ? UNAVAILABLE[section]
+          : section === 'music'
+            ? 'Music isn’t ready yet.'
+            : section === 'food'
+              ? 'Food ideas aren’t ready yet.'
+              : 'The film isn’t ready yet.'}
       </Notice>
     );
+    return large ? <div className="plan-placeholder plan-placeholder--large plan-placeholder--notice">{notice}</div> : notice;
   }
   return (
     <div

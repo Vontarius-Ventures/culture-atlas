@@ -58,6 +58,42 @@ export function accessSummary(
   return list.join(', ');
 }
 
+/** Signed-in account: sign out (the next visit starts a fresh private session). */
+function AccountSection() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const signOut = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.request('signOut', { body: {} });
+      await api.refreshSession();
+      window.location.assign('/');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Something went wrong.');
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="settings__section" aria-labelledby="settings-account">
+      <h2 id="settings-account" className="section-title section-title--display">
+        Your account
+      </h2>
+      <div className="settings__account">
+        <p>You’re signed in. Your collections and plans are private to you.</p>
+        <button type="button" className="button button--outline" onClick={() => void signOut()} disabled={busy}>
+          {busy ? 'Signing out…' : 'Sign out'}
+        </button>
+      </div>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
 /** Account settings: agent connections (scoped, revocable) and World Sensor import status. */
 export function SettingsView() {
   const { session, isAccount } = useSession();
@@ -74,6 +110,7 @@ export function SettingsView() {
         </section>
       ) : isAccount ? (
         <>
+          <AccountSection />
           <AgentConnections />
           <SensorConnections />
           <section className="settings__section">
