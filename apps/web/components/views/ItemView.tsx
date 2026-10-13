@@ -1,0 +1,277 @@
+'use client';
+
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useCallback, useState } from 'react';
+import type { ItemDetailResponse } from '@culture-atlas/domain/schemas';
+import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
+import { useAsyncEffect } from '@/lib/client/hooks';
+import { hostOf } from '@/lib/client/format';
+import { useJob } from '@/lib/client/jobs';
+import { cardToTarget, useSave } from '@/lib/client/save';
+import { applyOverrides, useItemOverrides } from '@/lib/client/store';
+import { CardGrid, DiscoveryCard, SkeletonGrid, TextArt } from '../DiscoveryCard';
+import { Icon } from '../Icon';
+import { useToast } from '../Toast';
+import { BackLink, Disclosure, MoreMenu, Notice, PageError } from '../ui';
+import { referencePhrase } from './CaptureResultView';
+
+/** Where "Back" goes, from the `from` query the opener set. */
+export function backTarget(params: URLSearchParams): { href: string; label: string } {
+  const from = params.get('from');
+  if (from === 'capture' && params.get('capture'))
+    return { href: `/captures/${params.get('capture')}`, label: 'Your photo' };
+  if (from === 'collection' && params.get('collection'))
+    return { href: `/collections/${params.get('collection')}`, label: 'Collection' };
+  if (from === 'later') return { href: '/collections/later', label: 'Saved for later' };
+  if (from === 'reference' && params.get('reference'))
+    return { href: `/references/${params.get('reference')}`, label: 'Back' };
+  if (from === 'item') return { href: '/', label: 'Back' };
+  return { href: '/', label: 'Discover' };
+}
+
+/**
+ * Item detail: open two-column layout on desktop (large image left; name,
+ * actions and related discoveries right), a dedicated page with Back on mobile.
+ * "Explore the references" and "Why this?" are quiet disclosures, closed by default.
+ * Opening the page never starts generation; "Discover more" is explicit and bounded.
+ */
+export function ItemView({ itemId }: { itemId: string }) {
+  const router = useRouter();
+  const search = useSearchParams();
+  const rec = search.get('rec') ?? undefined;
+  const collectionCtx = search.get('collection') ?? undefined;
+  const back = backTarget(new URLSearchParams(search.toString()));
+  const { openSave, hide } = useSave();
+  const toast = useToast();
+  const overrides = useItemOverrides();
+  const [data, setData] = useState<ItemDetailResponse | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [relatedJob, setRelatedJob] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.request('getItem', {
+        params: { id: itemId },
+        query: {
+          recommendation_id: rec,
+          collection_id: search.get('from') === 'collection' ? collectionCtx : undefined,
+        },
+      });
+      setData(res);
+      setError(null);
+      if (res.related_state === 'pending' && res.related_job_id) setRelatedJob(res.related_job_id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err : null);
+    }
+  }, [itemId, rec, collectionCtx, search]);
+
+  useAsyncEffect(load, [load]);
+
+  const related = useJob(relatedJob, (job) => {
+    if (job.state !== 'queued' && job.state !== 'running') {
+      void load().then(() => toast.announce('Related discoveries updated'));
+    }
+  });
+
+  if (error && !data) {
+    return (
+      <div className="page">
+        <BackLink href={back.href} label={back.label} />
+        <PageError
+          message={error.status === 404 ? 'This item isn’t available.' : error.message}
+          onRetry={error.status === 404 ? undefined : () => void load()}
+        />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="page item-detail" aria-busy="true">
+        <BackLink href={back.href} label={back.label} />
+        <div className="item-detail__layout">
+          <div className="item-detail__media skeleton" />
+          <div className="item-detail__body">
+            <div className="skeleton skeleton--title" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const item = applyOverrides([data.item], overrides)[0] ?? { ...data.item };
+  const relatedCards = applyOverrides(data.related, overrides);
+  const pending = related.active || data.related_state === 'pending';
+
+  const discoverMore = async () => {
+    setStarting(true);
+    try {
+      const res = await api.request('discoverRelated', {
+        params: { id: itemId },
+        body: { collection_id: collectionCtx },
+        idempotencyKey: newIdempotencyKey(),
+      });
+      setRelatedJob(res.job_id);
+      toast.announce('Looking for more related discoveries');
+    } catch (err) {
+      toast.show({
+        message: err instanceof ApiError ? err.message : 'That didn’t work. Try again.',
+      });
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const menuItems = [
+    {
+      label: 'Hide this',
+      onSelect: async () => {
+        try {
+          await hide(item.id, item.title);
+          router.push(back.href);
+        } catch (err) {
+          toast.show({ message: err instanceof ApiError ? err.message : 'That didn’t work.' });
+        }
+      },
+    },
+  ];
+
+  return (
+    <div className="page item-detail">
+      <BackLink href={back.href} label={back.label} />
+      <div className="item-detail__layout">
+        <div className="item-detail__media">
+          {item.image ? (
+            <img
+              src={item.image.url}
+              alt={item.image.alt || item.title}
+              className="item-detail__img"
+            />
+          ) : (
+            <TextArt card={item} />
+          )}
+        </div>
+        <div className="item-detail__body">
+          <h1 className="display">{item.title}</h1>
+          {item.subtitle && <p className="item-detail__subtitle">{item.subtitle}</p>}
+          {data.reason && <p className="lede">{data.reason}</p>}
+          {item.is_example && <p className="example-label">Example result</p>}
+          <div className="item-detail__actions">
+            <button
+              type="button"
+              className={`button button--primary${item.saved ? ' is-saved' : ''}`}
+              onClick={(e) => openSave(cardToTarget(item), e.currentTarget)}
+            >
+              <Icon name={item.saved ? 'bookmarkFilled' : 'bookmark'} />
+              <span>{item.saved ? 'Saved' : 'Save'}</span>
+            </button>
+            {data.destination_url && (
+              <a
+                className="button button--quiet"
+                href={data.destination_url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>Visit {hostOf(data.destination_url)}</span>
+                <Icon name="external" size={16} />
+              </a>
+            )}
+            <MoreMenu label={`More options for ${item.title}`} items={menuItems} />
+          </div>
+          {data.capture_id && (
+            <p>
+              <Link href={`/captures/${data.capture_id}`} className="text-link">
+                See discoveries from this photo
+              </Link>
+            </p>
+          )}
+          <div className="disclosures">
+            {data.references.length > 0 && (
+              <Disclosure label="Explore the references">
+                <ul className="reference-list">
+                  {data.references.map((ref) => (
+                    <li key={ref.id}>
+                      {ref.has_page ? (
+                        <Link href={`/references/${ref.id}`} className="reference-link">
+                          <span>{referencePhrase(ref)}</span>
+                          <Icon name="arrowRight" size={16} />
+                        </Link>
+                      ) : (
+                        <span className="reference-plain">{referencePhrase(ref)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </Disclosure>
+            )}
+            {data.why_this && (
+              <Disclosure label="Why this?">
+                <p>{data.why_this.text}</p>
+                {data.why_this.sources.length > 0 && (
+                  <ul className="source-list">
+                    {data.why_this.sources.map((s) => (
+                      <li key={s.id}>
+                        <a
+                          href={s.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-link"
+                        >
+                          {s.title ?? hostOf(s.url)}
+                        </a>
+                        {s.publisher && <span className="muted"> · {s.publisher}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Disclosure>
+            )}
+          </div>
+
+          <section className="related" aria-labelledby="related-heading">
+            <h2 id="related-heading" className="section-title section-title--display">
+              You might also like
+            </h2>
+            {relatedCards.length > 0 && (
+              <CardGrid columns="related" label="Related discoveries">
+                {relatedCards.map((card) => (
+                  <li key={card.id}>
+                    <DiscoveryCard
+                      card={card}
+                      aspect="portrait"
+                      href={`/items/${card.id}?from=item${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`}
+                      onSave={(c, el) => openSave(cardToTarget(c), el)}
+                    />
+                  </li>
+                ))}
+              </CardGrid>
+            )}
+            {pending && <SkeletonGrid count={3} columns="related" />}
+            {related.job?.state === 'failed' && (
+              <Notice onRetry={() => void discoverMore()}>
+                Related discoveries are taking longer.
+              </Notice>
+            )}
+            {!pending && relatedCards.length === 0 && related.job?.state !== 'failed' && (
+              <p className="muted">No related discoveries yet.</p>
+            )}
+            {!pending && (
+              <div className="related__more">
+                <button
+                  type="button"
+                  className="button button--outline"
+                  onClick={() => void discoverMore()}
+                  disabled={starting}
+                >
+                  {starting ? 'Starting…' : 'Discover more'}
+                </button>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  );
+}
