@@ -8,6 +8,7 @@ import { createObjectStorage } from './index';
 import { serveSignedMedia } from './media';
 import { LocalFsStorage } from './local';
 import { S3Storage } from './s3';
+import { resolveFromWorkspace } from '../paths';
 import { isSafeObjectKey, verifySignedMedia } from './signing';
 
 const dirs: string[] = [];
@@ -20,6 +21,16 @@ async function localStorage(secret = 'test-secret') {
   dirs.push(dir);
   return new LocalFsStorage(dir, { baseUrl: 'http://app.test', secret, ttlSeconds: 300 });
 }
+
+describe('resolveFromWorkspace', () => {
+  it('anchors relative paths at the workspace root regardless of cwd', () => {
+    const fromWeb = resolveFromWorkspace('.data/objects', path.resolve(import.meta.dirname, '../../../../apps/web'));
+    const fromWorker = resolveFromWorkspace('.data/objects', path.resolve(import.meta.dirname, '../../../../apps/worker'));
+    expect(fromWeb).toBe(fromWorker);
+    expect(fromWeb).toBe(path.resolve(import.meta.dirname, '../../../../.data/objects'));
+    expect(resolveFromWorkspace('/abs/dir')).toBe('/abs/dir');
+  });
+});
 
 describe('object keys', () => {
   it('rejects traversal and absolute keys', () => {

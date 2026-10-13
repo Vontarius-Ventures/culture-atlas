@@ -2,6 +2,7 @@ import { type CapabilityEntry, type CapabilityReason } from '../capabilities';
 import type { ProviderConfig } from '../config';
 import { ProviderError, type CallOptions, type ProviderErrorKind } from '../errors';
 import { attemptSignal, CircuitBreaker, parseRetryAfter, retriesFor, withRetries, type Sleep } from '../http/resilience';
+import { resolveFromWorkspace } from '../paths';
 import { UnavailableQloo } from '../unavailable';
 import { parseEntityTrends, parseInsights, parseSearch, parseTags, parseTrending, QlooShapeError } from './parse';
 import { createReplayQloo } from './replay';
@@ -334,7 +335,7 @@ function readRateLimit(headers: Headers): QlooResponse<unknown>['rate_limit'] {
 export function createQlooProvider(config: ProviderConfig, options: Partial<Omit<QlooHttpOptions, 'apiKey' | 'baseUrl' | 'timeoutMs'>> = {}): QlooProvider {
   if (!config.QLOO_API_KEY) {
     if (config.QLOO_REPLAY_FIXTURES) {
-      const replay = createReplayQloo(config.QLOO_REPLAY_DIR);
+      const replay = createReplayQloo(config.QLOO_REPLAY_DIR ? resolveFromWorkspace(config.QLOO_REPLAY_DIR) : undefined);
       if (replay) return replay;
     }
     return new UnavailableQloo('not_configured');

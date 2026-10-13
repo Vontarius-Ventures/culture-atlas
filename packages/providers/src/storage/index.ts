@@ -1,5 +1,6 @@
 import type { ProviderConfig } from '../config';
 import { MemoryObjectStorage } from '../testing/memory-storage';
+import { resolveFromWorkspace } from '../paths';
 import { UnavailableStorage } from '../unavailable';
 import { LocalFsStorage } from './local';
 import { S3Storage } from './s3';
@@ -20,7 +21,7 @@ export function createObjectStorage(config: ProviderConfig): ObjectStorage {
     case 'memory':
       return new MemoryObjectStorage(config.APP_BASE_URL, config.STORAGE_SIGNING_SECRET);
     case 'local':
-      return new LocalFsStorage(config.STORAGE_LOCAL_DIR, {
+      return new LocalFsStorage(resolveFromWorkspace(config.STORAGE_LOCAL_DIR), {
         baseUrl: config.APP_BASE_URL,
         secret: config.STORAGE_SIGNING_SECRET ?? ephemeralSigningSecret(),
         ephemeralSecret: !config.STORAGE_SIGNING_SECRET,
