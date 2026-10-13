@@ -83,7 +83,9 @@ export const ROUTES = {
   createAgentConnection: { method: 'POST', path: '/v1/agent-connections', auth: 'owner', scopes: [], body: A.CreateAgentConnectionRequest, response: A.CreateAgentConnectionResponse, status: 201, idempotent: true },
   revokeAgentConnection: { method: 'DELETE', path: '/v1/agent-connections/{id}', auth: 'owner', scopes: [], params: IdParams, response: null, status: 204, idempotent: true },
   listSensorConnections: { method: 'GET', path: '/v1/sensor-connections', auth: 'owner', scopes: [], response: S.SensorConnectionsListResponse, status: 200, idempotent: false, extension: true },
-  createSensorConnection: { method: 'POST', path: '/v1/sensor-connections', auth: 'owner', scopes: [], body: S.CreateSensorConnectionRequest, response: S.CreateSensorConnectionResponse, status: 201, idempotent: true },
+  // Not idempotent on purpose: a replay store would keep the shown-once bridge token in plaintext for 24 h.
+  // A retried create is still safe: a second active connection to the same relay is a 409.
+  createSensorConnection: { method: 'POST', path: '/v1/sensor-connections', auth: 'owner', scopes: [], body: S.CreateSensorConnectionRequest, response: S.CreateSensorConnectionResponse, status: 201, idempotent: false },
   deleteSensorConnection: { method: 'DELETE', path: '/v1/sensor-connections/{id}', auth: 'owner', scopes: [], params: IdParams, response: null, status: 204, idempotent: true },
   getTrace: { method: 'GET', path: '/v1/demo/traces/{job_id}', auth: 'demo', scopes: [], params: Tr.TraceParams, response: Tr.TraceResponse, status: 200, idempotent: false },
 } as const satisfies Record<string, RouteContract>;
