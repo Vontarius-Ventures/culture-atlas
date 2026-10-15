@@ -1,0 +1,74 @@
+[
+  {
+    "id": "01-library-desktop",
+    "file": "mockups/01-library-desktop.png",
+    "width": 1505,
+    "height": 1045,
+    "sha256": "84a3ad98b81d77521a7aeef22feb3efc79aa7ae6a9c0fd452b8bb52405dc1b34",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "02-source-mobile",
+    "file": "mockups/02-source-mobile.png",
+    "width": 853,
+    "height": 1844,
+    "sha256": "b50a173f64284519f8df5c8801153162947b0ac0500ff2263ad04ed6a214aadb",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "03-camera-mobile",
+    "file": "mockups/03-camera-mobile.png",
+    "width": 853,
+    "height": 1844,
+    "sha256": "efe69cfae160b54a3a2ca32d5c232edbbf98e522b07d941386284b102272a939",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "04-glasses-connect-mobile",
+    "file": "mockups/04-glasses-connect-mobile.png",
+    "width": 853,
+    "height": 1844,
+    "sha256": "36233591a502e9fe3294584602ca5a77400cd6a404e3772a44b24083e0910faf",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "05-glasses-ready-mobile",
+    "file": "mockups/05-glasses-ready-mobile.png",
+    "width": 853,
+    "height": 1844,
+    "sha256": "2eb8b8663c809b32e56855f29bdb1d62e3fa5f5cb21b4a736885e37c61592009",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "06-uploads-desktop",
+    "file": "mockups/06-uploads-desktop.png",
+    "width": 1586,
+    "height": 992,
+    "sha256": "dc8153ba7cc73878142bbf7b6cd724cb1a46c77d05ca0da9d1ddd1e1ac241d14",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "07-video-detail-desktop",
+    "file": "mockups/07-video-detail-desktop.png",
+    "width": 1505,
+    "height": 1045,
+    "sha256": "a974484d3727ae3c8db4d4a4c044ea678653517a1ce0c316c1d054f911e7915a",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "08-library-mobile",
+    "file": "mockups/08-library-mobile.png",
+    "width": 853,
+    "height": 1844,
+    "sha256": "90c254ce74c271faafeba1f3bf90ca9743bfdecf07b23d07f6579ffd486aa50d",
+    "kind": "generated visual reference"
+  },
+  {
+    "id": "09-glasses-unavailable-mobile",
+    "file": "mockups/09-glasses-unavailable-mobile.png",
+    "width": 853,
+    "height": 1844,
+    "sha256": "9d78c06f72320f1671580782f2ac37d196fd65fcecf17a5d35e03a3f6748301b",
+    "kind": "generated visual reference"
+  }
+]

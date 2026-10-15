@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MediaAssetResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "kind",
+    "source",
+    "status",
+    "analysis_status",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "enum": [
+        "photo",
+        "video"
+      ]
+    },
+    "source": {
+      "enum": [
+        "browser_camera",
+        "phone_camera",
+        "meta_glasses",
+        "upload",
+        "legacy_sensor"
+      ]
+    },
+    "status": {
+      "enum": [
+        "pending_upload",
+        "verifying",
+        "processing",
+        "ready",
+        "failed",
+        "deleted"
+      ]
+    },
+    "analysis_status": {
+      "enum": [
+        "not_requested",
+        "queued",
+        "running",
+        "complete",
+        "failed"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 120000
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "audio_present": {
+      "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "video"
+          },
+          "status": {
+            "const": "ready"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "duration_ms",
+          "audio_present"
+        ]
+      }
+    }
+  ]
+}

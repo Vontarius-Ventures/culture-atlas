@@ -1,0 +1,22 @@
+{
+  "capture.title": "Keep what catches your eye.",
+  "capture.camera": "This camera",
+  "capture.glasses": "Meta glasses",
+  "capture.experimental": "Experimental",
+  "capture.upload": "Upload files",
+  "capture.private": "Your library is private. Choose what to explore.",
+  "upload.notice": "Uploading does not start analysis.",
+  "video.analysis": "We explore selected moments, not every frame.",
+  "glasses.unavailable": "Glasses capture is not enabled for this app release. Your camera and uploads are ready to use.",
+  "agents.title": "Connected agents",
+  "agents.subtitle": "Choose what each agent can see and do.",
+  "agents.remote": "Request capture while I allow it",
+  "agents.remote_notice": "Capture also requires permission on your phone.",
+  "shares.restricted": "Restricted",
+  "shares.link": "Anyone with the link",
+  "shares.notice": "Anyone with this link can view the items you include.",
+  "shares.live": "New items added to this collection follow these sharing settings.",
+  "shares.media": "Include captured photos and videos",
+  "shares.download": "Allow original downloads",
+  "shares.revoked": "This collection is no longer shared."
+}

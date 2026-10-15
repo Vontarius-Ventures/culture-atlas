@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "media_library": true,
+    "camera_photo": true,
+    "camera_video": true,
+    "file_photo_upload": true,
+    "file_video_upload": true,
+    "meta_glasses_entry_visible": true,
+    "meta_glasses_label": "Experimental",
+    "meta_glasses_capture_enabled": false,
+    "meta_glasses_audio_enabled": false,
+    "remote_glasses_capture_enabled": false,
+    "concentrate_analysis_enabled": true,
+    "automatic_analysis": false,
+    "native_video_model_input": false,
+    "agent_api_enabled": true,
+    "collection_sharing_enabled": true,
+    "agent_remote_capture_enabled": false
+  },
+  "activation_rules": {
+    "meta_glasses_capture_enabled": "Build includes real SDK AND platform/release-channel entitlement verified AND rollout eligible AND supported device/OS AND permission granted AND not killed",
+    "remote_glasses_capture_enabled": "Glasses capture eligible AND active session explicitly armed locally AND same-account request AND fresh device state",
+    "meta_glasses_audio_enabled": "Glasses capture eligible AND qualified audio capability AND explicit microphone permission and selected source",
+    "concentrate_analysis_enabled": "Configured key AND qualified role profile AND verified privacy settings AND account/global budget AND provider readiness"
+  },
+  "note": "False activation defaults prevent unqualified rollout, not omission from implementation. CI experimental artifacts must contain and exercise the real feature. Server evaluation is authoritative. Disabling capture never deletes existing media."
+}

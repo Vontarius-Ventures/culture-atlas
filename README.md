@@ -1,5 +1,7 @@
 # culture atlas
 
+> Planned capture platform extension: [v2.1 design specification](specs/capture-platform-v2/README.md). Covers independent multi-user camera/glasses capture, video/uploads, Concentrate, agent access and collection sharing. This is a design handoff; current implementation behavior is unchanged.
+
 **Capture something you like. Discover more you will like.**
 
 culture atlas turns a photo into cultural discoveries: what to wear, play, watch and eat next. You save mixed interests (photos, brands, artists, films, dishes, references) into private collections and turn a few of them into a movie night. A personal agent can do the same through a scoped connection, and photos can arrive straight from World Sensor glasses.

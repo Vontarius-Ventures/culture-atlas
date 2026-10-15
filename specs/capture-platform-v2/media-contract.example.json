@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "med_example",
+  "kind": "video",
+  "source": "meta_glasses",
+  "status": "ready",
+  "analysis_status": "not_requested",
+  "created_at": "2026-10-15T14:00:00Z",
+  "title": "A slower afternoon",
+  "duration_ms": 42000,
+  "width": 1920,
+  "height": 1080,
+  "audio_present": false
+}

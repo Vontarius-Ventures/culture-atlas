@@ -1,5 +1,7 @@
 # culture atlas App and Agent Service Build Spec
 
+> Planned capture platform extension: [v2.1 design specification](capture-platform-v2/README.md). Covers independent multi-user camera/glasses capture, video/uploads, Concentrate, agent access and collection sharing. This is a design handoff; current implementation behavior is unchanged.
+
 Version 1.3 • October 12, 2026 • Product name: culture atlas
 
 Use “culture atlas” exactly, in lowercase, for the consumer wordmark, app title and product references.
