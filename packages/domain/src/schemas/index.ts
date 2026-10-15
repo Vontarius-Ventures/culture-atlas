@@ -1,3 +1,4 @@
+export * from './capture-v2';
 export * from './common';
 export * from './auth';
 export * from './uploads';
