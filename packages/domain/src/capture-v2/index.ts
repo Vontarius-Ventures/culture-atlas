@@ -5,3 +5,6 @@ export * from './context';
 export * from './intake';
 export * from './preparation';
 export * from './devices';
+export * from './analysis';
+export * from './capabilities';
+export * from './agent-fence';

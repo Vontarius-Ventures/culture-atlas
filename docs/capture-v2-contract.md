@@ -38,6 +38,7 @@ No request accepts an account ID, installation ID override, object key or bucket
 | POST `/v2/uploads/{id}/parts` | UploadPartsRequest | 200 `{parts: UploadPartInstruction[]}` |
 | POST `/v2/uploads/{id}/complete` | CompleteMediaUploadRequest | 202 MediaUploadResponse; 200 if committed |
 | DELETE `/v2/uploads/{id}` | none | 202 `{upload_id,state}`; committed upload is not implicitly deleted |
+| POST `/v2/uploads/{id}/resume` | `{}` | MediaUploadResponse; original recoverable browser account only |
 | GET `/v2/library` | MediaLibraryQuery (query params) | MediaLibraryResponse |
 | GET `/v2/media/{id}` | none | MediaDetailResponse |
 | PATCH `/v2/media/{id}` | UpdateMediaRequest | MediaDetailResponse, stale revision409 |
@@ -65,6 +66,20 @@ seal to an immutable key and transactionally publish a preparation job.
 No automatic analysis. State: created/uploading/verifying/committed, with terminal
 aborted/expired/rejected. Library status is independent:
 pending_upload/verifying/processing/ready/failed/deleted.
+
+Authority-end wire state is `paused`, with `pause_reason:"authority_ended"` and
+`parts:[]`. Previously transferred parts/receipts and the24h expiry are preserved.
+No new part URLs or completion are authorized while paused. The media generation
+increments and old verification leases are cancelled, without deleting the
+pending asset or rebinding its owner. Reauthenticate the original account on the
+same public installation ID **and same P-256 key**: enrollment reuses that same
+installation row, issues a new native session and changes paused uploads back to
+`created` (if previously created) or `uploading`. GET the existing upload_id and
+request fresh part URLs as needed; do not redeclare. Browser-only drafts use the
+explicit `/resume` endpoint after original-account reauthentication. Different
+keys with an existing public ID are rejected; another account may create a
+different installation row but never reassign the old one. Explicit media
+deletion, expiry and user device removal remain permanent and never resume.
 
 `MediaDetailResponse.media` matches the supplied media-contract JSON schema.
 Revision, generation and links live outside that strict object. Missing links
@@ -167,7 +182,8 @@ Installation authority is a separate `{kind:"installation",accountId,
 installationId,sessionId,expiresAt}` value, resolved server-side from the scoped token. It is not
 an agent principal and cannot pass the enrollment account-only gate.
 Identity's durable `authority_ended` event is consumed transactionally by P1 to
-end capture/remote arm and fence pending uploads. Revocation never rebinds bytes.
+end capture/remote arm and pause/fence pending uploads. Removal tombstones them.
+Revocation never rebinds bytes.
 
 Agent setup uses `SafeCaptureDeviceSetup`: alias, app version, last-seen time,
 staleness, boolean capabilities and safe unavailable reasons only, no installation
@@ -176,6 +192,72 @@ scope/resource checks. Remote-command creation checks the allowlisted agent;
 claim/delivery rechecks persisted `authorization_version` against the current
 grant. Media/job adapters must invoke the same live helper, not infer access from
 the account UUID alone. P1's default installation/account adapters deny agents.
+
+### Stable web composition helpers
+
+Import from `@/lib/server/capture-v2` (actual file
+`apps/web/lib/server/capture-v2.ts`):
+
+```ts
+requireCaptureV2InstallationContext(request: NextRequest): Promise<CaptureV2Context>;
+createCaptureV2HttpContext(
+  authority: CaptureV2Context['authority'],
+  options?: {db?: Db; agent?: {connectionId:string; authorizationVersion:number}},
+): Promise<CaptureV2Context>;
+configureCaptureV2Runtime(partial: Partial<CaptureV2Runtime>): void;
+```
+
+The native helper accepts only live cna_ installation authority, never cookies,
+agent tokens or share grants. P5 authenticates/authorizes agents FIRST and then
+uses the context factory with its trusted `agent` metadata. The factory supplies
+private storage, identity, server limits and the injected live authorizer.
+configureCaptureV2Runtime merges trusted adapters at the server composition root;
+setCaptureV2Runtime replaces them (test/reset use). Canonical prefix is `/v2`,
+**not** `/api/v2`. Share cookies (`ca_share*`), share headers and share bearers are
+rejected on owner/native routes. P6 uses its separate recipient gateway.
+
+### Agent authorization vocabulary
+
+`CaptureAgentAuthorization.authorize(db,{accountId,connectionId,operation,
+resourceId,authorizationVersion?})` returns `{authorizationVersion}`.
+Missing helper or a changed persisted version denies agent work. Migration055
+stores actor/version on assets, uploads, analysis requests and capture_work.
+Check before verification/preparation/model dispatch and again before publication.
+Owner-created work needs no agent grant. Cleanup still runs after grant revoke.
+
+| operation | resourceId |
+|---|---|
+| upload.create | destination_collection_id or null (only whole-library upload may omit destination) |
+| upload.read / upload.part / upload.complete / upload.abort | upload session UUID |
+| media.read / media.download / media.delete / media.update / media.prepare / media.analyze | asset UUID |
+| analysis.read | analysis-request UUID, resolve its same-owner asset |
+| command.create | installation UUID |
+| command.claim | command UUID |
+
+`media.prepare` requires continuing media-write authority over the agent draft.
+P5 owns scope/resource interpretation, grant-filtered list queries and agent draft
+destination membership. P1 refuses its unfiltered library list for agent contexts.
+
+### Worker capability and sharing storage seams
+
+`heartbeatMediaWorker(db,{workerId,qualifiedMatrixVersion,codecs},now?)` persists
+trusted worker qualification in media_worker_capabilities. `codecs` is a map of
+qualified codec-matrix entries to booleans. Web video availability is the server
+feature flag AND a nonempty qualified record with a heartbeat newer than2min;
+the web does not infer qualification from an injected decoder object or client
+flags. New requests fail closed without a fresh qualified worker; existing
+uploads/library media are retained.
+
+P2 sets `PreparedDerivative.shareSafe:true` only for qualified metadata-stripped
+outputs; it persists as `media_derivatives.share_safe`, defaultfalse (migration057).
+P6 must require this marker on every preview/playback derivative. Originals
+require their separate explicit download grant and never inherit this marker.
+
+`MultipartStorage.getRange(key,{start,end})` uses inclusive byte bounds and returns
+`{body:AsyncIterable<Uint8Array>,contentType,byteSize,totalSize,start,end}`.
+Each request is bounded to8MiB, each yielded chunk to64KiB. It uses authenticated
+server-side storage reads, never provider signed URLs. P6 authorizes every range
+and applies its playback/revocation limits around this reader.
 
 Defaults: photos JPEG/PNG/WebP <=15MiB/40MP; HEIC disabled pending qualified
 decoder. MP4/MOV/WebM video <=250MiB/120s (native camera clips <=60s).
