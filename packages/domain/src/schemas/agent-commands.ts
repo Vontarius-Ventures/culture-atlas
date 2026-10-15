@@ -15,6 +15,15 @@ export const CommandAck = z.strictObject({
 });
 export const CaptureCommandResponse = z.object({
   command_id: Uuid, session_id: Uuid, generation: z.number().int(), action: z.string(),
+  delivery_sequence: z.number().int(),
   duration_seconds: z.number().nullable(), capture_client_id: Uuid, authorization_version: z.number().int(),
   state: z.string(), expires_at: Timestamp, result_asset_id: Uuid.nullable(), error_code: z.string().nullable(),
+});
+export const NativeCommandQuery = z.object({
+  after_sequence: z.coerce.number().int().nonnegative().default(0),
+  wait: z.coerce.number().int().min(0).max(25).default(0),
+});
+export const NativeCommandBatch = z.object({
+  schema_version: z.literal('2.1'), request_id: z.string(),
+  items: z.array(CaptureCommandResponse), next_sequence: z.number().int().nonnegative(),
 });

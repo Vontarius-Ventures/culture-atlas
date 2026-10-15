@@ -3,6 +3,8 @@ import {
   captures,
   agentPlatform,
   agentCommands,
+  agentMedia,
+  agentOperations,
   collections,
   items,
   jobs,
@@ -36,6 +38,36 @@ const define = <I extends z.ZodType>(t: ToolDefinition<I>): ToolDefinition<I> =>
 const { Uuid } = schemas;
 
 export const TOOLS = [
+  define({
+    name: 'list_media', title: 'List permitted media',
+    description: 'List or search media within the live collection grant. No originals or private analysis reasoning.',
+    scopes: ['media:read'], startsJob: false, input: schemas.AgentMediaQuery,
+    run: (ctx, input) => agentMedia.listMedia(ctx, input),
+  }),
+  define({
+    name: 'get_media', title: 'View permitted media',
+    description: 'Read one currently permitted media item and authorized preview links. Originals require a separate download grant.',
+    scopes: ['media:read'], startsJob: false, input: z.strictObject({ media_id: Uuid }),
+    run: (ctx, input) => agentMedia.getMedia(ctx, input.media_id),
+  }),
+  define({
+    name: 'begin_upload', title: 'Begin signed media upload',
+    description: 'Begin byte intake, not analysis. Selected-collection agents must name a granted destination. Never accepts a URL or file path.',
+    scopes: ['media:write'], startsJob: false, input: z.strictObject({ idempotency_key: Uuid, upload: schemas.AgentUploadRequest }),
+    run: (ctx, input) => agentMedia.beginUpload(ctx, input.upload, input.idempotency_key),
+  }),
+  define({
+    name: 'complete_upload', title: 'Complete signed byte intake',
+    description: 'Submit signed byte-transfer receipts for a draft created by this connection. Check get_operation using upload_id. Analysis is never automatic.',
+    scopes: ['media:write'], startsJob: false, input: z.strictObject({ upload_id: Uuid, idempotency_key: Uuid, completion: schemas.CompleteMediaUploadRequest }),
+    run: (ctx, input) => agentMedia.completeUpload(ctx, input.upload_id, input.completion, input.idempotency_key),
+  }),
+  define({
+    name: 'get_operation', title: 'Check a permitted operation',
+    description: 'Check an authorized asynchronous upload, analysis or capture command. This does not broaden resource access.',
+    scopes: [], startsJob: false, input: z.strictObject({ operation_id: Uuid }),
+    run: (ctx, input) => agentOperations.getOperation(ctx, input.operation_id),
+  }),
   define({
     name: 'request_capture', title: 'Request locally authorized capture',
     description: 'Request capture on an explicitly selected phone and fresh locally armed session. Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request.',
@@ -255,6 +287,7 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 export const SPEC_TOOL_NAMES = [
+  'list_media', 'get_media', 'begin_upload', 'complete_upload', 'get_operation',
   'request_capture',
   'get_setup',
   'get_preferences', 'update_preferences',

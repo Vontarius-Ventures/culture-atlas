@@ -72,6 +72,7 @@ export type RequestOptions<N extends RouteName> = ([ParamsOf<N>] extends [never]
   ([QueryOf<N>] extends [never] ? { query?: undefined } : { query?: QueryOf<N> }) &
   ([BodyOf<N>] extends [never] ? { body?: undefined } : { body?: BodyOf<N> }) & {
     idempotencyKey?: string;
+    ifMatch?: string;
     signal?: AbortSignal;
   };
 
@@ -187,6 +188,11 @@ export class ApiClient {
     if (isMutation && sessionReady) {
       const session = await sessionReady;
       headers[CSRF_HEADER] = session.csrf_token;
+      if (contract.path.startsWith('/v2/')) {
+        if (session.principal.account_id) headers['x-ca-account-id'] = session.principal.account_id;
+        options = { ...options, idempotencyKey: options.idempotencyKey ?? newIdempotencyKey() };
+      }
+      if (options.ifMatch) headers['if-match'] = options.ifMatch;
       if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
     }
 

@@ -89,6 +89,21 @@ describe('AGT-01 / DEV-02 locally armed device commands', () => {
     expect((await acknowledgeCommand(f.phone, command.command_id, { sequence: 3, state: 'unknown', safe_error: 'outcome_unknown' })).state).toBe('unknown');
     expect((await claimCommands(f.phone)).items).toEqual([]);
   });
+  it('rechecks revocation when an executing acknowledgement is replayed', async () => {
+    const f = await fixture(), key = randomUUID();
+    const command = await requestCapture(f.agent, f.id, f.input, randomUUID());
+    await claimCommands(f.phone);
+    await acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' }, key);
+    await revokeAgentConnection(f.ctx, { id: f.created.connection.id });
+    await expect(acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' }, key)).rejects.toMatchObject({ code: 'token_revoked' });
+  });
+  it('rejects changed acknowledgements under one idempotency key', async () => {
+    const f = await fixture(), key = randomUUID();
+    const command = await requestCapture(f.agent, f.id, f.input, randomUUID());
+    await claimCommands(f.phone);
+    await acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' }, key);
+    await expect(acknowledgeCommand(f.phone, command.command_id, { sequence: 2, state: 'succeeded' }, key)).rejects.toMatchObject({ code: 'idempotency_conflict' });
+  });
   it('never exposes setup identifiers or raw capability data, and stale devices are not ready', async () => {
     const f = await fixture();
     await db.query(`UPDATE mobile_installations SET last_seen_at=now()-interval '31 seconds' WHERE id=$1`, [f.id]);

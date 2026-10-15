@@ -1,10 +1,13 @@
-import { enforceAgentRate } from '@culture-atlas/domain';
+import { assertExpectedCaptureAccount, enforceAgentRate } from '@culture-atlas/domain';
 import type { RouteContract } from '@culture-atlas/domain/schemas';
 import { apiRoute } from './http';
 
 /** Keep session, CSRF, input and authorization behavior shared with v1. */
 export function agentRoute<C extends RouteContract>(contract: C, handler: Parameters<typeof apiRoute<C>>[1]) {
   const run = apiRoute(contract, async (args) => {
+    if (args.ctx.principal.kind === 'account') {
+      assertExpectedCaptureAccount(args.ctx.principal, args.request.headers.get('x-ca-account-id'), contract.method !== 'GET');
+    }
     await enforceAgentRate(args.ctx, contract.method !== 'GET');
     return handler(args);
   });

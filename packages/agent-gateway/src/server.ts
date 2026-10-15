@@ -69,6 +69,7 @@ export interface GatewayDeps {
   providers?: ProviderRegistry;
   config?: DomainConfig;
   now?: () => Date;
+  captureContext?: (principal: AgentPrincipal) => Promise<NonNullable<ServiceContext['captureV2']>>;
 }
 
 function jsonError(status: number, body: ErrorBody, extraHeaders: Record<string, string> = {}): Response {
@@ -107,7 +108,7 @@ function idempotencyKeyFrom(meta: unknown): string | null {
 /** Build the per-request MCP server for one authenticated agent principal. */
 export function buildMcpServer(
   principal: AgentPrincipal,
-  deps: { db: Db; providers?: ProviderRegistry; config: DomainConfig; now: () => Date; requestId: string },
+  deps: { db: Db; providers?: ProviderRegistry; config: DomainConfig; now: () => Date; requestId: string; captureContext?: GatewayDeps['captureContext'] },
 ): Server {
   const server = new Server(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
@@ -147,6 +148,8 @@ export function buildMcpServer(
         now: deps.now,
         traceId,
         surface: 'mcp',
+        captureV2: deps.captureContext && (tool.scopes.some((s) => s.startsWith('media:')) || tool.name === 'get_operation')
+          ? await deps.captureContext(principal) : undefined,
       });
       await enforceAgentRate(ctx, route.method !== 'GET');
       const run = async () => {
@@ -249,7 +252,7 @@ export function createMcpHandler(deps: GatewayDeps = {}): (request: Request) => 
       return jsonError(413, toErrorBody(new AppError('payload_too_large', { message: 'MCP requests can be up to 256 KB.' }), requestId).body);
     }
 
-    const server = buildMcpServer(principal, { db, providers, config, now, requestId });
+    const server = buildMcpServer(principal, { db, providers, config, now, requestId, captureContext: deps.captureContext });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

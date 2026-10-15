@@ -1,6 +1,6 @@
 import { requireAccount, requireCollectionGrant, requireScopes } from '../authz';
 import { authorizeAgent } from '../authz/agent-authorization';
-import { authorizeMedia } from '../authz/agent-resources';
+import { authorizeMedia, authorizeUploadDestination } from '../authz/agent-resources';
 import type { ServiceContext } from '../context';
 import { AppError } from '../errors';
 
@@ -24,6 +24,27 @@ export async function addMediaToCollection(ctx: ServiceContext, collectionId: st
     [grant.accountId, collectionId, assetId],
   );
   return { collection_id: collectionId, asset_id: assetId };
+}
+
+/** Internal intake path, restricted to a draft actually created by this agent. */
+export async function attachAgentUpload(ctx: ServiceContext, collectionId: string, assetId: string) {
+  ctx = await authorizeUploadDestination(ctx, collectionId);
+  if (ctx.principal.kind !== 'agent') throw new AppError('scope_denied');
+  const { rowCount } = await ctx.db.query(
+    `INSERT INTO collection_media_items(account_id,collection_id,asset_id)
+     SELECT account_id,$2,id FROM media_assets WHERE account_id=$1 AND id=$3
+      AND created_by_agent_connection_id=$4 AND status='pending_upload' AND deleted_at IS NULL
+     ON CONFLICT DO NOTHING`,
+    [ctx.principal.accountId, collectionId, assetId, ctx.principal.connectionId],
+  );
+  if (!rowCount) {
+    const present = await ctx.db.query(
+      `SELECT 1 FROM collection_media_items cm JOIN media_assets m ON m.id=cm.asset_id AND m.account_id=cm.account_id
+       WHERE cm.account_id=$1 AND cm.collection_id=$2 AND cm.asset_id=$3 AND m.created_by_agent_connection_id=$4`,
+      [ctx.principal.accountId, collectionId, assetId, ctx.principal.connectionId],
+    );
+    if (!present.rowCount) throw new AppError('not_found');
+  }
 }
 
 export async function removeMediaFromCollection(ctx: ServiceContext, collectionId: string, assetId: string) {
