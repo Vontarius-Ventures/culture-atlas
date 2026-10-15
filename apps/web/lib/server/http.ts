@@ -10,6 +10,7 @@ import {
   getDb,
   getDomainConfig,
   authorizeOperation,
+  assertExpectedCaptureAccount,
   invalidInput,
   toErrorBody,
   withIdempotency,
@@ -157,6 +158,9 @@ export function apiRoute<C extends RouteContract>(
       const authorization = request.headers.get('authorization');
       let principal = await auth.resolvePrincipal(db, { sessionToken, authorization });
       const isMutation = contract.method !== 'GET';
+      if (contract.path.startsWith('/v2/') && principal?.kind === 'account') {
+        assertExpectedCaptureAccount(principal, request.headers.get('x-atlas-expected-account'), isMutation);
+      }
       const ip = abuseLimitIp(request, config);
 
       // Per-IP abuse limit on anything that creates state (never merges users' data).

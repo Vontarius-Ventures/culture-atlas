@@ -3701,7 +3701,7 @@
         "type": "apiKey",
         "in": "cookie",
         "name": "ca_session",
-        "description": "Owner browser session. Mutations also require x-csrf-token and x-ca-account-id."
+        "description": "Owner browser session. Mutations also require x-csrf-token and X-Atlas-Expected-Account."
       }
     }
   }

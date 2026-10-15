@@ -45,7 +45,7 @@ export function buildAgentContract() {
     jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
     servers: [{ url: 'https://your-atlas.example' }], paths,
     components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' }, accountSession: {
-      type: 'apiKey', in: 'cookie', name: 'ca_session', description: 'Owner browser session. Mutations also require x-csrf-token and x-ca-account-id.',
+      type: 'apiKey', in: 'cookie', name: 'ca_session', description: 'Owner browser session. Mutations also require x-csrf-token and X-Atlas-Expected-Account.',
     } } },
   };
 }

@@ -111,7 +111,7 @@ Owner/initiating agent polls `GET /v2/commands/{id}` or
 
 ## Collection media, for P2
 
-All routes require account authentication (cookie+CSRF+`x-ca-account-id` for web
+All routes require account authentication (cookie+CSRF+`X-Atlas-Expected-Account` for web
 mutations) or explicit agent scope/resource authorization. Mutation headers
 include `Idempotency-Key: <UUID>`.
 

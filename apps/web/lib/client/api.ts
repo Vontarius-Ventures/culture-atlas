@@ -189,7 +189,7 @@ export class ApiClient {
       const session = await sessionReady;
       headers[CSRF_HEADER] = session.csrf_token;
       if (contract.path.startsWith('/v2/')) {
-        if (session.principal.account_id) headers['x-ca-account-id'] = session.principal.account_id;
+        if (session.principal.account_id) headers['X-Atlas-Expected-Account'] = session.principal.account_id;
         options = { ...options, idempotencyKey: options.idempotencyKey ?? newIdempotencyKey() };
       }
       if (options.ifMatch) headers['if-match'] = options.ifMatch;
