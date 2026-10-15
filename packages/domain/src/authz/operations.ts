@@ -49,6 +49,8 @@ export const operationKey = (op: Pick<OperationPolicy, 'method' | 'path'>): stri
  */
 export function authorizeOperation(principal: Principal, op: OperationPolicy, surface: Surface = 'rest'): void {
   if (principal.kind === 'system') throw new AppError('unauthenticated');
+  // Native installation policy belongs to v2; never inherit browser/v1 authority.
+  if (principal.kind === 'installation') throw new AppError('scope_denied');
   if (principal.kind === 'agent' && principal.purpose === 'sensor_bridge') {
     if (surface !== 'rest' || !SENSOR_BRIDGE_OPERATIONS.has(operationKey(op))) {
       throw new AppError('scope_denied', { message: 'This connection may only import sensor photos.' });

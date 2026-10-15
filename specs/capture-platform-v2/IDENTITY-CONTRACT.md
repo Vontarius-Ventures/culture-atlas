@@ -140,3 +140,33 @@ Anonymous conversion is explicit (`claim_session:true`), bound to the
 initiating anonymous session, and uses the existing transactional claim
 service. Unclaimed records do not move. Existing stored media keys remain
 unchanged.
+
+Recovery revokes browser/native sessions, outstanding enrollment grants, and
+other email proofs for that address. It removes legacy password credentials
+so a compromised password cannot immediately restore access. Future sign-in
+uses verified email, with the same account UUID.
+
+## Mail and rollout
+
+`identity.setIdentityMail(adapter)` registers an `IdentityMail` implementation:
+`send({to,purpose,callback}): Promise<void>`. Call once at server startup from a
+private provider integration. Never log the message or callback. The default
+development/test adapter is an in-memory `DevIdentityOutbox`; tests install
+their own outbox and inspect `.messages`. There is no public outbox endpoint.
+Production without an adapter fails closed with 503 and cannot pretend to
+deliver mail. Delivery exceptions return the same accepted response as other
+requests and invalidate the failed proof. Configure a real delivery provider
+in staging before qualification; no live-mail acceptance is claimed here.
+
+Email start dispatches at most ten messages/address/UTC day and thirty
+requests/trusted IP/day, regardless of account existence. Over-address-limit
+starts keep the same accepted body. Complete allows thirty attempts/address/day
+and 120/trusted IP/day. Secrets and request bodies must be redacted by edge
+logging too. Unknown proxy addresses share a fail-closed bucket.
+
+The browser entry is `/identity`, with a fragment-consuming
+`/identity/callback` that checks its sessionStorage state/nonce and removes the
+fragment before network calls. Callback state must remain in the initiating
+browser; mobile must persist its own state/nonce/PKCE verifier and use the
+platform's secure callback handler. The browser proof also binds its initiating
+cookie session. Callback pages have no-referrer/no-store/noindex headers.

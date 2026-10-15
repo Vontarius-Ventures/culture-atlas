@@ -20,6 +20,7 @@ import { addCollectionItem, createCollection } from './collections';
 import { dummyPasswordHash, hashPassword, normalizeEmail, verifyPassword } from './passwords';
 import { recordPreference } from './preferences';
 import { bumpTasteRevision, rebuildTasteProfile } from './taste';
+import { endAuthority } from './native-sessions';
 
 /**
  * Accounts, demo sign-in and anonymous-session claim.
@@ -212,7 +213,8 @@ export async function createAccountImpl(
 
   return ctx.db.transaction(async (tx) => {
     if (email) {
-      const taken = await tx.query('SELECT 1 FROM account_credentials WHERE email = $1', [email]);
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`identity:${email}`]);
+      const taken = await tx.query('SELECT 1 FROM account_credentials WHERE email = $1 UNION ALL SELECT 1 FROM account_emails WHERE email=$1', [email]);
       if (taken.rowCount) throw new AppError('conflict', { message: 'An account with this email already exists. Sign in instead.' });
     }
     const subject = email ? `email:${email}` : `device:${randomUUID()}`;
@@ -286,6 +288,10 @@ export async function signIn(
       claimed = await claimSession(tx, p.sessionId, row.account_id, ctx.now());
     } else if (p.sessionId) {
       await tx.query('UPDATE sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE id = $1', [p.sessionId, ctx.now()]);
+      if (p.kind === 'account' && p.accountId !== row.account_id) {
+        await endAuthority(tx, { accountId: p.accountId, installationId: null, sessionId: p.sessionId,
+          reason: 'account_switch', now: ctx.now() });
+      }
     }
     const session = await createAccountSession(tx, row.account_id, ctx);
     const principal: AccountPrincipal = {
@@ -311,10 +317,16 @@ export async function signOut(ctx: ServiceContext): Promise<SessionResponse & { 
   if (p.kind !== 'anonymous' && p.kind !== 'account') {
     throw new AppError('scope_denied', { message: 'Sign out from the browser.' });
   }
-  if (p.sessionId) {
-    await ctx.db.query('UPDATE sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE id = $1', [p.sessionId, ctx.now()]);
-  }
-  const s = await createAnonymousSession(ctx.db, ctx.config, ctx.now());
+  const s = await ctx.db.transaction(async (tx) => {
+    if (p.sessionId) {
+      await tx.query('UPDATE sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE id = $1', [p.sessionId, ctx.now()]);
+      if (p.kind === 'account') {
+        await endAuthority(tx, { accountId: p.accountId, installationId: null, sessionId: p.sessionId,
+          reason: 'sign_out', now: ctx.now() });
+      }
+    }
+    return createAnonymousSession(tx, ctx.config, ctx.now());
+  });
   return {
     ...sessionResponse(ctx, { accountId: null, sessionId: s.sessionId, expiresAt: s.expiresAt, isDemoOwner: false }),
     sessionToken: s.token,

@@ -68,6 +68,7 @@ export function quotaFor(
       };
     case 'account':
     case 'agent':
+    case 'installation':
       return {
         bucket: `account:${principal.accountId}`,
         limit: metric === 'analyses' ? config.ACCOUNT_DAILY_ANALYSES : config.ACCOUNT_DAILY_PLANS,
