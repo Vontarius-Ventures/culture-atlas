@@ -1,4 +1,6 @@
 export * as auth from './auth';
+export * as identity from './identity';
+export * as nativeSessions from './native-sessions';
 export * as captures from './captures';
 export * as analyses from './analyses';
 export * as jobs from './jobs';

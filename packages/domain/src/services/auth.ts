@@ -8,6 +8,7 @@ import type { Principal } from '../principal';
 import type { CreateAccountRequest, CreateAccountResponse, SessionResponse } from '../schemas/auth';
 import type { ServiceContext } from '../context';
 import { addHours, iso } from '../util/time';
+import { resolveNativePrincipal } from './native-sessions';
 
 /**
  * Sessions, principals and credentials.
@@ -100,6 +101,7 @@ export async function resolvePrincipal(
   if (auth) {
     const match = /^Bearer\s+(\S+)$/i.exec(auth);
     if (!match) throw new AppError('unauthenticated');
+    if (match[1]!.startsWith('cna_')) return resolveNativePrincipal(db, match[1]!, now);
     const { rows } = await db.query<AgentRow>(
       `SELECT ac.id, ac.owner_account_id, ac.client_name, ac.purpose, ac.scopes, ac.library_access,
               ac.sensor_connection_id, ac.expires_at, ac.revoked_at,
