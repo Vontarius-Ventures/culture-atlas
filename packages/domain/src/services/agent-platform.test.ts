@@ -103,7 +103,7 @@ describe('AGT-02 ordinary preferences and token lifecycle', () => {
     const fresh = await resolvePrincipal(db, { authorization: `Bearer ${rotated.credential}` });
     expect(fresh).toMatchObject({ kind: 'agent', connectionId: f.created.connection.id });
     const record = (await db.query('SELECT credential_hash,credential_prefix FROM agent_connections WHERE id=$1', [f.created.connection.id])).rows[0];
-    expect(record.credential_hash).toBe(hashToken(rotated.credential));
+    expect(record!.credential_hash).toBe(hashToken(rotated.credential));
     expect(JSON.stringify(record)).not.toContain(rotated.credential);
   });
 });

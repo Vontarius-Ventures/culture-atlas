@@ -7,6 +7,7 @@ export * from './idempotency';
 export * from './quotas';
 export * from './authz';
 export * from './authz/agent-authorization';
+export * from './authz/agent-resources';
 export * from './db/pool';
 export * from './jobs';
 export * as schemas from './schemas';
