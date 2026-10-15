@@ -10,6 +10,8 @@ export * as taste from './taste';
 export * as collections from './collections';
 export * as plans from './plans';
 export * as agentConnections from './agent-connections';
+export * as agentPlatform from './agent-platform';
+export * as agentOAuth from './agent-oauth';
 export * as sensorConnections from './sensor-connections';
 export * as traces from './traces';
 export * as cards from './cards';

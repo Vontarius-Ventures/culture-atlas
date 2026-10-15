@@ -12,6 +12,7 @@ export * from './collections';
 export * from './taste';
 export * from './plans';
 export * from './agent-connections';
+export * from './agent-platform';
 export * from './sensor-connections';
 export * from './traces';
 export * from './routes';
