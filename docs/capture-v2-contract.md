@@ -43,6 +43,8 @@ No request accepts an account ID, installation ID override, object key or bucket
 | PATCH `/v2/media/{id}` | UpdateMediaRequest | MediaDetailResponse, stale revision409 |
 | DELETE `/v2/media/{id}` | DeleteMediaRequest | 202 `{id,generation,status:"deleted"}` |
 | POST `/v2/media/batch-delete` | BatchDeleteMediaRequest | BatchDeleteMediaResponse, explicit partial results |
+| POST `/v2/media/{id}/analysis` | AnalyzeMediaRequest | 202 AnalyzeMediaResponse |
+| GET `/v2/media/{id}/analysis/{analysisId}` | none | AnalyzeMediaResponse |
 
 Persist `client_capture_id` **and original owner** before taking/uploading media.
 One upload per batch file; at most20 files and2 concurrent transfers on clients.
@@ -71,12 +73,23 @@ gateway paths, not public bucket paths. This permits immediate deletion fencing
 even after a link was issued. Original reads are restricted until validation.
 P2 owns playback/poster/frame generation; use the MediaPreparation interface
 and durable job ownership/generation instead of writing media rows directly.
+`MediaDetailResponse.frames` lists `{id,timestamp_ms,extraction_version,
+thumbnail_url}` for prepared frames. Video Explore sends mode `sampled_video`
+for up to8 representative frames, or `selected_frame` with frame_id or
+timestamp_ms (server resolves to a verified frame near that moment). Photos send
+mode `photo`. Every analysis includes expected_generation and optional focus.
+The account allowance is50 explicit analyses per UTC day; reused existing work
+does not consume another allowance. Response links result_url to `/captures/{id}`
+when P4 publishes a validated result. Provider failures never mutate media bytes.
+P4 claims `analyze_media` jobs, reads `media_analysis_requests` by same-owner
+analysis_id, and publishes using live lease+generation fencing. The request
+persists selected derivative IDs with actual timestamps and extraction version.
 
 ## Devices (iOS and agent integration)
 
 | Route | Body | Result |
 |---|---|---|
-| POST `/v2/devices/enrollment/challenge` | `{enrollment_grant?,installation_public_id,platform}` | 201 `{nonce,expires_at}` |
+| POST `/v2/devices/enrollment/challenge` | EnrollmentChallengeRequest | 201 `{nonce,expires_at}` |
 | POST `/v2/devices/enroll` | EnrollCaptureDeviceRequest | 201 EnrolledCaptureDeviceResponse |
 | GET `/v2/devices` | cursor?,limit? | `{items:CaptureDeviceResponse[],next_cursor}` |
 | DELETE `/v2/devices/{id}` | RevokeCaptureDeviceRequest | 202 `{id,revoked:true}` |
@@ -91,15 +104,38 @@ Browser challenge and enrollment require a recoverable authenticated **account**
 never an installation/agent credential. Native enrollment instead consumes the
 identity workstream's one-use5-minute `enrollment_grant` plus enrollment proof.
 Native challenge accepts the enrollment grant as a grant, not an API bearer.
-It does not consume it: the challenge binds its hash+platform+installation UUID
-and a random nonce. Only enrollment consumes the identity grant atomically.
-Enroll sends `{enrollment_grant,installation_public_id,proof:nonce,platform,
+It calls `peekNativeEnrollmentGrant` but does not consume it: the challenge binds
+its hash+platform+installation UUID+public key and a random nonce.
+Only enrollment consumes the identity grant atomically.
+Enroll sends `{enrollment_grant,installation_public_id,proof,platform,
 app_version,capabilities}` and returns `{installation,native_session}`.
 Challenges expire in5 minutes and bind account+session (browser) or grant hash
 (native), plus platform+public installation UUID.
 SDK identity is not proof. In the same enrollment transaction P1 calls injected
 `issueNativeSession(tx,{accountId,installationId},now)`. Identity owns opaque
 `cna_` access tokens (10min) and `cnr_` rotating refresh, verification and recovery.
+
+Enrollment signature transport is ES256 (P-256 ECDSA with SHA-256). Create and
+retain a device private key in Keychain/Secure Enclave or Keystore. Challenge
+sends public_key as a public JWK `{kty:"EC",crv:"P-256",x,y}` (32-byte coordinates,
+base64url without padding). Enroll's `proof` is
+`{nonce,public_key,signature}`. Signature is the64-byte IEEE-P1363 `r||s` encoded
+base64url without padding (not DER; Apple CryptoKit `rawRepresentation`).
+Sign these exact UTF-8 bytes, with LF separators and **no trailing LF**:
+
+```text
+culture-atlas-enroll-v1
+<nonce>
+<installation_public_id>
+<platform>
+<lowercase hex SHA-256 of the exact enrollment_grant UTF-8 string>
+```
+
+Browser-account enrollment uses SHA-256 of the empty string on the last line.
+Never sign JSON serialization, which varies between platforms. The server checks
+the EC point, JWK equality with the challenge, signature, expiry and one-use
+nonce, then consumes the platform-bound grant in the installation transaction.
+Enrollment and challenges do not cache secret-bearing responses.
 
 Device status/wearables/capture-session calls require the installation token.
 Status sequence is monotonic. An account browser cannot pretend to be a phone

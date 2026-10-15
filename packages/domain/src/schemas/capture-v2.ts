@@ -74,6 +74,27 @@ export const MediaDetailResponse = z.object({
     analysis: z.string().nullable(),
   }),
   error_code: z.string().nullable(),
+  frames: z.array(z.object({
+    id: CaptureV2Uuid,
+    timestamp_ms: z.number().int().nonnegative(),
+    extraction_version: z.string(),
+    thumbnail_url: z.string(),
+  })),
+});
+export const AnalyzeMediaRequest = z.object({
+  focus: z.string().trim().max(500).default(''),
+  mode: z.enum(['photo','selected_frame','sampled_video']),
+  frame_id: CaptureV2Uuid.optional(),
+  timestamp_ms: z.number().int().nonnegative().optional(),
+  expected_generation: Revision,
+}).strict();
+export const AnalyzeMediaResponse = z.object({
+  analysis_id: CaptureV2Uuid,
+  job_id: CaptureV2Uuid,
+  state: z.enum(['queued','running','partial','complete','failed','cancelled']),
+  reused: z.boolean(),
+  result_url: z.string().nullable(),
+  capture_id: CaptureV2Uuid.nullable(),
 });
 export const MediaLibraryQuery = z.object({
   kind: MediaKind.optional(),
@@ -92,11 +113,25 @@ export const BatchDeleteMediaResponse = z.object({
   items: z.array(z.object({ id: CaptureV2Uuid, deleted: z.boolean(), error_code: z.string().nullable() })),
 });
 
+export const EnrollmentPublicKey = z.object({
+  kty:z.literal('EC'),crv:z.literal('P-256'),
+  x:z.string().regex(/^[A-Za-z0-9_-]{43}$/),y:z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+}).strict();
+export const EnrollmentChallengeRequest = z.object({
+  enrollment_grant:z.string().min(32).max(512).optional(),
+  installation_public_id:CaptureV2Uuid,
+  platform:z.enum(['ios','android']),
+  public_key:EnrollmentPublicKey,
+}).strict();
 export const EnrollCaptureDeviceRequest = z.object({
   platform: z.enum(['ios', 'android']),
   app_version: z.string().min(1).max(100),
   installation_public_id: CaptureV2Uuid,
-  proof: z.string().min(32).max(256),
+  proof: z.object({
+    nonce:z.string().min(32).max(256),
+    signature:z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+    public_key:EnrollmentPublicKey,
+  }).strict(),
   enrollment_grant: z.string().min(32).max(512).optional(),
   capabilities: z.record(z.string(), z.boolean()).default({}),
 }).strict();
@@ -171,6 +206,17 @@ export const CaptureV2Error = z.object({
     retry_after_ms: z.number().nonnegative().optional(),
   }),
 });
+export const CaptureCapabilitiesResponse = z.object({
+  contract_version: z.string(),
+  flags: z.record(z.string(), z.boolean()),
+  limits: z.object({
+    photo_max_bytes:z.number(),photo_max_pixels:z.number(),video_max_bytes:z.number(),
+    video_max_duration_ms:z.number(),capture_video_max_duration_ms:z.number(),
+    account_quota_bytes:z.number(),batch_max_files:z.number(),concurrent_transfers:z.number(),
+    analysis_daily_limit:z.number(),video_analysis_max_frames:z.number(),
+  }),
+  availability: z.record(z.string(),z.object({available:z.boolean(),reasons:z.array(z.string())})),
+});
 
 /** Contract publication is separate from route implementation. See docs/capture-v2-contract.md. */
 export const CAPTURE_V2_CONTRACT_VERSION = '2026-10-15.1';
@@ -186,6 +232,8 @@ export const CAPTURE_V2_ROUTES = {
   updateMedia: 'PATCH /v2/media/{id}',
   deleteMedia: 'DELETE /v2/media/{id}',
   batchDeleteMedia: 'POST /v2/media/batch-delete',
+  analyzeMedia: 'POST /v2/media/{id}/analysis',
+  mediaAnalysis: 'GET /v2/media/{id}/analysis/{analysisId}',
   enrollmentChallenge: 'POST /v2/devices/enrollment/challenge',
   enrollDevice: 'POST /v2/devices/enroll',
   devices: 'GET /v2/devices',

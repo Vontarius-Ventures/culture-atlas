@@ -9,6 +9,8 @@ export * from './research/types';
 export * from './qloo/types';
 export * from './storage/types';
 export * from './storage/multipart-types';
+export * from './storage/multipart-s3';
+export * from './storage/multipart-local';
 export { backoffDelay, CircuitBreaker, parseRetryAfter, withRetries, type BreakerState, type Sleep } from './http/resilience';
 export { createAnthropicVlm, AnthropicVlm } from './vlm/anthropic';
 export { VLM_SYSTEM_PROMPT } from './vlm/prompt';

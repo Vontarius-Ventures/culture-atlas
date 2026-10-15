@@ -51,6 +51,8 @@ export interface CaptureIdentityAdapter {
   requireRecoverableAccount(accountId: string, sessionId: string | null): Promise<void>;
   consumeNativeEnrollmentGrant(tx: Db, token: string, platform: 'ios' | 'android', now: Date):
     Promise<{ accountId: string; authenticatedAt: Date }>;
+  peekNativeEnrollmentGrant(tx: Db, token: string, platform: 'ios' | 'android', now: Date):
+    Promise<{ accountId: string; authenticatedAt: Date }>;
   issueNativeSession(tx: Db, input: { accountId: string; installationId: string; authenticatedAt: Date }, now: Date):
     Promise<{ access_token: string; refresh_token: string; access_expires_at: string; [key: string]: unknown }>;
   revokeInstallationSessions(tx: Db, accountId: string, installationId: string, now: Date): Promise<void>;
@@ -73,7 +75,7 @@ export interface AuthorityEnded {
   reason: string;
   now: Date;
 }
-export type CaptureWorkKind = 'verify_upload' | 'prepare_media' | 'purge_media' | 'cleanup_upload';
+export type CaptureWorkKind = 'verify_upload' | 'prepare_media' | 'purge_media' | 'cleanup_upload' | 'analyze_media';
 export interface CaptureLease {
   job_id: string;
   account_id: string;

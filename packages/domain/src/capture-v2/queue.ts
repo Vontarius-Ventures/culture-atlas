@@ -11,7 +11,7 @@ export class CaptureQueue {
   }): Promise<void> {
     await tx.query(
       `INSERT INTO capture_work(account_id,asset_id,upload_id,generation,kind)
-       VALUES($1,$2,$3,$4,$5) ON CONFLICT(account_id,asset_id,generation,kind) DO NOTHING`,
+       VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
       [input.accountId,input.assetId,input.uploadId ?? null,input.generation,input.kind],
     );
   }
