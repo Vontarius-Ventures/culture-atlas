@@ -23,6 +23,10 @@ envVarGroups:
         sync: false
       - key: FEATHERLESS_API_KEY
         sync: false
+      # Concentrate is NOT enabled by this blueprint. After qualification, set
+      # LLM_PROVIDER=concentrate explicitly and configure the secret/profile and
+      # spend assertions listed in docs/concentrate.md on the analysis worker.
+      # Keep the Featherless secret for explicit rollback only, never fallback.
       # Leave empty until the hackathon key arrives: Qloo then reports "unavailable", never fake data.
       - key: QLOO_API_KEY
         sync: false

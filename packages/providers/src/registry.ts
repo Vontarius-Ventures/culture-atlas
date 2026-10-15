@@ -1,5 +1,6 @@
 import { CAPABILITY_NAMES, type CapabilityMatrix } from './capabilities';
 import { loadProviderConfig, type ProviderConfig } from './config';
+import { createModelGateway, type ModelGatewayOptions } from './concentrate/gateway';
 import { createTextModel, createVlm } from './llm';
 import { createQlooProvider } from './qloo/client';
 import type { QlooProvider } from './qloo/types';
@@ -21,19 +22,29 @@ export interface ProviderRegistry {
   readonly research: ResearchProvider;
   readonly qloo: QlooProvider;
   readonly storage: ObjectStorage;
+  readonly modelGateway?: ReturnType<typeof createModelGateway>;
   capabilities(): CapabilityMatrix;
 }
 
-export type ProviderOverrides = Partial<Omit<ProviderRegistry, 'config' | 'capabilities'>>;
+export type ProviderOverrides = Partial<
+  Omit<ProviderRegistry, 'config' | 'capabilities' | 'modelGateway'>
+>;
 
 export function createProviderRegistry(
   env: Record<string, string | undefined> = process.env,
   overrides: ProviderOverrides = {},
+  gatewayOptions: ModelGatewayOptions = {},
 ): ProviderRegistry {
   const config = loadProviderConfig(env);
-  const vlm = overrides.vlm ?? createVlm(config);
-  const text = overrides.text ?? createTextModel(config, config.RESEARCH_MODEL);
-  const composer = overrides.composer ?? createTextModel(config, config.COMPOSER_MODEL ?? config.RESEARCH_MODEL);
+  const modelGateway =
+    config.LLM_PROVIDER === 'concentrate' ? createModelGateway(config, gatewayOptions) : undefined;
+  const vlm = overrides.vlm ?? modelGateway?.vlm ?? createVlm(config);
+  const text =
+    overrides.text ?? modelGateway?.text ?? createTextModel(config, config.RESEARCH_MODEL);
+  const composer =
+    overrides.composer ??
+    modelGateway?.composer ??
+    createTextModel(config, config.COMPOSER_MODEL ?? config.RESEARCH_MODEL);
   const research = overrides.research ?? createWikipediaResearch(config, text);
   const qloo = overrides.qloo ?? createQlooProvider(config);
   const storage = overrides.storage ?? createObjectStorage(config);
@@ -46,6 +57,7 @@ export function createProviderRegistry(
     research,
     qloo,
     storage,
+    modelGateway,
     capabilities(): CapabilityMatrix {
       const q = qloo.capability();
       const r = research.capability();
@@ -66,7 +78,8 @@ export function createProviderRegistry(
         'storage.objects': s.objects,
         'storage.signed_urls': s.signedUrls,
       };
-      for (const name of CAPABILITY_NAMES) matrix[name] ??= { status: 'unavailable', reason: 'not_implemented' };
+      for (const name of CAPABILITY_NAMES)
+        matrix[name] ??= { status: 'unavailable', reason: 'not_implemented' };
       return matrix;
     },
   };

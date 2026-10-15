@@ -14,11 +14,31 @@ export const DEFAULT_MODELS = {
   // Featherless serves vision on Gemma- and Mistral-class models; Gemma 3 27B handles both image and text.
   featherless: { vlm: 'google/gemma-3-27b-it', text: 'google/gemma-3-27b-it' },
   anthropic: { vlm: 'claude-sonnet-5-5', text: 'claude-sonnet-5-5' },
+  // No route is qualified by default. Profiles must supply exact catalog IDs.
+  concentrate: { vlm: '', text: '' },
 } as const;
 
 const BaseProviderConfigSchema = z.object({
   /** Which LLM service backs the VLM and text models. */
-  LLM_PROVIDER: z.enum(['featherless', 'anthropic']).default('featherless'),
+  LLM_PROVIDER: z.enum(['featherless', 'anthropic', 'concentrate']).default('featherless'),
+  CONCENTRATE_API_KEY: optional,
+  CONCENTRATE_BASE_URL: z
+    .literal('https://api.concentrate.ai/v1')
+    .default('https://api.concentrate.ai/v1'),
+  CONCENTRATE_PROFILE_FILE: optional,
+  CONCENTRATE_REQUIRE_ZDR: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  CONCENTRATE_ALLOW_CONTENT_LOGGING: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  CONCENTRATE_GATEWAY_FALLBACKS_ENABLED: z.literal('false').default('false'),
+  MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
+  MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
+  MODEL_MAX_UNKNOWN_SPEND_USD: z.coerce.number().positive().optional(),
+  ACCOUNT_DAILY_MEDIA_ANALYSES: z.coerce.number().int().positive().default(50),
   FEATHERLESS_API_KEY: optional,
   FEATHERLESS_BASE_URL: z.string().default('https://api.featherless.ai/v1'),
   /**
@@ -83,8 +103,12 @@ export const ProviderConfigSchema = BaseProviderConfigSchema.transform((c) => ({
 
 export type ProviderConfig = z.output<typeof ProviderConfigSchema>;
 
-export function loadProviderConfig(env: Record<string, string | undefined> = process.env): ProviderConfig {
+export function loadProviderConfig(
+  env: Record<string, string | undefined> = process.env,
+): ProviderConfig {
   // Empty strings (e.g. `NAME=` copied from .env.example) count as unset.
-  const cleaned = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ''));
+  const cleaned = Object.fromEntries(
+    Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ''),
+  );
   return ProviderConfigSchema.parse(cleaned);
 }
