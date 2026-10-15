@@ -96,8 +96,9 @@ export const EnrollCaptureDeviceRequest = z.object({
   platform: z.enum(['ios', 'android']),
   app_version: z.string().min(1).max(100),
   installation_public_id: CaptureV2Uuid,
-  enrollment_proof: z.string().min(32).max(256),
+  proof: z.string().min(32).max(256),
   enrollment_grant: z.string().min(32).max(512).optional(),
+  capabilities: z.record(z.string(), z.boolean()).default({}),
 }).strict();
 export const CaptureDeviceResponse = z.object({
   id: CaptureV2Uuid,
@@ -112,9 +113,15 @@ export const CaptureDeviceResponse = z.object({
 });
 export const EnrolledCaptureDeviceResponse = z.object({
   installation: CaptureDeviceResponse,
-  access_token: z.string(),
-  refresh_token: z.string(),
-  token_expires_at: DateTime,
+  native_session: z.object({
+    session_id: CaptureV2Uuid,
+    installation_id: CaptureV2Uuid,
+    account_id: CaptureV2Uuid,
+    access_token: z.string(),
+    refresh_token: z.string(),
+    access_expires_at: DateTime,
+    refresh_expires_at: DateTime,
+  }),
 });
 export const SafeCaptureDeviceSetup = z.object({
   alias: z.string(),
@@ -146,6 +153,7 @@ export const CreateCaptureSessionRequest = z.object({
 export const ArmCaptureSessionRequest = z.object({
   enabled: z.boolean(),
   duration_seconds: z.number().int().min(1).max(600).default(600),
+  allowed_agent_connection_ids: z.array(CaptureV2Uuid).max(100).default([]),
 }).strict();
 export const EndCaptureSessionRequest = z.object({ reason: z.string().max(100) }).strict();
 export const CaptureSessionResponse = z.object({
@@ -178,7 +186,7 @@ export const CAPTURE_V2_ROUTES = {
   updateMedia: 'PATCH /v2/media/{id}',
   deleteMedia: 'DELETE /v2/media/{id}',
   batchDeleteMedia: 'POST /v2/media/batch-delete',
-  enrollmentChallenge: 'POST /v2/devices/enrollment-challenge',
+  enrollmentChallenge: 'POST /v2/devices/enrollment/challenge',
   enrollDevice: 'POST /v2/devices/enroll',
   devices: 'GET /v2/devices',
   revokeDevice: 'DELETE /v2/devices/{id}',

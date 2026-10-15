@@ -15,6 +15,13 @@ another installation. Full recoverable native account login/refresh is separate
 from installation authority and remains a release requirement.
 
 Every mutation requires `Idempotency-Key: <UUID>`, except provider byte PUTs.
+Every browser v2 mutation also requires `X-Atlas-Expected-Account: <account UUID>`.
+Compare it to the authenticated principal immediately, before policy, quotas,
+idempotency replay or side effects; mismatch returns409 `account_mismatch`.
+It asserts the persisted draft owner and never selects/overrides the actual owner.
+Installation bearers are already bound to their original account; an optional
+expected-account header is still honored. Identity/grant exchange endpoints are
+not browser-session mutations and do not use idempotent secret-response caches.
 Keys are scoped by account, installation (if any), method and path. Reusing a key
 with different normalized JSON returns 409 `idempotency_conflict`.
 Replays recheck authentication and ownership. Cross-owner IDs return 404.
@@ -69,7 +76,7 @@ and durable job ownership/generation instead of writing media rows directly.
 
 | Route | Body | Result |
 |---|---|---|
-| POST `/v2/devices/enrollment-challenge` | `{installation_public_id}` | 201 `{enrollment_proof,expires_at}` |
+| POST `/v2/devices/enrollment/challenge` | `{enrollment_grant?,installation_public_id,platform}` | 201 `{nonce,expires_at}` |
 | POST `/v2/devices/enroll` | EnrollCaptureDeviceRequest | 201 EnrolledCaptureDeviceResponse |
 | GET `/v2/devices` | cursor?,limit? | `{items:CaptureDeviceResponse[],next_cursor}` |
 | DELETE `/v2/devices/{id}` | RevokeCaptureDeviceRequest | 202 `{id,revoked:true}` |
@@ -83,7 +90,13 @@ and durable job ownership/generation instead of writing media rows directly.
 Browser challenge and enrollment require a recoverable authenticated **account**,
 never an installation/agent credential. Native enrollment instead consumes the
 identity workstream's one-use5-minute `enrollment_grant` plus enrollment proof.
-Challenges expire in5 minutes and bind account+session+public installation UUID.
+Native challenge accepts the enrollment grant as a grant, not an API bearer.
+It does not consume it: the challenge binds its hash+platform+installation UUID
+and a random nonce. Only enrollment consumes the identity grant atomically.
+Enroll sends `{enrollment_grant,installation_public_id,proof:nonce,platform,
+app_version,capabilities}` and returns `{installation,native_session}`.
+Challenges expire in5 minutes and bind account+session (browser) or grant hash
+(native), plus platform+public installation UUID.
 SDK identity is not proof. In the same enrollment transaction P1 calls injected
 `issueNativeSession(tx,{accountId,installationId},now)`. Identity owns opaque
 `cna_` access tokens (10min) and `cnr_` rotating refresh, verification and recovery.
