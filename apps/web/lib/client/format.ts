@@ -44,6 +44,14 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   'taste:write': 'Save or hide items for you',
   'plans:read': 'See your plans',
   'plans:write': 'Create and change plans',
+  'setup:read': 'View my device setup',
+  'preferences:read': 'Read my preferences',
+  'preferences:write': 'Change ordinary preferences',
+  'media:read': 'View permitted photos and videos',
+  'media:download': 'Download permitted originals',
+  'media:write': 'Upload media and manage agent-created drafts',
+  'media:analyze': 'Request analysis of permitted media',
+  'devices:command': 'Request capture while I allow it',
 };
 
 export function pluralItems(n: number): string {

@@ -42,11 +42,13 @@ interface ConnectionRow {
   last_used_at: Date | null;
   collection_ids: string[] | null;
   collection_names: string[] | null;
+  installation_ids: string[];
+  authorization_version: number;
 }
 
 const SELECT_CONNECTION = `
   SELECT ac.id, ac.client_name, ac.scopes, ac.library_access, ac.credential_prefix, ac.created_at,
-         ac.expires_at, ac.revoked_at, ac.last_used_at,
+         ac.expires_at, ac.revoked_at, ac.last_used_at, ac.installation_ids, ac.authorization_version,
          ARRAY(SELECT acc.collection_id FROM agent_connection_collections acc
                  JOIN collections c ON c.id = acc.collection_id
                 WHERE acc.agent_connection_id = ac.id ORDER BY acc.granted_at, c.name) AS collection_ids,
@@ -69,6 +71,8 @@ function toDto(row: ConnectionRow, now: Date): AgentConnectionDto {
     scopes: normalizeScopes(row.scopes),
     library_access: row.library_access,
     collection_ids: row.collection_ids ?? [],
+    installation_ids: row.installation_ids ?? [],
+    authorization_version: row.authorization_version,
     credential_prefix: `cat_${row.credential_prefix}_…`,
     created_at: iso(row.created_at),
     expires_at: iso(row.expires_at),

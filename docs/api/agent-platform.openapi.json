@@ -1,0 +1,3708 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Culture Atlas agent platform",
+    "version": "2.1.0"
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "servers": [
+    {
+      "url": "https://your-atlas.example"
+    }
+  ],
+  "paths": {
+    "/v2/collections/{id}/media": {
+      "get": {
+        "operationId": "listCollectionMedia",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "collections:read"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "photo",
+                              "video"
+                            ]
+                          },
+                          "title": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "generation": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "source": {
+                            "type": "string"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "kind",
+                          "title",
+                          "status",
+                          "generation",
+                          "source",
+                          "created_at"
+                        ]
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/collections/{id}/media/{asset_id}": {
+      "put": {
+        "operationId": "addCollectionMedia",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "collections:write"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "collection_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "asset_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": [
+                    "collection_id",
+                    "asset_id"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "removeCollectionMedia",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "collections:write"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "collection_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "asset_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": [
+                    "collection_id",
+                    "asset_id"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/library": {
+      "get": {
+        "operationId": "listAgentMedia",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "media:read"
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "photo",
+                "video"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending_upload",
+                "verifying",
+                "processing",
+                "ready",
+                "failed"
+              ]
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "browser_camera",
+                "phone_camera",
+                "meta_glasses",
+                "upload",
+                "legacy_sensor"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "media": {
+                            "type": "object",
+                            "properties": {
+                              "schema_version": {
+                                "type": "number",
+                                "const": 1
+                              },
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "photo",
+                                  "video"
+                                ]
+                              },
+                              "source": {
+                                "type": "string",
+                                "enum": [
+                                  "browser_camera",
+                                  "phone_camera",
+                                  "meta_glasses",
+                                  "upload",
+                                  "legacy_sensor"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "pending_upload",
+                                  "verifying",
+                                  "processing",
+                                  "ready",
+                                  "failed",
+                                  "deleted"
+                                ]
+                              },
+                              "analysis_status": {
+                                "type": "string",
+                                "enum": [
+                                  "not_requested",
+                                  "queued",
+                                  "running",
+                                  "complete",
+                                  "failed"
+                                ]
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                              },
+                              "title": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "duration_ms": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 120000
+                              },
+                              "width": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "height": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "audio_present": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "schema_version",
+                              "id",
+                              "kind",
+                              "source",
+                              "status",
+                              "analysis_status",
+                              "created_at"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "generation": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "revision": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "links": {
+                            "type": "object",
+                            "properties": {
+                              "original": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "playback": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "poster": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "analysis": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "original",
+                              "playback",
+                              "poster",
+                              "analysis"
+                            ]
+                          },
+                          "error_code": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "frames": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "timestamp_ms": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "extraction_version": {
+                                  "type": "string"
+                                },
+                                "thumbnail_url": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "timestamp_ms",
+                                "extraction_version",
+                                "thumbnail_url"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "media",
+                          "generation",
+                          "revision",
+                          "links",
+                          "error_code",
+                          "frames"
+                        ]
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/media/{id}": {
+      "get": {
+        "operationId": "getAgentMedia",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "media:read"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "media": {
+                      "type": "object",
+                      "properties": {
+                        "schema_version": {
+                          "type": "number",
+                          "const": 1
+                        },
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "photo",
+                            "video"
+                          ]
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "browser_camera",
+                            "phone_camera",
+                            "meta_glasses",
+                            "upload",
+                            "legacy_sensor"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending_upload",
+                            "verifying",
+                            "processing",
+                            "ready",
+                            "failed",
+                            "deleted"
+                          ]
+                        },
+                        "analysis_status": {
+                          "type": "string",
+                          "enum": [
+                            "not_requested",
+                            "queued",
+                            "running",
+                            "complete",
+                            "failed"
+                          ]
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "title": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "duration_ms": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 120000
+                        },
+                        "width": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "height": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "audio_present": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "schema_version",
+                        "id",
+                        "kind",
+                        "source",
+                        "status",
+                        "analysis_status",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "links": {
+                      "type": "object",
+                      "properties": {
+                        "original": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "playback": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "poster": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "analysis": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "original",
+                        "playback",
+                        "poster",
+                        "analysis"
+                      ]
+                    },
+                    "error_code": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "frames": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "timestamp_ms": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "extraction_version": {
+                            "type": "string"
+                          },
+                          "thumbnail_url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "timestamp_ms",
+                          "extraction_version",
+                          "thumbnail_url"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "media",
+                    "generation",
+                    "revision",
+                    "links",
+                    "error_code",
+                    "frames"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/uploads": {
+      "post": {
+        "operationId": "beginAgentUpload",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "media:write"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "client_capture_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "photo",
+                      "video"
+                    ]
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "browser_camera",
+                      "phone_camera",
+                      "meta_glasses",
+                      "upload"
+                    ]
+                  },
+                  "filename": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "content_type": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/webp",
+                      "video/mp4",
+                      "video/quicktime",
+                      "video/webm"
+                    ]
+                  },
+                  "byte_size": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 262144000
+                  },
+                  "sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "captured_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "capture_session_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "destination_collection_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "client_capture_id",
+                  "kind",
+                  "source",
+                  "filename",
+                  "content_type",
+                  "byte_size",
+                  "sha256"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "asset_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "upload_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "created",
+                        "uploading",
+                        "verifying",
+                        "committed",
+                        "aborted",
+                        "expired",
+                        "rejected"
+                      ]
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    "part_size": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "part_count": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "parts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "part_number": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "method": {
+                            "type": "string",
+                            "const": "PUT"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "headers": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          }
+                        },
+                        "required": [
+                          "part_number",
+                          "method",
+                          "url",
+                          "headers",
+                          "expires_at"
+                        ]
+                      }
+                    },
+                    "verified_parts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "part_number": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000
+                          },
+                          "etag": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          }
+                        },
+                        "required": [
+                          "part_number",
+                          "etag"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "error_code": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "asset_id",
+                    "upload_id",
+                    "state",
+                    "expires_at",
+                    "part_size",
+                    "part_count",
+                    "parts",
+                    "verified_parts",
+                    "error_code"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/uploads/{id}/complete": {
+      "post": {
+        "operationId": "completeAgentUpload",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "media:write"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "parts": {
+                    "minItems": 1,
+                    "maxItems": 10000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "part_number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 10000
+                        },
+                        "etag": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1024
+                        }
+                      },
+                      "required": [
+                        "part_number",
+                        "etag"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "parts"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "asset_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "upload_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "created",
+                        "uploading",
+                        "verifying",
+                        "committed",
+                        "aborted",
+                        "expired",
+                        "rejected"
+                      ]
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    "part_size": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "part_count": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "parts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "part_number": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "method": {
+                            "type": "string",
+                            "const": "PUT"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "headers": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          }
+                        },
+                        "required": [
+                          "part_number",
+                          "method",
+                          "url",
+                          "headers",
+                          "expires_at"
+                        ]
+                      }
+                    },
+                    "verified_parts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "part_number": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000
+                          },
+                          "etag": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1024
+                          }
+                        },
+                        "required": [
+                          "part_number",
+                          "etag"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "error_code": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "asset_id",
+                    "upload_id",
+                    "state",
+                    "expires_at",
+                    "part_size",
+                    "part_count",
+                    "parts",
+                    "verified_parts",
+                    "error_code"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/operations/{id}": {
+      "get": {
+        "operationId": "getOperation",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "command",
+                        "upload",
+                        "analysis"
+                      ]
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "result_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "error_code": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "id",
+                    "kind",
+                    "state",
+                    "result_id",
+                    "error_code"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/devices/{id}/commands": {
+      "post": {
+        "operationId": "requestCapture",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "devices:command"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "session_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "generation": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "capture_photo",
+                      "start_video",
+                      "stop_video"
+                    ]
+                  },
+                  "capture_client_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "duration_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 60
+                  },
+                  "expires_in_seconds": {
+                    "default": 30,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                  }
+                },
+                "required": [
+                  "session_id",
+                  "generation",
+                  "action",
+                  "capture_client_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "command_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "delivery_sequence": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "duration_seconds": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "capture_client_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "authorization_version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    "result_asset_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "error_code": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "command_id",
+                    "session_id",
+                    "generation",
+                    "action",
+                    "delivery_sequence",
+                    "duration_seconds",
+                    "capture_client_id",
+                    "authorization_version",
+                    "state",
+                    "expires_at",
+                    "result_asset_id",
+                    "error_code"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/commands/{id}": {
+      "get": {
+        "operationId": "getCommandV2",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "devices:command"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "command_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "session_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "generation": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "action": {
+                      "type": "string"
+                    },
+                    "delivery_sequence": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "duration_seconds": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "capture_client_id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "authorization_version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    "result_asset_id": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "error_code": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "command_id",
+                    "session_id",
+                    "generation",
+                    "action",
+                    "delivery_sequence",
+                    "duration_seconds",
+                    "capture_client_id",
+                    "authorization_version",
+                    "state",
+                    "expires_at",
+                    "result_asset_id",
+                    "error_code"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/me/setup": {
+      "get": {
+        "operationId": "getSetup",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "setup:read"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "observed_at": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    },
+                    "installations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "alias": {
+                            "type": "string"
+                          },
+                          "app_version": {
+                            "type": "string"
+                          },
+                          "last_seen_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          "stale": {
+                            "type": "boolean"
+                          },
+                          "capabilities": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "boolean"
+                            }
+                          },
+                          "unavailable_reasons": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "alias",
+                          "app_version",
+                          "last_seen_at",
+                          "stale",
+                          "capabilities",
+                          "unavailable_reasons"
+                        ]
+                      }
+                    },
+                    "available_actions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "permission_summary": {
+                      "type": "string",
+                      "const": "Observed permissions only. OS access and remote capture require local consent."
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "observed_at",
+                    "installations",
+                    "available_actions",
+                    "permission_summary"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/me/preferences": {
+      "get": {
+        "operationId": "getPreferences",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "preferences:read"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "user_set": {
+                      "type": "object",
+                      "properties": {
+                        "theme": {
+                          "type": "string",
+                          "enum": [
+                            "system",
+                            "light",
+                            "dark"
+                          ]
+                        },
+                        "language": {
+                          "type": "string",
+                          "enum": [
+                            "en",
+                            "es",
+                            "fr",
+                            "de",
+                            "ja"
+                          ]
+                        },
+                        "default_capture_mode": {
+                          "type": "string",
+                          "enum": [
+                            "photo",
+                            "video"
+                          ]
+                        },
+                        "video_muted": {
+                          "type": "boolean"
+                        },
+                        "exploration": {
+                          "type": "string",
+                          "enum": [
+                            "familiar",
+                            "balanced",
+                            "adventurous"
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "effective": {
+                      "type": "object",
+                      "properties": {
+                        "theme": {
+                          "type": "string",
+                          "enum": [
+                            "system",
+                            "light",
+                            "dark"
+                          ]
+                        },
+                        "language": {
+                          "type": "string",
+                          "enum": [
+                            "en",
+                            "es",
+                            "fr",
+                            "de",
+                            "ja"
+                          ]
+                        },
+                        "default_capture_mode": {
+                          "type": "string",
+                          "enum": [
+                            "photo",
+                            "video"
+                          ]
+                        },
+                        "video_muted": {
+                          "type": "boolean"
+                        },
+                        "exploration": {
+                          "type": "string",
+                          "enum": [
+                            "familiar",
+                            "balanced",
+                            "adventurous"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "theme",
+                        "language",
+                        "default_capture_mode",
+                        "video_muted",
+                        "exploration"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "analysis_consent": {
+                      "type": "object",
+                      "properties": {
+                        "automatic_analysis": {
+                          "type": "boolean",
+                          "const": false
+                        },
+                        "requires_explicit_request": {
+                          "type": "boolean",
+                          "const": true
+                        }
+                      },
+                      "required": [
+                        "automatic_analysis",
+                        "requires_explicit_request"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "version",
+                    "user_set",
+                    "effective",
+                    "analysis_consent"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updatePreferences",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [
+          "preferences:write"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\"[1-9][0-9]*\"$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "theme": {
+                    "type": "string",
+                    "enum": [
+                      "system",
+                      "light",
+                      "dark"
+                    ]
+                  },
+                  "language": {
+                    "type": "string",
+                    "enum": [
+                      "en",
+                      "es",
+                      "fr",
+                      "de",
+                      "ja"
+                    ]
+                  },
+                  "default_capture_mode": {
+                    "type": "string",
+                    "enum": [
+                      "photo",
+                      "video"
+                    ]
+                  },
+                  "video_muted": {
+                    "type": "boolean"
+                  },
+                  "exploration": {
+                    "type": "string",
+                    "enum": [
+                      "familiar",
+                      "balanced",
+                      "adventurous"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "user_set": {
+                      "type": "object",
+                      "properties": {
+                        "theme": {
+                          "type": "string",
+                          "enum": [
+                            "system",
+                            "light",
+                            "dark"
+                          ]
+                        },
+                        "language": {
+                          "type": "string",
+                          "enum": [
+                            "en",
+                            "es",
+                            "fr",
+                            "de",
+                            "ja"
+                          ]
+                        },
+                        "default_capture_mode": {
+                          "type": "string",
+                          "enum": [
+                            "photo",
+                            "video"
+                          ]
+                        },
+                        "video_muted": {
+                          "type": "boolean"
+                        },
+                        "exploration": {
+                          "type": "string",
+                          "enum": [
+                            "familiar",
+                            "balanced",
+                            "adventurous"
+                          ]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "effective": {
+                      "type": "object",
+                      "properties": {
+                        "theme": {
+                          "type": "string",
+                          "enum": [
+                            "system",
+                            "light",
+                            "dark"
+                          ]
+                        },
+                        "language": {
+                          "type": "string",
+                          "enum": [
+                            "en",
+                            "es",
+                            "fr",
+                            "de",
+                            "ja"
+                          ]
+                        },
+                        "default_capture_mode": {
+                          "type": "string",
+                          "enum": [
+                            "photo",
+                            "video"
+                          ]
+                        },
+                        "video_muted": {
+                          "type": "boolean"
+                        },
+                        "exploration": {
+                          "type": "string",
+                          "enum": [
+                            "familiar",
+                            "balanced",
+                            "adventurous"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "theme",
+                        "language",
+                        "default_capture_mode",
+                        "video_muted",
+                        "exploration"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "analysis_consent": {
+                      "type": "object",
+                      "properties": {
+                        "automatic_analysis": {
+                          "type": "boolean",
+                          "const": false
+                        },
+                        "requires_explicit_request": {
+                          "type": "boolean",
+                          "const": true
+                        }
+                      },
+                      "required": [
+                        "automatic_analysis",
+                        "requires_explicit_request"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "version",
+                    "user_set",
+                    "effective",
+                    "analysis_consent"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/agent-connections": {
+      "get": {
+        "operationId": "listConnectionsV2",
+        "security": [
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "connections": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "client_name": {
+                            "type": "string"
+                          },
+                          "scopes": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "captures:read",
+                                "captures:write",
+                                "collections:read",
+                                "collections:write",
+                                "taste:read",
+                                "taste:write",
+                                "plans:read",
+                                "plans:write",
+                                "setup:read",
+                                "preferences:read",
+                                "preferences:write",
+                                "media:read",
+                                "media:download",
+                                "media:write",
+                                "media:analyze",
+                                "devices:command"
+                              ]
+                            }
+                          },
+                          "library_access": {
+                            "type": "string",
+                            "enum": [
+                              "none",
+                              "selected_collections",
+                              "all"
+                            ]
+                          },
+                          "collection_ids": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            }
+                          },
+                          "installation_ids": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            }
+                          },
+                          "authorization_version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "credential_prefix": {
+                            "type": "string"
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          "expires_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          "revoked_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "last_used_at": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "expired",
+                              "revoked"
+                            ]
+                          },
+                          "access_summary": {
+                            "type": "object",
+                            "properties": {
+                              "reads": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "writes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "limits": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "reads",
+                              "writes",
+                              "limits"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "client_name",
+                          "scopes",
+                          "library_access",
+                          "collection_ids",
+                          "credential_prefix",
+                          "created_at",
+                          "expires_at",
+                          "revoked_at",
+                          "last_used_at",
+                          "status",
+                          "access_summary"
+                        ]
+                      }
+                    },
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "connections",
+                    "schema_version",
+                    "request_id"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createConnectionV2",
+        "security": [
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "client_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "scopes": {
+                    "default": [
+                      "setup:read",
+                      "preferences:read"
+                    ],
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "captures:read",
+                        "captures:write",
+                        "collections:read",
+                        "collections:write",
+                        "taste:read",
+                        "taste:write",
+                        "plans:read",
+                        "plans:write",
+                        "setup:read",
+                        "preferences:read",
+                        "preferences:write",
+                        "media:read",
+                        "media:download",
+                        "media:write",
+                        "media:analyze",
+                        "devices:command"
+                      ]
+                    }
+                  },
+                  "library_access": {
+                    "default": "none",
+                    "type": "string",
+                    "enum": [
+                      "none",
+                      "selected_collections",
+                      "all"
+                    ]
+                  },
+                  "collection_ids": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "installation_ids": {
+                    "default": [],
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "expires_in_days": {
+                    "default": 30,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 90
+                  }
+                },
+                "required": [
+                  "client_name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "connection": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "client_name": {
+                          "type": "string"
+                        },
+                        "scopes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "captures:read",
+                              "captures:write",
+                              "collections:read",
+                              "collections:write",
+                              "taste:read",
+                              "taste:write",
+                              "plans:read",
+                              "plans:write",
+                              "setup:read",
+                              "preferences:read",
+                              "preferences:write",
+                              "media:read",
+                              "media:download",
+                              "media:write",
+                              "media:analyze",
+                              "devices:command"
+                            ]
+                          }
+                        },
+                        "library_access": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "selected_collections",
+                            "all"
+                          ]
+                        },
+                        "collection_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "installation_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "authorization_version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "credential_prefix": {
+                          "type": "string"
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "revoked_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "last_used_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "expired",
+                            "revoked"
+                          ]
+                        },
+                        "access_summary": {
+                          "type": "object",
+                          "properties": {
+                            "reads": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "writes": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "limits": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "reads",
+                            "writes",
+                            "limits"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "client_name",
+                        "scopes",
+                        "library_access",
+                        "collection_ids",
+                        "credential_prefix",
+                        "created_at",
+                        "expires_at",
+                        "revoked_at",
+                        "last_used_at",
+                        "status",
+                        "access_summary"
+                      ]
+                    },
+                    "credential": {
+                      "type": "string"
+                    },
+                    "mcp_url": {
+                      "type": "string"
+                    },
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "connection",
+                    "credential",
+                    "mcp_url",
+                    "schema_version",
+                    "request_id"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/agent-connections/{id}": {
+      "patch": {
+        "operationId": "narrowConnectionV2",
+        "security": [
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "client_name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "scopes": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "captures:read",
+                        "captures:write",
+                        "collections:read",
+                        "collections:write",
+                        "taste:read",
+                        "taste:write",
+                        "plans:read",
+                        "plans:write",
+                        "setup:read",
+                        "preferences:read",
+                        "preferences:write",
+                        "media:read",
+                        "media:download",
+                        "media:write",
+                        "media:analyze",
+                        "devices:command"
+                      ]
+                    }
+                  },
+                  "collection_ids": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "installation_ids": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "expires_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "connection": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "client_name": {
+                          "type": "string"
+                        },
+                        "scopes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "captures:read",
+                              "captures:write",
+                              "collections:read",
+                              "collections:write",
+                              "taste:read",
+                              "taste:write",
+                              "plans:read",
+                              "plans:write",
+                              "setup:read",
+                              "preferences:read",
+                              "preferences:write",
+                              "media:read",
+                              "media:download",
+                              "media:write",
+                              "media:analyze",
+                              "devices:command"
+                            ]
+                          }
+                        },
+                        "library_access": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "selected_collections",
+                            "all"
+                          ]
+                        },
+                        "collection_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "installation_ids": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "authorization_version": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "credential_prefix": {
+                          "type": "string"
+                        },
+                        "created_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "expires_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "revoked_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "last_used_at": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "expired",
+                            "revoked"
+                          ]
+                        },
+                        "access_summary": {
+                          "type": "object",
+                          "properties": {
+                            "reads": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "writes": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "limits": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "reads",
+                            "writes",
+                            "limits"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "client_name",
+                        "scopes",
+                        "library_access",
+                        "collection_ids",
+                        "credential_prefix",
+                        "created_at",
+                        "expires_at",
+                        "revoked_at",
+                        "last_used_at",
+                        "status",
+                        "access_summary"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "connection"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "revokeConnectionV2",
+        "security": [
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Authorized result"
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/agent-connections/{id}/rotate": {
+      "post": {
+        "operationId": "rotateConnectionV2",
+        "security": [
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "credential": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "credential"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/agent-activity": {
+      "get": {
+        "operationId": "agentActivity",
+        "security": [
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "connection_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "client_name": {
+                            "type": "string"
+                          },
+                          "action": {
+                            "type": "string"
+                          },
+                          "target_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "created_at": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "connection_id",
+                          "client_name",
+                          "action",
+                          "target_id",
+                          "created_at"
+                        ]
+                      }
+                    },
+                    "next_cursor": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "items",
+                    "next_cursor"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/oauth/authorize": {
+      "post": {
+        "operationId": "oauthConsent",
+        "security": [
+          {
+            "accountSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "client_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "redirect_uri": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "code_challenge": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43}$"
+                  },
+                  "code_challenge_method": {
+                    "type": "string",
+                    "const": "S256"
+                  },
+                  "state": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 512
+                  },
+                  "resource": {
+                    "type": "string",
+                    "maxLength": 2048,
+                    "format": "uri"
+                  },
+                  "grant": {
+                    "type": "object",
+                    "properties": {
+                      "client_name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "scopes": {
+                        "default": [
+                          "setup:read",
+                          "preferences:read"
+                        ],
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "captures:read",
+                            "captures:write",
+                            "collections:read",
+                            "collections:write",
+                            "taste:read",
+                            "taste:write",
+                            "plans:read",
+                            "plans:write",
+                            "setup:read",
+                            "preferences:read",
+                            "preferences:write",
+                            "media:read",
+                            "media:download",
+                            "media:write",
+                            "media:analyze",
+                            "devices:command"
+                          ]
+                        }
+                      },
+                      "library_access": {
+                        "default": "none",
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "selected_collections",
+                          "all"
+                        ]
+                      },
+                      "collection_ids": {
+                        "default": [],
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      },
+                      "installation_ids": {
+                        "default": [],
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        }
+                      },
+                      "expires_in_days": {
+                        "default": 30,
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 90
+                      }
+                    },
+                    "required": [
+                      "client_name"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "client_id",
+                  "redirect_uri",
+                  "code_challenge",
+                  "code_challenge_method",
+                  "state",
+                  "resource",
+                  "grant"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "schema_version": {
+                      "type": "string",
+                      "const": "2.1"
+                    },
+                    "request_id": {
+                      "type": "string"
+                    },
+                    "redirect_uri": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "request_id",
+                    "redirect_uri"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Preference version changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/oauth/token": {
+      "post": {
+        "operationId": "oauthToken",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "grant_type": {
+                        "type": "string",
+                        "const": "authorization_code"
+                      },
+                      "client_id": {
+                        "type": "string"
+                      },
+                      "redirect_uri": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "code": {
+                        "type": "string",
+                        "minLength": 32,
+                        "maxLength": 512
+                      },
+                      "code_verifier": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9._~-]{43,128}$"
+                      },
+                      "resource": {
+                        "type": "string",
+                        "format": "uri"
+                      }
+                    },
+                    "required": [
+                      "grant_type",
+                      "client_id",
+                      "redirect_uri",
+                      "code",
+                      "code_verifier",
+                      "resource"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "grant_type": {
+                        "type": "string",
+                        "const": "refresh_token"
+                      },
+                      "client_id": {
+                        "type": "string"
+                      },
+                      "refresh_token": {
+                        "type": "string",
+                        "minLength": 32,
+                        "maxLength": 512
+                      },
+                      "resource": {
+                        "type": "string",
+                        "format": "uri"
+                      }
+                    },
+                    "required": [
+                      "grant_type",
+                      "client_id",
+                      "refresh_token",
+                      "resource"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "10-minute bearer and rotating refresh, no-store"
+          },
+          "401": {
+            "description": "Generic invalid grant"
+          }
+        }
+      }
+    },
+    "/v2/events": {
+      "get": {
+        "operationId": "agentEvents",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "after_cursor",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resumable scoped batches, grant rechecked every second, no media URLs",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Cursor expired, resync current state"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "accountSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "ca_session",
+        "description": "Owner browser session. Mutations also require x-csrf-token and X-Atlas-Expected-Account."
+      }
+    }
+  }
+}

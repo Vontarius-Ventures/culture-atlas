@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import {
   captures,
+  agentPlatform,
+  agentCommands,
+  agentMedia,
+  agentOperations,
   collections,
   items,
   jobs,
@@ -34,6 +38,61 @@ const define = <I extends z.ZodType>(t: ToolDefinition<I>): ToolDefinition<I> =>
 const { Uuid } = schemas;
 
 export const TOOLS = [
+  define({
+    name: 'list_media', title: 'List permitted media',
+    description: 'List or search media within the live collection grant. No originals or private analysis reasoning.',
+    scopes: ['media:read'], startsJob: false, input: schemas.AgentMediaQuery,
+    run: (ctx, input) => agentMedia.listMedia(ctx, input),
+  }),
+  define({
+    name: 'get_media', title: 'View permitted media',
+    description: 'Read one currently permitted media item and authorized preview links. Originals require a separate download grant.',
+    scopes: ['media:read'], startsJob: false, input: z.strictObject({ media_id: Uuid }),
+    run: (ctx, input) => agentMedia.getMedia(ctx, input.media_id),
+  }),
+  define({
+    name: 'begin_upload', title: 'Begin signed media upload',
+    description: 'Begin byte intake, not analysis. Selected-collection agents must name a granted destination. Never accepts a URL or file path.',
+    scopes: ['media:write'], startsJob: false, input: z.strictObject({ idempotency_key: Uuid, upload: schemas.AgentUploadRequest }),
+    run: (ctx, input) => agentMedia.beginUpload(ctx, input.upload, input.idempotency_key),
+  }),
+  define({
+    name: 'complete_upload', title: 'Complete signed byte intake',
+    description: 'Submit signed byte-transfer receipts for a draft created by this connection. Check get_operation using upload_id. Analysis is never automatic.',
+    scopes: ['media:write'], startsJob: false, input: z.strictObject({ upload_id: Uuid, idempotency_key: Uuid, completion: schemas.CompleteMediaUploadRequest }),
+    run: (ctx, input) => agentMedia.completeUpload(ctx, input.upload_id, input.completion, input.idempotency_key),
+  }),
+  define({
+    name: 'get_operation', title: 'Check a permitted operation',
+    description: 'Check an authorized asynchronous upload, analysis or capture command. This does not broaden resource access.',
+    scopes: [], startsJob: false, input: z.strictObject({ operation_id: Uuid }),
+    run: (ctx, input) => agentOperations.getOperation(ctx, input.operation_id),
+  }),
+  define({
+    name: 'request_capture', title: 'Request locally authorized capture',
+    description: 'Request capture on an explicitly selected phone and fresh locally armed session. Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request.',
+    scopes: ['devices:command'], startsJob: false,
+    input: z.strictObject({ installation_id: Uuid, idempotency_key: Uuid, command: schemas.CaptureCommandRequest }),
+    run: (ctx, input) => agentCommands.requestCapture(ctx, input.installation_id, input.command, input.idempotency_key),
+  }),
+  define({
+    name: 'get_setup', title: 'View device setup',
+    description: 'Read safe capabilities and device aliases. Observations never grant OS permissions or arm a camera.',
+    scopes: ['setup:read'], input: z.strictObject({}), startsJob: false,
+    run: (ctx) => agentPlatform.getSetup(ctx),
+  }),
+  define({
+    name: 'get_preferences', title: 'Read ordinary preferences',
+    description: 'Read explicit and effective ordinary account preferences. This does not reveal taste.',
+    scopes: ['preferences:read'], input: z.strictObject({}), startsJob: false,
+    run: (ctx) => agentPlatform.getPreferences(ctx),
+  }),
+  define({
+    name: 'update_preferences', title: 'Change ordinary preferences',
+    description: 'Change only ordinary preferences using the version returned by get_preferences. Cannot enable capture, microphones, sharing or automatic analysis.',
+    scopes: ['preferences:write'], input: z.strictObject({ version: z.number().int().positive(), patch: schemas.PatchOrdinaryPreferences }),
+    startsJob: false, run: (ctx, input) => agentPlatform.updatePreferences(ctx, input.patch, input.version),
+  }),
   define({
     name: 'analyze_capture',
     title: 'Analyze a photo',
@@ -198,7 +257,7 @@ export interface ToolAnnotations {
   openWorldHint: boolean;
 }
 
-const READ_ONLY = new Set<string>(['get_job', 'get_capture', 'explore_reference', 'get_taste', 'list_collections', 'get_collection', 'get_plan']);
+const READ_ONLY = new Set<string>(['get_setup', 'get_preferences', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'list_collections', 'get_collection', 'get_plan']);
 const DESTRUCTIVE = new Set<string>(['record_preference', 'remove_collection_item', 'replace_plan_section']);
 const IDEMPOTENT = new Set<string>([...READ_ONLY, 'add_collection_item', 'remove_collection_item']);
 
@@ -228,6 +287,10 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 export const SPEC_TOOL_NAMES = [
+  'list_media', 'get_media', 'begin_upload', 'complete_upload', 'get_operation',
+  'request_capture',
+  'get_setup',
+  'get_preferences', 'update_preferences',
   'analyze_capture', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'record_preference',
   'list_collections', 'get_collection', 'create_collection', 'add_collection_item', 'remove_collection_item',
   'discover_related', 'create_plan', 'get_plan', 'replace_plan_section',

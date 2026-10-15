@@ -1,0 +1,174 @@
+import { z } from 'zod';
+import { requireAccount, requireAccountOwner } from '../authz';
+import { agentActivity, authorizeAgent } from '../authz/agent-authorization';
+import type { ServiceContext } from '../context';
+import type { Queryable } from '../db/pool';
+import { AppError, invalidInput } from '../errors';
+import { CreateAgentV2, NarrowAgentV2, OrdinaryPreferences, PatchOrdinaryPreferences } from '../schemas/agent-platform';
+import { createAgentConnection, listAgentConnections } from './agent-connections';
+import { generateAgentCredential } from './auth';
+
+const defaults = {
+  theme: 'system', language: 'en', default_capture_mode: 'photo', video_muted: true, exploration: 'balanced',
+} as const;
+const meta = (ctx: ServiceContext) => ({ schema_version: '2.1' as const, request_id: ctx.requestId });
+
+export function preferenceVersion(ifMatch?: string | null): number {
+  if (!ifMatch) throw new AppError('precondition_required');
+  const match = /^"([1-9]\d*)"$/.exec(ifMatch);
+  if (!match || !Number.isSafeInteger(Number(match[1]))) throw new AppError('invalid_input', { message: 'Use the quoted version from the preferences response.' });
+  return Number(match[1]);
+}
+
+export async function getPreferences(ctx: ServiceContext) {
+  ctx = await authorizeAgent(ctx, 'preferences:read');
+  const account = requireAccount(ctx.principal);
+  const { rows } = await ctx.db.query<{ preferences: Record<string, unknown>; preferences_version: number }>(
+    'SELECT preferences,preferences_version FROM accounts WHERE id=$1', [account.accountId],
+  );
+  if (!rows[0]) throw new AppError('not_found');
+  // A positive projection, never spread the account's general preferences.
+  const userSet: Record<string, unknown> = {};
+  for (const key of Object.keys(defaults)) {
+    const value = rows[0].preferences[key];
+    if (value !== undefined) {
+      const parsed = OrdinaryPreferences.safeParse({ [key]: value });
+      if (parsed.success) Object.assign(userSet, parsed.data);
+    }
+  }
+  await agentActivity(ctx, 'preferences.read');
+  return {
+    ...meta(ctx), version: rows[0].preferences_version, user_set: userSet,
+    effective: { ...defaults, ...userSet },
+    analysis_consent: { automatic_analysis: false as const, requires_explicit_request: true as const },
+  };
+}
+
+export async function updatePreferences(ctx: ServiceContext, patch: unknown, version: number) {
+  ctx = await authorizeAgent(ctx, 'preferences:write');
+  const account = requireAccount(ctx.principal);
+  const parsed = PatchOrdinaryPreferences.safeParse(patch);
+  if (!parsed.success) throw invalidInput(parsed.error);
+  await ctx.db.transaction(async (tx) => {
+    await authorizeAgent(ctx, 'preferences:write', tx);
+    const { rowCount } = await tx.query(
+      `UPDATE accounts SET preferences=preferences || $2::jsonb,preferences_version=preferences_version+1,updated_at=$4
+       WHERE id=$1 AND preferences_version=$3`, [account.accountId, JSON.stringify(parsed.data), version, ctx.now()],
+    );
+    if (!rowCount) throw new AppError('precondition_failed');
+    await agentActivity(ctx, 'preferences.update', undefined, tx);
+  });
+  // Write-only grants need not acquire preferences:read to receive their result.
+  return getPreferences({ ...ctx, principal: { kind: 'account', accountId: account.accountId, sessionId: null, isDemoOwner: false } });
+}
+
+export async function getSetup(ctx: ServiceContext) {
+  ctx = await authorizeAgent(ctx, 'setup:read');
+  const account = requireAccount(ctx.principal);
+  const { rows } = await ctx.db.query<{
+    platform: string; app_version: string; last_seen_at: Date; app_state: string; readiness: string; capabilities: Record<string, unknown>;
+  }>(
+    `SELECT platform,app_version,last_seen_at,app_state,readiness,capabilities FROM mobile_installations
+     WHERE account_id=$1 AND revoked_at IS NULL ORDER BY created_at,id LIMIT 100`, [account.accountId],
+  );
+  await agentActivity(ctx, 'setup.read');
+  return {
+    ...meta(ctx), observed_at: ctx.now().toISOString(),
+    installations: rows.map((r) => {
+      const stale = ctx.now().getTime() - r.last_seen_at.getTime() > 30_000 || r.app_state !== 'foreground';
+      const capabilities: Record<string, boolean> = {};
+      for (const key of ['photo', 'video', 'phone_camera', 'meta_glasses', 'microphone']) {
+        capabilities[key] = !stale && r.readiness === 'ready' && r.capabilities[key] === true;
+      }
+      return { alias: `${r.platform} phone`, app_version: r.app_version, last_seen_at: r.last_seen_at.toISOString(),
+        stale, capabilities, unavailable_reasons: stale ? ['device_disconnected_or_stale'] : r.readiness === 'ready' ? [] : ['local_permission_required'] };
+    }),
+    available_actions: ['view_preferences', 'upload_files'],
+    permission_summary: 'Observed permissions only. OS access and remote capture require local consent.' as const,
+  };
+}
+
+/** Ownership validation happens in one transaction with grant creation. */
+async function ownedInstallations(db: Queryable, accountId: string, ids: readonly string[]) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return unique;
+  const { rows } = await db.query<{ id: string }>(
+    'SELECT id FROM mobile_installations WHERE account_id=$1 AND id=ANY($2::uuid[]) AND revoked_at IS NULL',
+    [accountId, unique],
+  );
+  if (rows.length !== unique.length) throw new AppError('not_found');
+  return unique;
+}
+
+export async function createConnection(ctx: ServiceContext, raw: unknown) {
+  const owner = requireAccountOwner(ctx.principal);
+  const body = CreateAgentV2.parse(raw);
+  const result = await ctx.db.transaction(async (tx) => {
+    const ids = await ownedInstallations(tx, owner.accountId, body.installation_ids);
+    // Reuse the existing hashed credential and selected-collection foundation.
+    const transactionalCtx = { ...ctx, db: tx };
+    const created = await createAgentConnection(transactionalCtx, body);
+    await tx.query('UPDATE agent_connections SET installation_ids=$2 WHERE id=$1', [created.connection.id, ids]);
+    return created;
+  });
+  const connection = (await listAgentConnections(ctx)).connections.find((c) => c.id === result.connection.id)!;
+  return { ...meta(ctx), ...result, connection, installation_ids: body.installation_ids, authorization_version: 1 };
+}
+
+export async function narrowConnection(ctx: ServiceContext, id: string, raw: unknown) {
+  const owner = requireAccountOwner(ctx.principal);
+  const body = NarrowAgentV2.parse(raw);
+  await ctx.db.transaction(async (tx) => {
+    const { rows } = await tx.query<{
+      scopes: string[]; installation_ids: string[]; expires_at: Date; library_access: string; collection_ids: string[];
+    }>(
+      `SELECT ac.*, ARRAY(SELECT collection_id FROM agent_connection_collections WHERE agent_connection_id=ac.id) AS collection_ids
+       FROM agent_connections ac WHERE id=$1 AND owner_account_id=$2 AND purpose='agent' AND revoked_at IS NULL FOR UPDATE`,
+      [id, owner.accountId],
+    );
+    const row = rows[0];
+    if (!row) throw new AppError('not_found');
+    if (body.scopes?.some((s) => !row.scopes.includes(s)) ||
+        body.installation_ids?.some((i) => !row.installation_ids.includes(i)) ||
+        body.collection_ids?.some((i) => !row.collection_ids.includes(i)) ||
+        (body.expires_at && (new Date(body.expires_at) > row.expires_at || new Date(body.expires_at) <= ctx.now()))) {
+      throw new AppError('scope_denied', { message: 'Wider access requires a new owner consent transaction.' });
+    }
+    if (body.collection_ids && row.library_access !== 'selected_collections') throw new AppError('invalid_input');
+    await tx.query(
+      `UPDATE agent_connections SET client_name=COALESCE($3,client_name),scopes=COALESCE($4,scopes),
+       installation_ids=COALESCE($5,installation_ids),expires_at=COALESCE($6,expires_at),
+       authorization_version=authorization_version+1 WHERE id=$1 AND owner_account_id=$2`,
+      [id, owner.accountId, body.client_name, body.scopes, body.installation_ids, body.expires_at],
+    );
+    if (body.collection_ids) await tx.query(
+      'DELETE FROM agent_connection_collections WHERE agent_connection_id=$1 AND NOT(collection_id=ANY($2::uuid[]))',
+      [id, body.collection_ids],
+    );
+  });
+  return { ...meta(ctx), connection: (await listAgentConnections(ctx)).connections.find((c) => c.id === id)! };
+}
+
+export async function rotateConnection(ctx: ServiceContext, id: string) {
+  const owner = requireAccountOwner(ctx.principal);
+  const credential = generateAgentCredential();
+  const { rowCount } = await ctx.db.query(
+    `UPDATE agent_connections SET credential_hash=$3,credential_prefix=$4,authorization_version=authorization_version+1
+     WHERE id=$1 AND owner_account_id=$2 AND purpose='agent' AND revoked_at IS NULL AND expires_at>$5`,
+    [id, owner.accountId, credential.hash, credential.prefix, ctx.now()],
+  );
+  if (!rowCount) throw new AppError('not_found');
+  return { ...meta(ctx), credential: credential.credential };
+}
+
+export async function getActivity(ctx: ServiceContext) {
+  const owner = requireAccountOwner(ctx.principal);
+  const { rows } = await ctx.db.query<{
+    id: string; connection_id: string; client_name: string; action: string; target_id: string | null; created_at: Date;
+  }>(
+    `SELECT a.id,a.connection_id,ac.client_name,a.action,a.target_id,a.created_at FROM agent_activity a
+     JOIN agent_connections ac ON ac.id=a.connection_id AND ac.owner_account_id=a.account_id
+     WHERE a.account_id=$1 ORDER BY a.created_at DESC,a.id LIMIT 100`, [owner.accountId],
+  );
+  return { ...meta(ctx), items: rows.map((r) => ({ ...r, created_at: r.created_at.toISOString() })), next_cursor: null };
+}
