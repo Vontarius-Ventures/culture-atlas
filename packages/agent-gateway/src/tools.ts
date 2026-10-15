@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   captures,
+  agentPlatform,
   collections,
   items,
   jobs,
@@ -34,6 +35,18 @@ const define = <I extends z.ZodType>(t: ToolDefinition<I>): ToolDefinition<I> =>
 const { Uuid } = schemas;
 
 export const TOOLS = [
+  define({
+    name: 'get_preferences', title: 'Read ordinary preferences',
+    description: 'Read explicit and effective ordinary account preferences. This does not reveal taste.',
+    scopes: ['preferences:read'], input: z.strictObject({}), startsJob: false,
+    run: (ctx) => agentPlatform.getPreferences(ctx),
+  }),
+  define({
+    name: 'update_preferences', title: 'Change ordinary preferences',
+    description: 'Change only ordinary preferences using the version returned by get_preferences. Cannot enable capture, microphones, sharing or automatic analysis.',
+    scopes: ['preferences:write'], input: z.strictObject({ version: z.number().int().positive(), patch: schemas.PatchOrdinaryPreferences }),
+    startsJob: false, run: (ctx, input) => agentPlatform.updatePreferences(ctx, input.patch, input.version),
+  }),
   define({
     name: 'analyze_capture',
     title: 'Analyze a photo',
@@ -198,7 +211,7 @@ export interface ToolAnnotations {
   openWorldHint: boolean;
 }
 
-const READ_ONLY = new Set<string>(['get_job', 'get_capture', 'explore_reference', 'get_taste', 'list_collections', 'get_collection', 'get_plan']);
+const READ_ONLY = new Set<string>(['get_setup', 'get_preferences', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'list_collections', 'get_collection', 'get_plan']);
 const DESTRUCTIVE = new Set<string>(['record_preference', 'remove_collection_item', 'replace_plan_section']);
 const IDEMPOTENT = new Set<string>([...READ_ONLY, 'add_collection_item', 'remove_collection_item']);
 
@@ -228,6 +241,7 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 export const SPEC_TOOL_NAMES = [
+  'get_preferences', 'update_preferences',
   'analyze_capture', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'record_preference',
   'list_collections', 'get_collection', 'create_collection', 'add_collection_item', 'remove_collection_item',
   'discover_related', 'create_plan', 'get_plan', 'replace_plan_section',

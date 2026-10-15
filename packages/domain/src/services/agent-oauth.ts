@@ -32,7 +32,7 @@ export async function consent(ctx: ServiceContext, raw: unknown) {
     const redirect = new URL(body.redirect_uri);
     redirect.searchParams.set('code', code);
     redirect.searchParams.set('state', body.state);
-    return { schema_version: '2.1', request_id: ctx.requestId, redirect_uri: redirect.toString() };
+    return { schema_version: '2.1' as const, request_id: ctx.requestId, redirect_uri: redirect.toString() };
   });
 }
 

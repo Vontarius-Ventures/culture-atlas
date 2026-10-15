@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { LibraryAccess, Scope } from '../enums';
 import { Timestamp, Uuid } from './common';
+import { SafeCaptureDeviceSetup } from './capture-v2';
 
 export const OrdinaryPreferences = z.strictObject({
   theme: z.enum(['system', 'light', 'dark']).optional(),
@@ -18,11 +19,7 @@ export const PreferencesResponse = z.object({
 });
 export const SetupResponse = z.object({
   schema_version: z.literal('2.1'), request_id: z.string(), observed_at: Timestamp,
-  installations: z.array(z.object({
-    id: Uuid, alias: z.string(), platform: z.string(), app_version: z.string(),
-    last_seen_at: Timestamp.nullable(), stale: z.boolean(), ready: z.boolean(),
-    capability_reasons: z.array(z.string()),
-  })),
+  installations: z.array(SafeCaptureDeviceSetup),
   available_actions: z.array(z.string()),
   permission_summary: z.literal('Observed permissions only. OS access and remote capture require local consent.'),
 });

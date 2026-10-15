@@ -26,6 +26,14 @@ export function describeConnectionAccess(
   const reads: string[] = [];
   const writes: string[] = [];
   const limits: string[] = [];
+  if (has('setup:read')) reads.push('Your safe device setup and observed capabilities');
+  if (has('preferences:read')) reads.push('Your ordinary preferences, not your taste profile');
+  if (has('media:read') && libraryAccess !== 'none') reads.push(`Preview photos and videos in ${where}`);
+  if (has('media:download') && libraryAccess !== 'none') reads.push(`Download original media in ${where}`);
+  if (has('preferences:write')) writes.push('Change ordinary preferences, never security or capture consent');
+  if (has('media:write')) writes.push('Upload media and manage drafts created by this connection');
+  if (has('media:analyze')) writes.push('Request analysis within your consent and spending limits');
+  if (has('devices:command')) writes.push('Request capture on selected phones only while locally allowed');
 
   if (has('collections:read') && libraryAccess !== 'none') reads.push(`Items in ${where}`);
   if (has('captures:read')) {
@@ -53,7 +61,9 @@ export function describeConnectionAccess(
     limits.push('Cannot delete photos or unsave items everywhere.');
   }
   if (libraryAccess === 'none') limits.push('No access to your collections or saved items.');
-  limits.push('Original photos, Sensor credentials and other connections are never shared.');
+  limits.push(has('media:download')
+    ? 'Original downloads are audited. Sensor credentials and other connections are never shared.'
+    : 'Original photos, Sensor credentials and other connections are never shared.');
   limits.push('You can revoke this connection at any time; it stops working immediately.');
   return { reads, writes, limits };
 }

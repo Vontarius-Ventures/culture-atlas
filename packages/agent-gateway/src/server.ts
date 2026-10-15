@@ -16,6 +16,7 @@ import {
   toErrorBody,
   traces,
   withIdempotency,
+  enforceAgentRate,
   type AgentPrincipal,
   type Db,
   type DomainConfig,
@@ -147,6 +148,7 @@ export function buildMcpServer(
         traceId,
         surface: 'mcp',
       });
+      await enforceAgentRate(ctx, route.method !== 'GET');
       const run = async () => {
         const out = await tool.run(ctx, parsed.data);
         let body: unknown = out;
@@ -230,7 +232,7 @@ export function createMcpHandler(deps: GatewayDeps = {}): (request: Request) => 
     } catch (err) {
       const { status, body } = toErrorBody(err, requestId);
       const headers: Record<string, string> =
-        status === 401 ? { 'www-authenticate': `Bearer realm="culture atlas", error="invalid_token"` } : {};
+        status === 401 ? { 'www-authenticate': `Bearer realm="culture atlas", error="invalid_token", resource_metadata="${config.APP_BASE_URL.replace(/\/+$/, '')}/.well-known/oauth-protected-resource/mcp"` } : {};
       return jsonError(status, body, headers);
     }
 

@@ -259,7 +259,8 @@ export class ApiClient {
 
 async function readError(res: Response): Promise<ApiErrorBody> {
   try {
-    const body = (await res.json()) as Partial<ApiErrorBody>;
+    const raw = (await res.json()) as Partial<ApiErrorBody> & { error?: Partial<ApiErrorBody> };
+    const body = raw.error ?? raw;
     if (body && typeof body.code === 'string' && typeof body.message === 'string') {
       return {
         code: body.code,
