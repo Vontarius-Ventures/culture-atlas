@@ -14,7 +14,8 @@ Native access tokens are opaque `cna_` + 32 random bytes (base64url), expire in
 10 minutes, and are resolved against live family revocation on every call.
 Refresh tokens are opaque `cnr_` + 32 random bytes, one-use, with 30-day idle and
 90-day absolute expiry. Reusing a consumed refresh revokes the entire family,
-including access tokens. Store both in Keychain/Keystore, never in URLs.
+including access tokens, except the narrow lost-response retry below. Store
+both in Keychain/Keystore, never in URLs.
 
 ## Exported domain interface
 
@@ -40,13 +41,16 @@ issueNativeSession(tx: Db, input: {
 }, now?: Date): Promise<NativeSessionTokens>;
 resolveNativePrincipal(db: Queryable, token: string, now?: Date):
   Promise<InstallationPrincipal>;
-rotateNativeSession(db: Db, refreshToken: string, now?: Date):
+rotateNativeSession(db: Db, refreshToken: string, now?: Date,
+  retry?: {installationId:string; refreshRequestId:string}):
   Promise<NativeSessionTokens>;
 revokeInstallationSessions(tx: Db, accountId: string, installationId: string,
   now?: Date): Promise<void>;
 // P1 consumes this proof inside its enrollment transaction, verifies platform,
 // creates/checks the same-owner installation, then calls issueNativeSession.
 consumeNativeEnrollmentGrant(tx: Db, token: string, platform: 'ios'|'android',
+  now?: Date): Promise<{accountId:string; authenticatedAt:Date}>;
+peekNativeEnrollmentGrant(db: Queryable, token: string, platform: 'ios'|'android',
   now?: Date): Promise<{accountId:string; authenticatedAt:Date}>;
 
 // packages/domain/src/services/identity.ts, exported as identity
@@ -57,6 +61,16 @@ Issuance is a trusted internal API and requires P1's enrolled-installation
 ownership predicate. The returned enrollment grant is NOT an API bearer, is
 single-use, expires after five minutes, and binds the verified account and
 platform. It cannot select a different account during exchange.
+
+Native enrollment bootstrap: P1's challenge endpoint accepts
+`{enrollment_grant,installation_public_id,platform,installation_public_key}`
+and calls `peekNativeEnrollmentGrant` without consuming it. Its nonce binds
+the verified account, platform, installation public ID and public key.
+P1's enroll endpoint accepts the grant plus a signature over that nonce,
+validates the signature, consumes the grant atomically, creates/checks the
+same-owner installation, and calls `issueNativeSession` in that transaction.
+The grant cannot call unrelated account endpoints or bind a caller-selected
+account. P1 owns the exact installation-key/signature transport schema.
 
 `identity_authority_events` persists `{id, account_id, installation_id nullable,
 session_id nullable, reason, created_at}`. Null installation means every
@@ -84,7 +98,21 @@ Web sets a new HttpOnly session cookie. Native returns a five-minute
 `enrollment_grant` for P1's enrollment endpoint. Callback tokens are fragment
 values delivered only to the mail adapter, not returned by email/start.
 
-POST `/v2/identity/native/refresh`: `{refresh_token}`.
+POST `/v2/identity/native/refresh`:
+`{refresh_token,installation_id,refresh_request_id}`. `refresh_request_id` is
+32 cryptographically random bytes encoded base64url (43 characters), persisted
+atomically with the old refresh token before dispatch and reused only for that
+rotation attempt. On a lost response, a retry of the immediately previous token
+within 60 seconds, with the same request ID and installation, replaces the
+unseen successor with a new pair. No secret response is cached/replayed.
+Both the successor refresh and its access token must be unused; otherwise the
+family is revoked. The replaced pair is invalidated. Wrong installation,
+different/missing request ID, late retry, or an invalidated successor revokes
+the family. Ordinary subsequent refreshes use a NEW request ID. Clients commit
+the returned pair to secure storage before clearing the pending attempt.
+Without the optional retry argument, the domain function uses strict reuse
+revocation. Rotation takes a root DB handle so reuse revocation commits before
+its 401 error is thrown.
 GET `/v2/identity/sessions`: owner-only session listing.
 POST `/v2/identity/sessions/{id}/revoke`: owner-only, same-account lookup.
 POST `/v2/identity/sign-out-all`: recent verified reauthentication required.
