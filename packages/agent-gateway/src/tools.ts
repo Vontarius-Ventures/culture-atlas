@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   captures,
   agentPlatform,
+  agentCommands,
   collections,
   items,
   jobs,
@@ -35,6 +36,19 @@ const define = <I extends z.ZodType>(t: ToolDefinition<I>): ToolDefinition<I> =>
 const { Uuid } = schemas;
 
 export const TOOLS = [
+  define({
+    name: 'request_capture', title: 'Request locally authorized capture',
+    description: 'Request capture on an explicitly selected phone and fresh locally armed session. Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request.',
+    scopes: ['devices:command'], startsJob: false,
+    input: z.strictObject({ installation_id: Uuid, idempotency_key: Uuid, command: schemas.CaptureCommandRequest }),
+    run: (ctx, input) => agentCommands.requestCapture(ctx, input.installation_id, input.command, input.idempotency_key),
+  }),
+  define({
+    name: 'get_setup', title: 'View device setup',
+    description: 'Read safe capabilities and device aliases. Observations never grant OS permissions or arm a camera.',
+    scopes: ['setup:read'], input: z.strictObject({}), startsJob: false,
+    run: (ctx) => agentPlatform.getSetup(ctx),
+  }),
   define({
     name: 'get_preferences', title: 'Read ordinary preferences',
     description: 'Read explicit and effective ordinary account preferences. This does not reveal taste.',
@@ -241,6 +255,8 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 export const SPEC_TOOL_NAMES = [
+  'request_capture',
+  'get_setup',
   'get_preferences', 'update_preferences',
   'analyze_capture', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'record_preference',
   'list_collections', 'get_collection', 'create_collection', 'add_collection_item', 'remove_collection_item',

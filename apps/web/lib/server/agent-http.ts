@@ -14,7 +14,10 @@ export function agentRoute<C extends RouteContract>(contract: C, handler: Parame
     headers.set('cache-control', 'no-store');
     let body: Record<string, unknown> | null = response.status === 204 ? null : await response.json();
     if (response.status >= 400) body = { error: body };
-    else if (body && typeof body.version === 'number') headers.set('etag', `"${body.version}"`);
+    else if (body) {
+      body = { ...body, schema_version: '2.1', request_id: headers.get('x-request-id') };
+      if (typeof body.version === 'number') headers.set('etag', `"${body.version}"`);
+    }
     return new Response(body ? JSON.stringify(body) : null, { status: response.status, headers });
   };
 }

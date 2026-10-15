@@ -62,6 +62,32 @@ export async function updatePreferences(ctx: ServiceContext, patch: unknown, ver
   return getPreferences({ ...ctx, principal: { kind: 'account', accountId: account.accountId, sessionId: null, isDemoOwner: false } });
 }
 
+export async function getSetup(ctx: ServiceContext) {
+  ctx = await authorizeAgent(ctx, 'setup:read');
+  const account = requireAccount(ctx.principal);
+  const { rows } = await ctx.db.query<{
+    platform: string; app_version: string; last_seen_at: Date; app_state: string; readiness: string; capabilities: Record<string, unknown>;
+  }>(
+    `SELECT platform,app_version,last_seen_at,app_state,readiness,capabilities FROM mobile_installations
+     WHERE account_id=$1 AND revoked_at IS NULL ORDER BY created_at,id LIMIT 100`, [account.accountId],
+  );
+  await agentActivity(ctx, 'setup.read');
+  return {
+    ...meta(ctx), observed_at: ctx.now().toISOString(),
+    installations: rows.map((r) => {
+      const stale = ctx.now().getTime() - r.last_seen_at.getTime() > 30_000 || r.app_state !== 'foreground';
+      const capabilities: Record<string, boolean> = {};
+      for (const key of ['photo', 'video', 'phone_camera', 'meta_glasses', 'microphone']) {
+        capabilities[key] = !stale && r.readiness === 'ready' && r.capabilities[key] === true;
+      }
+      return { alias: `${r.platform} phone`, app_version: r.app_version, last_seen_at: r.last_seen_at.toISOString(),
+        stale, capabilities, unavailable_reasons: stale ? ['device_disconnected_or_stale'] : r.readiness === 'ready' ? [] : ['local_permission_required'] };
+    }),
+    available_actions: ['view_preferences', 'upload_files'],
+    permission_summary: 'Observed permissions only. OS access and remote capture require local consent.' as const,
+  };
+}
+
 /** Ownership validation happens in one transaction with grant creation. */
 async function ownedInstallations(db: Queryable, accountId: string, ids: readonly string[]) {
   const unique = [...new Set(ids)];
@@ -85,7 +111,8 @@ export async function createConnection(ctx: ServiceContext, raw: unknown) {
     await tx.query('UPDATE agent_connections SET installation_ids=$2 WHERE id=$1', [created.connection.id, ids]);
     return created;
   });
-  return { ...meta(ctx), ...result, installation_ids: body.installation_ids, authorization_version: 1 };
+  const connection = (await listAgentConnections(ctx)).connections.find((c) => c.id === result.connection.id)!;
+  return { ...meta(ctx), ...result, connection, installation_ids: body.installation_ids, authorization_version: 1 };
 }
 
 export async function narrowConnection(ctx: ServiceContext, id: string, raw: unknown) {

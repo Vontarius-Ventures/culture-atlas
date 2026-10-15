@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
 import { requireAccount } from '../authz';
 import { agentActivity, authorizeAgent } from '../authz/agent-authorization';
 import type { CaptureV2Context, InstallationAuthority } from '../capture-v2/types';
@@ -7,20 +6,10 @@ import type { ServiceContext } from '../context';
 import type { Db } from '../db/pool';
 import { AppError } from '../errors';
 import { Uuid } from '../schemas/common';
+import { CaptureCommandRequest, CommandAck } from '../schemas/agent-commands';
 import { stableStringify } from '../util/stable-json';
+export type CommandContext = Pick<CaptureV2Context, 'db' | 'authority' | 'now'>;
 
-export const CaptureCommandRequest = z.strictObject({
-  session_id: Uuid, generation: z.number().int().positive(),
-  action: z.enum(['capture_photo', 'start_video', 'stop_video']),
-  capture_client_id: Uuid, duration_seconds: z.number().int().min(1).max(60).optional(),
-  expires_in_seconds: z.number().int().min(1).max(30).default(30),
-});
-export const CommandAck = z.strictObject({
-  sequence: z.number().int().nonnegative(),
-  state: z.enum(['awaiting_user', 'executing', 'succeeded', 'failed', 'unknown']),
-  result_asset_id: Uuid.optional(),
-  safe_error: z.enum(['device_unavailable', 'permission_denied', 'interrupted', 'storage_full', 'outcome_unknown']).optional(),
-});
 interface Command {
   id: string; account_id: string; installation_id: string; capture_session_id: string; connection_id: string;
   authorization_version: number; generation: number; action: string; duration_seconds: number | null;
@@ -111,12 +100,12 @@ export async function requestCapture(ctx: ServiceContext, installationId: string
   });
 }
 
-function installation(ctx: CaptureV2Context): InstallationAuthority {
+function installation(ctx: CommandContext): InstallationAuthority {
   if (ctx.authority.kind !== 'installation' || ctx.authority.expiresAt <= ctx.now()) throw new AppError('unauthenticated');
   return ctx.authority;
 }
 
-export async function claimCommands(ctx: CaptureV2Context) {
+export async function claimCommands(ctx: CommandContext) {
   const caller = installation(ctx);
   return ctx.db.transaction(async (tx) => {
     const { rows } = await tx.query<Command>(
@@ -140,7 +129,7 @@ export async function claimCommands(ctx: CaptureV2Context) {
   });
 }
 
-export async function acknowledgeCommand(ctx: CaptureV2Context, id: string, raw: unknown) {
+export async function acknowledgeCommand(ctx: CommandContext, id: string, raw: unknown) {
   const caller = installation(ctx), body = CommandAck.parse(raw);
   return ctx.db.transaction(async (tx) => {
     const { rows } = await tx.query<Command>(
