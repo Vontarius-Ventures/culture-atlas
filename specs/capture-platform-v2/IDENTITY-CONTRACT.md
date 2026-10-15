@@ -83,6 +83,9 @@ reauthentication of that account or explicit deletion.
 
 ## HTTP
 
+The canonical API prefix is **`/v2`**, not `/api/v2` or `/v1`.
+Identity endpoints live under `/v2/identity`.
+
 POST `/v2/identity/email/start`: `{email,purpose:'sign_in'|'verify'|'recover',
 destination:'web'|'ios'|'android',state,nonce,code_challenge,claim_session?}`.
 Always returns the same accepted response. IP/address rate limits apply.
@@ -94,9 +97,15 @@ code_verifier}`. Proof, state, nonce, S256 PKCE, expiry, initiating browser
 session and one-use consumption are checked. Fixed destinations only:
 `/identity/callback`, `cultureatlas://identity/callback`,
 `https://app.cultureatlas.com/identity/callback`. No arbitrary redirects.
-Web sets a new HttpOnly session cookie. Native returns a five-minute
-`enrollment_grant` for P1's enrollment endpoint. Callback tokens are fragment
-values delivered only to the mail adapter, not returned by email/start.
+Web sets a new HttpOnly session cookie. Native returns
+`{account_id,enrollment_grant,platform,claimed}`, including the **non-secret,
+verified internal account UUID** alongside the five-minute enrollment grant
+for P1's enrollment endpoint. This lets the app compare the authenticated
+account with locked local drafts and request reactivation of its original
+installation only for the same account and installation key. `account_id` is
+not an authorization credential and cannot override the account bound into the
+grant. Callback tokens are fragment values delivered only to the mail adapter,
+not returned by email/start.
 
 POST `/v2/identity/native/refresh`:
 `{refresh_token,installation_id,refresh_request_id}`. `refresh_request_id` is
@@ -119,6 +128,19 @@ POST `/v2/identity/sign-out-all`: recent verified reauthentication required.
 POST `/v2/identity/switch`: ends current authority, never changes ownership or
 silently signs in another account; native clients authenticate the next account
 through a fresh verified email flow. Browser sign-in rotates its cookie.
+
+A native client retrying that same POST `/v2/identity/switch` with its already
+revoked bearer receives **401 `token_revoked`**; an expired bearer receives
+**401 `token_expired`**. Authentication rejects both before dispatch: no new
+authority event, lifecycle hook, session mutation, or access-use bookkeeping
+occurs. For this sign-out/switch call only, the client treats either code as
+“revocation complete”, stops local capture/polling, clears credentials, and
+keeps pending bytes locked to their original account. This is a terminal
+client-side sign-out result, not proof that an expired token revoked its
+family or other installations. Do not refresh merely to retry a terminal
+sign-out. The same errors on any other endpoint remain authentication
+failures and never authorize an action. Unknown/malformed credentials still
+return `unauthenticated` and are not this documented retry acknowledgement.
 
 Auth exchange endpoints deliberately do not replay secret-bearing responses
 from an idempotency cache. A consumed proof/refresh fails closed on replay.

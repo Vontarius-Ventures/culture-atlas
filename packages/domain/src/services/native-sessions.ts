@@ -117,14 +117,19 @@ export async function resolveNativePrincipal(
   now = new Date(),
 ): Promise<InstallationPrincipal> {
   if (!/^cna_[A-Za-z0-9_-]{43}$/.test(token)) throw new AppError('unauthenticated');
-  const { rows } = await db.query<Family & { access_expiry: Date }>(
+  const { rows } = await db.query<Family & { access_expiry: Date; accepted: boolean }>(
     `WITH family AS (
-       SELECT s.* FROM native_sessions s JOIN native_access_tokens a ON a.session_id=s.id
+       SELECT s.*,a.expires_at AS access_expiry
+       FROM native_sessions s JOIN native_access_tokens a ON a.session_id=s.id
        WHERE a.token_hash=$1 FOR UPDATE OF s
+     ), used AS (
+       UPDATE native_access_tokens a SET used_at=COALESCE(a.used_at,$2)
+       FROM family f WHERE a.token_hash=$1 AND a.session_id=f.id
+         AND f.revoked_at IS NULL AND f.access_expiry>$2
+         AND f.idle_expires_at>$2 AND f.absolute_expires_at>$2
+       RETURNING a.token_hash
      )
-     UPDATE native_access_tokens a SET used_at=COALESCE(a.used_at,$2)
-     FROM family f WHERE a.token_hash=$1 AND a.session_id=f.id
-     RETURNING f.*,a.expires_at AS access_expiry`,
+     SELECT f.*,EXISTS(SELECT 1 FROM used) AS accepted FROM family f`,
     [hashToken(token), now],
   );
   const row = rows[0];
@@ -133,6 +138,7 @@ export async function resolveNativePrincipal(
   if (row.access_expiry <= now || row.idle_expires_at <= now || row.absolute_expires_at <= now) {
     throw new AppError('token_expired');
   }
+  if (!row.accepted) throw new AppError('unauthenticated');
   return {
     kind: 'installation',
     accountId: row.account_id,

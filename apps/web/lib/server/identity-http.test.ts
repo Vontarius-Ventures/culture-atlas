@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import {
   auth,
@@ -47,6 +47,7 @@ beforeEach(() => {
   outbox.clear();
   identity.setIdentityMail(outbox);
 });
+afterEach(() => nativeSessions.setAuthorityLifecycle(undefined));
 afterAll(async () => {
   identity.setIdentityMail(undefined);
   setDbForTesting(undefined);
@@ -54,7 +55,11 @@ afterAll(async () => {
   await closeTestDb();
 });
 
-async function start(destination: 'web' | 'ios' = 'ios', cookie?: string, csrf?: string) {
+async function start(
+  destination: 'web' | 'ios' | 'android' = 'ios',
+  cookie?: string,
+  csrf?: string,
+) {
   const verifier = auth.randomToken();
   const body = {
     email: `${randomUUID()}@example.test`,
@@ -84,23 +89,115 @@ async function start(destination: 'web' | 'ios' = 'ios', cookie?: string, csrf?:
 }
 
 describe('identity HTTP boundary', () => {
-  it('allows only proof-based native bootstrap, with no cookie required or secrets in start responses', async () => {
-    const first = await start();
-    const accepted = await first.response.json();
-    expect(accepted).toEqual({ accepted: true, message: expect.any(String) });
-    const result = await identityRoute(request('email/complete', first.proof), 'email/complete');
-    expect(result.status).toBe(200);
-    expect(result.headers.get('cache-control')).toBe('no-store');
-    expect(result.headers.get('referrer-policy')).toBe('no-referrer');
-    const grant = await result.json();
-    expect(grant.enrollment_grant).toMatch(/^cne_/);
-    expect(grant).not.toHaveProperty('sessionToken');
-    const replay = await identityRoute(request('email/complete', first.proof), 'email/complete');
-    expect(replay.status).toBe(401);
-    expect(await replay.json()).toMatchObject({
-      error: { code: 'unauthenticated', request_id: expect.any(String) },
-    });
-  });
+  it.each(['ios', 'android'] as const)(
+    'returns the verified account UUID alongside the %s enrollment grant',
+    async (platform) => {
+      const first = await start(platform);
+      const accepted = await first.response.json();
+      expect(accepted).toEqual({ accepted: true, message: expect.any(String) });
+      const result = await identityRoute(request('email/complete', first.proof), 'email/complete');
+      expect(result.status).toBe(200);
+      expect(result.headers.get('cache-control')).toBe('no-store');
+      expect(result.headers.get('referrer-policy')).toBe('no-referrer');
+      const grant = await result.json();
+      expect(grant.enrollment_grant).toMatch(/^cne_/);
+      expect(grant).toMatchObject({ account_id: expect.any(String), platform });
+      expect(
+        await nativeSessions.peekNativeEnrollmentGrant(db, grant.enrollment_grant, platform),
+      ).toMatchObject({ accountId: grant.account_id });
+      const binding = await db.query('SELECT email FROM account_emails WHERE account_id=$1', [
+        grant.account_id,
+      ]);
+      expect(binding.rows[0]!.email).toBe(first.body.email);
+      expect(grant).not.toHaveProperty('sessionToken');
+      const replay = await identityRoute(request('email/complete', first.proof), 'email/complete');
+      expect(replay.status).toBe(401);
+      expect(await replay.json()).toMatchObject({
+        error: { code: 'unauthenticated', request_id: expect.any(String) },
+      });
+    },
+  );
+
+  it.each(['revoked', 'expired'] as const)(
+    'rejects a %s switch bearer with no additional effects',
+    async (state) => {
+      const first = await start();
+      const complete = await identityRoute(
+        request('email/complete', first.proof),
+        'email/complete',
+      );
+      const grant = await complete.json();
+      const pair = await db.transaction(async (tx) => {
+        const proof = await nativeSessions.consumeNativeEnrollmentGrant(
+          tx,
+          grant.enrollment_grant,
+          'ios',
+        );
+        return nativeSessions.issueNativeSession(tx, {
+          accountId: proof.accountId,
+          authenticatedAt: proof.authenticatedAt,
+          installationId: randomUUID(),
+        });
+      });
+      const lifecycle = vi.fn(async () => {});
+      nativeSessions.setAuthorityLifecycle(lifecycle);
+      const options = {
+        authorization: `Bearer ${pair.access_token}`,
+        ip: `198.18.1.${state === 'revoked' ? '1' : '2'}`,
+      };
+      if (state === 'revoked') {
+        const switched = await identityRoute(request('switch', {}, options), 'switch');
+        expect(switched.status).toBe(200);
+        expect(await switched.json()).toMatchObject({
+          signed_out: true,
+          pending_upload_account_id: grant.account_id,
+          pending_upload_policy: 'original_account_only',
+        });
+        expect(lifecycle).toHaveBeenCalledTimes(1);
+      } else {
+        await db.query(
+          "UPDATE native_access_tokens SET expires_at=now()-interval '1 second' WHERE token_hash=$1",
+          [auth.hashToken(pair.access_token)],
+        );
+      }
+      async function snapshot() {
+        return {
+          family: (await db.query('SELECT * FROM native_sessions WHERE id=$1', [pair.session_id]))
+            .rows,
+          access: (
+            await db.query('SELECT * FROM native_access_tokens WHERE session_id=$1', [
+              pair.session_id,
+            ])
+          ).rows,
+          refresh: (
+            await db.query('SELECT * FROM native_refresh_tokens WHERE session_id=$1', [
+              pair.session_id,
+            ])
+          ).rows,
+          events: (
+            await db.query(
+              'SELECT * FROM identity_authority_events WHERE account_id=$1 ORDER BY id',
+              [grant.account_id],
+            )
+          ).rows,
+          limits: (
+            await db.query(
+              "SELECT * FROM usage_counters WHERE metric='identity:switch' ORDER BY bucket,day",
+            )
+          ).rows,
+        };
+      }
+      const before = await snapshot();
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const retried = await identityRoute(request('switch', {}, options), 'switch');
+        expect(retried.status).toBe(401);
+        expect(await retried.json()).toMatchObject({ error: { code: `token_${state}` } });
+        expect(retried.headers.get('cache-control')).toBe('no-store');
+        expect(await snapshot()).toEqual(before);
+      }
+      expect(lifecycle).toHaveBeenCalledTimes(state === 'revoked' ? 1 : 0);
+    },
+  );
 
   it('checks browser CSRF on both exchanges, rotates HttpOnly cookie, and omits private session token from JSON', async () => {
     const anon = await auth.createAnonymousSession(db, testConfig());
