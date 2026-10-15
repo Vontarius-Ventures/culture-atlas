@@ -9,7 +9,7 @@ This publication fixes interfaces, not implementation/release acceptance.
 
 Browser calls use the existing signed-in account cookie and CSRF header.
 Anonymous users and existing agent/bridge tokens gain **no v2 authority**.
-Native installation calls use `Authorization: Bearer <installation_token>`:
+Native installation calls use `Authorization: Bearer <access_token>`:
 these tokens are bound to one existing account and installation and cannot enroll
 another installation. Full recoverable native account login/refresh is separate
 from installation authority and remains a release requirement.
@@ -80,12 +80,13 @@ and durable job ownership/generation instead of writing media rows directly.
 | POST `/v2/device/capture-sessions/{id}/arm` | ArmCaptureSessionRequest | CaptureSessionResponse |
 | POST `/v2/device/capture-sessions/{id}/end` | EndCaptureSessionRequest | CaptureSessionResponse |
 
-Challenge and enrollment require a recoverable authenticated **account**, never
-an installation/agent credential. Challenges expire in5 minutes and are bound to
-account+account session+public installation UUID; SDK identity is not proof.
-Installation tokens last24 hours, are hashed at rest and revoked with the device.
-Clients must reauthenticate the original account to renew enrollment authority.
-Enrollment is not a substitute for native account recovery/rotating refresh.
+Browser challenge and enrollment require a recoverable authenticated **account**,
+never an installation/agent credential. Native enrollment instead consumes the
+identity workstream's one-use5-minute `enrollment_grant` plus enrollment proof.
+Challenges expire in5 minutes and bind account+session+public installation UUID.
+SDK identity is not proof. In the same enrollment transaction P1 calls injected
+`issueNativeSession(tx,{accountId,installationId},now)`. Identity owns opaque
+`cna_` access tokens (10min) and `cnr_` rotating refresh, verification and recovery.
 
 Device status/wearables/capture-session calls require the installation token.
 Status sequence is monotonic. An account browser cannot pretend to be a phone
@@ -114,8 +115,18 @@ inject P4's `createModelGateway({db,accountId,jobId,profile})`; P4 owns the
 model spend-ledger tables, not this queue. The identity workstream owns native
 account login/refresh and returns verified account authority to this context.
 Installation authority is a separate `{kind:"installation",accountId,
-installationId}` value, resolved server-side from the scoped token. It is not
+installationId,sessionId,expiresAt}` value, resolved server-side from the scoped token. It is not
 an agent principal and cannot pass the enrollment account-only gate.
+Identity's durable `authority_ended` event is consumed transactionally by P1 to
+end capture/remote arm and fence pending uploads. Revocation never rebinds bytes.
+
+Agent setup uses `SafeCaptureDeviceSetup`: alias, app version, last-seen time,
+staleness, boolean capabilities and safe unavailable reasons only, no installation
+or hardware IDs, SDK references or credentials. P5 supplies live AgentAuthorization
+scope/resource checks. Remote-command creation checks the allowlisted agent;
+claim/delivery rechecks persisted `authorization_version` against the current
+grant. Media/job adapters must invoke the same live helper, not infer access from
+the account UUID alone. P1's default installation/account adapters deny agents.
 
 Defaults: photos JPEG/PNG/WebP <=15MiB/40MP; HEIC disabled pending qualified
 decoder. MP4/MOV/WebM video <=250MiB/120s (native camera clips <=60s).

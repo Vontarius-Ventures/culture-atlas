@@ -97,6 +97,7 @@ export const EnrollCaptureDeviceRequest = z.object({
   app_version: z.string().min(1).max(100),
   installation_public_id: CaptureV2Uuid,
   enrollment_proof: z.string().min(32).max(256),
+  enrollment_grant: z.string().min(32).max(512).optional(),
 }).strict();
 export const CaptureDeviceResponse = z.object({
   id: CaptureV2Uuid,
@@ -111,8 +112,17 @@ export const CaptureDeviceResponse = z.object({
 });
 export const EnrolledCaptureDeviceResponse = z.object({
   installation: CaptureDeviceResponse,
-  installation_token: z.string(),
+  access_token: z.string(),
+  refresh_token: z.string(),
   token_expires_at: DateTime,
+});
+export const SafeCaptureDeviceSetup = z.object({
+  alias: z.string(),
+  app_version: z.string(),
+  last_seen_at: DateTime,
+  stale: z.boolean(),
+  capabilities: z.record(z.string(), z.boolean()),
+  unavailable_reasons: z.array(z.string()),
 });
 export const DeviceStatusRequest = z.object({
   sequence: z.number().int().nonnegative(),
