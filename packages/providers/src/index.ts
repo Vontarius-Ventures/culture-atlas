@@ -8,7 +8,14 @@ export * from './text/types';
 export * from './research/types';
 export * from './qloo/types';
 export * from './storage/types';
-export { backoffDelay, CircuitBreaker, parseRetryAfter, withRetries, type BreakerState, type Sleep } from './http/resilience';
+export {
+  backoffDelay,
+  CircuitBreaker,
+  parseRetryAfter,
+  withRetries,
+  type BreakerState,
+  type Sleep,
+} from './http/resilience';
 export { createAnthropicVlm, AnthropicVlm } from './vlm/anthropic';
 export { VLM_SYSTEM_PROMPT } from './vlm/prompt';
 export { createAnthropicTextModel, AnthropicTextModel } from './text/anthropic';
@@ -17,7 +24,11 @@ export { createFeatherlessTransport, type FeatherlessJsonMode } from './featherl
 export type { MessagesTransport, TransportRequest, TransportResult } from './anthropic/transport';
 export { createQlooProvider, QlooHttpProvider } from './qloo/client';
 export { ReplayQloo, createReplayQloo, recordingKey, type QlooRecording } from './qloo/replay';
-export { createWikipediaResearch, WikipediaResearch, enforceExtraction } from './research/wikipedia';
+export {
+  createWikipediaResearch,
+  WikipediaResearch,
+  enforceExtraction,
+} from './research/wikipedia';
 export {
   createObjectStorage,
   LocalFsStorage,
@@ -28,3 +39,12 @@ export {
   type MediaVerification,
 } from './storage';
 export { serveSignedMedia } from './storage/media';
+export * from './model-gateway/types';
+export * from './model-gateway/budget';
+export * from './model-gateway/postgres';
+export * from './model-gateway/runner';
+export * from './model-gateway/schema';
+export * from './concentrate/gateway';
+export * from './concentrate/profiles';
+export * from './concentrate/providers';
+export * from './concentrate/transport';
