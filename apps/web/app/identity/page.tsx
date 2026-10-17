@@ -75,6 +75,9 @@ export default function IdentityPage() {
         </button>
       </form>
       <p role="status">{message}</p>
+      <p>
+        <a href="/identity/sessions">Manage sessions and devices</a>
+      </p>
     </main>
   );
 }

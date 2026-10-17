@@ -1,0 +1,127 @@
+# culture atlas on one EC2 host (docs/deploy-aws.md). Installed to
+# /opt/culture-atlas/compose.yml by bin/atlas-install; values come from
+# compose.env (release/image/region, written by atlas-install) and .env
+# (application settings rendered from SSM by bin/atlas-env, mode 0600).
+#
+# Memory: a t3.micro has 1 GiB. The limits below are caps, not reservations;
+# the 2 GiB swap file absorbs short peaks (Next.js start, ffmpeg).
+name: culture-atlas
+
+x-logging: &logging
+  driver: awslogs
+  options:
+    awslogs-region: ${ATLAS_REGION:?ATLAS_REGION is required}
+    awslogs-group: ${ATLAS_LOG_GROUP:?ATLAS_LOG_GROUP is required}
+    tag: '{{.Name}}'
+    mode: non-blocking
+    max-buffer-size: 4m
+
+x-app: &app
+  image: ${ATLAS_IMAGE:?ATLAS_IMAGE is required}
+  env_file: [.env]
+  restart: unless-stopped
+  init: true
+  volumes:
+    - /etc/culture-atlas/tls:/etc/culture-atlas/tls:ro
+  logging: *logging
+  depends_on:
+    postgres:
+      condition: service_healthy
+      required: false
+
+services:
+  caddy:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS is required}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+    mem_limit: 96m
+    logging: *logging
+
+  web:
+    <<: *app
+    environment:
+      PORT: '3000'
+    mem_limit: 512m
+
+  worker:
+    <<: *app
+    command: ['pnpm', 'worker']
+    healthcheck:
+      disable: true
+    mem_limit: 384m
+
+  # Capture v2 verification, ffmpeg preparation and cleanup (pnpm media-worker,
+  # from the v2/media work). One job at a time on a micro instance.
+  media-worker:
+    <<: *app
+    command: ['pnpm', 'media-worker']
+    healthcheck:
+      disable: true
+    # Scratch stays in the container's own /tmp (writable by the node user).
+    mem_limit: 640m
+
+  # PostgreSQL on the instance (DatabaseMode=instance only: COMPOSE_PROFILES=localdb).
+  postgres:
+    profiles: [localdb]
+    image: postgres:16.4-bookworm
+    restart: unless-stopped
+    env_file: [.env]
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=40
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+    logging: *logging
+
+  # One-off operator commands: atlas-ops <command> (migrations, kill switches,
+  # backups, psql). Same code plus PostgreSQL 16 client tools.
+  ops:
+    <<: *app
+    profiles: [ops]
+    image: ${ATLAS_OPS_IMAGE:?ATLAS_OPS_IMAGE is required}
+    restart: 'no'
+    healthcheck:
+      disable: true
+    volumes:
+      - /etc/culture-atlas/tls:/etc/culture-atlas/tls:ro
+      - /var/lib/culture-atlas/backups:/backups
+    mem_limit: 384m
+
+  # Run every 5 minutes by atlas-metrics.timer, not kept resident.
+  ops-metrics:
+    <<: *app
+    profiles: [ops]
+    restart: 'no'
+    command: ['pnpm', 'ops:metrics']
+    healthcheck:
+      disable: true
+    mem_limit: 256m
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:

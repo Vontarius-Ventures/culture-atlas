@@ -46,3 +46,20 @@ export function analysisAvailability(
 export async function photoAnalysisReady(): Promise<boolean> {
   return (await roleAvailability('vision_photo')) === 'available';
 }
+
+/**
+ * Readiness input for the server-side feature flags (identity-ops flag
+ * evaluation). Read-only: derived from the same gateway readiness as above.
+ * A credit/throttle pause keeps the provider "ready" (work queues and resumes)
+ * but reports the budget as unavailable, so the capability stays off.
+ */
+export async function photoAnalysisReadiness(): Promise<{
+  budgetAvailable: boolean;
+  providerReady: boolean;
+}> {
+  const availability = await roleAvailability('vision_photo');
+  return {
+    providerReady: availability !== 'unavailable',
+    budgetAvailable: availability === 'available',
+  };
+}

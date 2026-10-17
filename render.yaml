@@ -68,6 +68,18 @@ envVarGroups:
         sync: false
       - key: DEMO_INSPECTOR_ACCOUNT_IDS
         sync: false
+      # Identity email delivery (docs/deploy.md): "ses" needs IDENTITY_MAIL_FROM,
+      # AWS_REGION and SES-capable AWS credentials; unset = sign-in email fails closed.
+      - key: IDENTITY_MAIL_DRIVER
+        sync: false
+      - key: IDENTITY_MAIL_FROM
+        sync: false
+      # Comma-separated feature kill switches (docs/runbooks/glasses-kill-switch.md).
+      - key: FEATURE_KILL_SWITCHES
+        sync: false
+      # "live" sends APNs/FCM wake-ups (PUSH_APNS_*/PUSH_FCM_* secrets); default none.
+      - key: PUSH_DRIVER
+        sync: false
 
 services:
   - type: web

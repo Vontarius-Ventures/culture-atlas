@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Render /opt/culture-atlas/.env from SSM Parameter Store.
+
+Reads every parameter under ATLAS_PARAM_PATH (String and SecureString, with
+decryption) through the instance role, assembles DATABASE_URL from the DB_*
+parameters when it is not set explicitly, and writes a Compose env file with
+mode 0600. Values are single-quoted so Compose never interpolates them.
+
+Never prints parameter values. Exit codes: 0 ok, 1 missing/invalid settings,
+2 AWS CLI failure.
+
+Overrides (tests and manual runs): ATLAS_STACK_ENV_FILE, ATLAS_ENV_OUT, AWS_BIN.
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from urllib.parse import quote
+
+STACK_ENV = os.environ.get("ATLAS_STACK_ENV_FILE", "/etc/culture-atlas/stack.env")
+OUT = os.environ.get("ATLAS_ENV_OUT", "/opt/culture-atlas/.env")
+AWS = os.environ.get("AWS_BIN") or shutil.which("aws") or "/snap/bin/aws"
+RDS_CA = "/etc/culture-atlas/tls/rds-ca.pem"
+NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
+# Present in production or the app refuses to start safely.
+REQUIRED = ["SESSION_SECRET", "DATABASE_URL", "S3_BUCKET", "APP_BASE_URL", "NODE_ENV"]
+
+
+def fail(message, code=1):
+    print(f"atlas-env: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def read_stack_env(path):
+    values = {}
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+    return values
+
+
+def fetch_parameters(path, region):
+    command = [
+        AWS, "ssm", "get-parameters-by-path",
+        "--path", path, "--recursive", "--with-decryption",
+        "--region", region, "--output", "json",
+    ]
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=60)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        # stderr may echo parameter names; it never includes values, but keep output minimal anyway.
+        fail("could not read SSM parameters (check the instance role and region)", 2)
+    data = json.loads(result.stdout or "{}")
+    values = {}
+    for parameter in data.get("Parameters", []):
+        key = parameter["Name"][len(path):] if parameter["Name"].startswith(path) else ""
+        if "/" in key or not NAME.match(key):
+            fail(f"unsupported parameter name under {path}: {key or parameter['Name']!r}")
+        values[key] = parameter.get("Value", "")
+    return values
+
+
+def assemble(values):
+    env = dict(values)
+    password = env.pop("DB_PASSWORD", None)
+    if "DATABASE_URL" not in env and env.get("DB_HOST"):
+        if not password:
+            fail("DB_PASSWORD SecureString is missing")
+        user = env.get("DB_USER", "culture_atlas")
+        name = env.get("DB_NAME", "culture_atlas")
+        port = env.get("DB_PORT", "5432")
+        url = f"postgres://{quote(user, safe='')}:{quote(password, safe='')}@{env['DB_HOST']}:{port}/{quote(name, safe='')}"
+        mode = env.get("DB_SSLMODE", "verify-full")
+        if mode == "verify-full":
+            url += f"?sslmode=verify-full&sslrootcert={RDS_CA}"
+        elif mode != "disable":
+            url += f"?sslmode={quote(mode, safe='')}"
+        env["DATABASE_URL"] = url
+        if env["DB_HOST"] == "postgres":
+            # Local PostgreSQL container (DatabaseMode=instance) initialises from these.
+            env["POSTGRES_USER"] = user
+            env["POSTGRES_PASSWORD"] = password
+            env["POSTGRES_DB"] = name
+    for key in ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_SSLMODE"):
+        env.pop(key, None)
+    missing = [key for key in REQUIRED if not env.get(key)]
+    if missing:
+        fail("missing required settings: " + ", ".join(missing))
+    return env
+
+
+def render(env):
+    lines = ["# Rendered by atlas-env from SSM. Do not edit; change the parameters instead."]
+    for key in sorted(env):
+        value = env[key]
+        if "\n" in value or "\r" in value or "'" in value:
+            fail(f"{key} contains a newline or single quote, which env files cannot carry safely")
+        lines.append(f"{key}='{value}'")
+    return "\n".join(lines) + "\n"
+
+
+def write_atomic(path, content):
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".env.")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def main():
+    stack = read_stack_env(STACK_ENV)
+    path = stack.get("ATLAS_PARAM_PATH", "")
+    region = stack.get("ATLAS_REGION", "")
+    if not path.startswith("/culture-atlas/") or not path.endswith("/") or not region:
+        fail("stack.env needs ATLAS_PARAM_PATH (/culture-atlas/<env>/) and ATLAS_REGION")
+    env = assemble(fetch_parameters(path, region))
+    write_atomic(OUT, render(env))
+    print(f"atlas-env: wrote {len(env)} settings to {OUT}")
+
+
+if __name__ == "__main__":
+    main()

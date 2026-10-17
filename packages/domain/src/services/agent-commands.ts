@@ -73,6 +73,18 @@ async function assertCommandLive(tx: Db, command: Pick<Command,
   }
 }
 
+/** Post-commit notification that a NEW command is queued (push wake-ups). Never part of authorization. */
+export type CommandQueuedListener = (event: {
+  accountId: string; installationId: string; commandId: string;
+}) => Promise<unknown> | unknown;
+let commandQueued: CommandQueuedListener | undefined;
+export function setCommandQueuedListener(listener: CommandQueuedListener | undefined): void {
+  commandQueued = listener;
+}
+export function getCommandQueuedListener(): CommandQueuedListener | undefined {
+  return commandQueued;
+}
+
 export async function requestCapture(ctx: ServiceContext, installationId: string, raw: unknown, idempotencyKey: string) {
   ctx = await authorizeAgent(ctx, 'devices:command');
   if (ctx.principal.kind !== 'agent') throw new AppError('scope_denied', { message: 'Use an explicitly authorized agent connection.' });
@@ -81,7 +93,8 @@ export async function requestCapture(ctx: ServiceContext, installationId: string
   Uuid.parse(idempotencyKey);
   if (!principal.allowedInstallationIds?.includes(installationId)) throw new AppError('not_found');
   const hash = createHash('sha256').update(stableStringify({ installationId, ...body })).digest('hex');
-  return ctx.db.transaction(async (tx) => {
+  let created: string | null = null;
+  const result = await ctx.db.transaction(async (tx) => {
     const command = { account_id: principal.accountId, installation_id: installationId,
       capture_session_id: body.session_id, generation: body.generation, connection_id: principal.connectionId,
       authorization_version: principal.authorizationVersion!, action: body.action };
@@ -108,8 +121,15 @@ export async function requestCapture(ctx: ServiceContext, installationId: string
         body.capture_client_id, idempotencyKey, hash, new Date(ctx.now().getTime() + body.expires_in_seconds * 1000), ctx.now()],
     );
     await agentActivity(ctx, `capture.${body.action}`, installationId, tx);
+    created = rows[0]!.id;
     return dto(rows[0]!);
   });
+  if (created && commandQueued) {
+    const event = { accountId: principal.accountId, installationId, commandId: created };
+    // Best effort, after commit: the phone's long poll is the delivery guarantee.
+    void Promise.resolve().then(() => commandQueued?.(event)).catch(() => undefined);
+  }
+  return result;
 }
 
 function installation(ctx: CommandContext): InstallationAuthority {

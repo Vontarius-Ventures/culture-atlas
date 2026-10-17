@@ -22,6 +22,10 @@ const dev = new DevIdentityOutbox();
 export function setIdentityMail(adapterOverride: IdentityMail | undefined): void {
   adapter = adapterOverride;
 }
+/** True when a deployment (or test) registered an adapter; the dev outbox does not count. */
+export function hasIdentityMail(): boolean {
+  return adapter !== undefined;
+}
 export function getIdentityMail(environment: string): IdentityMail {
   if (adapter) return adapter;
   if (environment === 'production')

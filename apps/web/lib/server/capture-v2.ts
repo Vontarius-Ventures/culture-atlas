@@ -20,6 +20,10 @@ import {
   captureLimitsFromEnv,
   parseByteRange,
   MediaRangeNotSatisfiable,
+  resolveFeatureFlags,
+  applyFeatureFlagsToCapabilities,
+  type AnalysisReadiness,
+  type FeatureFlagEvaluation,
   type CaptureV2Context,
   type InstallationAuthority,
   type CaptureIdentityAdapter,
@@ -36,7 +40,8 @@ import {
   type MultipartStorage,
 } from '@culture-atlas/providers';
 import { abuseLimitIp } from './http';
-import { analysisAvailability, photoAnalysisReady } from './model-readiness';
+import { analysisAvailability, photoAnalysisReadiness } from './model-readiness';
+import { ensureServerRuntime } from './runtime';
 
 /** Identity/P2 integration seam. Server startup must register before enabling those capabilities. */
 export interface CaptureV2Runtime {
@@ -45,12 +50,29 @@ export interface CaptureV2Runtime {
   verifier?: CaptureV2Context['verifier'];
   storage?: MultipartStorage;
   agentAuthorization?: CaptureV2Context['agentAuthorization'];
+  /** Model gateway readiness for concentrate_analysis_enabled; absent means not ready. */
+  analysisReadiness?: () => Promise<AnalysisReadiness>;
+}
+/** Server-side flag evaluation behind each HTTP context (feature-flags.json activation rules). */
+const contextFlags = new WeakMap<CaptureV2Context, FeatureFlagEvaluation>();
+export function captureV2ContextFlags(ctx: CaptureV2Context): FeatureFlagEvaluation | undefined {
+  return contextFlags.get(ctx);
 }
 let runtime: CaptureV2Runtime = {};
 let storage: MultipartStorage | undefined;
+/** Set by tests/explicit composition; production defaults are then never applied. */
+let explicitRuntime = false;
 export function setCaptureV2Runtime(value: CaptureV2Runtime): void {
   runtime = value;
+  explicitRuntime = true;
   storage = undefined;
+}
+/** Production defaults (runtime.ts). Fills only slots that are still empty. */
+export function installCaptureV2Defaults(value: Partial<CaptureV2Runtime>): void {
+  runtime = { ...value, ...runtime };
+}
+function prepareRuntime(): void {
+  if (!explicitRuntime) ensureServerRuntime();
 }
 export function configureCaptureV2Runtime(value: Partial<CaptureV2Runtime>): void {
   runtime = { ...runtime, ...value };
@@ -104,7 +126,21 @@ export async function createCaptureV2HttpContext(
   authority: CaptureV2Context['authority'],
   options: { db?: CaptureV2Context['db']; agent?: CaptureV2Context['agent'] } = {},
 ): Promise<CaptureV2Context> {
+  prepareRuntime();
   const db = options.db ?? getDb();
+  const now = new Date();
+  const decoderQualified = await hasQualifiedVideoWorker(db, now, true);
+  const flags = await resolveFeatureFlags(db, {
+    accountId: authority.accountId,
+    installationId: authority.kind === 'installation' ? authority.installationId : null,
+    env: process.env,
+    now,
+    videoDecoderQualified: decoderQualified,
+    analysisReadiness: await (runtime.analysisReadiness ?? photoAnalysisReadiness)(),
+  });
+  // Kill switches are enforced per media kind (fail closed): killing either
+  // photo flag pauses new photo creation, either video flag pauses video.
+  const killed = new Set<string>(flags.killed);
   const ctx = createCaptureV2Context({
     db,
     authority,
@@ -113,12 +149,16 @@ export async function createCaptureV2HttpContext(
     verifier: runtime.verifier,
     agent: options.agent,
     agentAuthorization: runtime.agentAuthorization,
-    videoEnabled: await hasQualifiedVideoWorker(
-      db,
-      new Date(),
-      process.env.CAPTURE_VIDEO_UPLOAD_ENABLED !== 'false',
-    ),
-    mediaCreationEnabled: process.env.CAPTURE_MEDIA_CREATION_ENABLED !== 'false',
+    videoEnabled:
+      decoderQualified &&
+      process.env.CAPTURE_VIDEO_UPLOAD_ENABLED !== 'false' &&
+      !killed.has('camera_video') &&
+      !killed.has('file_video_upload'),
+    mediaCreationEnabled:
+      process.env.CAPTURE_MEDIA_CREATION_ENABLED !== 'false' &&
+      !killed.has('camera_photo') &&
+      !killed.has('file_photo_upload'),
+    glassesEnabled: flags.flags.meta_glasses_capture_enabled,
     analysisAvailability,
     deleteAnalysisCapture: async (tx, accountId, captureId) => {
       const legacy = createServiceContext(
@@ -138,6 +178,7 @@ export async function createCaptureV2HttpContext(
     },
   });
   ctx.limits = captureLimitsFromEnv(process.env, ctx.limits);
+  contextFlags.set(ctx, flags);
   return ctx;
 }
 /** Native-only HTTP context for P5 command claim/ack; cookies and share tokens confer no authority. */
@@ -145,6 +186,7 @@ export async function requireCaptureV2InstallationContext(
   request: NextRequest,
 ): Promise<CaptureV2Context> {
   rejectShareAuthority(request);
+  prepareRuntime();
   const authorization = request.headers.get('authorization');
   if (!authorization?.startsWith('Bearer cna_')) throw new AppError('unauthenticated');
   if (!runtime.resolveNativePrincipal) throw new AppError('service_unavailable');
@@ -164,6 +206,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
   const requestId = randomUUID(),
     headers = { 'x-request-id': requestId, 'cache-control': 'private, no-store' };
   try {
+    prepareRuntime();
     const url = new URL(request.url),
       path = url.pathname.replace(/\/$/, ''),
       method = request.method,
@@ -262,25 +305,29 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
       status = 200,
       match: RegExpExecArray | null;
     if (path === '/v2/capabilities' && method === 'GET') {
-      result = evaluateCaptureCapabilities(
-        {
-          mediaCreationEnabled: process.env.CAPTURE_MEDIA_CREATION_ENABLED !== 'false',
-          cameraVideoEnabled: true,
-          videoDecoderQualified: ctx.videoEnabled,
-          glasses: {
-            buildSupported: false,
-            channelEligible: false,
-            rolloutEligible: false,
-            deviceCompatible: false,
-            permissionGranted: false,
-            locallyReady: false,
-            killed: true,
+      const evaluation = contextFlags.get(ctx)!;
+      result = applyFeatureFlagsToCapabilities(
+        evaluateCaptureCapabilities(
+          {
+            mediaCreationEnabled: ctx.mediaCreationEnabled,
+            cameraVideoEnabled: evaluation.flags.camera_video,
+            videoDecoderQualified: ctx.videoEnabled,
+            glasses: {
+              buildSupported: false,
+              channelEligible: false,
+              rolloutEligible: false,
+              deviceCompatible: false,
+              permissionGranted: false,
+              locallyReady: false,
+              killed: true,
+            },
+            analysisReady: evaluation.flags.concentrate_analysis_enabled,
+            agentApiEnabled: evaluation.flags.agent_api_enabled,
+            sharingEnabled: evaluation.flags.collection_sharing_enabled,
           },
-          analysisReady: await photoAnalysisReady(),
-          agentApiEnabled: false,
-          sharingEnabled: false,
-        },
-        ctx.limits,
+          ctx.limits,
+        ),
+        evaluation,
       );
     } else if (path === '/v2/uploads' && method === 'POST') {
       result = await intake.createUpload(body, key);

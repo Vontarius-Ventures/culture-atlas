@@ -15,6 +15,10 @@ let lifecycle: AuthorityLifecycle | undefined;
 export function setAuthorityLifecycle(hook: AuthorityLifecycle | undefined): void {
   lifecycle = hook;
 }
+/** Composition roots check this so they never replace a hook installed elsewhere (e.g. by tests). */
+export function getAuthorityLifecycle(): AuthorityLifecycle | undefined {
+  return lifecycle;
+}
 
 /** Must be called within the same transaction that revokes authority. */
 export async function endAuthority(tx: Db, event: AuthorityEnded): Promise<void> {

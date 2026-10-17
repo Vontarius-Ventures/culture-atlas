@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# One ops snapshot (atlas-metrics.timer, every 5 minutes). The JSON line goes
+# to CloudWatch Logs through the awslogs driver; metric filters in the stack
+# turn it into the CultureAtlas metrics the alarms watch.
+set -euo pipefail
+app=/opt/culture-atlas
+exec docker compose --project-directory "$app" --env-file "$app/compose.env" -f "$app/compose.yml" \
+  --profile ops run --rm --no-deps -T ops-metrics

@@ -1,39 +1,75 @@
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { inject } from 'vitest';
 import { runMigrations } from '../db/migrate';
 import { createDb, type PoolDb } from '../db/pool';
 
 /**
- * A separate, fully migrated database for tests that mutate GLOBAL state (the
- * model-gateway spend control row, credit pauses, role circuits). Named
- * `<run db>_<prefix><hex>` so it is recognizable and never collides with the
- * shared per-run database other files use concurrently.
+ * A private, separately created database for tests that either mutate GLOBAL
+ * state (the model-gateway spend control row, credit pauses, role circuits),
+ * need absolute counts (ops metrics) or need a second database (restore
+ * drills). The shared per-run test database is used by many files in parallel,
+ * so those assertions would not be deterministic there.
+ *
+ * Two call shapes are supported:
+ * - `createIsolatedDatabase('conc', { migrationsDir })`: named
+ *   `ca_conc_<pid>_<hex>`, migrated from `migrationsDir` (default: db/migrations).
+ * - `createIsolatedDatabase({ migrate, prefix })`: named
+ *   `<prefix ?? 'ca_idops'>_<pid>_<hex>`; `migrate: false` leaves it empty.
+ *
+ * Each is dropped by `drop()`; leftovers are easy to find by their prefix.
  */
+export interface IsolatedDatabase {
+  name: string;
+  url: string;
+  db: PoolDb;
+  drop(): Promise<void>;
+}
+
+const BASE_URL = () =>
+  process.env.TEST_DATABASE_URL ??
+  'postgres://culture_atlas:culture_atlas@localhost:5432/culture_atlas_test';
+
+export function databaseUrl(name: string): string {
+  const url = new URL(BASE_URL());
+  url.pathname = `/${name}`;
+  return url.toString();
+}
+
 export async function createIsolatedDatabase(
-  prefix: string,
-  options: { migrationsDir?: string } = {},
-): Promise<{ url: string; db: PoolDb; drop: () => Promise<void> }> {
-  if (!/^[a-z][a-z0-9]{0,15}$/.test(prefix)) throw new Error('Invalid test database prefix');
-  const base = new URL(inject('databaseUrl'));
-  const name = `${base.pathname.slice(1)}_${prefix}${randomBytes(3).toString('hex')}`;
-  const admin = new pg.Client({ connectionString: base.toString() });
+  prefixOrOptions?: string | { migrate?: boolean; prefix?: string },
+  maybeOptions: { migrationsDir?: string } = {},
+): Promise<IsolatedDatabase> {
+  let prefix: string;
+  let migrate = true;
+  let migrationsDir: string | undefined;
+  if (typeof prefixOrOptions === 'string') {
+    if (!/^[a-z][a-z0-9]{0,15}$/.test(prefixOrOptions))
+      throw new Error('Invalid test database prefix');
+    prefix = `ca_${prefixOrOptions}`;
+    migrationsDir = maybeOptions.migrationsDir;
+  } else {
+    prefix = prefixOrOptions?.prefix ?? 'ca_idops';
+    migrate = prefixOrOptions?.migrate !== false;
+  }
+  const name = `${prefix}_${process.pid}_${randomBytes(4).toString('hex')}`;
+  if (!/^[a-z0-9_]+$/.test(name)) throw new Error('Invalid isolated database name.');
+  const admin = new pg.Client({ connectionString: BASE_URL() });
   await admin.connect();
   try {
     await admin.query(`CREATE DATABASE ${name}`);
   } finally {
     await admin.end();
   }
-  const url = new URL(base.toString());
-  url.pathname = `/${name}`;
-  await runMigrations(url.toString(), { dir: options.migrationsDir });
-  const db = createDb(url.toString(), 5);
+  const url = databaseUrl(name);
+  if (migrate) await runMigrations(url, migrationsDir ? { dir: migrationsDir } : undefined);
+  const db = createDb(url, 5);
   return {
-    url: url.toString(),
+    name,
+    url,
     db,
-    drop: async () => {
-      await db.end();
-      const c = new pg.Client({ connectionString: base.toString() });
+    async drop() {
+      await db.end().catch(() => undefined);
+      const c = new pg.Client({ connectionString: BASE_URL() });
       await c.connect();
       try {
         await c.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);

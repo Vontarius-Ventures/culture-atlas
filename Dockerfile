@@ -5,6 +5,8 @@
 #   worker:         docker run <image> pnpm worker
 #   media worker:   docker run <image> pnpm media-worker   (capture v2 verify/prepare/cleanup; uses ffmpeg)
 #   migrations:     docker run <image> pnpm db:migrate   (run before each release)
+#   ops image:      docker build --target ops .  (source + PostgreSQL 16 client tools,
+#                   for pnpm ops:backup / psql; used by infra/aws atlas-ops)
 #
 # Workspace packages ship TypeScript source; the worker and scripts run under
 # tsx, so the runtime image keeps the full workspace install.
@@ -33,6 +35,26 @@ COPY packages/domain/package.json packages/domain/
 COPY packages/providers/package.json packages/providers/
 COPY packages/agent-gateway/package.json packages/agent-gateway/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile
+
+# Operator image (built only with --target ops; the default build target stays
+# `runtime`, which Render and plain `docker build` use). It runs tsx scripts
+# (migrations, kill switches, backups, metrics) and adds pg_dump/pg_restore/
+# psql 16 from the PostgreSQL project's Debian repository: bookworm ships 15,
+# which cannot dump a 16 server. Not used to serve traffic.
+FROM deps AS ops
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && install -d /usr/share/postgresql-common/pgdg \
+ && curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+ && echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' > /etc/apt/sources.list.d/pgdg.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-client-16 \
+ && apt-get purge -y --auto-remove curl gnupg \
+ && rm -rf /var/lib/apt/lists/*
+COPY --chown=node:node . .
+ENV NODE_ENV=production
+USER node
+CMD ["sh", "-c", "echo 'culture atlas ops image: run a command, e.g. pnpm ops:kill list'"]
 
 # Build the Next.js app.
 FROM deps AS build

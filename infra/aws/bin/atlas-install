@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Installs one release on the host. Invoked by /usr/local/sbin/atlas-deploy
+# (from the CloudFormation user data) after it downloads and unpacks
+# s3://<bucket>/deploy/<release>/bundle.tar.gz. Safe to re-run.
+#
+# Steps: install files -> load images -> render .env from SSM -> start the
+# database (instance mode) -> migrate -> start services -> prune old images.
+set -euo pipefail
+export PATH="$PATH:/snap/bin"   # AWS CLI is a snap on Ubuntu
+
+release="${1:?usage: atlas-install <release>}"
+case "$release" in *[!a-zA-Z0-9._-]*) echo 'invalid release id' >&2; exit 2 ;; esac
+# shellcheck disable=SC1091
+. /etc/culture-atlas/stack.env
+bundle="$(cd "$(dirname "$0")/.." && pwd)"
+app=/opt/culture-atlas
+log() { printf '[atlas-install] %s\n' "$*"; }
+
+log "installing release $release"
+install -d -m 0750 "$app" /etc/culture-atlas/tls /var/lib/culture-atlas/backups
+chown 1000:1000 /var/lib/culture-atlas/backups   # the image's node user
+install -m 0644 "$bundle/compose.yml" "$app/compose.yml"
+install -m 0644 "$bundle/Caddyfile" "$app/Caddyfile"
+for tool in atlas-env atlas-ops atlas-backup atlas-metrics atlas-reload; do
+  install -m 0755 "$bundle/bin/$tool" "/usr/local/sbin/$tool"
+done
+for unit in "$bundle"/systemd/*; do
+  install -m 0644 "$unit" "/etc/systemd/system/$(basename "$unit")"
+done
+systemctl daemon-reload
+
+if [ "$ATLAS_DB_MODE" = rds ]; then
+  # Amazon RDS certificate bundle for sslmode=verify-full.
+  curl -fsS --retry 3 -o /etc/culture-atlas/tls/rds-ca.pem.new \
+    https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+  grep -q 'BEGIN CERTIFICATE' /etc/culture-atlas/tls/rds-ca.pem.new
+  mv /etc/culture-atlas/tls/rds-ca.pem.new /etc/culture-atlas/tls/rds-ca.pem
+  chmod 0644 /etc/culture-atlas/tls/rds-ca.pem
+fi
+
+if docker image inspect "culture-atlas:$release" "culture-atlas-ops:$release" >/dev/null 2>&1; then
+  log 'images already present (rollback or re-run)'
+else
+  log 'loading images'
+  aws s3 cp --only-show-errors "s3://$ATLAS_BUCKET/deploy/$release/image.tar.gz" - | gunzip | docker load -q
+fi
+
+log 'rendering settings from SSM'
+/usr/local/sbin/atlas-env
+
+site="$(sed -n "s/^SITE_ADDRESS='\(.*\)'$/\1/p" "$app/.env")"
+[ -n "$site" ] || { echo 'SITE_ADDRESS parameter is missing' >&2; exit 1; }
+profiles=''
+[ "$ATLAS_DB_MODE" = instance ] && profiles=localdb
+umask 077
+cat > "$app/compose.env" <<EOF
+ATLAS_IMAGE=culture-atlas:$release
+ATLAS_OPS_IMAGE=culture-atlas-ops:$release
+ATLAS_REGION=$ATLAS_REGION
+ATLAS_LOG_GROUP=$ATLAS_LOG_GROUP
+SITE_ADDRESS=$site
+ACME_EMAIL=$ATLAS_ACME_EMAIL
+COMPOSE_PROFILES=$profiles
+EOF
+umask 022
+compose() { docker compose --project-directory "$app" --env-file "$app/compose.env" -f "$app/compose.yml" "$@"; }
+
+if [ "$ATLAS_DB_MODE" = instance ]; then
+  log 'starting local PostgreSQL'
+  compose up -d --wait postgres
+fi
+
+log 'applying database migrations'
+compose --profile ops run --rm --no-deps ops pnpm db:migrate
+
+log 'starting services'
+compose up -d --remove-orphans caddy web worker media-worker
+compose up -d --wait web
+
+systemctl enable --now atlas-metrics.timer atlas-backup.timer
+echo "$release" > "$app/RELEASE"
+
+log 'pruning images older than the previous release'
+keep="$(ls -1t /opt/culture-atlas/releases | head -n 2 | tr '\n' ' ')"
+for image in $(docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^culture-atlas(-ops)?:' || true); do
+  tag="${image#*:}"
+  case " $keep " in *" $tag "*) ;; *) docker image rm "$image" >/dev/null 2>&1 || true ;; esac
+done
+for old in $(ls -1t /opt/culture-atlas/releases | tail -n +3); do rm -rf "/opt/culture-atlas/releases/$old"; done
+docker image prune -f >/dev/null
+log "release $release is live at https://$site"

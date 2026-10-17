@@ -1,0 +1,60 @@
+# HTTPS edge for culture atlas. Caddy obtains and renews the certificate for
+# SITE_ADDRESS automatically (Let's Encrypt / ZeroSSL) over ports 80/443.
+{
+	email {$ACME_EMAIL}
+	# Caddy is the only proxy hop; the app's TRUSTED_PROXY_HOPS=1 reads the
+	# client address Caddy appends to X-Forwarded-For.
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	# Media bytes go straight to S3 with signed part URLs; requests through the
+	# app are metadata, range reads and agent calls.
+	request_body {
+		max_size 20MB
+	}
+
+	reverse_proxy web:3000 {
+		# Server-sent events (/v2/events) and long polls (/v2/device/commands).
+		flush_interval -1
+		transport http {
+			read_timeout 60s
+		}
+	}
+
+	# JSON access log for the HttpRequests/Http5xx metric filters. Headers
+	# (cookies, Authorization) and credential-bearing query values are removed
+	# before anything is written.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				resp_headers delete
+				request>tls delete
+				request>uri query {
+					delete signature
+					delete expires
+					delete token
+					delete code
+					delete state
+					delete nonce
+					delete X-Amz-Signature
+					delete X-Amz-Credential
+					delete X-Amz-Security-Token
+				}
+			}
+		}
+	}
+}
