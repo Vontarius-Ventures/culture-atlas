@@ -111,3 +111,4 @@ export async function insertAgentConnection(
     },
   };
 }
+export { createIsolatedDatabase, type IsolatedDatabase } from './isolated-db';

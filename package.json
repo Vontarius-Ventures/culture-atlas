@@ -22,7 +22,10 @@
     "demo-agent": "pnpm --filter @culture-atlas/demo-agent start",
     "qloo:probe": "tsx scripts/qloo-probe.ts",
     "mock-relay": "pnpm --filter @culture-atlas/sensor-bridge mock-relay",
-    "ops:kill": "tsx scripts/feature-kill.ts"
+    "ops:kill": "tsx scripts/feature-kill.ts",
+    "ops:metrics": "tsx scripts/ops-metrics.ts",
+    "ops:restore-drill": "tsx scripts/restore-drill.ts",
+    "ops:backup": "tsx scripts/capture-backup.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

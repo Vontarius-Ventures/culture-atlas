@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import pg from 'pg';
+import { libpqEnv } from './pg-env';
 
 /**
  * Consistent metadata snapshot + immutable-object inventory. Object backup is
@@ -27,7 +28,7 @@ try {
       `--snapshot=${rows[0]!.snapshot}`,
       `--file=${join(directory, 'database.dump')}`,
     ],
-    { env: { ...process.env, PGDATABASE: databaseUrl }, timeout: 900000, maxBuffer: 1048576 },
+    { env: libpqEnv(databaseUrl), timeout: 900000, maxBuffer: 1048576 },
   );
   const inventory = await db.query(
     `SELECT account_id,id AS asset_id,generation,original_key AS object_key,sha256 AS checksum,byte_size
