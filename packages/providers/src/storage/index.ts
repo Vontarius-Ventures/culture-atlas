@@ -9,6 +9,7 @@ import type { ObjectStorage } from './types';
 
 export { LocalFsStorage } from './local';
 export { S3Storage } from './s3';
+export * from './multipart-types';
 export { buildSignedMediaUrl, isSafeObjectKey, signMedia, verifySignedMedia, type MediaVerification } from './signing';
 
 /**
