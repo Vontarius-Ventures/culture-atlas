@@ -12,6 +12,8 @@ import {
   setDbForTesting,
   setDomainConfigForTesting,
   endCaptureAuthority,
+  setFeatureKill,
+  liftFeatureKill,
 } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, insertAccount, testConfig } from '@culture-atlas/domain/testing';
 import { LocalMultipartStorage } from '@culture-atlas/providers';
@@ -459,5 +461,151 @@ describe('production identity runtime (G1, G2, G8)', () => {
     );
     expect(response.status).toBe(403);
     expect((await response.json()).error.code).toBe('account_required');
+  });
+});
+
+describe('server-side feature flags and kill switches over HTTP', () => {
+  const glassesEnv = {
+    META_GLASSES_QUALIFIED_BUILDS: 'ios@1.0.0',
+    META_GLASSES_ENTITLED_PLATFORMS: 'ios',
+    META_GLASSES_ROLLOUT: 'all',
+  };
+  async function readyGlassesPhone() {
+    const signedIn = await nativeSignIn();
+    const enrolled = await enrollPhone(signedIn.enrollment_grant);
+    const { access_token: access, account_id: accountId } = enrolled.native_session;
+    const capabilities = {
+      photo: true,
+      meta_wearables_sdk: true,
+      meta_wearables_supported_os: true,
+    };
+    await capture(
+      '/v2/device/status',
+      'PUT',
+      { sequence: 1, capabilities, readiness: 'ready', app_state: 'foreground' },
+      phone(access, accountId),
+    );
+    const wearable = await (
+      await capture(
+        '/v2/device/wearables',
+        'POST',
+        {
+          sdk_reference: 'opaque',
+          display_name: 'Glasses',
+          capabilities: { photo: true },
+          permission_state: 'granted',
+        },
+        phone(access, accountId),
+      )
+    ).json();
+    return { access, accountId, connectionId: wearable.connection_id as string };
+  }
+  const glassesSession = (p: { access: string; accountId: string; connectionId: string }) =>
+    capture(
+      '/v2/device/capture-sessions',
+      'POST',
+      { source: 'meta_glasses', mode: 'photo', connection_id: p.connectionId },
+      phone(p.access, p.accountId),
+    );
+
+  it('capabilities explain why glasses are off and never trust client flags', async () => {
+    const p = await readyGlassesPhone();
+    const response = await capture(
+      '/v2/capabilities?meta_glasses_capture_enabled=true',
+      'GET',
+      undefined,
+      {
+        authorization: `Bearer ${p.access}`,
+      },
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.flags).toMatchObject({
+      media_library: true,
+      meta_glasses_entry_visible: true,
+      meta_glasses_label: 'Experimental',
+      meta_glasses_capture_enabled: false,
+      remote_glasses_capture_enabled: false,
+    });
+    expect(body.availability.meta_glasses.reasons).toEqual(
+      expect.arrayContaining([
+        'build_unsupported',
+        'release_channel_ineligible',
+        'rollout_unavailable',
+      ]),
+    );
+    expect((await glassesSession(p)).status).toBe(403);
+  });
+
+  it('activation rules enable glasses sessions; an account kill disables them while reads continue', async () => {
+    Object.assign(process.env, glassesEnv);
+    try {
+      const p = await readyGlassesPhone();
+      const other = await readyGlassesPhone();
+      const caps = await (
+        await capture('/v2/capabilities', 'GET', undefined, { authorization: `Bearer ${p.access}` })
+      ).json();
+      expect(caps.flags.meta_glasses_capture_enabled).toBe(true);
+      expect((await glassesSession(p)).status).toBe(201);
+
+      await setFeatureKill(db, {
+        flag: 'meta_glasses_capture_enabled',
+        accountId: p.accountId,
+        reason: 'glasses incident drill',
+        actor: 'vitest',
+      });
+      const killed = await glassesSession(p);
+      expect(killed.status).toBe(403);
+      const after = await (
+        await capture('/v2/capabilities', 'GET', undefined, { authorization: `Bearer ${p.access}` })
+      ).json();
+      expect(after.availability.meta_glasses).toEqual({
+        available: false,
+        reasons: ['temporarily_disabled'],
+      });
+      // Other accounts and library reads are unaffected.
+      expect((await glassesSession(other)).status).toBe(201);
+      expect(
+        (await capture('/v2/library', 'GET', undefined, { authorization: `Bearer ${p.access}` }))
+          .status,
+      ).toBe(200);
+      await liftFeatureKill(db, { flag: 'meta_glasses_capture_enabled', accountId: p.accountId });
+      expect((await glassesSession(p)).status).toBe(201);
+    } finally {
+      for (const key of Object.keys(glassesEnv)) delete process.env[key];
+    }
+  });
+
+  it('a global (env) photo kill pauses new uploads for everyone without blocking the library', async () => {
+    const p = await readyGlassesPhone();
+    const upload = () =>
+      capture(
+        '/v2/uploads',
+        'POST',
+        {
+          client_capture_id: randomUUID(),
+          kind: 'photo',
+          source: 'upload',
+          filename: 'a.jpg',
+          content_type: 'image/jpeg',
+          byte_size: 1024,
+          sha256: 'a'.repeat(64),
+        },
+        phone(p.access, p.accountId),
+      );
+    // Env kill (process-local): a global database kill would leak into other test files sharing this DB.
+    process.env.FEATURE_KILL_SWITCHES = 'file_photo_upload';
+    try {
+      const paused = await upload();
+      expect(paused.status).toBe(503);
+      expect((await paused.json()).error.message).toBe('New captures are temporarily paused.');
+      expect(
+        (await capture('/v2/library', 'GET', undefined, { authorization: `Bearer ${p.access}` }))
+          .status,
+      ).toBe(200);
+    } finally {
+      delete process.env.FEATURE_KILL_SWITCHES;
+    }
+    expect((await upload()).status).toBe(201);
   });
 });

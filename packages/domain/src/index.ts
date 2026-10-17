@@ -18,3 +18,4 @@ export * from './util/cursor';
 export * from './util/stable-json';
 export * from './util/time';
 export * from './capture-v2';
+export * from './flags/feature-flags';

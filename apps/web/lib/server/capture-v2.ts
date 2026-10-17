@@ -18,6 +18,10 @@ import {
   enforceIpLimit,
   assertCaptureAuthority,
   hasQualifiedVideoWorker,
+  resolveFeatureFlags,
+  applyFeatureFlagsToCapabilities,
+  type AnalysisReadiness,
+  type FeatureFlagEvaluation,
   type CaptureV2Context,
   type InstallationAuthority,
   type CaptureIdentityAdapter,
@@ -42,6 +46,13 @@ export interface CaptureV2Runtime {
   verifier?: CaptureV2Context['verifier'];
   storage?: MultipartStorage;
   agentAuthorization?: CaptureV2Context['agentAuthorization'];
+  /** Model gateway readiness for concentrate_analysis_enabled; absent means not ready. */
+  analysisReadiness?: () => Promise<AnalysisReadiness>;
+}
+/** Server-side flag evaluation behind each HTTP context (feature-flags.json activation rules). */
+const contextFlags = new WeakMap<CaptureV2Context, FeatureFlagEvaluation>();
+export function captureV2ContextFlags(ctx: CaptureV2Context): FeatureFlagEvaluation | undefined {
+  return contextFlags.get(ctx);
 }
 let runtime: CaptureV2Runtime = {};
 let storage: MultipartStorage | undefined;
@@ -139,6 +150,19 @@ export async function createCaptureV2HttpContext(
 ): Promise<CaptureV2Context> {
   prepareRuntime();
   const db = options.db ?? getDb();
+  const now = new Date();
+  const decoderQualified = await hasQualifiedVideoWorker(db, now, true);
+  const flags = await resolveFeatureFlags(db, {
+    accountId: authority.accountId,
+    installationId: authority.kind === 'installation' ? authority.installationId : null,
+    env: process.env,
+    now,
+    videoDecoderQualified: decoderQualified,
+    analysisReadiness: await runtime.analysisReadiness?.(),
+  });
+  // Kill switches are enforced per media kind (fail closed): killing either
+  // photo flag pauses new photo creation, either video flag pauses video.
+  const killed = new Set<string>(flags.killed);
   const ctx = createCaptureV2Context({
     db,
     authority,
@@ -147,12 +171,16 @@ export async function createCaptureV2HttpContext(
     verifier: runtime.verifier,
     agent: options.agent,
     agentAuthorization: runtime.agentAuthorization,
-    videoEnabled: await hasQualifiedVideoWorker(
-      db,
-      new Date(),
-      process.env.CAPTURE_VIDEO_UPLOAD_ENABLED !== 'false',
-    ),
-    mediaCreationEnabled: process.env.CAPTURE_MEDIA_CREATION_ENABLED !== 'false',
+    videoEnabled:
+      decoderQualified &&
+      process.env.CAPTURE_VIDEO_UPLOAD_ENABLED !== 'false' &&
+      !killed.has('camera_video') &&
+      !killed.has('file_video_upload'),
+    mediaCreationEnabled:
+      process.env.CAPTURE_MEDIA_CREATION_ENABLED !== 'false' &&
+      !killed.has('camera_photo') &&
+      !killed.has('file_photo_upload'),
+    glassesEnabled: flags.flags.meta_glasses_capture_enabled,
     deleteAnalysisCapture: async (tx, accountId, captureId) => {
       const legacy = createServiceContext(
         { kind: 'account', accountId, sessionId: null, isDemoOwner: false },
@@ -177,6 +205,7 @@ export async function createCaptureV2HttpContext(
     photoMaxPixels: integerEnv('MEDIA_PHOTO_MAX_PIXELS', ctx.limits.photoMaxPixels),
     videoMaxBytes: integerEnv('MEDIA_VIDEO_MAX_BYTES', ctx.limits.videoMaxBytes),
   };
+  contextFlags.set(ctx, flags);
   return ctx;
 }
 /** Native-only HTTP context for P5 command claim/ack; cookies and share tokens confer no authority. */
@@ -303,25 +332,29 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
       status = 200,
       match: RegExpExecArray | null;
     if (path === '/v2/capabilities' && method === 'GET') {
-      result = evaluateCaptureCapabilities(
-        {
-          mediaCreationEnabled: process.env.CAPTURE_MEDIA_CREATION_ENABLED !== 'false',
-          cameraVideoEnabled: true,
-          videoDecoderQualified: ctx.videoEnabled,
-          glasses: {
-            buildSupported: false,
-            channelEligible: false,
-            rolloutEligible: false,
-            deviceCompatible: false,
-            permissionGranted: false,
-            locallyReady: false,
-            killed: true,
+      const evaluation = contextFlags.get(ctx)!;
+      result = applyFeatureFlagsToCapabilities(
+        evaluateCaptureCapabilities(
+          {
+            mediaCreationEnabled: ctx.mediaCreationEnabled,
+            cameraVideoEnabled: evaluation.flags.camera_video,
+            videoDecoderQualified: ctx.videoEnabled,
+            glasses: {
+              buildSupported: false,
+              channelEligible: false,
+              rolloutEligible: false,
+              deviceCompatible: false,
+              permissionGranted: false,
+              locallyReady: false,
+              killed: true,
+            },
+            analysisReady: evaluation.flags.concentrate_analysis_enabled,
+            agentApiEnabled: evaluation.flags.agent_api_enabled,
+            sharingEnabled: evaluation.flags.collection_sharing_enabled,
           },
-          analysisReady: false,
-          agentApiEnabled: false,
-          sharingEnabled: false,
-        },
-        ctx.limits,
+          ctx.limits,
+        ),
+        evaluation,
       );
     } else if (path === '/v2/uploads' && method === 'POST') {
       result = await intake.createUpload(body, key);
