@@ -590,7 +590,8 @@ export class MediaIntake {
     const derivatives = await this.ctx.db.query(
       `SELECT d.*,s.timestamp_ms,s.extraction_version FROM media_derivatives d LEFT JOIN media_segments s
        ON s.account_id=d.account_id AND s.frame_derivative_id=d.id
-       WHERE d.account_id=$1 AND d.asset_id=$2 AND d.generation=$3`,
+       WHERE d.account_id=$1 AND d.asset_id=$2 AND d.generation=$3
+       ORDER BY s.timestamp_ms NULLS FIRST, d.id`,
       [m.account_id, id, m.generation],
     );
     const link = (variant: string) => `/v2/media/${id}/content/${variant}`;

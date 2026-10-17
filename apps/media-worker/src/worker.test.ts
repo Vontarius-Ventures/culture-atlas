@@ -198,6 +198,9 @@ describe('MED-01 one committed asset per capture across duplicate completion and
     expect(detail.frames.length).toBeLessThanOrEqual(8);
     expect(detail.frames.every((fr) => fr.extraction_version === 'frames-v1')).toBe(true);
     expect(detail.frames.every((fr) => fr.timestamp_ms < detail.media.duration_ms!)).toBe(true);
+    // Moments are listed in playback order (the detail screen renders them as given).
+    const times = detail.frames.map((fr) => fr.timestamp_ms);
+    expect(times).toEqual([...times].sort((a, b) => a - b));
     // Staging bytes are gone; only the immutable namespace remains.
     expect(await stored(f.storage, `accounts/${f.account.accountId}/staging`)).toEqual([]);
     const keys = await stored(f.storage, `accounts/${f.account.accountId}/media/${u.asset_id}`);

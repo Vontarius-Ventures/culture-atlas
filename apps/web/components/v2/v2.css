@@ -1153,6 +1153,15 @@
   white-space: nowrap;
 }
 
+/* Shown on the dark player bar when the browser cannot decode the stream. */
+.player__error {
+  margin: 0;
+  padding: 8px 16px;
+  background: var(--player);
+  color: #fff;
+  font-size: 14px;
+}
+
 .player__status {
   display: grid;
   place-items: center;

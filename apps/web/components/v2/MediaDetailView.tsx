@@ -584,7 +584,7 @@ function VideoPlayer({
         onClick={() => (video.current?.paused ? void video.current.play() : video.current?.pause())}
       />
       {error && (
-        <p className="player__time" role="alert" style={{ padding: '8px 16px' }}>
+        <p className="player__error" role="alert">
           This video cannot play in this browser. Download the original from More.
         </p>
       )}

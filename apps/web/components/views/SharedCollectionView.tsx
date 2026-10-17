@@ -163,7 +163,9 @@ export function SharedCollectionView() {
               }} />
             ))}
           </div>
-        ) : <p>Nothing has been shared in this collection yet.</p>}
+        ) : data.share.include_media && data.media.length > 0 ? null : (
+          <p>Nothing has been shared in this collection yet.</p>
+        )}
         {data.share.include_media && data.media.length > 0 && (
           <>
             <h2>Photos and videos</h2>

@@ -277,8 +277,13 @@ export function ShareCollectionView({ collectionId }: { collectionId: string }) 
                 });
                 setShareLink(created.link);
                 setConfirmLink(false);
-                if (includeMedia && !(await applyPolicy(created.share, includeMedia, allowOriginals))) return;
+                const applied = !includeMedia || (await applyPolicy(created.share, includeMedia, allowOriginals));
+                // The link is live from here on, even while media inclusion awaits
+                // confirmation: refresh so the panel never says "Currently private".
+                await load();
+                if (!applied) return;
                 setStatus('Link created. Copy it now; it is shown once.');
+                return;
               } else {
                 const share = await ensureRestricted();
                 if (!(await applyPolicy(share, includeMedia, allowOriginals))) return;
