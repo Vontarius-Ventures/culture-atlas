@@ -58,8 +58,10 @@ describe('ops snapshot', () => {
     );
     const deleted = await asset(ago(2 * 86400));
     await db.query(
-      `INSERT INTO capture_work(account_id,asset_id,generation,kind,state) VALUES($1,$2,2,'purge_media','failed')`,
-      [accountId, deleted],
+      // Pinned in the past: the snapshot uses a fixed "now", so a wall-clock default
+      // would land inside its "last hour" window once real time passes it.
+      `INSERT INTO capture_work(account_id,asset_id,generation,kind,state,created_at) VALUES($1,$2,2,'purge_media','failed',$3)`,
+      [accountId, deleted, ago(2 * 86400)],
     );
     const stuck = await asset();
     const upload = await db.query<{ id: string }>(

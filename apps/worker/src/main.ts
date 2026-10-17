@@ -27,6 +27,8 @@ const analysis =
         storage: createCaptureStorage(providers.config, config.SESSION_SECRET),
         displayStorage: providers.storage,
         gateway: providers.modelGateway,
+        // MODEL_FALLBACK=elorian + ELORIAN_API_KEY: Elorian backs up the gateway's vision roles.
+        fallbackVlm: providers.fallbackVlm,
         config,
         photoConcurrency: Number(process.env.MEDIA_ANALYSIS_PHOTO_CONCURRENCY ?? 2),
         videoConcurrency: Number(process.env.MEDIA_ANALYSIS_VIDEO_CONCURRENCY ?? 1),

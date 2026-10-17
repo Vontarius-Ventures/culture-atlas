@@ -19,6 +19,7 @@ import {
   type FrameReading,
 } from '@culture-atlas/domain';
 import {
+  FallbackVlm,
   ProviderError,
   boundJpegForProfile,
   identityFromCaptureLease,
@@ -27,6 +28,9 @@ import {
   type ObjectStorage,
   type VlmProvider,
 } from '@culture-atlas/providers';
+
+/** Image bounds for the fallback model when no qualified gateway profile applies. */
+const FALLBACK_IMAGE_BOUNDS = { maxBytes: 700_000, maxPixels: 4_194_304, maxDimension: 2048, maxCount: 1 };
 
 /**
  * v2 media analysis worker (asset-analysis orchestration). Claims
@@ -44,6 +48,12 @@ export interface MediaAnalysisWorkerOptions {
   /** v1 capture storage for the analysis display image. */
   displayStorage: ObjectStorage;
   gateway: ModelGateway | undefined;
+  /**
+   * Operator-chosen fallback vision model (MODEL_FALLBACK=elorian). Used when the
+   * gateway has no qualified/available runner for the role, and as a second try
+   * after a provider-side failure of the gateway.
+   */
+  fallbackVlm?: VlmProvider;
   config: DomainConfig;
   workerId?: string;
   photoConcurrency?: number;
@@ -248,9 +258,12 @@ export class MediaAnalysisWorker {
     const work = await run.loadWork(lease);
     const role = kind === 'photo' ? 'vision_photo' : 'vision_video_frame';
     const gateway = this.opts.gateway;
-    const runner = gateway?.runners[role];
-    const vlm: VlmProvider | undefined =
+    const fallbackVlm = this.opts.fallbackVlm;
+    let runner = gateway?.runners[role];
+    const primaryVlm: VlmProvider | undefined =
       role === 'vision_photo' ? gateway?.vlm : gateway?.videoFrames;
+    let vlm: VlmProvider | undefined =
+      primaryVlm && fallbackVlm ? new FallbackVlm(primaryVlm, fallbackVlm) : primaryVlm;
     const result = (
       frames: Array<{ frame_id: string | null; timestamp_ms: number | null; state: string }>,
       candidates: unknown[] = [],
@@ -264,16 +277,20 @@ export class MediaAnalysisWorker {
       await run.publishVision(lease, { state: 'failed', errorCode: code, result: result(frames) });
       return `failed:${code}`;
     };
-    if (!runner || !vlm) return fail('analysis_unavailable');
-    const readiness = await runner.readinessDetail();
-    if (readiness.state === 'degraded' && readiness.reason === 'rate_limited') {
+    const readiness = runner ? await runner.readinessDetail() : null;
+    if ((!runner || !vlm || readiness?.state === 'unavailable') && fallbackVlm) {
+      // Gateway cannot serve this role at all: use only the operator-chosen fallback.
+      runner = undefined;
+      vlm = fallbackVlm;
+    } else if (!runner || !vlm || !readiness) return fail('analysis_unavailable');
+    if (runner && readiness && readiness.state === 'degraded' && readiness.reason === 'rate_limited') {
       await run.defer(lease, {
         reason: 'rate_limited',
         until: new Date(Date.now() + Math.max(readiness.retryAfterMs ?? 30_000, 1000)),
       });
       return 'deferred:rate_limited';
     }
-    if (readiness.state === 'unavailable') {
+    if (runner && readiness && readiness.state === 'unavailable') {
       if (readiness.reason === 'credits' || readiness.reason === 'cost_overrun') {
         await run.defer(lease, { reason: 'ai_paused', until: new Date(Date.now() + 60_000) });
         return 'deferred:ai_paused';
@@ -310,9 +327,9 @@ export class MediaAnalysisWorker {
       try {
         const image = await boundJpegForProfile(
           await readBounded(this.opts.storage, input.objectKey),
-          runner.profile.image,
+          runner?.profile.image ?? FALLBACK_IMAGE_BOUNDS,
         );
-        const reading = await vlm.analyzeImage(
+        const reading = await vlm!.analyzeImage(
           {
             image: { bytes: image.bytes, mediaType: 'image/jpeg' },
             focus: work.focus ? { label: String(work.focus).slice(0, 120) } : undefined,
@@ -357,7 +374,7 @@ export class MediaAnalysisWorker {
           error instanceof ProviderError &&
           (error.kind === 'budget_exhausted' || error.kind === 'rate_limited')
         ) {
-          const pause = await gateway!.ledger?.status();
+          const pause = await gateway?.ledger?.status();
           if (pause || error.kind === 'rate_limited') {
             // Only an attempt the gateway refused (402/429 response) is a deferral; a local
             // pause check refused before any HTTP request and reserved nothing.

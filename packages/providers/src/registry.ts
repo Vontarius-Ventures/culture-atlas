@@ -1,6 +1,7 @@
 import { CAPABILITY_NAMES, type CapabilityMatrix } from './capabilities';
 import { loadProviderConfig, type ProviderConfig } from './config';
 import { createModelGateway, type ModelGatewayOptions } from './concentrate/gateway';
+import { createElorianVlm, elorianEnabled, withModelFallback } from './fallback';
 import { createTextModel, createVlm } from './llm';
 import { createQlooProvider } from './qloo/client';
 import type { QlooProvider } from './qloo/types';
@@ -24,6 +25,8 @@ export interface ProviderRegistry {
   readonly storage: ObjectStorage;
   /** Present only with LLM_PROVIDER=concentrate (the default). */
   readonly modelGateway?: ReturnType<typeof createModelGateway>;
+  /** Elorian vision model when MODEL_FALLBACK=elorian and ELORIAN_API_KEY are set. */
+  readonly fallbackVlm?: VlmProvider;
   capabilities(): CapabilityMatrix;
 }
 
@@ -41,13 +44,17 @@ export function createProviderRegistry(
   // that role is unavailable. Featherless/Anthropic are explicit rollback only.
   const modelGateway =
     config.LLM_PROVIDER === 'concentrate' ? createModelGateway(config, gatewayOptions) : undefined;
-  const vlm = overrides.vlm ?? modelGateway?.vlm ?? createVlm(config);
-  const text =
-    overrides.text ?? modelGateway?.text ?? createTextModel(config, config.RESEARCH_MODEL);
-  const composer =
-    overrides.composer ??
+  const baseVlm = modelGateway?.vlm ?? createVlm(config);
+  const baseText = modelGateway?.text ?? createTextModel(config, config.RESEARCH_MODEL);
+  const baseComposer =
     modelGateway?.composer ??
     createTextModel(config, config.COMPOSER_MODEL ?? config.RESEARCH_MODEL);
+  // MODEL_FALLBACK=elorian (explicit operator choice): Elorian backs up the primary models.
+  const fallback = withModelFallback(config, { vlm: baseVlm, text: baseText, composer: baseComposer });
+  const vlm = overrides.vlm ?? fallback.vlm;
+  const text = overrides.text ?? fallback.text;
+  const composer = overrides.composer ?? fallback.composer;
+  const fallbackVlm = elorianEnabled(config) ? createElorianVlm(config) : undefined;
   const research = overrides.research ?? createWikipediaResearch(config, text);
   const qloo = overrides.qloo ?? createQlooProvider(config);
   const storage = overrides.storage ?? createObjectStorage(config);
@@ -61,6 +68,7 @@ export function createProviderRegistry(
     qloo,
     storage,
     modelGateway,
+    fallbackVlm,
     capabilities(): CapabilityMatrix {
       const q = qloo.capability();
       const r = research.capability();

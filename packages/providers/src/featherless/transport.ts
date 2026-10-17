@@ -23,6 +23,10 @@ export interface FeatherlessTransportConfig {
   baseUrl: string;
   jsonMode: FeatherlessJsonMode;
   fetch?: typeof fetch;
+  /** Provider label for errors and logs (default "featherless"); also used for Elorian. */
+  providerName?: string;
+  /** Output cap field: OpenAI-style APIs differ (default max_tokens). */
+  tokenParam?: 'max_tokens' | 'max_completion_tokens';
 }
 
 type ChatContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
@@ -47,7 +51,11 @@ function schemaInstructions(schema: z.ZodType): string {
   ].join('\n');
 }
 
-export function buildChatRequest(req: TransportRequest, jsonMode: FeatherlessJsonMode): Record<string, unknown> {
+export function buildChatRequest(
+  req: TransportRequest,
+  jsonMode: FeatherlessJsonMode,
+  tokenParam: 'max_tokens' | 'max_completion_tokens' = 'max_tokens',
+): Record<string, unknown> {
   // Featherless recommends text before images in the content array.
   const texts: ChatContentPart[] = [];
   const images: ChatContentPart[] = [];
@@ -58,7 +66,7 @@ export function buildChatRequest(req: TransportRequest, jsonMode: FeatherlessJso
   const userContent = images.length === 0 && texts.length === 1 ? (texts[0] as { text: string }).text : [...texts, ...images];
   const body: Record<string, unknown> = {
     model: req.model,
-    max_tokens: req.maxTokens,
+    [tokenParam]: req.maxTokens,
     temperature: 0.2,
     messages: [
       { role: 'system', content: `${req.system}\n\n${schemaInstructions(req.schema)}` },
@@ -95,17 +103,18 @@ function kindForStatus(status: number): ProviderErrorKind {
 
 export function createFeatherlessTransport(config: FeatherlessTransportConfig): MessagesTransport {
   const doFetch = config.fetch ?? fetch;
+  const name = config.providerName ?? 'featherless';
   const url = `${config.baseUrl.replace(/\/+$/, '')}/chat/completions`;
   return async (req, options) => {
     const res = await doFetch(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(buildChatRequest(req, config.jsonMode)),
+      body: JSON.stringify(buildChatRequest(req, config.jsonMode, config.tokenParam)),
       signal: options.signal,
     });
     if (!res.ok) {
       // Never include the response body: it may echo the request.
-      throw new ProviderError('featherless', kindForStatus(res.status), `featherless API error ${res.status}`, {
+      throw new ProviderError(name, kindForStatus(res.status), `${name} API error ${res.status}`, {
         status: res.status,
         retryAfterMs: parseRetryAfter(res.headers.get('retry-after')),
       });
@@ -114,7 +123,7 @@ export function createFeatherlessTransport(config: FeatherlessTransportConfig): 
     try {
       json = (await res.json()) as ChatCompletionResponse;
     } catch (err) {
-      throw new ProviderError('featherless', 'invalid_response', 'featherless returned non-JSON', { cause: err });
+      throw new ProviderError(name, 'invalid_response', `${name} returned non-JSON`, { cause: err });
     }
     const choice = json.choices?.[0];
     const content = choice?.message?.content ?? '';

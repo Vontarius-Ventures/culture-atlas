@@ -28,6 +28,7 @@ import {
   ModelSpendLedger,
   PostgresSpendStore,
   createConcentrateTransport,
+  createElorianVlm,
   createModelGateway,
   loadProviderConfig,
   type ModelGateway,
@@ -675,6 +676,40 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
       ).rows[0]!.n,
     ).toBe(0);
     expect(display.objects.size).toBe(keysBefore);
+  });
+
+
+  it('MODEL_FALLBACK=elorian: with no qualified gateway role, the photo is read by Elorian and completes', async () => {
+    const { accountId } = await insertAccount(db);
+    const assetId = await photoAsset(accountId, 'red');
+    const { gateway, fetchImpl } = gatewayWith(() => envelope('{}'), { roles: ['vision_video_frame'] });
+    const elorianCalls: Array<Record<string, unknown>> = [];
+    const elorianFetch = (async (_url: string, init: RequestInit) => {
+      elorianCalls.push(JSON.parse(init.body as string));
+      return new Response(
+        JSON.stringify({
+          model: 'elorian-1-agent',
+          choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(reading([{ name: 'Mid-century modern' }])) } }],
+          usage: { prompt_tokens: 10, completion_tokens: 10 },
+        }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const fallbackVlm = createElorianVlm(
+      loadProviderConfig({ MODEL_FALLBACK: 'elorian', ELORIAN_API_KEY: 'elor_test' }),
+      elorianFetch,
+    );
+    const req = await request(accountId, assetId, { mode: 'photo' });
+    await new MediaAnalysisWorker({
+      db, storage, displayStorage: display, gateway, fallbackVlm, config, accountId,
+      log: () => undefined, heartbeatMs: 1000,
+    }).drain();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(elorianCalls).toHaveLength(1);
+    expect(elorianCalls[0]!.model).toBe('elorian-1-agent');
+    const row = await analysisRow(req.analysis_id);
+    expect(row).toMatchObject({ state: 'complete', error_code: null });
+    expect(row.result).toMatchObject({ candidates: [{ name: 'Mid-century modern' }] });
   });
 
   it('missing or unqualified role: fails as unavailable without any HTTP call; the request gate refuses before using allowance', async () => {

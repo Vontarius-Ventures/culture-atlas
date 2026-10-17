@@ -289,6 +289,7 @@ export async function resolveFeatureFlags(
     budgetAvailable: false,
     providerReady: false,
   };
+  const elorianFallback = env.MODEL_FALLBACK === 'elorian' && !!env.ELORIAN_API_KEY;
   return evaluateFeatureFlags({
     killed,
     mediaCreationEnabled: notOff(env.CAPTURE_MEDIA_CREATION_ENABLED),
@@ -329,16 +330,21 @@ export async function resolveFeatureFlags(
       // Accepts both the spec's env names and the gateway implementation's
       // (LLM_PROVIDER unset means Concentrate there). These are configuration
       // presence checks only; providerReady (injected readiness) is the real gate.
+      // MODEL_FALLBACK=elorian with a key is an operator-chosen alternative route.
       keyConfigured:
-        (env.LLM_PROVIDER === undefined || env.LLM_PROVIDER === 'concentrate') &&
-        !!env.CONCENTRATE_API_KEY,
+        ((env.LLM_PROVIDER === undefined || env.LLM_PROVIDER === 'concentrate') &&
+          !!env.CONCENTRATE_API_KEY) ||
+        elorianFallback,
       profileQualified:
-        !!env.CONCENTRATE_PROFILES_JSON || (!!env.VLM_MODEL && !!env.CONCENTRATE_PROFILE_FILE),
+        !!env.CONCENTRATE_PROFILES_JSON ||
+        (!!env.VLM_MODEL && !!env.CONCENTRATE_PROFILE_FILE) ||
+        elorianFallback,
       // Spec defaults are the safe values (require ZDR, no content logging).
       privacyVerified:
         env.CONCENTRATE_REQUIRE_ZDR !== 'false' && env.CONCENTRATE_ALLOW_CONTENT_LOGGING !== 'true',
       budgetAvailable:
-        Number(env.MODEL_DAILY_SPEND_LIMIT_USD) > 0 && analysisReadiness.budgetAvailable,
+        (Number(env.MODEL_DAILY_SPEND_LIMIT_USD) > 0 || elorianFallback) &&
+        analysisReadiness.budgetAvailable,
       providerReady: analysisReadiness.providerReady,
     },
     agentApiConfigured: notOff(env.AGENT_API_ENABLED),

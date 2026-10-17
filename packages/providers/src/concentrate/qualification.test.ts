@@ -166,7 +166,7 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
 describe('catalogCompatible against the live catalog shape', () => {
   // GET /v1/models lists bare model ids with providers keyed by slug.
   const live = {
-    kind: 'concentrate-catalog-snapshot',
+    kind: 'concentrate-catalog-snapshot' as const,
     fetched_at: profile.catalogSnapshotAt,
     pages: 1,
     models: [{ id: 'gpt-5-nano', slug: 'gpt-5-nano', providers: { openai: { provider_slug: 'openai' }, azure: { provider_slug: 'azure' } } }],

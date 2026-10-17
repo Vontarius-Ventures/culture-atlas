@@ -229,6 +229,23 @@ be split into a fast first section and a follow-up call.
 The catalog fix needed to run these at all (provider/model pins vs bare catalog
 ids) landed in `packages/providers/src/concentrate/profiles.ts`.
 
+## Elorian fallback (operator choice)
+
+`MODEL_FALLBACK=elorian` plus `ELORIAN_API_KEY` adds Elorian
+(`https://api.elorian.ai/v1/chat/completions`, model `ELORIAN_MODEL`, default
+`elorian-1-agent`) behind the vision and text roles
+(`packages/providers/src/fallback.ts`). It is used when Concentrate cannot
+serve a role at all (no qualified profile, circuit open, unavailable), and as
+one second attempt after a provider-side failure (`unavailable`, `timeout`,
+`incomplete_response`, `invalid_response`, `rate_limited`, `server`, `auth`,
+`not_found`). Refusals, bad requests, cancellations and the per-job budget
+never fall through. Replies use the same zod validation, so nothing unvalidated
+is published. This deliberately departs from the spec's "no cross-gateway
+fallback" default at the operator's request: Elorian calls are not reserved in
+the Concentrate spend ledger (only the per-account daily analysis allowance
+applies), and Elorian's data-retention terms are not verified here. Image input
+and structured output on `elorian-1-agent` have not been verified live.
+
 ## Deployment configuration
 
 **Render** (`render.yaml`): set `CONCENTRATE_API_KEY`,

@@ -55,6 +55,18 @@ const BaseProviderConfigSchema = z.object({
    * none (schema in the prompt only). Output is always re-validated with zod.
    */
   FEATHERLESS_JSON_MODE: z.enum(['json_schema', 'json_object', 'none']).default('json_object'),
+  /**
+   * Elorian (OpenAI-compatible Chat Completions) as an explicit operator-chosen
+   * fallback for the vision/text roles when the primary gateway cannot serve a
+   * request (unavailable, timeout, incomplete, 429, 5xx). Off unless both
+   * MODEL_FALLBACK=elorian and ELORIAN_API_KEY are set.
+   */
+  MODEL_FALLBACK: z.enum(['none', 'elorian']).default('none'),
+  ELORIAN_API_KEY: optional,
+  ELORIAN_BASE_URL: z.string().default('https://api.elorian.ai/v1'),
+  ELORIAN_MODEL: z.string().default('elorian-1-agent'),
+  ELORIAN_JSON_MODE: z.enum(['json_schema', 'json_object', 'none']).default('json_object'),
+  ELORIAN_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   ANTHROPIC_API_KEY: optional,
   ANTHROPIC_BASE_URL: optional,
   VLM_MODEL: optional,

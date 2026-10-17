@@ -16,9 +16,20 @@ const ROLE_FOR_MODE: Record<'photo' | 'selected_frame' | 'sampled_video', ModelR
 export async function roleAvailability(
   role: ModelRole,
   gateway: ModelGateway | undefined = getProviders().modelGateway,
+  hasFallback: boolean = !!getProviders().fallbackVlm,
 ): Promise<AnalysisAvailability> {
-  // v2 media analysis runs only on the Concentrate gateway. With an explicit
-  // Featherless/Anthropic rollback it is unavailable rather than silently rerouted.
+  const primary = await gatewayAvailability(role, gateway);
+  // MODEL_FALLBACK=elorian (explicit operator choice): the worker sends vision
+  // work to Elorian when the gateway cannot serve the role.
+  return primary === 'unavailable' && hasFallback ? 'available' : primary;
+}
+
+async function gatewayAvailability(
+  role: ModelRole,
+  gateway: ModelGateway | undefined,
+): Promise<AnalysisAvailability> {
+  // v2 media analysis runs on the Concentrate gateway (plus the explicit
+  // MODEL_FALLBACK above). A Featherless/Anthropic rollback is not rerouted here.
   if (!gateway) return 'unavailable';
   try {
     const detail = (await gateway.readiness())[role];

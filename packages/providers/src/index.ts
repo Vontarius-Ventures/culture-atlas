@@ -17,6 +17,14 @@ export { createAnthropicVlm, AnthropicVlm } from './vlm/anthropic';
 export { VLM_SYSTEM_PROMPT } from './vlm/prompt';
 export { createAnthropicTextModel, AnthropicTextModel } from './text/anthropic';
 export { createVlm, createTextModel } from './llm';
+export {
+  FallbackTextModel,
+  FallbackVlm,
+  createElorianVlm,
+  elorianEnabled,
+  shouldFallBack,
+  withModelFallback,
+} from './fallback';
 export { createFeatherlessTransport, type FeatherlessJsonMode } from './featherless/transport';
 export type { MessagesTransport, TransportRequest, TransportResult } from './anthropic/transport';
 export { createQlooProvider, QlooHttpProvider } from './qloo/client';
