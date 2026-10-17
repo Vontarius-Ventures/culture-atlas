@@ -15,6 +15,7 @@ import {
   toErrorBody,
 } from '@culture-atlas/domain';
 import { abuseLimitIp, cookieOptions } from './http';
+import { ensureServerRuntime } from './runtime';
 
 const Refresh = z
   .object({
@@ -35,6 +36,8 @@ export async function identityRoute(request: NextRequest, path: string): Promise
     'x-request-id': requestId,
   };
   try {
+    // Lifecycle hook (G2) and mail adapter (G8) before any authority change or email.
+    ensureServerRuntime();
     const db = getDb();
     const config = getDomainConfig();
     const now = new Date();

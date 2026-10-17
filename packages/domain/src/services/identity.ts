@@ -11,7 +11,7 @@ import { getIdentityMail } from './identity-mail';
 import { endAuthority } from './native-sessions';
 import { normalizeEmail } from './passwords';
 
-export { DevIdentityOutbox, setIdentityMail } from './identity-mail';
+export { DevIdentityOutbox, setIdentityMail, hasIdentityMail } from './identity-mail';
 const secret = z.string().min(32).max(256);
 export const EmailStart = z
   .object({

@@ -33,6 +33,7 @@ import {
   type MultipartStorage,
 } from '@culture-atlas/providers';
 import { abuseLimitIp } from './http';
+import { ensureServerRuntime } from './runtime';
 
 /** Identity/P2 integration seam. Server startup must register before enabling those capabilities. */
 export interface CaptureV2Runtime {
@@ -44,9 +45,19 @@ export interface CaptureV2Runtime {
 }
 let runtime: CaptureV2Runtime = {};
 let storage: MultipartStorage | undefined;
+/** Set by tests/explicit composition; production defaults are then never applied. */
+let explicitRuntime = false;
 export function setCaptureV2Runtime(value: CaptureV2Runtime): void {
   runtime = value;
+  explicitRuntime = true;
   storage = undefined;
+}
+/** Production defaults (runtime.ts). Fills only slots that are still empty. */
+export function installCaptureV2Defaults(value: Partial<CaptureV2Runtime>): void {
+  runtime = { ...value, ...runtime };
+}
+function prepareRuntime(): void {
+  if (!explicitRuntime) ensureServerRuntime();
 }
 export function configureCaptureV2Runtime(value: Partial<CaptureV2Runtime>): void {
   runtime = { ...runtime, ...value };
@@ -126,6 +137,7 @@ export async function createCaptureV2HttpContext(
   authority: CaptureV2Context['authority'],
   options: { db?: CaptureV2Context['db']; agent?: CaptureV2Context['agent'] } = {},
 ): Promise<CaptureV2Context> {
+  prepareRuntime();
   const db = options.db ?? getDb();
   const ctx = createCaptureV2Context({
     db,
@@ -172,6 +184,7 @@ export async function requireCaptureV2InstallationContext(
   request: NextRequest,
 ): Promise<CaptureV2Context> {
   rejectShareAuthority(request);
+  prepareRuntime();
   const authorization = request.headers.get('authorization');
   if (!authorization?.startsWith('Bearer cna_')) throw new AppError('unauthenticated');
   if (!runtime.resolveNativePrincipal) throw new AppError('service_unavailable');
@@ -191,6 +204,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
   const requestId = randomUUID(),
     headers = { 'x-request-id': requestId, 'cache-control': 'private, no-store' };
   try {
+    prepareRuntime();
     const url = new URL(request.url),
       path = url.pathname.replace(/\/$/, ''),
       method = request.method,

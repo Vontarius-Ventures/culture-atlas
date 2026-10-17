@@ -23,3 +23,4 @@ export * as sensorConnections from './sensor-connections';
 export * as traces from './traces';
 export * as cards from './cards';
 export * as display from './display';
+export { createCaptureIdentityAdapter, createNativePrincipalResolver } from './capture-identity';

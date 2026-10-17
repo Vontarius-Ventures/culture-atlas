@@ -44,3 +44,4 @@ export * from './concentrate/gateway';
 export * from './concentrate/profiles';
 export * from './concentrate/providers';
 export * from './concentrate/transport';
+export * from './mail/identity-mail';

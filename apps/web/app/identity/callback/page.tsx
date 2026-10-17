@@ -32,7 +32,10 @@ export default function IdentityCallback() {
       if (!response.ok)
         throw new Error('This link is expired or already used. Start sign-in again.');
       sessionStorage.removeItem('ca_identity_pending');
-      window.location.replace('/library');
+      // Only fixed in-app destinations; never an arbitrary redirect.
+      const back = sessionStorage.getItem('ca_identity_return');
+      sessionStorage.removeItem('ca_identity_return');
+      window.location.replace(back === '/identity/sessions' ? back : '/library');
     }
     void complete().catch((error: Error) => setMessage(error.message));
   }, []);
