@@ -28,13 +28,19 @@ const featherlessOpts = (config: ProviderConfig) => ({
 });
 
 export function createVlm(config: ProviderConfig): VlmProvider {
+  if (config.LLM_PROVIDER === 'concentrate') return new UnavailableVlm('not_configured');
   if (config.LLM_PROVIDER === 'anthropic') return createAnthropicVlm(config);
   if (!config.FEATHERLESS_API_KEY) return new UnavailableVlm('not_configured');
   return new AnthropicVlm(config.VLM_MODEL, featherlessTransport(config), featherlessOpts(config));
 }
 
 export function createTextModel(config: ProviderConfig, model?: string): TextModelProvider {
+  if (config.LLM_PROVIDER === 'concentrate') return new UnavailableTextModel('not_configured');
   if (config.LLM_PROVIDER === 'anthropic') return createAnthropicTextModel(config, model);
   if (!config.FEATHERLESS_API_KEY) return new UnavailableTextModel('not_configured');
-  return new AnthropicTextModel(model ?? config.RESEARCH_MODEL, featherlessTransport(config), featherlessOpts(config));
+  return new AnthropicTextModel(
+    model ?? config.RESEARCH_MODEL,
+    featherlessTransport(config),
+    featherlessOpts(config),
+  );
 }
