@@ -4,6 +4,8 @@ The demo runs as two processes from one Docker image, `web` (Next.js app, REST `
 
 > Neither the Docker build nor the Render blueprint has been run from this repository yet: the build environment had no Docker or Render access. Locally verified: `pnpm build`, `next start` with the worker and migrations, and the full sensor flow against that server. Treat the first deploy as a check of these files.
 
+AWS (one small EC2 instance, RDS or on-instance PostgreSQL, private S3, a 1 USD budget alert): see [deploy-aws.md](deploy-aws.md), which also covers what the AWS free offers do and do not include. Operational runbooks: [runbooks/README.md](runbooks/README.md).
+
 ## Option A: Render blueprint (`render.yaml`)
 
 1. Push the repository to GitHub, then in Render choose **New > Blueprint** and select the repo. The blueprint creates:

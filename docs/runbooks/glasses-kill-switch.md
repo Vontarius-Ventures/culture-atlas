@@ -30,7 +30,7 @@ sudo atlas-ops pnpm ops:kill kill meta_glasses_capture_enabled --reason "<incide
 Takes effect on the next request; no deploy or restart. Alternative without
 database access: add `meta_glasses_capture_enabled` to `FEATURE_KILL_SWITCHES`
 in SSM (`/culture-atlas/<env>/FEATURE_KILL_SWITCHES`) and run
-`sudo atlas-deploy` to restart with the new environment.
+`sudo atlas-reload` to restart with the new environment.
 
 ## Kill for one account
 

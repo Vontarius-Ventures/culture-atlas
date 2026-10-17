@@ -93,8 +93,8 @@ describe('ops snapshot', () => {
           WorkFailedLastHour: 0,
           ExpiredLeases: 0,
           UploadsStuckVerifying: 0,
-          ReservationsUnsettled: 0,
-          PurgeOverdue: 0,
+          ReservationsUnsettled: 1,
+          PurgeOverdue: 2,
           ModelAttemptsUnknown: 3,
         },
         { namespace: 'CultureAtlas', environment: 'staging', now: new Date(0) },
@@ -103,15 +103,22 @@ describe('ops snapshot', () => {
     expect(line._aws.Timestamp).toBe(0);
     expect(line._aws.CloudWatchMetrics[0].Namespace).toBe('CultureAtlas');
     expect(line._aws.CloudWatchMetrics[0].Dimensions).toEqual([['Environment']]);
-    expect(line._aws.CloudWatchMetrics[0].Metrics).toHaveLength(8);
+    expect(line._aws.CloudWatchMetrics[0].Metrics).toHaveLength(7);
     expect(line._aws.CloudWatchMetrics[0].Metrics[0]).toEqual({
       Name: 'CaptureQueueOldestSeconds',
       Unit: 'Seconds',
     });
     expect(line).toMatchObject({
       Environment: 'staging',
+      event: 'ops_snapshot',
       CaptureQueueOldestSeconds: 12,
       ModelAttemptsUnknown: 3,
+      PurgeOverdue: 2,
+      ReservationsUnsettled: 1,
+      StorageCleanupBacklog: 3,
     });
+    expect(
+      line._aws.CloudWatchMetrics[0].Metrics.map((m: { Name: string }) => m.Name),
+    ).not.toContain('PurgeOverdue');
   });
 });

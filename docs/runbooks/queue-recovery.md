@@ -40,7 +40,7 @@ Run SQL with `sudo atlas-ops psql` (wrapper opens psql with the production
 
 ## 2. Workers are down or crash-looping
 
-1. `sudo docker compose up -d worker media-worker` (or `sudo atlas-deploy` to
+1. `sudo docker compose up -d worker media-worker` (or `sudo atlas-reload` to
    restart everything with the current image and SSM environment).
 2. If they OOM: lower `MEDIA_WORKER_CONCURRENCY` to 1 (default on micro) and
    `WORKER_CONCURRENCY` to 2 in SSM, redeploy. Confirm the swap file is active

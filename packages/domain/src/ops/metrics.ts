@@ -5,8 +5,8 @@ import type { Queryable } from '../db/pool';
  * no per-account data). Feeds the alerts in BUILD-AND-ACCEPTANCE "Operational
  * targets" and docs/capture-v2-operations.md "Monitoring and cleanup".
  *
- * Kept to eight metrics so the AWS shape stays inside the CloudWatch custom
- * metric allowance documented in docs/deploy-aws.md.
+ * Published as seven CloudWatch metrics (PUBLISHED_OPS_METRICS) so the AWS
+ * shape stays inside the custom metric allowance in docs/deploy-aws.md.
  */
 export interface OpsSnapshot {
   /** Oldest runnable capture_work item (verify/prepare/purge/cleanup/analyze); alert > 300s. */
@@ -58,15 +58,36 @@ export async function collectOpsSnapshot(db: Queryable, now = new Date()): Promi
 }
 
 /**
- * CloudWatch Embedded Metric Format: one JSON log line that CloudWatch Logs
- * turns into metrics without any API call or SDK. Without CloudWatch the line
- * is still a readable structured log.
+ * The seven values published as CloudWatch metrics. PurgeOverdue and
+ * ReservationsUnsettled are folded into StorageCleanupBacklog so that, with
+ * the two HTTP metrics, the deployment stays at nine custom metrics (see
+ * infra/aws/culture-atlas.yaml). The individual counts stay in the log line.
+ */
+export const PUBLISHED_OPS_METRICS = [
+  'CaptureQueueOldestSeconds',
+  'JobQueueOldestSeconds',
+  'WorkFailedLastHour',
+  'ExpiredLeases',
+  'UploadsStuckVerifying',
+  'StorageCleanupBacklog',
+  'ModelAttemptsUnknown',
+] as const;
+export type PublishedOpsMetric = (typeof PUBLISHED_OPS_METRICS)[number];
+
+/**
+ * One JSON log line in CloudWatch Embedded Metric Format. The AWS stack also
+ * extracts the same values with explicit metric filters on `event =
+ * "ops_snapshot"`, so publishing does not depend on how the log driver
+ * delivers EMF. Without CloudWatch the line is still a readable structured log.
  */
 export function toEmbeddedMetricLine(
   snapshot: OpsSnapshot,
   options: { namespace: string; environment: string; now?: Date },
 ): string {
-  const names = Object.keys(snapshot) as (keyof OpsSnapshot)[];
+  const values: OpsSnapshot & { StorageCleanupBacklog: number } = {
+    ...snapshot,
+    StorageCleanupBacklog: snapshot.PurgeOverdue + snapshot.ReservationsUnsettled,
+  };
   return JSON.stringify({
     _aws: {
       Timestamp: (options.now ?? new Date()).getTime(),
@@ -74,7 +95,7 @@ export function toEmbeddedMetricLine(
         {
           Namespace: options.namespace,
           Dimensions: [['Environment']],
-          Metrics: names.map((name) => ({
+          Metrics: PUBLISHED_OPS_METRICS.map((name) => ({
             Name: name,
             Unit: name.endsWith('Seconds') ? 'Seconds' : 'Count',
           })),
@@ -83,6 +104,6 @@ export function toEmbeddedMetricLine(
     },
     Environment: options.environment,
     event: 'ops_snapshot',
-    ...snapshot,
+    ...values,
   });
 }

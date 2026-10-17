@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Apply changed SSM settings without a new release: re-render .env and
+# recreate the running services (seconds of downtime). No S3 download.
+set -euo pipefail
+export PATH="$PATH:/snap/bin"
+app=/opt/culture-atlas
+[ -f "$app/compose.env" ] || { echo 'No release installed yet (run atlas-deploy).' >&2; exit 1; }
+/usr/local/sbin/atlas-env
+docker compose --project-directory "$app" --env-file "$app/compose.env" -f "$app/compose.yml" \
+  up -d --force-recreate --remove-orphans caddy web worker media-worker
+echo 'atlas-reload: services restarted with the current SSM settings'

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Run an operator command in a one-off container from the deployed release,
+# with the production settings (docs/runbooks/README.md).
+#   atlas-ops pnpm ops:kill list
+#   atlas-ops psql                 interactive psql on DATABASE_URL (never echoed)
+#   atlas-ops env CAPTURE_BACKUP_DIR=/backups pnpm ops:backup
+set -euo pipefail
+app=/opt/culture-atlas
+[ -f "$app/compose.env" ] || { echo 'No release installed yet (run atlas-deploy).' >&2; exit 1; }
+[ "$#" -gt 0 ] || { echo 'usage: atlas-ops <command...> | atlas-ops psql' >&2; exit 2; }
+compose() { docker compose --project-directory "$app" --env-file "$app/compose.env" -f "$app/compose.yml" "$@"; }
+tty=()
+[ -t 0 ] || tty=(-T)
+if [ "$1" = psql ]; then
+  shift
+  # The URL is expanded inside the container from its environment.
+  exec compose --profile ops run --rm --no-deps "${tty[@]}" ops sh -c 'exec psql "$DATABASE_URL" "$@"' psql "$@"
+fi
+exec compose --profile ops run --rm --no-deps "${tty[@]}" ops "$@"

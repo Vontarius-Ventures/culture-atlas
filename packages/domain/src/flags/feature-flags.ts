@@ -318,10 +318,17 @@ export async function resolveFeatureFlags(
       sourceSelected: deviceCaps.glasses_microphone_selected === true,
     },
     analysis: {
-      keyConfigured: env.LLM_PROVIDER === 'concentrate' && !!env.CONCENTRATE_API_KEY,
-      profileQualified: !!env.VLM_MODEL && !!env.CONCENTRATE_PROFILE_FILE,
+      // Accepts both the spec's env names and the gateway implementation's
+      // (LLM_PROVIDER unset means Concentrate there). These are configuration
+      // presence checks only; providerReady (injected readiness) is the real gate.
+      keyConfigured:
+        (env.LLM_PROVIDER === undefined || env.LLM_PROVIDER === 'concentrate') &&
+        !!env.CONCENTRATE_API_KEY,
+      profileQualified:
+        !!env.CONCENTRATE_PROFILES_JSON || (!!env.VLM_MODEL && !!env.CONCENTRATE_PROFILE_FILE),
+      // Spec defaults are the safe values (require ZDR, no content logging).
       privacyVerified:
-        env.CONCENTRATE_REQUIRE_ZDR === 'true' && env.CONCENTRATE_ALLOW_CONTENT_LOGGING === 'false',
+        env.CONCENTRATE_REQUIRE_ZDR !== 'false' && env.CONCENTRATE_ALLOW_CONTENT_LOGGING !== 'true',
       budgetAvailable:
         Number(env.MODEL_DAILY_SPEND_LIMIT_USD) > 0 && analysisReadiness.budgetAvailable,
       providerReady: analysisReadiness.providerReady,

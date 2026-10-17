@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Nightly logical backup (atlas-backup.timer): consistent metadata snapshot
+# and object/tombstone inventory via scripts/capture-backup.ts, copied to
+# s3://<bucket>/backups/ (write-only for the instance role; the bucket
+# lifecycle expires backups after 30 days). Keeps 3 days locally.
+# Objects themselves are protected by bucket versioning (30 days of previous
+# versions), not by this script. See docs/runbooks/restore-drill.md.
+set -euo pipefail
+export PATH="$PATH:/snap/bin"   # AWS CLI is a snap on Ubuntu
+# shellcheck disable=SC1091
+. /etc/culture-atlas/stack.env
+dir=/var/lib/culture-atlas/backups
+/usr/local/sbin/atlas-ops env CAPTURE_BACKUP_DIR=/backups pnpm ops:backup
+latest="$(ls -1td "$dir"/capture-* | head -n 1)"
+aws s3 cp --only-show-errors --recursive --sse AES256 "$latest" "s3://$ATLAS_BUCKET/backups/$(basename "$latest")/"
+find "$dir" -mindepth 1 -maxdepth 1 -name 'capture-*' -mtime +3 -exec rm -rf {} +
+echo "atlas-backup: uploaded $(basename "$latest")"
