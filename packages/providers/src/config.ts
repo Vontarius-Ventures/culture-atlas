@@ -65,7 +65,8 @@ const BaseProviderConfigSchema = z.object({
   ELORIAN_API_KEY: optional,
   ELORIAN_BASE_URL: z.string().default('https://api.elorian.ai/v1'),
   ELORIAN_MODEL: z.string().default('elorian-1-agent'),
-  ELORIAN_JSON_MODE: z.enum(['json_schema', 'json_object', 'none']).default('json_object'),
+  // Elorian rejects response_format (structured_output_unsupported), so the schema goes in the prompt.
+  ELORIAN_JSON_MODE: z.enum(['json_schema', 'json_object', 'none']).default('none'),
   ELORIAN_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   ANTHROPIC_API_KEY: optional,
   ANTHROPIC_BASE_URL: optional,
