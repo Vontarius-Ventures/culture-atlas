@@ -155,7 +155,7 @@ export function CollectionsView() {
 
   const unfiledCount = data?.unfiled?.item_count ?? 0;
   return (
-    <div className="page">
+    <div className="page page--collections">
       {header}
       {error && !data && <PageError message={error.message} onRetry={() => void load()} />}
       {!data && !error && <SkeletonGrid count={4} />}

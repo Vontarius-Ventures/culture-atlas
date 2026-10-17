@@ -40,6 +40,30 @@ export const SHORT_SCOPE_LABELS: Record<Scope, string> = {
   'plans:write': 'Change plans',
 };
 
+/** Consent order (SCREEN-CONTRACT "Agent consent"): setup, preferences, collections, media, capture. */
+const SCOPE_ORDER: readonly Scope[] = [
+  'setup:read', 'preferences:read', 'preferences:write', 'collections:read', 'collections:write',
+  'media:read', 'media:download', 'media:write', 'media:analyze', 'devices:command',
+  'captures:read', 'captures:write', 'taste:read', 'taste:write', 'plans:read', 'plans:write',
+];
+
+/**
+ * The capability line on a connection card ("View device setup · Read preferences"),
+ * in consent order. Collection reading is spelled out by the card's own
+ * "Collections: …" line, so it is not repeated here when collections are granted.
+ */
+export function connectionScopeLine(scopes: readonly Scope[], library: 'none' | 'selected_collections' | 'all'): string {
+  const rank = (s: Scope) => {
+    const i = SCOPE_ORDER.indexOf(s);
+    return i === -1 ? SCOPE_ORDER.length : i;
+  };
+  return [...scopes]
+    .filter((s) => !(s === 'collections:read' && library !== 'none'))
+    .sort((a, b) => rank(a) - rank(b))
+    .map((s) => SHORT_SCOPE_LABELS[s])
+    .join(' · ');
+}
+
 const ACTIVITY: Record<string, string> = {
   'preferences.read': 'Read your preferences',
   'preferences.update': 'Changed your preferences',

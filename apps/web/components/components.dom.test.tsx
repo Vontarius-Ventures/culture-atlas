@@ -194,7 +194,7 @@ describe('Toast', () => {
 });
 
 describe('CoverMosaic', () => {
-  it('bounds tiles to four (three for mini)', () => {
+  it('uses the mockup 07 layout: three tiles from three images, otherwise one (mini: up to three)', () => {
     const imgs = Array.from({ length: 6 }, (_, i) => ({
       url: `/i${i}.jpg`,
       width: null,
@@ -202,8 +202,14 @@ describe('CoverMosaic', () => {
       alt: '',
     }));
     const { container, rerender } = render(<CoverMosaic images={imgs} />);
-    expect(container.querySelectorAll('img')).toHaveLength(4);
-    expect(container.querySelector('.mosaic--n4')).not.toBeNull();
+    expect(container.querySelectorAll('img')).toHaveLength(3);
+    expect(container.querySelector('.mosaic--n3')).not.toBeNull();
+    rerender(<CoverMosaic images={imgs.slice(0, 2)} />);
+    expect(container.querySelectorAll('img')).toHaveLength(1);
+    expect(container.querySelector('.mosaic--n1')).not.toBeNull();
+    rerender(<CoverMosaic images={[]} />);
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+    expect(container.querySelector('.mosaic__empty')).not.toBeNull();
     rerender(<CoverMosaic images={imgs} size="mini" />);
     expect(container.querySelectorAll('img')).toHaveLength(3);
   });

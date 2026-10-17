@@ -71,6 +71,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   const active = sectionFor(pathname);
   const chrome = chromeFor(pathname);
   const settingsActive = /^\/settings(\/|$)/.test(pathname);
+  // v1 surfaces (design/cultural-atlas-v1 mockups 01–07) keep Capture in the
+  // mobile header, top right, as in mockup 04. Library and uploads follow the
+  // v2 reference 08 (Capture pill above the bottom bar, Settings in the header).
+  const headerCapture = active === 'discover' || active === 'collections' || active === 'plans';
   useEffect(() => {
     recordRouteChange();
   }, [pathname]);
@@ -93,7 +97,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
 
   return (
-    <div className={`shell shell--${chrome}${isV2Width(pathname) ? ' shell--v2' : ''}`}>
+    <div
+      className={`shell shell--${chrome}${isV2Width(pathname) ? ' shell--v2' : ''}${headerCapture ? ' shell--header-capture' : ''}`}
+    >
       <a className="skip-link" href="#main">
         Skip to content
       </a>
@@ -123,7 +129,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               className="button button--primary header__capture"
               aria-current={pathname === '/capture' ? 'page' : undefined}
             >
-              Capture
+              <Icon name="plus" size={20} />
+              <span>Capture</span>
             </Link>
             <Link
               href="/settings"
@@ -150,10 +157,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       {chrome === 'default' && (
         <div className="mobile-dock">
           {pathname !== '/uploads' && <UploadStatusBar variant="mobile" />}
-          <Link href="/capture" className="mobile-dock__capture">
-            <Icon name="camera" size={26} />
-            <span>Capture</span>
-          </Link>
+          {!headerCapture && (
+            <Link href="/capture" className="mobile-dock__capture">
+              <Icon name="camera" size={26} />
+              <span>Capture</span>
+            </Link>
+          )}
         </div>
       )}
       {chrome === 'default' && (

@@ -34,8 +34,10 @@
 }
 
 .header__capture {
-  min-height: 40px;
-  padding: 0 22px;
+  /* "+ Capture" as in v1 mockups 01, 02, 06 and 07; 44 px minimum target. */
+  min-height: var(--control-min-height);
+  padding: 0 20px 0 16px;
+  gap: var(--space-2);
   border-radius: 12px;
   font-weight: 500;
 }
@@ -150,6 +152,26 @@
   }
   .bottom-nav ul {
     grid-template-columns: repeat(4, 1fr);
+  }
+  /*
+   * v1 surfaces (Discover, Collections, Plans and their detail pages) keep
+   * Capture in the header, top right, as in v1 mockup 04; the dock then only
+   * carries upload recovery. Settings stays reachable from the footer.
+   */
+  .shell--header-capture {
+    --dock-height: 0px;
+  }
+  .shell--header-capture:has(.mobile-dock .upload-bar) {
+    --dock-height: 72px;
+  }
+  .shell--header-capture .header__capture {
+    display: inline-flex;
+    border-radius: 999px;
+    padding: 0 18px 0 14px;
+    font-size: 17px;
+  }
+  .shell--header-capture .header__settings {
+    display: none;
   }
   .bottom-nav__link {
     font-size: 14px;

@@ -66,6 +66,8 @@ E2E_BASE_URL=http://localhost:3200 pnpm --filter @culture-atlas/web test:e2e:rea
 
 It browses, tries an example, uploads, creates an account, saves into a collection, makes a movie night from mixed items and connects an agent to one collection.
 
+Design fidelity of the v1 screens and the agent and sharing screens is checked on the same real stack with a fixture account (`scripts/seed-fidelity.ts`, every item labeled "Example result") and `apps/web/playwright.fidelity.config.ts` at 1440, 390 and 320 px; see [docs/design-fidelity-v1-and-account.md](docs/design-fidelity-v1-and-account.md).
+
 The capture v2 journey (`e2e/real/v2-journey.spec.ts`) runs against `next dev`, the worker and the media worker. It covers sign-up, photo and video upload, the library, video detail and the unavailable exploration state. It also covers collections, a fake native client enrolling and running a remote command, an agent over REST and MCP, and a shared link opened and then revoked. Commands are in [docs/v2-real-stack.md](docs/v2-real-stack.md). Screenshots land in `apps/web/e2e/screenshots/real-*.png` (credentials masked). The desktop run writes the agent token to `apps/web/test-results/agent-token.txt` (git-ignored), so you can then run `DEMO_AGENT_TOKEN=$(cat apps/web/test-results/agent-token.txt) pnpm demo-agent -- --url http://localhost:3200/mcp --collection "Slow Sunday"`.
 
 ## Environment

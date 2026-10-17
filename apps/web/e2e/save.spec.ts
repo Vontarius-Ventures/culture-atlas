@@ -15,8 +15,8 @@ test.describe('Saving', () => {
     await dialog.getByLabel(/Your name/).fill('Ada');
     await dialog.getByRole('button', { name: 'Create account' }).click();
     // Account created; the intended save was claimed; picker now offers collections.
-    const accountCall = api.log.find((r) => r.path === '/v1/accounts');
-    expect(accountCall).toBeTruthy();
+    // The click only starts the request: wait for it instead of reading the log at once.
+    await expect.poll(() => api.log.some((r) => r.path === '/v1/accounts')).toBe(true);
     await expect(dialog.getByRole('radio', { name: 'New collection' })).toBeVisible();
     await dialog.getByRole('radio', { name: 'New collection' }).check({ force: true });
     await dialog.getByLabel('Collection name').fill('Slow Sunday');

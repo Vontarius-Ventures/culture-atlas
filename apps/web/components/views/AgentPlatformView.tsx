@@ -15,7 +15,7 @@ import {
   expiresIn,
   isCaptureActivity,
   lastUsed,
-  SHORT_SCOPE_LABELS,
+  connectionScopeLine,
 } from './agents-sharing-format';
 import './agent-platform.css';
 
@@ -115,7 +115,7 @@ function ConnectionCard({ connection, collectionNames, onChanged, onSecret }: {
     <article className="as-panel" aria-labelledby={headingId}>
       <h2 id={headingId}>{connection.client_name}</h2>
       <span className="as-badge">Connected</span>
-      <p>{connection.scopes.map((s) => SHORT_SCOPE_LABELS[s]).join(' · ')}</p>
+      <p>{connectionScopeLine(connection.scopes, connection.library_access)}</p>
       <p>Collections: {resources}</p>
       {(connection.installation_ids?.length ?? 0) > 0 && (
         <p>Phones: {connection.installation_ids?.length} selected · capture only while allowed on the phone</p>
