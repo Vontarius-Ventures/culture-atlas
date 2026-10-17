@@ -35,6 +35,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     recordRouteChange();
   }, [pathname]);
+  // Shared-collection viewers get no private navigation, owner menus or capture actions.
+  if (/^\/shared(\/|$)/.test(pathname)) {
+    return (
+      <main id="main" tabIndex={-1}>
+        {children}
+      </main>
+    );
+  }
   return (
     <div className="shell">
       <a className="skip-link" href="#main">

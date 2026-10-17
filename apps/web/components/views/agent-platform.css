@@ -1,19 +1,296 @@
-.agent-platform { max-width: 1200px; padding: 32px; margin-inline: auto; overflow-wrap: anywhere; }
-.agent-platform h1, .agent-platform h2 { font-family: Georgia, serif; font-weight: 400; }
-.agent-platform h1 { font-size: clamp(2rem, 5vw, 3rem); margin-block: 20px; }
-.agent-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; margin-block: 24px; align-items: start; }
-.agent-panel { border: 1px solid #d2d1c5; border-radius: 12px; padding: 24px; margin-bottom: 20px; min-width: 0; background: #fcfaf6; }
-.agent-platform label { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-block: 14px; min-height: 44px; }
-.agent-platform input:not([type=checkbox]), .agent-platform select, .agent-platform textarea { font: inherit; background: #fffefa; border: 1px solid #888a7c; border-radius: 6px; padding: 12px; max-width: 100%; min-width: 0; }
-.agent-platform textarea { width: 100%; }
-.agent-platform input[type=checkbox] { width: 22px; height: 22px; accent-color: #55633a; flex-shrink: 0; }
-.agent-platform fieldset { border: 0; padding: 0; margin-block: 24px; min-width: 0; }
-.agent-platform legend { font-weight: 600; }
-.agent-platform button, .agent-platform .button { min-height: 44px; padding: 10px 16px; margin: 4px; border: 1px solid #70775f; border-radius: 8px; color: #26301c; background: #f9f8f1; font: inherit; cursor: pointer; white-space: normal; }
-.agent-platform .button--primary { background: #4c5c32; color: #fff; }
-.agent-platform :focus-visible { outline: 3px solid #64763d; outline-offset: 3px; }
-.agent-platform button:disabled { cursor: wait; opacity: .65; }
-.agent-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.agent-platform [role=alert] { color: #8c2929; }
-@media(max-width: 640px) { .agent-grid { grid-template-columns: minmax(0, 1fr); } .agent-platform { padding: 20px; } .agent-panel { padding: 16px; } }
-@media(prefers-reduced-motion: reduce) { .agent-platform * { transition: none !important; animation: none !important; } }
+/*
+ * Screens 10–13 (agents and sharing). Composition, spacing and type scale follow
+ * the editable HTML mockups in specs/capture-platform-v2/design/index.html
+ * (sections 10–13) rendered with specs/capture-platform-v2/design/tokens.css.
+ * Colors come from the shared tokens (styles/tokens.css carries the same values:
+ * --canvas = --paper, --accent = --olive). Scoped to .as-page so v1 surfaces are untouched.
+ */
+.as-page {
+  --as-surface: #fffdfa;
+  --as-field-border: var(--muted);
+  --as-danger: #8a2c1f;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  color: var(--ink);
+  font: 16px/1.55 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.as-card {
+  margin: 40px 0;
+  padding: 24px;
+  background: var(--as-surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.as-crumb {
+  display: block;
+  font-size: 13.333px;
+  color: var(--muted);
+}
+
+.as-crumb a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.as-crumb a:hover {
+  text-decoration: underline;
+}
+
+.as-page h1,
+.as-page h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  line-height: 1.15;
+}
+
+/* Mockup page heading (h2 at 32 px with the browser's 0.83em block margins). */
+.as-page h1 {
+  font-size: 32px;
+  margin: 26.56px 0;
+}
+
+/* Mockup panel heading (h3: 1.17em with 1em block margins). */
+.as-page h2 {
+  font-size: 18.72px;
+  margin: 18.72px 0;
+}
+
+.as-page p {
+  margin: 16px 0;
+}
+
+.as-muted,
+.as-page small {
+  color: var(--muted);
+}
+
+.as-page small {
+  font-size: 13.333px;
+}
+
+.as-page label,
+.as-field {
+  display: block;
+  margin: 16px 0;
+}
+
+.as-page input:not([type='checkbox']):not([type='radio']),
+.as-page select,
+.as-page textarea {
+  font: inherit;
+  padding: 10px;
+  max-width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--as-field-border);
+  border-radius: 2px;
+}
+
+.as-page input:not([type='checkbox']):not([type='radio']) {
+  padding: 11px;
+}
+
+.as-page textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+}
+
+.as-page input[type='checkbox'],
+.as-page input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  margin: 3px 3px 3px 4px;
+  vertical-align: -3px;
+  accent-color: var(--accent);
+}
+
+.as-page button,
+.as-page .as-button {
+  display: inline-block;
+  min-height: 44px;
+  padding: 12px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--canvas);
+  color: var(--ink);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: normal;
+  text-align: center;
+}
+
+.as-page .as-primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.as-page .as-danger {
+  background: var(--as-danger);
+  border-color: var(--as-danger);
+  color: #fff;
+}
+
+.as-page button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.as-page .as-link-button {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.as-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.as-stack {
+  display: grid;
+  gap: 24px;
+  align-content: start;
+  min-width: 0;
+}
+
+.as-panel {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.as-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--quiet);
+  font-size: 13px;
+}
+
+.as-page hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 24px 0;
+}
+
+.as-page fieldset {
+  min-width: 0;
+  margin: 16px 0;
+  padding: 0 0 0 16px;
+  border: 0;
+  border-left: 2px solid var(--line);
+}
+
+.as-page legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+.as-page details summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.as-page code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.as-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.as-alert {
+  color: var(--as-danger);
+}
+
+.as-list {
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.as-list li {
+  margin: 8px 0;
+}
+
+.as-media {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.as-media img,
+.as-media video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 12px;
+  background: var(--quiet);
+}
+
+.as-detail-image {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  border-radius: 12px;
+  margin: 16px 0;
+}
+
+.as-page :focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* The shared viewer has no app navigation; keep the canvas consistent. */
+.as-bare {
+  min-height: 100vh;
+  background: var(--canvas);
+}
+
+@media (max-width: 640px) {
+  .as-page {
+    padding: 16px;
+  }
+  .as-card {
+    padding: 16px;
+  }
+  .as-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .as-page h1 {
+    font-size: 28px;
+    margin: 23.24px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .as-page * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

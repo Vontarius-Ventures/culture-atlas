@@ -4093,6 +4093,12 @@
                               }
                             ]
                           },
+                          "target_label": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "created_at": {
                             "type": "string",
                             "format": "date-time",
@@ -7190,6 +7196,12 @@
                     {
                       "type": "null"
                     }
+                  ]
+                },
+                "target_label": {
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "created_at": {

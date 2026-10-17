@@ -163,11 +163,13 @@ export async function rotateConnection(ctx: ServiceContext, id: string) {
 export async function getActivity(ctx: ServiceContext) {
   const owner = requireAccountOwner(ctx.principal);
   const { rows } = await ctx.db.query<{
-    id: string; connection_id: string; client_name: string; action: string; target_id: string | null; created_at: Date;
+    id: string; connection_id: string; client_name: string; action: string; target_id: string | null;
+    target_label: string | null; created_at: Date;
   }>(
-    `SELECT a.id,a.connection_id,ac.client_name,a.action,a.target_id,a.created_at FROM agent_activity a
+    `SELECT a.id,a.connection_id,ac.client_name,a.action,a.target_id,c.name AS target_label,a.created_at FROM agent_activity a
      JOIN agent_connections ac ON ac.id=a.connection_id AND ac.owner_account_id=a.account_id
-     WHERE a.account_id=$1 ORDER BY a.created_at DESC,a.id LIMIT 100`, [owner.accountId],
+     LEFT JOIN collections c ON c.id=a.target_id AND c.owner_account_id=a.account_id
+     WHERE a.account_id=$1 AND ac.purpose='agent' ORDER BY a.created_at DESC,a.id LIMIT 100`, [owner.accountId],
   );
   return { ...meta(ctx), items: rows.map((r) => ({ ...r, created_at: r.created_at.toISOString() })), next_cursor: null };
 }
