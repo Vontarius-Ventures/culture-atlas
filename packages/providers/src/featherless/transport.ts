@@ -123,6 +123,9 @@ export function createFeatherlessTransport(config: FeatherlessTransportConfig): 
     try {
       json = (await res.json()) as ChatCompletionResponse;
     } catch (err) {
+      // A deadline or cancellation that lands while the body is streaming is not a
+      // malformed reply: rethrow so the runner classifies it as timeout/aborted.
+      if (options.signal?.aborted) throw err;
       throw new ProviderError(name, 'invalid_response', `${name} returned non-JSON`, { cause: err });
     }
     const choice = json.choices?.[0];

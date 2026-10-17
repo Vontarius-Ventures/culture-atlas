@@ -116,3 +116,27 @@ describe('featherless provider', () => {
     expect(extractJsonText('{"a":1}')).toBe('{"a":1}');
   });
 });
+
+describe('featherless-style transport deadlines', () => {
+  it('reports a deadline that interrupts the response body as a timeout, not invalid_response', async () => {
+    const slowBody = (async (_url: string, init: RequestInit) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"choices":['));
+          init.signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')));
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const { AnthropicTextModel } = await import('../text/anthropic');
+    const text = new AnthropicTextModel('m', createFeatherlessTransport({ apiKey: 'k', baseUrl: 'https://x.test/v1', jsonMode: 'none', fetch: slowBody }), {
+      timeoutMs: 50,
+      effort: 'medium',
+      refusalFallback: false,
+      vendor: 'elorian',
+    });
+    await expect(
+      text.generateStructured({ system: 's', prompt: 'p', schema: z.object({ ok: z.boolean() }), schemaName: 'x' }, { maxRetries: 0 }),
+    ).rejects.toMatchObject({ kind: 'timeout' });
+  });
+});

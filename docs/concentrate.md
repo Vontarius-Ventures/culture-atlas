@@ -244,7 +244,21 @@ is published. This deliberately departs from the spec's "no cross-gateway
 fallback" default at the operator's request: Elorian calls are not reserved in
 the Concentrate spend ledger (only the per-account daily analysis allowance
 applies), and Elorian's data-retention terms are not verified here. Image input
-and structured output on `elorian-1-agent` have not been verified live.
+and structured output on `elorian-1-agent` were checked live on 2026-10-17:
+
+- `elorian-1-agent` accepts images (its model entry lists text, image and
+  video) but rejects `response_format` (`json_object` and `json_schema`) with
+  `structured_output_unsupported`, so `ELORIAN_JSON_MODE` defaults to `none`:
+  the schema goes in the prompt and the reply is validated afterwards.
+- Same 16 illustrations, one `VlmAnalysis` reading each, 60 s limit: 6
+  complete, 10 cut off at the limit. Completed readings took 38.6–58.6 s
+  (p50 51.5 s). About 6.8k input and 2.9k output tokens per request, mostly
+  hidden reasoning. Completed readings were good (for example tetsubin,
+  matcha and chanoyu for the tea still life, Japandi and wabi-sabi for the
+  interior).
+- It is a slow, heavy agent model: as configured (30 s attempt deadline) it
+  will rarely finish an interactive photo reading. It is better suited to
+  background re-tries or to a shorter reading format.
 
 ## Deployment configuration
 
