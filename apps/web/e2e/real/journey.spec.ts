@@ -109,7 +109,7 @@ test('main journey on the real stack', async ({ page }, info) => {
   });
 
   await test.step('upload a photo', async () => {
-    await page.goto('/capture');
+    await page.goto('/capture/photo');
     await page.getByTestId('upload-input').setInputFiles(path.join(PUBLIC, 'room.jpg'));
     await expect(page.getByRole('img', { name: 'Your selected photo' })).toBeVisible();
     await page.getByRole('button', { name: 'Discover' }).click();

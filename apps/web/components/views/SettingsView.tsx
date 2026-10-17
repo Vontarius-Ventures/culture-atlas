@@ -18,6 +18,7 @@ import { Dialog } from '../Dialog';
 import { Icon } from '../Icon';
 import { useToast } from '../Toast';
 import { Disclosure, Notice } from '../ui';
+import { DevicesEntry } from '../v2/DevicesEntry';
 
 const READ_SCOPES: Scope[] = ['collections:read', 'plans:read', 'taste:read', 'captures:read'];
 const WRITE_SCOPES: Scope[] = ['collections:write', 'plans:write', 'taste:write', 'captures:write'];
@@ -111,6 +112,7 @@ export function SettingsView() {
       ) : isAccount ? (
         <>
           <AccountSection />
+          <DevicesEntry />
           <AgentConnections />
           <SensorConnections />
           <section className="settings__section">

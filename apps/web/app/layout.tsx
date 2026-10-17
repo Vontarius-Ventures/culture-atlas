@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { Providers } from '@/components/Providers';
 import './globals.css';
+// Capture platform v2 surfaces; loaded after the v1 base so its overrides win.
+import '@/components/v2/v2.css';
 
 export const metadata: Metadata = {
   title: { default: 'culture atlas', template: '%s · culture atlas' },

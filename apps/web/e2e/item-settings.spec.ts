@@ -112,7 +112,8 @@ test.describe('Accessibility', () => {
       (api) => `/plans/${[...api.plans.values()][0]!.id}`,
     ],
     ['settings', { account: true, seedCollections: true, sensorOffline: true }, () => '/settings'],
-    ['capture', {}, () => '/capture'],
+    ['capture', {}, () => '/capture/photo'],
+    ['capture-source', {}, () => '/capture'],
   ];
   for (const [name, opts, path] of pages) {
     test(`no serious axe violations: ${name}`, async ({ page }) => {

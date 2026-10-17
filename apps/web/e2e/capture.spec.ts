@@ -5,7 +5,7 @@ test.describe('Capture', () => {
   test('upload → preview → optional crop → Discover → processing → results with Load more', async ({
     page,
   }) => {
-    const api = await open(page, '/capture');
+    const api = await open(page, '/capture/photo');
     await expect(page.getByRole('heading', { name: 'Capture something you like.' })).toBeVisible();
     await page.getByTestId('upload-input').setInputFiles(SAMPLE_JPEG);
     await expect(page.getByRole('img', { name: 'Your selected photo' })).toBeVisible();
@@ -95,7 +95,7 @@ test.describe('Capture', () => {
   test('unsupported file types explain accepted formats and keep the selection', async ({
     page,
   }) => {
-    await open(page, '/capture');
+    await open(page, '/capture/photo');
     await page
       .getByTestId('upload-input')
       .setInputFiles({ name: 'notes.gif', mimeType: 'image/gif', buffer: Buffer.from('GIF89a') });
