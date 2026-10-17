@@ -45,7 +45,9 @@ export const AgentActivityResponse = z.object({
   schema_version: z.literal('2.1'), request_id: z.string(),
   items: z.array(z.object({
     id: Uuid, connection_id: Uuid, client_name: z.string(), action: z.string(),
-    target_id: Uuid.nullable(), created_at: Timestamp,
+    target_id: Uuid.nullable(),
+    /** Owner-facing name of the target when it is one of the owner's collections. */
+    target_label: z.string().nullable().optional(), created_at: Timestamp,
   })),
   next_cursor: z.string().nullable(),
 });

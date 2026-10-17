@@ -134,13 +134,18 @@ describe('v2 REST boundary', () => {
     expect((await captureV2Route(new NextRequest('http://localhost:3301/v2/library'))).status).toBe(
       401,
     );
-    const agent = await insertAgentConnection(owner.principal);
+    // A legacy (v1-scoped) token: agent REST media now exists (G7), but old
+    // credentials never gain the new v2 media scopes.
+    const agent = await insertAgentConnection(owner.principal, {
+      scopes: ['captures:read', 'collections:read', 'taste:read', 'plans:read'],
+    });
     const result = await captureV2Route(
       new NextRequest('http://localhost:3301/v2/library', {
         headers: { authorization: `Bearer ${agent.credential}` },
       }),
     );
     expect(result.status).toBe(403);
+    expect((await result.json()).error.code).toBe('scope_denied');
   });
   it('share tokens and viewer cookies never become account authority, including when an owner cookie exists', async () => {
     const owner = await browser(),

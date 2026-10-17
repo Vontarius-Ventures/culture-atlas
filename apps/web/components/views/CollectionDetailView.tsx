@@ -272,6 +272,7 @@ export function CollectionDetailView({ collectionId }: { collectionId: string })
           <MoreMenu
             label={`More options for ${collection.name}`}
             items={[
+              { label: 'Share', onSelect: () => router.push(`/collections/${collection.id}/share`) },
               { label: 'Rename or edit description', onSelect: () => setEditOpen(true) },
               { label: 'Add saved items', onSelect: () => setAddOpen(true) },
               { label: 'Delete collection', danger: true, onSelect: () => setDeleteOpen(true) },

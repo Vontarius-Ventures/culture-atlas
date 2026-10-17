@@ -34,6 +34,12 @@ export default defineConfig({
       name: 'minimum',
       use: { ...devices['Desktop Chrome'], viewport: { width: 360, height: 740 } },
     },
+    // Capture platform v2: SCREEN-CONTRACT requires no horizontal scroll at 320 px.
+    {
+      name: 'narrow',
+      testMatch: 'v2/**/*.spec.ts',
+      use: { ...devices['Pixel 7'], viewport: { width: 320, height: 700 } },
+    },
   ],
   webServer: process.env.E2E_BASE_URL
     ? undefined

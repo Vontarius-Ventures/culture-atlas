@@ -1,0 +1,45 @@
+{
+  "$id": "https://culture-atlas.invalid/schemas/v2/OrdinaryPreferencesPatch.json",
+  "title": "OrdinaryPreferencesPatch",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "theme": {
+      "type": "string",
+      "enum": [
+        "system",
+        "light",
+        "dark"
+      ]
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "en",
+        "es",
+        "fr",
+        "de",
+        "ja"
+      ]
+    },
+    "default_capture_mode": {
+      "type": "string",
+      "enum": [
+        "photo",
+        "video"
+      ]
+    },
+    "video_muted": {
+      "type": "boolean"
+    },
+    "exploration": {
+      "type": "string",
+      "enum": [
+        "familiar",
+        "balanced",
+        "adventurous"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

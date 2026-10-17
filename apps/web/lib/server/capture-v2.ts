@@ -211,6 +211,11 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
       path = url.pathname.replace(/\/$/, ''),
       method = request.method,
       mutation = method !== 'GET';
+    // Agent bearer credentials use the live-authorized agent façade (REST media parity, G7).
+    if (request.headers.get('authorization')?.startsWith('Bearer cat_')) {
+      const { agentMediaRoute } = await import('./agent-media-http');
+      return agentMediaRoute(request);
+    }
     const db = getDb(),
       config = getDomainConfig();
     rejectShareAuthority(request);

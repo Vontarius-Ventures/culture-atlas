@@ -21,3 +21,4 @@ export * from './capture-v2';
 export * from './flags/feature-flags';
 export * from './ops/log';
 export * from './ops/metrics';
+export { clampShareRange, segmentByteLimit, SHARE_SEGMENT_SECONDS, SHARE_SEGMENT_MAX_BYTES } from './sharing/projection';

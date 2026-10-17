@@ -4,8 +4,8 @@ import { AgentConnectionDto, AgentConnectionsListResponse, CreateAgentConnection
 import * as A from './agent-platform';
 import type { RouteContract } from './routes';
 import { CaptureCommandRequest, CaptureCommandResponse } from './agent-commands';
-import { AgentMediaQuery, AgentOperationResponse, AgentUploadRequest } from './agent-media';
-import { CompleteMediaUploadRequest, MediaDetailResponse, MediaLibraryResponse, MediaUploadResponse } from './capture-v2';
+import { AgentAnalysisResponse, AgentMediaQuery, AgentOperationResponse, AgentUploadRequest } from './agent-media';
+import { AnalyzeMediaRequest, CompleteMediaUploadRequest, MediaDetailResponse, MediaLibraryResponse, MediaUploadResponse, UploadPartsRequest } from './capture-v2';
 import { CollectionMediaParams, CollectionMediaResult, CollectionMediaResponse } from './collection-media';
 
 const Meta = z.object({ schema_version: z.literal('2.1'), request_id: z.string() });
@@ -17,6 +17,10 @@ export const AGENT_ROUTES = {
   getAgentMedia: { method: 'GET', path: '/v2/media/{id}', auth: 'account', scopes: ['media:read'], params: IdParams, response: MediaDetailResponse, status: 200, idempotent: false, mcpTool: 'get_media' },
   beginAgentUpload: { method: 'POST', path: '/v2/uploads', auth: 'account', scopes: ['media:write'], body: AgentUploadRequest, response: MediaUploadResponse, status: 201, idempotent: false, mcpTool: 'begin_upload' },
   completeAgentUpload: { method: 'POST', path: '/v2/uploads/{id}/complete', auth: 'account', scopes: ['media:write'], params: IdParams, body: CompleteMediaUploadRequest, response: MediaUploadResponse, status: 202, idempotent: false, mcpTool: 'complete_upload' },
+  getAgentUpload: { method: 'GET', path: '/v2/uploads/{id}', auth: 'account', scopes: ['media:write'], params: IdParams, response: MediaUploadResponse, status: 200, idempotent: false },
+  agentUploadParts: { method: 'POST', path: '/v2/uploads/{id}/parts', auth: 'account', scopes: ['media:write'], params: IdParams, body: UploadPartsRequest, response: MediaUploadResponse, status: 200, idempotent: false },
+  abortAgentUpload: { method: 'DELETE', path: '/v2/uploads/{id}', auth: 'account', scopes: ['media:write'], params: IdParams, response: MediaUploadResponse, status: 202, idempotent: false },
+  analyzeAgentMedia: { method: 'POST', path: '/v2/media/{id}/analysis', auth: 'account', scopes: ['media:analyze'], params: IdParams, body: AnalyzeMediaRequest, response: AgentAnalysisResponse, status: 202, idempotent: false, mcpTool: 'analyze_media' },
   getOperation: { method: 'GET', path: '/v2/operations/{id}', auth: 'account', scopes: [], params: IdParams, response: AgentOperationResponse, status: 200, idempotent: false, mcpTool: 'get_operation' },
   requestCapture: { method: 'POST', path: '/v2/devices/{id}/commands', auth: 'account', scopes: ['devices:command'], params: IdParams, body: CaptureCommandRequest, response: CaptureCommandResponse, status: 202, idempotent: false, mcpTool: 'request_capture' },
   getCommandV2: { method: 'GET', path: '/v2/commands/{id}', auth: 'account', scopes: ['devices:command'], params: IdParams, response: CaptureCommandResponse, status: 200, idempotent: false },

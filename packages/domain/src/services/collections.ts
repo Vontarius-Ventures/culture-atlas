@@ -6,6 +6,7 @@ import {
   requireScopes,
   requireWholeLibrary,
 } from '../authz';
+import { agentActivity } from '../authz/agent-authorization';
 import type { ServiceContext } from '../context';
 import type { Db, Queryable } from '../db/pool';
 import { COLLECTION_FILTER_KINDS, COLLECTION_FILTERS, type CollectionFilter, type ItemKind } from '../enums';
@@ -152,6 +153,8 @@ export async function getCollection(
 ): Promise<CollectionDetailResponse> {
   requireScopes(ctx.principal, 'collections:read');
   const col = await loadAccessibleCollection(ctx, input.id);
+  // Owner-visible agent activity ("Viewed Quiet weekends"); a no-op for people.
+  if (!input.query.cursor) await agentActivity(ctx, 'collection.read', col.id);
   const limit = input.query.limit ?? 24;
   const params: unknown[] = [col.id];
   const where = ['ci.collection_id = $1'];
