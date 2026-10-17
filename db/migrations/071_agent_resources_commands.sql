@@ -7,10 +7,24 @@ CREATE TABLE collection_media_items (
  FOREIGN KEY(collection_id,account_id) REFERENCES collections(id,owner_account_id) ON DELETE CASCADE,
  FOREIGN KEY(account_id,asset_id) REFERENCES media_assets(account_id,id) ON DELETE CASCADE
 );
-ALTER TABLE media_assets ADD COLUMN created_by_agent_connection_id uuid;
-ALTER TABLE media_assets ADD COLUMN hidden_at timestamptz;
-ALTER TABLE media_assets ADD FOREIGN KEY(account_id,created_by_agent_connection_id)
- REFERENCES agent_connections(owner_account_id,id);
+-- Reconciled with 055_agent_media_fences.sql (merged from a parallel line):
+-- 055 may already have added the agent creator column and its owner-scoped
+-- foreign key. Both are guarded so either application order converges on one
+-- column and one foreign key.
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS created_by_agent_connection_id uuid;
+ALTER TABLE media_assets ADD COLUMN IF NOT EXISTS hidden_at timestamptz;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'media_assets'::regclass AND contype = 'f'
+       AND confrelid = 'agent_connections'::regclass
+       AND pg_get_constraintdef(oid) LIKE 'FOREIGN KEY (account_id, created_by_agent_connection_id)%'
+  ) THEN
+    ALTER TABLE media_assets ADD FOREIGN KEY(account_id,created_by_agent_connection_id)
+     REFERENCES agent_connections(owner_account_id,id);
+  END IF;
+END $$;
 CREATE TABLE agent_media_uploads (
  account_id uuid NOT NULL,
  upload_id uuid PRIMARY KEY,

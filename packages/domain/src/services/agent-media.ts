@@ -86,8 +86,12 @@ export async function beginUpload(ctx: ServiceContext, raw: unknown, key: string
        VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
       [account.accountId, result.upload_id, principal.connectionId, destination, principal.authorizationVersion],
     );
-    await tx.query('UPDATE media_assets SET created_by_agent_connection_id=$3 WHERE account_id=$1 AND id=$2',
-      [account.accountId, result.asset_id, principal.connectionId]);
+    // The creator and the grant version it acted under are recorded together
+    // (055 pairing check), so later queued work is fenced to that version.
+    await tx.query(
+      'UPDATE media_assets SET created_by_agent_connection_id=$3,authorization_version=$4 WHERE account_id=$1 AND id=$2',
+      [account.accountId, result.asset_id, principal.connectionId, principal.authorizationVersion],
+    );
     if (destination) {
       // This is the sole agent-created-draft exception. Destination authorization
       // is checked above; arbitrary inaccessible existing media cannot enter it.

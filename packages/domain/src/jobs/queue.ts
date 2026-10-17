@@ -10,7 +10,9 @@ import { JobPayloads, type JobBudget, type JobFailure, type JobPayload, type Job
  *  - enqueueJob: insert with optional dedupe key. An existing non-failed,
  *    non-cancelled job with the same key is reused (spec: duplicate submission).
  *  - claimJobs: lease queued jobs (or running jobs whose lease expired) using
- *    FOR UPDATE SKIP LOCKED; increments attempt.
+ *    FOR NO KEY UPDATE SKIP LOCKED; increments attempt. NO KEY: rows that
+ *    reference a job (trace_events, job_stages) take FOR KEY SHARE on insert,
+ *    which FOR UPDATE would conflict with, silently skipping a queued job.
  *  - heartbeatJob: extend the lease; returns false when the lease was lost or
  *    cancellation was requested (the handler must stop without publishing).
  *  - completeJob / failJob: guarded by lease_owner so a worker that lost its
@@ -103,7 +105,7 @@ export async function claimJobs(db: Queryable, opts: ClaimOptions): Promise<JobR
            AND ($5::uuid[] IS NULL OR id = ANY($5::uuid[]))
          ORDER BY available_at
          LIMIT $3
-         FOR UPDATE SKIP LOCKED)
+         FOR NO KEY UPDATE SKIP LOCKED)
       RETURNING j.*`,
     [opts.workerId, opts.leaseMs, opts.limit, opts.types ? [...opts.types] : null, opts.ids ? [...opts.ids] : null],
   );

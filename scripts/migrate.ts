@@ -18,7 +18,7 @@ const redacted = url.replace(/\/\/([^:@/]+):[^@/]*@/, '//$1:***@');
 console.log(`Migrating ${redacted}`);
 runMigrations(url, { log: (m) => console.log(`  ${m}`) })
   .then((r) => {
-    console.log(`Done: ${r.applied.length} applied, ${r.skipped.length} already applied.`);
+    console.log(`Done: ${r.applied.length} applied, ${r.skipped.length} already applied, ${r.reconciled.length} reconciled.`);
   })
   .catch((err: unknown) => {
     console.error((err as Error).message);

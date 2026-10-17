@@ -13,6 +13,9 @@ export const DEFAULT_AGENT_SCOPES: Scope[] = ['setup:read', 'preferences:read'];
 const SCOPES: Scope[] = ['setup:read', 'preferences:read', 'preferences:write', 'collections:read',
   'collections:write', 'media:read', 'media:download', 'media:write', 'media:analyze', 'plans:read', 'plans:write', 'devices:command'];
 
+const fetchAgents = () => Promise.all([api.request('listConnectionsV2', {}), api.request('agentActivity', {})]);
+const loadErrorMessage = (err: unknown) => (err instanceof Error ? err.message : 'Could not load agents.');
+
 function Secret({ value, dismiss }: { value: string; dismiss(): void }) {
   const [copied, setCopied] = useState(false);
   return <section className="agent-panel" aria-labelledby="secret-heading">
@@ -41,12 +44,24 @@ export function AgentPlatformView() {
   const [busy, setBusy] = useState(false), [status, setStatus] = useState('');
   async function load() {
     try {
-      const [list, events] = await Promise.all([api.request('listConnectionsV2', {}), api.request('agentActivity', {})]);
+      const [list, events] = await fetchAgents();
       setConnections(list.connections); setActivity(events.items); setError('');
-    } catch (err) { setError(err instanceof Error ? err.message : 'Could not load agents.'); }
+    } catch (err) { setError(loadErrorMessage(err)); }
     finally { setLoading(false); }
   }
-  useEffect(() => { if (isAccount) void load(); }, [isAccount]);
+  useEffect(() => {
+    if (!isAccount) return;
+    // Inline (not load()) so no state is set synchronously inside the effect,
+    // and a late response after sign-out or unmount is ignored.
+    let cancelled = false;
+    fetchAgents()
+      .then(([list, events]) => {
+        if (cancelled) return;
+        setConnections(list.connections); setActivity(events.items); setError('');
+      }, (err: unknown) => { if (!cancelled) setError(loadErrorMessage(err)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [isAccount]);
   if (!isAccount) return <div className="page agent-platform"><h1>Connected agents</h1><p>Sign in to connect and manage your own agents.</p><Link href="/settings">Account settings</Link></div>;
   return <div className="page agent-platform">
     <Link href="/settings">Settings</Link><h1>Connected agents</h1>

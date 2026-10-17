@@ -27,7 +27,7 @@ import {
 import { isProviderError, type ProviderRegistry } from '@culture-atlas/providers';
 
 /**
- * DB-backed job worker: claims leased jobs (SKIP LOCKED), runs the handler for
+ * DB-backed job worker: claims leased jobs (NO KEY UPDATE SKIP LOCKED), runs the handler for
  * the job type with a heartbeat and a per-attempt deadline, then completes,
  * re-queues (retryable, with backoff) or fails the job. Cancellation and lease
  * loss abort the handler's signal; the handler must not publish afterwards.

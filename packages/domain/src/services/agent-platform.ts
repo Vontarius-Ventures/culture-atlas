@@ -1,4 +1,3 @@
-import { z } from 'zod';
 import { requireAccount, requireAccountOwner } from '../authz';
 import { agentActivity, authorizeAgent } from '../authz/agent-authorization';
 import type { ServiceContext } from '../context';
