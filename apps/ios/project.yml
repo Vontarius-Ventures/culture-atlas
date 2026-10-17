@@ -1,0 +1,133 @@
+# XcodeGen spec for the culture atlas iOS app (`xcodegen generate` in apps/ios).
+# Layout follows World Observer's project.yml.
+#
+# Two app targets share the same sources:
+#   CultureAtlas              public camera/upload build. Does NOT link the Meta
+#                             SDK; the Experimental glasses entry explains it is
+#                             unavailable in this release (screen 09).
+#   CultureAtlasExperimental  links AtlasGlasses (Meta Wearables Device Access
+#                             Toolkit), compiles ATLAS_META_DAT and carries the
+#                             MWDAT Info.plist keys. Distribute only through
+#                             permitted channels (TestFlight / Meta release
+#                             channel); see docs/native.md for the gates.
+name: CultureAtlas
+options:
+  bundleIdPrefix: com.cultureatlas
+  deploymentTarget:
+    iOS: "17.2"
+  createIntermediateGroups: true
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    # DEVELOPMENT_TEAM comes from CI or an untracked Config/Signing.xcconfig.
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+packages:
+  MetaWearablesDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    exactVersion: 1.0.0
+targets:
+  AtlasCapture:
+    # Reusable capture module extracted from World Observer: contract models,
+    # identity/session, encrypted draft store, multipart uploader, remote
+    # command processing, phone camera, glasses clip recorder. No SDK import.
+    type: framework
+    platform: iOS
+    sources:
+      - AtlasCapture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cultureatlas.AtlasCapture
+        GENERATE_INFOPLIST_FILE: true
+  AtlasGlasses:
+    # The only code that imports the Meta SDK.
+    type: framework
+    platform: iOS
+    sources:
+      - AtlasGlasses
+    dependencies:
+      - target: AtlasCapture
+      - package: MetaWearablesDAT
+        products:
+          - MWDATCore
+          - MWDATCamera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cultureatlas.AtlasGlasses
+        GENERATE_INFOPLIST_FILE: true
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) ATLAS_META_DAT
+  CultureAtlas:
+    type: application
+    platform: iOS
+    sources:
+      - CultureAtlas
+    dependencies:
+      - target: AtlasCapture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cultureatlas.app
+        PRODUCT_NAME: CultureAtlas
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: CultureAtlas/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CultureAtlas/CultureAtlas.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  CultureAtlasExperimental:
+    type: application
+    platform: iOS
+    sources:
+      - CultureAtlas
+    dependencies:
+      - target: AtlasCapture
+      - target: AtlasGlasses
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cultureatlas.app.experimental
+        PRODUCT_NAME: CultureAtlasExperimental
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: false
+        INFOPLIST_FILE: CultureAtlas/Info-Experimental.plist
+        CODE_SIGN_ENTITLEMENTS: CultureAtlas/CultureAtlas.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) ATLAS_META_DAT
+        # META_APP_ID / CLIENT_TOKEN are injected by CI for the release channel;
+        # empty means Meta's Developer Mode (as in World Observer).
+    postBuildScripts:
+      - name: Copy Meta SDK license notice
+        script: '"${SRCROOT}/Scripts/copy-sdk-notices.sh"'
+        basedOnDependencyAnalysis: false
+  AtlasCaptureTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - AtlasCaptureTests
+      - path: ../../fixtures/native-contract
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: AtlasCapture
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+schemes:
+  CultureAtlas:
+    build:
+      targets:
+        CultureAtlas: all
+        AtlasCaptureTests: [test]
+    test:
+      targets:
+        - AtlasCaptureTests
+  CultureAtlasExperimental:
+    build:
+      targets:
+        CultureAtlasExperimental: all
+        AtlasCaptureTests: [test]
+    test:
+      targets:
+        - AtlasCaptureTests

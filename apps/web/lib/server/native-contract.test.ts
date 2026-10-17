@@ -684,6 +684,9 @@ class Phone {
     expect(schemas.DeviceStatusRequest.safeParse(body).success).toBe(true);
     const response = await this.api('PUT', '/v2/device/status', body);
     expect(response.status, await response.clone().text()).toBe(200);
+    const accepted = await response.json();
+    expect(shapeOf(accepted)).toEqual(shapeOf(messages.device_status_response!.body));
+    expect(accepted.accepted_sequence).toBe(this.statusSequence);
   }
 }
 
@@ -1064,5 +1067,75 @@ describe('native journey through the real handlers', () => {
     );
     expect(response.status).toBe(401);
     expect(new AppError('unauthenticated').code).toBe((await response.json()).error.code);
+  });
+
+  it('signs the installation id exactly as the body carries it (wire UUIDs are lowercase)', async () => {
+    expect((contract as unknown as { wire_uuid_case: string }).wire_uuid_case).toBe('lowercase');
+    const phone = new Phone('ios');
+    const grant = await phone.signIn(`${randomUUID()}@example.test`);
+    const upper = phone.installationPublicId.toUpperCase();
+    const challenge = await phone.api(
+      'POST',
+      '/v2/devices/enrollment/challenge',
+      {
+        enrollment_grant: grant.enrollment_grant,
+        installation_public_id: upper,
+        platform: 'ios',
+        public_key: phone.jwk(),
+      },
+      { noAuth: true, expectedAccount: grant.account_id },
+    );
+    expect(challenge.status).toBe(201);
+    const { nonce } = (await challenge.json()) as { nonce: string };
+    // A client that sends an uppercase id but signs the lowercase form is refused.
+    const lowerPayload = reference.payload({
+      nonce,
+      installation_public_id: phone.installationPublicId,
+      platform: 'ios',
+      enrollment_grant: grant.enrollment_grant,
+    });
+    const signature = sign('sha256', Buffer.from(lowerPayload), {
+      key: phone.key.privateKey,
+      dsaEncoding: 'ieee-p1363',
+    });
+    const response = await phone.api(
+      'POST',
+      '/v2/devices/enroll',
+      {
+        platform: 'ios',
+        app_version: '1.0.0 (1)',
+        installation_public_id: upper,
+        enrollment_grant: grant.enrollment_grant,
+        proof: { nonce, signature: signature.toString('base64url'), public_key: phone.jwk() },
+      },
+      { noAuth: true, expectedAccount: grant.account_id },
+    );
+    expect(response.status).toBe(401);
+    // Control: the same challenge signed over the string the body carries is accepted.
+    const matching = sign(
+      'sha256',
+      Buffer.from(
+        reference.payload({
+          nonce,
+          installation_public_id: upper,
+          platform: 'ios',
+          enrollment_grant: grant.enrollment_grant,
+        }),
+      ),
+      { key: phone.key.privateKey, dsaEncoding: 'ieee-p1363' },
+    );
+    const accepted = await phone.api(
+      'POST',
+      '/v2/devices/enroll',
+      {
+        platform: 'ios',
+        app_version: '1.0.0 (1)',
+        installation_public_id: upper,
+        enrollment_grant: grant.enrollment_grant,
+        proof: { nonce, signature: matching.toString('base64url'), public_key: phone.jwk() },
+      },
+      { noAuth: true, expectedAccount: grant.account_id },
+    );
+    expect(accepted.status).toBe(201);
   });
 });

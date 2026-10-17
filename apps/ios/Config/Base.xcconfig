@@ -1,0 +1,7 @@
+// Hosted API for this build. A host name only: xcconfig treats "//" as a
+// comment, so Info.plist builds the URL as https://$(ATLAS_API_HOST).
+// Staging/production builds override this in CI; never a LAN relay address.
+ATLAS_API_HOST = app.cultureatlas.com
+
+// Optional, untracked signing settings (DEVELOPMENT_TEAM etc.).
+#include? "Signing.xcconfig"

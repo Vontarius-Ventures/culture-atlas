@@ -32,7 +32,10 @@
       "direction": "response",
       "route": "POST /v2/identity/email/start",
       "schema": null,
-      "body": { "accepted": true, "message": "If this request is eligible, check your email to continue." }
+      "body": {
+        "accepted": true,
+        "message": "If this request is eligible, check your email to continue."
+      }
     },
     "email_complete_request": {
       "direction": "request",
@@ -54,7 +57,10 @@
         "account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
         "enrollment_grant": "cne_ExampleGrantValueOnlyNotACredential_0000001",
         "platform": "ios",
-        "claimed": { "captures": 0, "saved_items": 0 }
+        "claimed": {
+          "captures": 0,
+          "saved_items": 0
+        }
       }
     },
     "refresh_request": {
@@ -135,7 +141,11 @@
             "y": "DbbRMPo2Ni4DSHGN3ouYPbUkEMZOcHzsFKl_S5IN8Lo"
           }
         },
-        "capabilities": { "photo": true, "video": true, "meta_glasses_sdk": false }
+        "capabilities": {
+          "photo": true,
+          "video": true,
+          "meta_glasses_sdk": false
+        }
       }
     },
     "enroll_response": {
@@ -150,7 +160,11 @@
           "revision": 1,
           "last_seen_at": "2026-10-17T12:00:00.000Z",
           "revoked_at": null,
-          "capabilities": { "photo": true, "video": true, "meta_glasses_sdk": false },
+          "capabilities": {
+            "photo": true,
+            "video": true,
+            "meta_glasses_sdk": false
+          },
           "readiness": "unavailable",
           "app_state": "foreground"
         },
@@ -171,9 +185,22 @@
       "schema": "schemas.DeviceStatusRequest",
       "body": {
         "sequence": 42,
-        "capabilities": { "photo": true, "video": true, "microphone": false, "meta_glasses_sdk": false },
+        "capabilities": {
+          "photo": true,
+          "video": true,
+          "microphone": false,
+          "meta_glasses_sdk": false
+        },
         "readiness": "ready",
         "app_state": "foreground"
+      }
+    },
+    "device_status_response": {
+      "direction": "response",
+      "route": "PUT /v2/device/status",
+      "schema": null,
+      "body": {
+        "accepted_sequence": 42
       }
     },
     "create_wearable_request": {
@@ -183,8 +210,20 @@
       "body": {
         "sdk_reference": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
         "display_name": "My glasses",
-        "capabilities": { "photo": true, "video": true, "audio": false },
+        "capabilities": {
+          "photo": true,
+          "video": true,
+          "audio": false
+        },
         "permission_state": "granted"
+      }
+    },
+    "create_wearable_response": {
+      "direction": "response",
+      "route": "POST /v2/device/wearables",
+      "schema": null,
+      "body": {
+        "connection_id": "8a7b6c5d-4e3f-4a2b-9c1d-0e9f8a7b6c5d"
       }
     },
     "create_capture_session_request": {
@@ -215,20 +254,28 @@
       "body": {
         "enabled": true,
         "duration_seconds": 600,
-        "allowed_agent_connection_ids": ["8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a"]
+        "allowed_agent_connection_ids": [
+          "8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a"
+        ]
       }
     },
     "disarm_request": {
       "direction": "request",
       "route": "POST /v2/device/capture-sessions/{id}/arm",
       "schema": "schemas.ArmCaptureSessionRequest",
-      "body": { "enabled": false, "duration_seconds": 1, "allowed_agent_connection_ids": [] }
+      "body": {
+        "enabled": false,
+        "duration_seconds": 1,
+        "allowed_agent_connection_ids": []
+      }
     },
     "end_session_request": {
       "direction": "request",
       "route": "POST /v2/device/capture-sessions/{id}/end",
       "schema": "schemas.EndCaptureSessionRequest",
-      "body": { "reason": "user_stopped" }
+      "body": {
+        "reason": "user_stopped"
+      }
     },
     "create_upload_photo_request": {
       "direction": "request",
@@ -298,7 +345,12 @@
         "part_size": 8388608,
         "part_count": 3,
         "parts": [],
-        "verified_parts": [{ "part_number": 1, "etag": "\"5d41402abc4b2a76b9719d911017c592\"" }],
+        "verified_parts": [
+          {
+            "part_number": 1,
+            "etag": "\"5d41402abc4b2a76b9719d911017c592\""
+          }
+        ],
         "error_code": "authority_ended",
         "pause_reason": "authority_ended"
       }
@@ -307,7 +359,12 @@
       "direction": "request",
       "route": "POST /v2/uploads/{id}/parts",
       "schema": "schemas.UploadPartsRequest",
-      "body": { "part_numbers": [2, 3] }
+      "body": {
+        "part_numbers": [
+          2,
+          3
+        ]
+      }
     },
     "upload_parts_response": {
       "direction": "response",
@@ -331,9 +388,18 @@
       "schema": "schemas.CompleteMediaUploadRequest",
       "body": {
         "parts": [
-          { "part_number": 1, "etag": "\"5d41402abc4b2a76b9719d911017c592\"" },
-          { "part_number": 2, "etag": "\"7d793037a0760186574b0282f2f435e7\"" },
-          { "part_number": 3, "etag": "\"0cc175b9c0f1b6a831c399e269772661\"" }
+          {
+            "part_number": 1,
+            "etag": "\"5d41402abc4b2a76b9719d911017c592\""
+          },
+          {
+            "part_number": 2,
+            "etag": "\"7d793037a0760186574b0282f2f435e7\""
+          },
+          {
+            "part_number": 3,
+            "etag": "\"0cc175b9c0f1b6a831c399e269772661\""
+          }
         ]
       }
     },
@@ -367,31 +433,49 @@
       "direction": "request",
       "route": "POST /v2/device/commands/{id}/ack",
       "schema": "schemas.CommandAck",
-      "body": { "sequence": 1, "state": "executing" }
+      "body": {
+        "sequence": 1,
+        "state": "executing"
+      }
     },
     "command_ack_succeeded": {
       "direction": "request",
       "route": "POST /v2/device/commands/{id}/ack",
       "schema": "schemas.CommandAck",
-      "body": { "sequence": 2, "state": "succeeded", "result_asset_id": "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a" }
+      "body": {
+        "sequence": 2,
+        "state": "succeeded",
+        "result_asset_id": "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+      }
     },
     "command_ack_unknown": {
       "direction": "request",
       "route": "POST /v2/device/commands/{id}/ack",
       "schema": "schemas.CommandAck",
-      "body": { "sequence": 2, "state": "unknown", "safe_error": "outcome_unknown" }
+      "body": {
+        "sequence": 2,
+        "state": "unknown",
+        "safe_error": "outcome_unknown"
+      }
     },
     "command_ack_failed": {
       "direction": "request",
       "route": "POST /v2/device/commands/{id}/ack",
       "schema": "schemas.CommandAck",
-      "body": { "sequence": 1, "state": "failed", "safe_error": "device_unavailable" }
+      "body": {
+        "sequence": 1,
+        "state": "failed",
+        "safe_error": "device_unavailable"
+      }
     },
     "command_ack_awaiting_user": {
       "direction": "request",
       "route": "POST /v2/device/commands/{id}/ack",
       "schema": "schemas.CommandAck",
-      "body": { "sequence": 1, "state": "awaiting_user" }
+      "body": {
+        "sequence": 1,
+        "state": "awaiting_user"
+      }
     },
     "capabilities_response": {
       "direction": "response",
@@ -431,10 +515,26 @@
         "availability": {
           "meta_glasses": {
             "available": false,
-            "reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "permission_required", "user_action_required", "temporarily_disabled"]
+            "reasons": [
+              "build_unsupported",
+              "release_channel_ineligible",
+              "rollout_unavailable",
+              "device_unsupported",
+              "permission_required",
+              "user_action_required",
+              "temporarily_disabled"
+            ]
           },
-          "analysis": { "available": false, "reasons": ["provider_unavailable"] },
-          "video": { "available": true, "reasons": [] }
+          "analysis": {
+            "available": false,
+            "reasons": [
+              "provider_unavailable"
+            ]
+          },
+          "video": {
+            "available": true,
+            "reasons": []
+          }
         }
       }
     },
