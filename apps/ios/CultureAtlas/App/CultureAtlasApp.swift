@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     completionHandler: @escaping () -> Void
   ) {
     Task { @MainActor in
-      AppEnvironment.shared.transfer.backgroundCompletionHandlers[identifier] = completionHandler
+      AppEnvironment.shared.transfer.setBackgroundCompletionHandler(completionHandler, for: identifier)
     }
   }
 }

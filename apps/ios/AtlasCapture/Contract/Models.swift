@@ -419,8 +419,8 @@ public struct DeviceCommand: Codable, Sendable, Equatable {
 }
 
 public struct CommandBatch: Codable, Sendable, Equatable {
-  public var schemaVersion: String
-  public var requestID: String
+  public var schemaVersion: String?
+  public var requestID: String?
   public var items: [DeviceCommand]
   public var nextSequence: Int
 

@@ -1,0 +1,65 @@
+package com.cultureatlas.app
+
+import android.app.Application
+import com.cultureatlas.app.capture.GlassesAdapter
+import com.cultureatlas.app.capture.GlassesFactory
+import com.cultureatlas.app.capture.PhoneCameraController
+import com.cultureatlas.app.data.FileDraftRepository
+import com.cultureatlas.app.data.FileReceiptRepository
+import com.cultureatlas.app.security.KeystoreVault
+import com.cultureatlas.app.upload.OkHttpPartTransfer
+import com.cultureatlas.capture.core.identity.AccountClient
+import com.cultureatlas.capture.core.identity.SessionManager
+import com.cultureatlas.capture.core.net.AtlasApi
+import com.cultureatlas.capture.core.net.AtlasHttp
+import com.cultureatlas.capture.core.upload.UploadEngine
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+
+class CultureAtlasApplication : Application() {
+    lateinit var graph: AppGraph
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        graph = AppGraph(this)
+    }
+}
+
+/**
+ * Composition root: one instance of each dependency, no global relay profile,
+ * operator device or shared upload identity.
+ */
+class AppGraph(val app: Application) {
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val vault = KeystoreVault(app)
+    val http = AtlasHttp.forHost(BuildConfig.ATLAS_API_HOST)
+    val sessions = SessionManager(http, vault.tokens)
+    val api = AtlasApi(http, sessions)
+    val drafts = FileDraftRepository(app, vault)
+    val receipts = FileReceiptRepository(app)
+    val uploadEngine = UploadEngine(api, drafts, OkHttpPartTransfer())
+    val camera = PhoneCameraController(app)
+    val glasses: GlassesAdapter = GlassesFactory.create(app)
+    val accounts = AccountClient(
+        http = http,
+        sessions = sessions,
+        keys = vault.installations,
+        pending = vault.pendingSignIn,
+        appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+        capabilities = { mapOf("photo" to true, "video" to true, "meta_glasses_sdk" to BuildConfig.META_DAT) },
+    )
+
+    val controller: AppController by lazy { AppController(this) }
+
+    private val draftsVersion = MutableStateFlow(0L)
+    /** Bumped whenever a draft changes (UI reloads). */
+    val draftsChanged: StateFlow<Long> = draftsVersion
+
+    fun notifyDraftsChanged() {
+        draftsVersion.value = draftsVersion.value + 1
+    }
+}

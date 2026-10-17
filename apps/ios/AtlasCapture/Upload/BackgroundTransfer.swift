@@ -30,7 +30,11 @@ public final class BackgroundTransfer: NSObject, URLSessionDataDelegate, @unchec
   /// that finish while the app was not running.
   public var onPartFinished: (@Sendable (TaskInfo, Outcome) -> Void)?
   /// Set by the app delegate from `handleEventsForBackgroundURLSession`.
-  public var backgroundCompletionHandlers: [String: () -> Void] = [:]
+  private var backgroundCompletionHandlers: [String: () -> Void] = [:]
+
+  public func setBackgroundCompletionHandler(_ handler: @escaping () -> Void, for identifier: String) {
+    lock.withLock { backgroundCompletionHandlers[identifier] = handler }
+  }
 
   private let queue = OperationQueue()
   private let lock = NSLock()

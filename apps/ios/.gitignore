@@ -1,0 +1,5 @@
+xcuserdata/
+*.xcodeproj/
+DerivedData/
+Config/Signing.xcconfig
+.build/
