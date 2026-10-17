@@ -32,6 +32,21 @@ export const GLASSES_BLOCKING_REASONS: ReadonlySet<string> = new Set([
 export const glassesBlocked = (reasons: readonly string[]) =>
   reasons.some((r) => GLASSES_BLOCKING_REASONS.has(r));
 
+/**
+ * Screen 02 glasses line. SCREEN-CONTRACT: the glasses entry always explains
+ * eligibility, and "not connected" is never shown as ready. Only a server
+ * evaluation that says glasses capture is available may claim connected
+ * glasses; a browser never captures from glasses (it hands off to the phone).
+ */
+export function glassesEntryLine(
+  glasses: { available: boolean; reasons: readonly string[] } | null | undefined,
+): string {
+  if (!glasses) return 'See what glasses capture needs';
+  if (glassesBlocked(glasses.reasons)) return 'See why it is not available yet';
+  if (glasses.available) return 'Capture with your connected glasses';
+  return 'Set up on your phone with the culture atlas app';
+}
+
 /** PRODUCT-AND-ARCHITECTURE defaults, used until GET /v2/capabilities answers. */
 export const DEFAULT_LIMITS: ClientLimits = {
   photo_max_bytes: 15 * 1024 * 1024,

@@ -2,13 +2,19 @@ import { createHash } from 'node:crypto';
 import { requireAccount } from '../authz';
 import { agentActivity, authorizeAgent } from '../authz/agent-authorization';
 import type { CaptureV2Context, InstallationAuthority } from '../capture-v2/types';
+import { getDomainConfig } from '../config';
 import type { ServiceContext } from '../context';
 import type { Db } from '../db/pool';
 import { AppError } from '../errors';
 import { Uuid } from '../schemas/common';
 import { CaptureCommandRequest, CommandAck } from '../schemas/agent-commands';
+import { requireServiceFeature, type ServiceFeatureEnv } from '../flags/feature-flags';
 import { stableStringify } from '../util/stable-json';
-export type CommandContext = Pick<CaptureV2Context, 'db' | 'authority' | 'now'> & { glassesEnabled?: boolean };
+export type CommandContext = Pick<CaptureV2Context, 'db' | 'authority' | 'now'> & {
+  glassesEnabled?: boolean;
+  /** Flag configuration (agent_remote_capture_enabled, kills). Defaults to the process configuration. */
+  config?: ServiceFeatureEnv;
+};
 
 interface Command {
   id: string; account_id: string; installation_id: string; capture_session_id: string; connection_id: string;
@@ -28,7 +34,12 @@ const dto = (r: Command) => ({
 /** One policy for initial request, claim, and the phone's last pre-execution check. */
 async function assertCommandLive(tx: Db, command: Pick<Command,
   'account_id' | 'installation_id' | 'capture_session_id' | 'generation' | 'connection_id' | 'authorization_version' | 'action'>,
-  now: Date, glassesEnabled = false) {
+  now: Date, glassesEnabled: boolean | undefined, config: ServiceFeatureEnv) {
+  // Server evaluation is authoritative (feature-flags.json): agent remote
+  // capture is off by default, and an operator kill of it (or of the agent
+  // API) stops new requests, cancels queued commands on claim and blocks the
+  // phone's last pre-execution check.
+  await requireServiceFeature({ db: tx, config }, command.account_id, 'agent_remote_capture_enabled');
   const { rows } = await tx.query<{
     state: string; remote_arm_expires_at: Date | null; allowed_agent_connection_ids: string[];
     generation: number; readiness: string; app_state: string; last_seen_at: Date; revoked_at: Date | null;
@@ -89,6 +100,7 @@ export async function requestCapture(ctx: ServiceContext, installationId: string
   ctx = await authorizeAgent(ctx, 'devices:command');
   if (ctx.principal.kind !== 'agent') throw new AppError('scope_denied', { message: 'Use an explicitly authorized agent connection.' });
   const principal = ctx.principal;
+  await requireServiceFeature(ctx, principal.accountId, 'agent_remote_capture_enabled');
   const body = CaptureCommandRequest.parse(raw);
   Uuid.parse(idempotencyKey);
   if (!principal.allowedInstallationIds?.includes(installationId)) throw new AppError('not_found');
@@ -98,7 +110,7 @@ export async function requestCapture(ctx: ServiceContext, installationId: string
     const command = { account_id: principal.accountId, installation_id: installationId,
       capture_session_id: body.session_id, generation: body.generation, connection_id: principal.connectionId,
       authorization_version: principal.authorizationVersion!, action: body.action };
-    await assertCommandLive(tx, command, ctx.now(), ctx.captureV2?.glassesEnabled);
+    await assertCommandLive(tx, command, ctx.now(), ctx.captureV2?.glassesEnabled, ctx.config);
     const prior = await tx.query<Command>(
       'SELECT * FROM device_commands WHERE account_id=$1 AND connection_id=$2 AND idempotency_key=$3',
       [principal.accountId, principal.connectionId, idempotencyKey],
@@ -149,7 +161,7 @@ export async function claimCommands(ctx: CommandContext, afterSequence = 0) {
     for (const command of rows) {
       try {
         if (command.expires_at <= ctx.now()) throw new AppError('token_expired');
-        await assertCommandLive(tx, command, ctx.now(), ctx.glassesEnabled);
+        await assertCommandLive(tx, command, ctx.now(), ctx.glassesEnabled, ctx.config ?? getDomainConfig());
         await tx.query(`UPDATE device_commands SET state='delivered' WHERE id=$1`, [command.id]);
         items.push(dto({ ...command, state: 'delivered' }));
       } catch (err) {
@@ -183,7 +195,7 @@ export async function acknowledgeCommand(ctx: CommandContext, id: string, raw: u
     }
     if (body.state === 'executing' && ['delivered', 'awaiting_user', 'executing'].includes(row.state)) {
       if (row.expires_at <= ctx.now()) throw new AppError('action_required');
-      await assertCommandLive(tx, row, ctx.now(), ctx.glassesEnabled);
+      await assertCommandLive(tx, row, ctx.now(), ctx.glassesEnabled, ctx.config ?? getDomainConfig());
     }
     if (body.sequence <= row.ack_sequence) return dto(row);
     if (['succeeded', 'failed', 'expired', 'cancelled', 'unknown'].includes(row.state)) throw new AppError('conflict');

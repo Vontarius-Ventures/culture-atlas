@@ -376,6 +376,26 @@ describe('MED-03 bounded input and quota rejection', () => {
     const good = await committed(f);
     expect((await f.intake.getUpload(good.u.upload_id)).state).toBe('committed');
   });
+  it('signs each part URL for its exact length and aborts a multipart whose stored part is oversized', async () => {
+    const f = await fixture();
+    const u = await f.intake.createUpload(request(), randomUUID());
+    expect(new URL(u.parts[0]!.url).searchParams.get('size')).toBe(String(photo.length));
+    // A storage that accepted more than the signed length (or a part beyond the declared count).
+    const { rows } = await db.query(`SELECT provider_multipart_id, staging_key FROM upload_sessions WHERE id=$1`, [
+      u.upload_id,
+    ]);
+    const extra = Buffer.alloc(4096, 1);
+    const etag = await f.storage.writePart(rows[0]!.provider_multipart_id, 1, Readable.from([photo, extra]));
+    await f.intake.completeUpload(u.upload_id, { parts: [{ part_number: 1, etag }] }, randomUUID());
+    const lease = await f.queue.claim(['verify_upload'], 60, f.account.accountId);
+    await f.worker.verifyUpload(lease!);
+    expect((await f.intake.getUpload(u.upload_id)).state).toBe('rejected');
+    // The multipart was aborted: its stored bytes are gone, and nothing was sealed.
+    expect(await f.storage.listParts(rows[0]!.staging_key, rows[0]!.provider_multipart_id)).toEqual([]);
+    await expect(
+      f.storage.writePart(rows[0]!.provider_multipart_id, 1, Readable.from([photo])),
+    ).rejects.toThrow('closed');
+  });
   it('rejects actual dimensions and overlong video at the verifier boundary', async () => {
     const metadata = (
       kind: 'photo' | 'video',
@@ -493,6 +513,46 @@ describe('worker leases, explicit analysis and device proof', () => {
       status: 'ready',
       analysis_status: 'failed',
     });
+  });
+  it('the owner cancels waiting or running exploration; a cancelled run cannot publish', async () => {
+    const f = await fixture(),
+      { u } = await committed(f);
+    const prep = await f.queue.claim(['prepare_media'], 60, f.account.accountId);
+    await f.worker.prepareMedia(prep!, {
+      async prepare(input) {
+        const objectKey = input.derivativeKey('normalized');
+        await input.storage.put(objectKey, Readable.from([photo]), 'image/png', photo.length);
+        return {
+          derivatives: [
+            { kind: 'normalized', objectKey, checksum: digest(photo), byteSize: photo.length, width: 8, height: 8, processingVersion: 'test-v1' },
+          ],
+        };
+      },
+    });
+    const analysis = new MediaAnalysis(f.ctx);
+    // Waiting (queued): cancel ends it and the media is no longer "queued".
+    const first = await analysis.request(u.asset_id, { mode: 'photo', expected_generation: 1 }, randomUUID());
+    const cancelled = await analysis.cancel(u.asset_id, first.analysis_id as string, randomUUID());
+    expect(cancelled).toMatchObject({ analysis_id: first.analysis_id, state: 'cancelled', waiting_reason: null });
+    expect((await f.intake.detail(u.asset_id)).media.analysis_status).toBe('not_requested');
+    expect(await f.queue.claim(['analyze_media'], 60, f.account.accountId)).toBeNull();
+    // Exploring again starts a new request instead of reusing the cancelled one.
+    const second = await analysis.request(u.asset_id, { mode: 'photo', expected_generation: 1 }, randomUUID());
+    expect(second.analysis_id).not.toBe(first.analysis_id);
+    // Running: the worker holds a lease; after cancel its publication is fenced.
+    const lease = await f.queue.claim(['analyze_media'], 60, f.account.accountId);
+    expect(lease).not.toBeNull();
+    await analysis.cancel(u.asset_id, second.analysis_id as string, randomUUID());
+    await expect(analysis.publish(lease!, { state: 'failed', errorCode: 'provider_unavailable' })).rejects.toMatchObject({
+      code: 'conflict',
+    });
+    expect((await analysis.get(u.asset_id, second.analysis_id as string)).state).toBe('cancelled');
+    // A finished request is returned unchanged; another account cannot reach it.
+    expect((await analysis.cancel(u.asset_id, second.analysis_id as string, randomUUID())).state).toBe('cancelled');
+    const other = await fixture();
+    await expect(
+      new MediaAnalysis(other.ctx).cancel(u.asset_id, second.analysis_id as string, randomUUID()),
+    ).rejects.toMatchObject({ code: 'not_found' });
   });
   it('verifies enrolled P-256 proof, rejects replay/wrong key, and exposes safe setup only', async () => {
     const f = await fixture(),

@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Db } from '../db/pool';
 import { AppError } from '../errors';
-import { MediaIntake, loadCaptureUpload, mediaObjectPrefix } from './intake';
+import { multipartPartSize } from '@culture-atlas/providers';
+import { CAPTURE_PART_SIZE, MediaIntake, loadCaptureUpload, mediaObjectPrefix } from './intake';
 import { CaptureQueue } from './queue';
 import type {
   CaptureLease,
@@ -56,6 +57,7 @@ export class MediaPreparation {
       if (u.authority_ended_at) throw new AppError('conflict');
       if (u.state !== 'verifying' || u.expires_at <= ctx.now())
         throw new AppError('invalid_input', { message: 'Upload expired.' });
+      await this.assertStoredPartSizes(u);
       await ctx.storage.finish(u.staging_key, u.provider_multipart_id!, u.part_receipts);
       const stored = await ctx.storage.read(u.staging_key);
       if (stored.byteSize !== u.expected_bytes)
@@ -136,6 +138,31 @@ export class MediaPreparation {
       }
       await this.rejectOrRetry(lease, error);
     }
+  }
+  /**
+   * Signed part URLs bind each part's exact length, so storage normally refuses
+   * oversized parts. This is the backstop before completion: any stored part
+   * that is not exactly its expected size (or beyond the declared part count)
+   * aborts the multipart upload so its bytes stop being billed, and the upload
+   * is rejected. A completed upload (lost completion response) has no parts to
+   * list; finish() then recognizes the sealed staging object instead.
+   */
+  private async assertStoredPartSizes(u: { staging_key: string; provider_multipart_id: string | null; expected_bytes: number }) {
+    let parts: Awaited<ReturnType<CaptureV2Context['storage']['listParts']>>;
+    try {
+      parts = await this.ctx.storage.listParts(u.staging_key, u.provider_multipart_id!);
+    } catch {
+      return;
+    }
+    const count = Math.ceil(u.expected_bytes / CAPTURE_PART_SIZE);
+    const wrong = parts.some(
+      (p) =>
+        p.part_number > count ||
+        (p.size !== undefined && p.size !== multipartPartSize(u.expected_bytes, p.part_number, CAPTURE_PART_SIZE)),
+    );
+    if (!wrong) return;
+    await this.ctx.storage.abort(u.staging_key, u.provider_multipart_id!);
+    throw new AppError('invalid_input', { message: 'The uploaded file size does not match.' });
   }
   private validateMetadata(
     m: VerifiedMedia,

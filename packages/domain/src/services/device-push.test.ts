@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import type { MultipartStorage, PushDriver, PushTarget } from '@culture-atlas/providers';
-import { closeTestDb, getTestDb, insertAccount, testContext } from '../testing';
+import { closeTestDb, getTestDb, insertAccount, testConfig, testContext } from '../testing';
 import { createCaptureV2Context } from '../capture-v2/context';
 import { endCaptureAuthority } from '../capture-v2/devices';
 import type { CaptureAuthority } from '../capture-v2/types';
@@ -188,8 +188,10 @@ describe('command queued wake-up', () => {
       scopes: ['devices:command'],
       installation_ids: [p.installationId],
     });
+    // Agent remote capture is off by default; this operator opts in.
     const agent = testContext(
       (await resolvePrincipal(db, { authorization: `Bearer ${created.credential}` }))!,
+      { config: testConfig({ AGENT_REMOTE_CAPTURE_ENABLED: 'true' }) },
     );
     const session = await db.query<{ id: string }>(
       `INSERT INTO capture_sessions(account_id,installation_id,source,media_mode,remote_arm_expires_at,allowed_agent_connection_ids)
@@ -232,8 +234,10 @@ describe('command queued wake-up', () => {
       scopes: ['devices:command'],
       installation_ids: [p.installationId],
     });
+    // Agent remote capture is off by default; this operator opts in.
     const agent = testContext(
       (await resolvePrincipal(db, { authorization: `Bearer ${created.credential}` }))!,
+      { config: testConfig({ AGENT_REMOTE_CAPTURE_ENABLED: 'true' }) },
     );
     const session = await db.query<{ id: string }>(
       `INSERT INTO capture_sessions(account_id,installation_id,source,media_mode,remote_arm_expires_at,allowed_agent_connection_ids)

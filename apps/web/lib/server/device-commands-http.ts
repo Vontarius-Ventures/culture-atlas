@@ -18,7 +18,8 @@ const headers = (requestId: string) => ({ 'x-request-id': requestId, 'cache-cont
 function failure(err: unknown, requestId: string): Response {
   const safe = err instanceof z.ZodError ? new AppError('invalid_input') : err;
   const { status, body } = toErrorBody(safe, requestId);
-  return Response.json({ error: body }, { status, headers: headers(requestId) });
+  const retry: Record<string, string> = safe instanceof AppError && safe.retryAfter ? { 'retry-after': String(safe.retryAfter) } : {};
+  return Response.json({ error: body }, { status, headers: { ...headers(requestId), ...retry } });
 }
 
 export async function claimDeviceCommandsRoute(request: NextRequest): Promise<Response> {

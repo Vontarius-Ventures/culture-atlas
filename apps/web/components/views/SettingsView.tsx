@@ -19,6 +19,7 @@ import { Icon } from '../Icon';
 import { useToast } from '../Toast';
 import { Disclosure, Notice } from '../ui';
 import { DevicesEntry } from '../v2/DevicesEntry';
+import { defaultUploadStore, type UploadEntry } from '../v2/upload-store';
 
 const READ_SCOPES: Scope[] = ['collections:read', 'plans:read', 'taste:read', 'captures:read'];
 const WRITE_SCOPES: Scope[] = ['collections:write', 'plans:write', 'taste:write', 'captures:write'];
@@ -59,11 +60,24 @@ export function accessSummary(
   return list.join(', ');
 }
 
+/**
+ * Local upload drafts of this account that still hold their bytes on this
+ * device (not yet committed by the server). SCREEN-CONTRACT Upload rule:
+ * sign-out with pending local media offers Keep on this device or Delete local drafts.
+ */
+export function pendingLocalDrafts(entries: readonly UploadEntry[], accountId: string | null): UploadEntry[] {
+  if (!accountId) return [];
+  return entries.filter((e) => e.account_id === accountId && e.blob !== null && e.phase !== 'ready');
+}
+
 /** Signed-in account: sign out (the next visit starts a fresh private session). */
-function AccountSection() {
+export function AccountSection() {
+  const { session } = useSession();
+  const accountId = session?.principal.account_id ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const signOut = async () => {
+  const [drafts, setDrafts] = useState<UploadEntry[] | null>(null);
+  const finishSignOut = async () => {
     setBusy(true);
     setError(null);
     try {
@@ -74,6 +88,28 @@ function AccountSection() {
       setError(err instanceof ApiError ? err.message : 'Something went wrong.');
       setBusy(false);
     }
+  };
+  const signOut = async () => {
+    let pending: UploadEntry[] = [];
+    try {
+      pending = pendingLocalDrafts(await defaultUploadStore().all(), accountId);
+    } catch {
+      // Local storage unavailable: nothing can be kept or deleted here.
+    }
+    if (pending.length) setDrafts(pending);
+    else await finishSignOut();
+  };
+  const deleteDrafts = async () => {
+    setBusy(true);
+    try {
+      const store = defaultUploadStore();
+      for (const d of drafts ?? []) await store.delete(d.client_capture_id);
+    } catch {
+      setError('The local drafts could not be deleted. Try again.');
+      setBusy(false);
+      return;
+    }
+    await finishSignOut();
   };
   return (
     <section className="settings__section" aria-labelledby="settings-account">
@@ -91,6 +127,30 @@ function AccountSection() {
           {error}
         </p>
       )}
+      <Dialog
+        open={drafts !== null}
+        onClose={() => (busy ? undefined : setDrafts(null))}
+        title="Some files have not finished uploading"
+        variant="dialog"
+        size="small"
+      >
+        <p>
+          {drafts?.length === 1 ? '1 file is' : `${drafts?.length ?? 0} files are`} still only on this
+          device. Keep them here to finish uploading after you sign in again, or delete the local
+          drafts. Nothing already in your library changes.
+        </p>
+        <div className="form-actions">
+          <button type="button" className="button button--primary" disabled={busy} onClick={() => void finishSignOut()}>
+            Keep on this device
+          </button>
+          <button type="button" className="button button--danger" disabled={busy} onClick={() => void deleteDrafts()}>
+            Delete local drafts
+          </button>
+          <button type="button" className="button button--outline" disabled={busy} onClick={() => setDrafts(null)}>
+            Cancel
+          </button>
+        </div>
+      </Dialog>
     </section>
   );
 }

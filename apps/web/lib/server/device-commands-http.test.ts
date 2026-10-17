@@ -14,7 +14,8 @@ const claim = await import('../../app/v2/device/commands/route');
 const ack = await import('../../app/v2/device/commands/[id]/ack/route');
 
 const db = getTestDb();
-const config = testConfig();
+// The operator has opted in to agent remote capture (default off).
+const config = testConfig({ AGENT_REMOTE_CAPTURE_ENABLED: 'true' });
 const BASE = 'http://localhost:3304';
 let root: string;
 const phones = new Map<string, InstallationAuthority>();
@@ -51,7 +52,7 @@ async function fixture() {
   );
   const installationId = rows[0]!.id;
   const created = await agentPlatform.createConnection(ctx, { client_name: 'Camera agent', scopes: ['devices:command'], installation_ids: [installationId] });
-  const agent = testContext((await auth.resolvePrincipal(db, { authorization: `Bearer ${created.credential}` }))!);
+  const agent = testContext((await auth.resolvePrincipal(db, { authorization: `Bearer ${created.credential}` }))!, { config });
   const session = await db.query<{ id: string }>(
     `INSERT INTO capture_sessions (account_id, installation_id, source, media_mode, remote_arm_expires_at, allowed_agent_connection_ids)
      VALUES ($1, $2, 'phone_camera', 'photo', now() + interval '10 minutes', $3) RETURNING id`,

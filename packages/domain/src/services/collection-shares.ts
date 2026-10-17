@@ -3,6 +3,7 @@ import { requireAccountOwner } from '../authz';
 import type { ServiceContext } from '../context';
 import type { Queryable } from '../db/pool';
 import { AppError } from '../errors';
+import { requireServiceFeature } from '../flags/feature-flags';
 import {
   AcceptInvitationRequest,
   CreateInvitationRequest,
@@ -48,6 +49,16 @@ const meta = (ctx: ServiceContext) => ({ schema_version: '2.1' as const, request
 export const SHARE_UNAVAILABLE = 'This collection is no longer shared.';
 const unavailable = () => new AppError('not_found', { message: SHARE_UNAVAILABLE });
 const INVITE_INVALID = 'This invitation is not valid for this account. Sign in with the invited, verified email.';
+
+/**
+ * collection_sharing_enabled (and its global or per-owner kill switch) is
+ * enforced here, on the server: while it is off, nobody can create, broaden or
+ * invite to a share, redeem a link, accept an invitation or view a shared
+ * collection. Listing, auditing, narrowing and revoking keep working, and no
+ * share, session or membership is deleted, so lifting the kill restores them.
+ */
+const sharingOn = (ctx: Pick<ServiceContext, 'db' | 'config'>, ownerAccountId: string, db: Queryable = ctx.db) =>
+  requireServiceFeature({ db, config: ctx.config }, ownerAccountId, 'collection_sharing_enabled');
 
 export const LINK_TOKEN_PREFIX = 'cas_';
 export const INVITE_TOKEN_PREFIX = 'csi_';
@@ -166,6 +177,7 @@ export async function listShares(ctx: ServiceContext, collectionId: string) {
 /** POST /v2/collections/{id}/shares — owner only. The bearer link is returned once. */
 export async function createShare(ctx: ServiceContext, collectionId: string, raw: unknown) {
   const owner = requireAccountOwner(ctx.principal);
+  await sharingOn(ctx, owner.accountId);
   const body = CreateShareRequest.parse(raw);
   const now = ctx.now();
   if (body.audience === 'link' && !body.confirm_policy) {
@@ -248,6 +260,7 @@ export async function updateShare(ctx: ServiceContext, shareId: string, raw: unk
     if (allowOriginals && !current.allow_originals) broadening.push('allow_originals');
     if (expiresAt && (current.expires_at === null ? false : expiresAt > current.expires_at)) broadening.push('expires_at');
     // Adding an expiry to an unbounded restricted share narrows it (not listed above).
+    if (broadening.length) await sharingOn(ctx, owner.accountId, tx);
     if (broadening.length && !body.confirm_broaden) {
       const live = current as LiveShare;
       throw new AppError('conflict', {
@@ -302,6 +315,7 @@ export async function revokeShare(ctx: ServiceContext, shareId: string): Promise
  */
 export async function createInvitation(ctx: ServiceContext, shareId: string, raw: unknown) {
   const owner = requireAccountOwner(ctx.principal);
+  await sharingOn(ctx, owner.accountId);
   const body = CreateInvitationRequest.parse(raw);
   const now = ctx.now();
   const token = `${INVITE_TOKEN_PREFIX}${randomToken(32)}`;
@@ -348,6 +362,7 @@ export async function acceptInvitation(ctx: ServiceContext, raw: unknown) {
       throw invalid();
     }
     if (invite.expires_at <= now) throw invalid();
+    await sharingOn(ctx, invite.owner_account_id, tx);
     const email = await tx.query<{ email: string }>(
       'SELECT email FROM account_emails WHERE account_id = $1 AND verified_at IS NOT NULL',
       [viewer.accountId],
@@ -395,6 +410,7 @@ export async function redeemLink(ctx: ServiceContext, raw: unknown) {
     );
     const share = rows[0];
     if (!share || !isLive(share, now)) throw unavailable();
+    await sharingOn(ctx, share.owner_account_id, tx);
     const sessionToken = randomToken(32);
     const expiresAt = new Date(Math.min(now.getTime() + SHARE_SESSION_HOURS * 3_600_000, share.expires_at!.getTime()));
     await tx.query(
@@ -418,6 +434,12 @@ export interface ShareViewer {
  * itself are re-read. All failures are the same 404.
  */
 export async function resolveViewerShare(ctx: ServiceContext, viewer: ShareViewer, db: Queryable = ctx.db): Promise<LiveShare> {
+  const share = await findViewerShare(ctx, viewer, db);
+  await sharingOn(ctx, share.owner_account_id, db);
+  return share;
+}
+
+async function findViewerShare(ctx: ServiceContext, viewer: ShareViewer, db: Queryable): Promise<LiveShare> {
   const now = ctx.now();
   if (viewer.sessionToken) {
     const { rows } = await db.query<ShareRow & { session_expires_at: Date; session_revoked_at: Date | null }>(

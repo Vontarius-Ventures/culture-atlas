@@ -164,11 +164,14 @@ export function evaluateFeatureFlags(i: FeatureFlagInputs): FeatureFlagEvaluatio
     collection_sharing_enabled: gate('collection_sharing_enabled', [
       [i.sharingConfigured, 'not_enabled'],
     ]),
-    agent_remote_capture_enabled: gate('agent_remote_capture_enabled', [
-      [i.optIn.agentRemoteCapture, 'not_enabled'],
-      [i.agentApiConfigured, 'agent_api_disabled'],
-    ]),
+    agent_remote_capture_enabled: false,
   };
+  // Remote capture is an agent API operation: a killed or unconfigured agent
+  // API turns it off too (the phone then cancels queued commands on claim).
+  flags.agent_remote_capture_enabled = gate('agent_remote_capture_enabled', [
+    [i.optIn.agentRemoteCapture, 'not_enabled'],
+    [flags.agent_api_enabled, 'agent_api_disabled'],
+  ]);
   return { flags, reasons, killed: KILLABLE_FLAGS.filter((flag) => i.killed.has(flag)) };
 }
 
@@ -255,12 +258,7 @@ export async function resolveFeatureFlags(
   },
 ): Promise<FeatureFlagEvaluation> {
   const { env, now } = input;
-  const killed = new Set<string>(list(env.FEATURE_KILL_SWITCHES).filter(isKillableFlag));
-  const kills = await db.query<{ flag: string }>(
-    `SELECT flag FROM feature_flag_kills WHERE lifted_at IS NULL AND (account_id IS NULL OR account_id=$1)`,
-    [input.accountId],
-  );
-  for (const row of kills.rows) killed.add(row.flag);
+  const killed = await activeKills(db, input.accountId, env);
 
   let device = null as DeviceFlagState | null;
   if (input.installationId) {
@@ -350,6 +348,100 @@ export async function resolveFeatureFlags(
       nativeVideoModelInput: on(env.NATIVE_VIDEO_MODEL_INPUT_ENABLED),
       agentRemoteCapture: on(env.AGENT_REMOTE_CAPTURE_ENABLED),
     },
+  });
+}
+
+/**
+ * Flags that services enforce themselves on every request (not only reported
+ * through GET /v2/capabilities): agent REST/MCP/media/events access, collection
+ * sharing (owner broadening, redemption, viewing) and agent remote capture
+ * (request, phone claim and the phone's pre-execution check).
+ */
+export const SERVICE_FEATURES = [
+  'agent_api_enabled',
+  'collection_sharing_enabled',
+  'agent_remote_capture_enabled',
+] as const;
+export type ServiceFeature = (typeof SERVICE_FEATURES)[number];
+
+export interface ServiceFeatureEnv {
+  AGENT_API_ENABLED?: string;
+  COLLECTION_SHARING_ENABLED?: string;
+  AGENT_REMOTE_CAPTURE_ENABLED?: string;
+  FEATURE_KILL_SWITCHES?: string;
+}
+
+/**
+ * Pure evaluation of the service-enforced flags. Uses the same rules as
+ * evaluateFeatureFlags (a test keeps them equal).
+ */
+export function evaluateServiceFeature(
+  flag: ServiceFeature,
+  input: { killed: ReadonlySet<string>; env: ServiceFeatureEnv },
+): { enabled: boolean; reasons: string[] } {
+  const { killed, env } = input;
+  const reasons: string[] = [];
+  const agentApi = notOff(env.AGENT_API_ENABLED) && !killed.has('agent_api_enabled');
+  if (flag === 'agent_api_enabled') {
+    if (!notOff(env.AGENT_API_ENABLED)) reasons.push('not_enabled');
+  } else if (flag === 'collection_sharing_enabled') {
+    if (!notOff(env.COLLECTION_SHARING_ENABLED)) reasons.push('not_enabled');
+  } else {
+    if (!on(env.AGENT_REMOTE_CAPTURE_ENABLED)) reasons.push('not_enabled');
+    if (!agentApi) reasons.push('agent_api_disabled');
+  }
+  if (killed.has(flag)) reasons.push('temporarily_disabled');
+  return { enabled: reasons.length === 0, reasons };
+}
+
+/** Reads the active kill switches (environment and database) that apply to one account. */
+export async function activeKills(
+  db: Queryable,
+  accountId: string,
+  env: Pick<ServiceFeatureEnv, 'FEATURE_KILL_SWITCHES'>,
+): Promise<Set<string>> {
+  const killed = new Set<string>(list(env.FEATURE_KILL_SWITCHES).filter(isKillableFlag));
+  const { rows } = await db.query<{ flag: string }>(
+    `SELECT flag FROM feature_flag_kills WHERE lifted_at IS NULL AND (account_id IS NULL OR account_id=$1)`,
+    [accountId],
+  );
+  for (const row of rows) killed.add(row.flag);
+  return killed;
+}
+
+export async function serviceFeatureState(
+  db: Queryable,
+  input: { accountId: string; env: ServiceFeatureEnv },
+  flag: ServiceFeature,
+): Promise<{ enabled: boolean; reasons: string[] }> {
+  return evaluateServiceFeature(flag, {
+    killed: await activeKills(db, input.accountId, input.env),
+    env: input.env,
+  });
+}
+
+const SERVICE_FEATURE_MESSAGES: Record<ServiceFeature, string> = {
+  agent_api_enabled: 'Agent access is temporarily unavailable.',
+  collection_sharing_enabled: 'Sharing is temporarily unavailable.',
+  agent_remote_capture_enabled: 'Agent capture is not available.',
+};
+
+/**
+ * Server-side enforcement point. Throws service_unavailable (503) when the flag
+ * is off for this account; `retryable` only when an operator kill is the sole
+ * reason (it will be lifted), never for a feature that is not enabled at all.
+ */
+export async function requireServiceFeature(
+  ctx: { db: Queryable; config: ServiceFeatureEnv },
+  accountId: string,
+  flag: ServiceFeature,
+): Promise<void> {
+  const state = await serviceFeatureState(ctx.db, { accountId, env: ctx.config }, flag);
+  if (state.enabled) return;
+  throw new AppError('service_unavailable', {
+    message: SERVICE_FEATURE_MESSAGES[flag],
+    retryable: state.reasons.every((reason) => reason === 'temporarily_disabled'),
+    details: { feature: flag, reasons: state.reasons },
   });
 }
 

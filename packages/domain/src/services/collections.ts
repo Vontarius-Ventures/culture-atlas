@@ -11,6 +11,7 @@ import type { ServiceContext } from '../context';
 import type { Db, Queryable } from '../db/pool';
 import { COLLECTION_FILTER_KINDS, COLLECTION_FILTERS, type CollectionFilter, type ItemKind } from '../enums';
 import { AppError } from '../errors';
+import { assertAgentCannotExposeMedia } from '../sharing/agent-guard';
 import { loadAccessibleCollection, requireVisibleItem, type CollectionRow } from '../library/access';
 import type { Image } from '../schemas/common';
 import type {
@@ -283,6 +284,8 @@ export async function addCollectionItem(
       throw revisionConflict(col.revision);
     }
     const item = await resolveAddTarget(ctx, db, owner, input.item_id);
+    // A capture item carries its photo or video into a share that includes media.
+    if (item.capture_id) await assertAgentCannotExposeMedia(db, ctx.principal, owner, col.id, ctx.now());
     const existing = await db.query<{ id: string }>(
       'SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
       [owner, item.id],

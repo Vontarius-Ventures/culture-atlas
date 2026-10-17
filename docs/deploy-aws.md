@@ -1,4 +1,4 @@
-# Deploying culture atlas on AWS (free-tier shape)
+# Deploying culture atlas on AWS (small, credit-funded shape)
 
 Status: **written and statically tested, never deployed.** Nothing in this
 repository has created AWS resources. The CloudFormation template, Compose
@@ -10,33 +10,42 @@ this environment. Treat the first deploy as a staging exercise.
 
 ## Can it run for free?
 
-Possibly, for a small private trial. It depends on which AWS offer your
-account has, and AWS changes these terms. **Verify the current terms on the
-AWS Free Tier page and in your Billing console before you deploy.** The
-assumptions below were written without access to AWS documentation:
+**No, not at USD 0 on any AWS account today (October 2026).** It can run on
+AWS credits for a limited trial, and then it bills. The terms below were
+written without access to AWS documentation (no network in this environment),
+so **verify them on the AWS Free Tier page and in your Billing console before
+you deploy**:
 
-- **Accounts created before 15 July 2025 (legacy Free Tier, first 12
-  months):** 750 hours/month of a t2.micro or t3.micro, 750 hours of an RDS
-  db.t2/t3/t4g.micro single-AZ instance with 20 GB storage and 20 GB backups,
-  30 GB of EBS, 5 GB of S3 Standard, and 750 hours of public IPv4. This stack
-  was sized to fit that: one t3.micro, one db.t4g.micro, 20 GB disks.
-- **Accounts created on or after 15 July 2025 (credit-based Free plan):** new
+- **Legacy Free Tier (accounts created before 15 July 2025): no longer
+  available to anyone.** It lasted 12 months from account creation, so every
+  such account lost it by 14 July 2026 at the latest. While it existed it
+  would have covered this stack (one t3.micro, one db.t4g.micro, 20 GB disks,
+  5 GB of S3, public IPv4 hours); that is why the stack is sized this way.
+  Older accounts now pay the "after free tier" column below.
+- **Credit-based Free plan (accounts created on or after 15 July 2025):** new
   accounts receive AWS credits (we assume about USD 100 at sign-up plus up to
   USD 100 for onboarding activities) usable for a limited period (we assume
-  6 months) on a Free plan. EC2, RDS and public IPv4 hours are then **paid
-  from credits**, not free. At on-demand prices this stack costs roughly
-  USD 15-27 a month (table below), so credits cover the trial period but it is
-  not free forever. When the Free plan ends you must upgrade to a paid plan or
-  the account is closed.
+  6 months). EC2, RDS and public IPv4 hours are **paid from those credits**,
+  not free. At on-demand prices this stack costs roughly USD 15 a month with
+  `DatabaseMode=instance` and USD 27 with RDS (table below), so the credits
+  fund a trial of a few months. When the Free plan period ends (or the
+  credits run out) you must upgrade to a paid plan, and the stack then bills
+  about USD 15-27 a month, or the account is closed.
 - Some allowances have historically been free for every account ("always
   free"): 100 GB/month of data transfer out to the internet, CloudWatch 10
   custom metrics, 10 alarms and 5 GB of log ingestion, SNS 1,000 email
   notifications, SSM Parameter Store standard parameters, and the first two
   AWS Budgets. This stack stays inside those: 9 custom metrics, 9 alarms
-  watching 10 metrics, 14-day log retention.
+  watching 10 metrics, 14-day log retention. They reduce the bill; they do
+  not make the stack free, because the instance, its public IPv4 address and
+  the database are not in them.
 
-The 1 USD budget below emails you as soon as anything starts to cost money,
-and when the month is forecast to pass 1 USD.
+So for the request "host it on AWS if it can run free": it cannot run free
+indefinitely. The cheapest honest option is a new account's Free plan credits
+with `DatabaseMode=instance` (about USD 15 a month of credits), deciding
+before the credits end whether to pay about USD 15 a month or shut it down.
+The 1 USD budget below emails you as soon as anything is billed, and when the
+month is forecast to pass 1 USD.
 
 ## What you get
 
@@ -81,7 +90,7 @@ Security choices:
 Prices are approximate us-east-1 on-demand list prices remembered from
 before this was written; **check the AWS pricing pages**.
 
-| Item | Legacy Free Tier (first 12 months) | Credit-based Free plan / after free tier | Can bill when |
+| Item | Legacy Free Tier (ended for every account by July 2026; for reference) | Credit-based Free plan (paid from credits) / after free tier | Can bill when |
 | --- | --- | --- | --- |
 | EC2 t3.micro, 730 h | free (750 h) | ≈ USD 7.60/month | always on new plan; >750 h or larger type on legacy |
 | EBS gp3 20 GB root | free (30 GB) | ≈ USD 1.60/month | above 30 GB in total, snapshots |
@@ -100,9 +109,9 @@ before this was written; **check the AWS pricing pages**.
 | Model/Qloo providers | not AWS | not AWS | billed by those providers |
 | Domain name | not AWS (or Route 53 ≈ USD 0.50/zone/month + registration) | | optional; sslip.io works without one |
 
-Rough monthly totals: **legacy free tier ≈ USD 0** (within allowances);
-**credit-based plan ≈ USD 15 with `DatabaseMode=instance`, ≈ USD 27 with
-RDS**, paid from credits while they last.
+Rough monthly totals today: **≈ USD 15 with `DatabaseMode=instance`, ≈ USD 27
+with RDS**, paid from Free plan credits while they last and billed after
+that. The legacy free tier's ≈ USD 0 no longer applies to any account.
 
 ## Limits of a micro instance (read before enabling video)
 

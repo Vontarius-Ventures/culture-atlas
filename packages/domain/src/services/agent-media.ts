@@ -82,8 +82,10 @@ export async function beginUpload(ctx: ServiceContext, raw: unknown, key: string
   if (body.source !== 'upload' || body.capture_session_id) throw new AppError('invalid_input', { message: 'Agent uploads must use signed byte intake, not device source claims.' });
   return ctx.db.transaction(async (tx) => {
     await authorizeUploadDestination({ ...ctx, db: tx }, body.destination_collection_id);
-    const { destination_collection_id: destination, ...input } = body;
-    const result = await new MediaIntake({ ...capture(ctx), db: tx }).createUpload(input, key);
+    const destination = body.destination_collection_id;
+    // The destination goes through to intake: its own live fence requires a
+    // granted destination for selected-collection agents (media:write).
+    const result = await new MediaIntake({ ...capture(ctx), db: tx }).createUpload(body, key);
     const existing = await tx.query<{ connection_id: string; destination_collection_id: string | null }>(
       'SELECT connection_id,destination_collection_id FROM agent_media_uploads WHERE upload_id=$1', [result.upload_id],
     );

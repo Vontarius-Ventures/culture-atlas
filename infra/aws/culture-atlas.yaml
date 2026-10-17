@@ -3,8 +3,9 @@ Description: >-
   culture atlas on one small EC2 instance (web, worker and media worker in
   Docker Compose behind Caddy HTTPS), PostgreSQL 16 on RDS or on the instance,
   a private S3 media bucket, SSM Parameter Store configuration, CloudWatch
-  logs/alarms and a 1 USD budget alert. See docs/deploy-aws.md. Free-tier fit
-  depends on your account's plan; verify current AWS terms before deploying.
+  logs/alarms and a 1 USD budget alert. See docs/deploy-aws.md. Not free:
+  it runs on Free plan credits or bills (about USD 15-27/month); verify
+  current AWS terms before deploying.
 
 Parameters:
   EnvironmentName:
@@ -28,9 +29,9 @@ Parameters:
     Default: t3.micro
     AllowedValues: [t3.micro, t3.small, t2.micro]
     Description: >-
-      x86_64 burstable type. t3.micro (1 GiB) is the free-tier-eligible default;
-      t3.small (2 GiB) is far more comfortable for video but may not be free on
-      your plan. CPU credits are fixed to "standard" so bursts never bill extra.
+      x86_64 burstable type. t3.micro (1 GiB) is the cheapest default;
+      t3.small (2 GiB) is far more comfortable for video but costs about
+      twice as much. CPU credits are fixed to "standard" so bursts never bill extra.
   SwapGiB:
     Type: Number
     Default: 2

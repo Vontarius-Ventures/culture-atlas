@@ -140,6 +140,10 @@ export const AnalyzeMediaResponse = z.object({
   reused: z.boolean(),
   result_url: z.string().nullable(),
   capture_id: CaptureV2Uuid.nullable(),
+  /** Why queued work is waiting: 'rate_limited' (429) or 'ai_paused' (credits). */
+  waiting_reason: z.string().nullable().optional(),
+  /** Safe failure classification for a failed request (never a provider payload). */
+  error_code: z.string().nullable().optional(),
 });
 export const MediaLibraryQuery = z.object({
   kind: MediaKind.optional(),

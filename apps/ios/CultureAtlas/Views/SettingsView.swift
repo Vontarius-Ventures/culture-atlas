@@ -20,7 +20,7 @@ struct SettingsView: View {
     }
     .navigationTitle("Settings")
     .confirmationDialog("Sign out", isPresented: $confirmSignOut, titleVisibility: .visible) {
-      Button("Keep on this phone") { Task { await controller.signOut(drafts: .keep) } }
+      Button("Keep on this device") { Task { await controller.signOut(drafts: .keep) } }
       Button("Delete local drafts", role: .destructive) { Task { await controller.signOut(drafts: .delete) } }
       Button("Cancel", role: .cancel) {}
     } message: {

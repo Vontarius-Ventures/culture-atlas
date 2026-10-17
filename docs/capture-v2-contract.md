@@ -48,7 +48,7 @@ No request accepts an account ID, installation ID override, object key or bucket
 | GET `/v2/media/{id}/analysis/{analysisId}` | none | AnalyzeMediaResponse |
 | POST `/v2/media/{id}/preparation` | DeleteMediaRequest shape `{expected_generation}` | 202 MediaDetailResponse (`processing`); only `failed` media with a sealed original, else409 |
 | GET `/v2/media/{id}/content/{variant}` | `Range: bytes=` optional | 200/206 bytes; each request reauthorizes; ranged reads return at most one 8 MiB window; 416 with `Content-Range: bytes */size` when unsatisfiable |
-| GET `/v2/events` | `after_cursor` or `Last-Event-ID` | SSE `batch` events of own media/command ids+status (owners also receive `deleted`); `resync` on expired cursor; session cookie, agent token or `cna_` installation bearer |
+| GET `/v2/events` | `after_cursor` or `Last-Event-ID` | SSE `batch` events of own media/command ids+status (owners also receive `deleted`); an expired cursor (24 h) gets HTTP 410 `cursor_expired` with `details.action: "resync"` before any stream starts; session cookie, agent token or `cna_` installation bearer |
 
 Persist `client_capture_id` **and original owner** before taking/uploading media.
 One upload per batch file; at most20 files and2 concurrent transfers on clients.

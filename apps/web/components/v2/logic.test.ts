@@ -13,6 +13,8 @@ import {
   statusLabel,
 } from './media-format';
 import { deviceState } from './DevicesView';
+import { exploreFailureMessage, exploreState } from './explore-state';
+import { glassesEntryLine } from './media-format';
 
 describe('media format', () => {
   it('formats durations and sizes like the mockups', () => {
@@ -135,5 +137,50 @@ describe('device state', () => {
       deviceState({ ...base, last_seen_at: '2026-10-17T11:59:50Z', app_state: 'background' }, now)
         .label,
     ).toBe('App in background');
+  });
+});
+
+describe('exploration states (CONCENTRATE failure behavior)', () => {
+  const video = { kind: 'video' as const };
+  const base = { result_url: null, waiting_reason: null, error_code: null };
+  it('opens a complete or partial result, and never keeps polling a partial one', () => {
+    expect(exploreState({ ...base, state: 'complete', result_url: '/captures/a' }, video)).toEqual({
+      kind: 'result',
+      url: '/captures/a',
+    });
+    expect(exploreState({ ...base, state: 'partial', result_url: '/captures/b' }, video)).toEqual({
+      kind: 'result',
+      url: '/captures/b',
+    });
+  });
+  it('shows a paused request as waiting and a normal one as working', () => {
+    expect(exploreState({ ...base, state: 'queued', waiting_reason: 'rate_limited' }, video).kind).toBe('waiting');
+    expect(exploreState({ ...base, state: 'queued', waiting_reason: 'ai_paused' }, video).kind).toBe('waiting');
+    expect(exploreState({ ...base, state: 'queued' }, video).kind).toBe('working');
+    expect(exploreState({ ...base, state: 'running' }, video).kind).toBe('working');
+    expect(exploreState({ ...base, state: 'cancelled' }, video).kind).toBe('cancelled');
+  });
+  it('uses the spec copy per failure class, with a next step that fits', () => {
+    const failed = (error_code: string) => exploreState({ ...base, state: 'failed', error_code }, video);
+    expect(failed('model_input_rejected')).toMatchObject({ message: expect.stringMatching(/^We couldn’t explore this media\. Choose a different moment/) });
+    expect(failed('model_declined')).toMatchObject({ message: expect.stringContaining('We couldn’t explore this media.') });
+    expect(failed('analysis_unavailable')).toMatchObject({ message: 'Exploration is temporarily unavailable. Your video stays in your library.' });
+    expect(failed('model_timeout')).toMatchObject({ message: expect.stringContaining('Try again later') });
+    expect(exploreFailureMessage('model_invalid_output', { kind: 'photo' })).not.toContain('Try again later');
+  });
+});
+
+describe('source screen glasses line (SCREEN-CONTRACT 02)', () => {
+  it('never claims connected glasses unless the server says glasses capture is available', () => {
+    expect(glassesEntryLine(null)).toBe('See what glasses capture needs');
+    expect(glassesEntryLine(undefined)).toBe('See what glasses capture needs');
+    // A browser: device-local reasons only, setup continues on the phone.
+    expect(glassesEntryLine({ available: false, reasons: ['build_unsupported', 'device_unsupported'] })).toBe(
+      'Set up on your phone with the culture atlas app',
+    );
+    expect(glassesEntryLine({ available: false, reasons: ['rollout_unavailable'] })).toBe(
+      'See why it is not available yet',
+    );
+    expect(glassesEntryLine({ available: true, reasons: [] })).toBe('Capture with your connected glasses');
   });
 });

@@ -31,6 +31,7 @@ import {
   statusLabel,
 } from './media-format';
 import { CollectionPicker, ConfirmDelete, FlowHeader, SignInPanel, V2Notice } from './parts';
+import { EXPLORE_WAITING, exploreFailureMessage, exploreState } from './explore-state';
 import { loadCapabilities } from './uploads-client';
 import { V2Icon } from './V2Icon';
 
@@ -55,6 +56,7 @@ export function MediaDetailView({ id }: { id: string }) {
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [exploring, setExploring] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const player = useRef<PlayerHandle | null>(null);
@@ -99,17 +101,20 @@ export function MediaDetailView({ id }: { id: string }) {
     return () => clearInterval(t);
   }, [status, fetchItem]);
 
-  // Analysis polling until complete/failed or the owner stops waiting.
+  // Analysis polling until a terminal state (complete, partial, failed, cancelled).
+  const mediaKind = load.state === 'ready' ? load.item.media.kind : 'photo';
+  const explored = analysis ? exploreState(analysis, { kind: mediaKind }) : null;
   useEffect(() => {
     if (!exploring || !analysis) return;
-    if (analysis.state === 'complete' && analysis.result_url) {
-      router.push(analysis.result_url);
+    const next = exploreState(analysis, { kind: mediaKind });
+    if (next.kind === 'result') {
+      router.push(next.url);
       return;
     }
-    if (analysis.state === 'failed' || analysis.state === 'cancelled') {
+    if (next.kind === 'failed' || next.kind === 'cancelled') {
       void Promise.resolve().then(() => {
         setExploring(false);
-        setAnalysisError('Exploring did not finish. Your media is still saved. Try again later.');
+        if (next.kind === 'failed') setAnalysisError(next.message);
       });
       return;
     }
@@ -122,7 +127,7 @@ export function MediaDetailView({ id }: { id: string }) {
       }
     }, 2500);
     return () => clearTimeout(t);
-  }, [exploring, analysis, id, router]);
+  }, [exploring, analysis, id, router, mediaKind]);
 
   if (load.state === 'signed-out')
     return (
@@ -222,9 +227,26 @@ export function MediaDetailView({ id }: { id: string }) {
       setAnalysisError(
         err instanceof ApiError &&
           (err.code === 'provider_unavailable' || err.code === 'service_unavailable')
-          ? 'Exploring is unavailable right now. Your media stays in your library.'
+          ? exploreFailureMessage(err.code, { kind: m.kind })
           : mediaErrorMessage(err),
       );
+    }
+  };
+
+  // Cancels the request on the server (waiting or running); publication is fenced.
+  const cancelExplore = async () => {
+    if (!analysis) {
+      setExploring(false);
+      return;
+    }
+    setCancelling(true);
+    try {
+      setAnalysis(await mediaApi.cancelAnalysis(id, analysis.analysis_id));
+      setExploring(false);
+    } catch (err) {
+      setAnalysisError(mediaErrorMessage(err, 'It could not be cancelled. Try again.'));
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -319,16 +341,26 @@ export function MediaDetailView({ id }: { id: string }) {
               <p className="muted">Exploring is available once this {m.kind} is ready.</p>
             )}
             {m.status === 'ready' && analysisReady === false && (
-              <p className="muted">
-                Exploring is unavailable right now. Your {m.kind} stays in your library.
-              </p>
+              <p className="muted">{exploreFailureMessage('analysis_unavailable', { kind: m.kind })}</p>
             )}
             {exploring && (
               <p>
-                Exploring{' '}
-                {selectedFrame ? 'this moment' : isVideo ? 'selected moments' : 'your photo'}…{' '}
-                <button type="button" className="text-button" onClick={() => setExploring(false)}>
-                  Stop waiting
+                {explored?.kind === 'waiting' ? (
+                  <>{EXPLORE_WAITING}… </>
+                ) : (
+                  <>
+                    Exploring{' '}
+                    {selectedFrame ? 'this moment' : isVideo ? 'selected moments' : 'your photo'}
+                    …{' '}
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="text-button"
+                  disabled={cancelling}
+                  onClick={() => void cancelExplore()}
+                >
+                  Cancel
                 </button>
               </p>
             )}

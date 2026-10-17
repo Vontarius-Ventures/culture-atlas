@@ -17,6 +17,7 @@ const accept = await import('../../app/v2/share-invitations/accept/route');
 const redeem = await import('../../app/v2/shared/redeem/route');
 const shared = await import('../../app/v2/shared/collection/route');
 const media = await import('../../app/v2/shared/media/[id]/[variant]/route');
+const mediaDefault = await import('../../app/v2/shared/media/[id]/route');
 
 const db = getTestDb();
 const config = testConfig({ APP_BASE_URL: 'http://localhost:3302' });
@@ -160,11 +161,20 @@ describe('SHR-01 share transport', () => {
     expect(plain.status).toBe(206);
     expect(Number(plain.headers.get('content-length'))).toBe(300_000);
     await plain.arrayBuffer();
+    // The spec path GET /v2/shared/media/{id} serves the default (playback) rendition under the same checks.
+    const bare = await mediaDefault.GET(
+      viewerRequest(`/v2/shared/media/${f.assetId}`, cookie, { headers: { range: 'bytes=0-9' } }),
+      seg({ id: f.assetId }),
+    );
+    expect(bare.status).toBe(206);
+    expectPrivacyHeaders(bare);
+    expect(Buffer.from(await bare.arrayBuffer()).equals(f.bytes.subarray(0, 10))).toBe(true);
     const revoke = await share.DELETE(ownerRequest(`/v2/shares/${created.id}`, f.owner, 'DELETE'), seg({ id: created.id }));
     expect(revoke.status).toBe(204);
     const next = await media.GET(viewerRequest(path, cookie, { headers: { range: 'bytes=300000-' } }), seg({ id: f.assetId, variant: 'playback' }));
     expect(next.status).toBe(404);
     expect((await next.json()).error.message).toBe('This collection is no longer shared.');
+    expect((await mediaDefault.GET(viewerRequest(`/v2/shared/media/${f.assetId}`, cookie), seg({ id: f.assetId }))).status).toBe(404);
     const again = await shared.GET(viewerRequest('/v2/shared/collection', cookie));
     expect(again.status).toBe(404);
   });

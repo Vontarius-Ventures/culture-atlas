@@ -44,17 +44,19 @@ export class LocalMultipartStorage implements MultipartStorage {
     );
     return id;
   }
-  async signPart(key: string, id: string, part: number, expiresInSeconds: number) {
+  async signPart(key: string, id: string, part: number, expiresInSeconds: number, byteSize: number) {
     const m = await this.metadata(id);
     if (m.key !== key || m.closed) throw new Error('Upload closed');
+    if (!Number.isSafeInteger(byteSize) || byteSize < 1 || byteSize > 8388608)
+      throw new Error('Invalid part size');
     const expires = Math.floor(Date.now() / 1000) + Math.min(900, expiresInSeconds);
     const signature = createHmac('sha256', this.secret)
-      .update(`${id}:${part}:${expires}`)
+      .update(`${id}:${part}:${expires}:${byteSize}`)
       .digest('hex');
     return {
       part_number: part,
       method: 'PUT' as const,
-      url: `${this.baseUrl}/v2/storage/parts/${id}/${part}?expires=${expires}&signature=${signature}`,
+      url: `${this.baseUrl}/v2/storage/parts/${id}/${part}?expires=${expires}&size=${byteSize}&signature=${signature}`,
       headers: {},
       expires_at: new Date(expires * 1000).toISOString(),
     };
@@ -65,12 +67,16 @@ export class LocalMultipartStorage implements MultipartStorage {
     expires: number,
     signature: string,
     body: AsyncIterable<Uint8Array>,
+    byteSize: number,
   ): Promise<string> {
     const expected = Buffer.from(
-      createHmac('sha256', this.secret).update(`${id}:${part}:${expires}`).digest('hex'),
+      createHmac('sha256', this.secret)
+        .update(`${id}:${part}:${expires}:${byteSize}`)
+        .digest('hex'),
     );
     const got = Buffer.from(signature);
     if (
+      !Number.isSafeInteger(byteSize) ||
       !Number.isInteger(expires) ||
       expires <= Date.now() / 1000 ||
       expires > Date.now() / 1000 + 901 ||
@@ -78,10 +84,18 @@ export class LocalMultipartStorage implements MultipartStorage {
       !timingSafeEqual(expected, got)
     )
       throw new Error('Part authorization expired');
-    return this.writePart(id, part, body);
+    return this.writePart(id, part, body, byteSize);
   }
-  /** Test helper models provider PUT. Production callers use signed instructions. */
-  async writePart(id: string, part: number, body: AsyncIterable<Uint8Array>): Promise<string> {
+  /**
+   * Test helper models provider PUT. Production callers use signed instructions.
+   * With `exactBytes`, a body of any other length is refused (signed length).
+   */
+  async writePart(
+    id: string,
+    part: number,
+    body: AsyncIterable<Uint8Array>,
+    exactBytes?: number,
+  ): Promise<string> {
     if (!Number.isInteger(part) || part < 1 || part > 10000) throw new Error('Invalid part');
     const m = await this.metadata(id);
     if (m.closed) throw new Error('Upload closed');
@@ -91,7 +105,7 @@ export class LocalMultipartStorage implements MultipartStorage {
     async function* bounded() {
       for await (const chunk of body) {
         size += chunk.byteLength;
-        if (size > 8388608) throw new Error('Part too large');
+        if (size > (exactBytes ?? 8388608)) throw new Error('Part too large');
         hash.update(chunk);
         yield chunk;
       }
@@ -101,6 +115,7 @@ export class LocalMultipartStorage implements MultipartStorage {
         Readable.from(bounded()),
         createWriteStream(temp, { mode: 0o600, flags: 'wx' }),
       );
+      if (exactBytes !== undefined && size !== exactBytes) throw new Error('Part size mismatch');
       // A late PUT can only affect staging, never an immutable committed object.
       if ((await this.metadata(id)).closed) throw new Error('Upload closed');
       await copyFile(temp, join(this.upload(id), `${part}.part`));
@@ -116,8 +131,12 @@ export class LocalMultipartStorage implements MultipartStorage {
       parts: MultipartPart[] = [];
     for (const name of files.filter((n) => /^\d+\.part$/.test(n))) {
       const hash = createHash('sha256');
-      for await (const chunk of createReadStream(join(this.upload(id), name))) hash.update(chunk);
-      parts.push({ part_number: Number(name.split('.')[0]), etag: `"${hash.digest('hex')}"` });
+      let size = 0;
+      for await (const chunk of createReadStream(join(this.upload(id), name))) {
+        size += (chunk as Buffer).byteLength;
+        hash.update(chunk);
+      }
+      parts.push({ part_number: Number(name.split('.')[0]), etag: `"${hash.digest('hex')}"`, size });
     }
     return parts.sort((a, b) => a.part_number - b.part_number);
   }

@@ -186,6 +186,12 @@ export const mediaApi = {
       idempotencyKey,
       schema: AnalyzeMediaResponse,
     }),
+  cancelAnalysis: (id: string, analysisId: string) =>
+    v2(`/v2/media/${encodeURIComponent(id)}/analysis/${encodeURIComponent(analysisId)}`, {
+      method: 'DELETE',
+      body: {},
+      schema: AnalyzeMediaResponse,
+    }),
   analysis: (id: string, analysisId: string, signal?: AbortSignal) =>
     v2(`/v2/media/${encodeURIComponent(id)}/analysis/${encodeURIComponent(analysisId)}`, {
       schema: AnalyzeMediaResponse,

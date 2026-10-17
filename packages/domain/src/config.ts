@@ -63,6 +63,17 @@ export const DomainConfigSchema = z.object({
   SENSOR_POLL_INTERVAL_MS: int(10_000),
   SENSOR_MAX_ASSET_BYTES: int(LIMITS.uploadMaxBytes),
   /** Comma-separated account ids allowed to open the demo inspector for their own jobs. */
+  /**
+   * Feature flags evaluated inside services (feature-flags.ts
+   * requireServiceFeature). Raw strings so the evaluation rules stay identical
+   * to resolveFeatureFlags: "false"/"0" turns a default-on flag off, "true"/"1"
+   * opts in to a default-off flag. FEATURE_KILL_SWITCHES is a comma-separated
+   * list of killable flag names.
+   */
+  AGENT_API_ENABLED: z.string().optional(),
+  COLLECTION_SHARING_ENABLED: z.string().optional(),
+  AGENT_REMOTE_CAPTURE_ENABLED: z.string().optional(),
+  FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()
     .default('')

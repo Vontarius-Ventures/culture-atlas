@@ -232,6 +232,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         Number(url.searchParams.get('expires')),
         url.searchParams.get('signature') ?? '',
         Readable.fromWeb(request.body as NodeReadableStream<Uint8Array>),
+        Number(url.searchParams.get('size')),
       );
       return new Response(null, { status: 200, headers: { ...headers, ETag: etag } });
     }
@@ -399,6 +400,8 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         status = 202;
       } else if (match[2] === 'analysis' && method === 'GET' && match[3])
         result = await analysis.get(id, z.uuid().parse(match[3]));
+      else if (match[2] === 'analysis' && method === 'DELETE' && match[3])
+        result = await analysis.cancel(id, z.uuid().parse(match[3]), key);
       else if (!match[2] && method === 'GET') result = await intake.detail(id);
       else if (!match[2] && method === 'PATCH') result = await intake.updateMedia(id, body, key);
       else if (!match[2] && method === 'DELETE') {
@@ -448,6 +451,11 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
     // (no request body or credentials), so an operator can find the cause.
     if (result.status >= 500 && result.body.code === 'internal')
       console.error(`[v2] ${requestId}`, error);
-    return Response.json({ error: result.body }, { status: result.status, headers });
+    const retry: Record<string, string> =
+      safe instanceof AppError && safe.retryAfter ? { 'retry-after': String(safe.retryAfter) } : {};
+    return Response.json(
+      { error: result.body },
+      { status: result.status, headers: { ...headers, ...retry } },
+    );
   }
 }

@@ -458,12 +458,21 @@ export class MediaAnalysisRun {
       let compileJobId: string | null = null;
       if (input.state !== 'failed') {
         const media = await tx.query(
-          `SELECT source,kind,captured_at FROM media_assets WHERE account_id=$1 AND id=$2`,
+          `SELECT source,kind,captured_at,created_by_agent_connection_id FROM media_assets WHERE account_id=$1 AND id=$2`,
           [lease.account_id, lease.asset_id],
         );
         const m = media.rows[0]!;
         captureId = input.captureId!;
-        const agent = lease.created_by_agent_connection_id;
+        // Asking for an analysis is not creating the capture. Only an agent
+        // that uploaded the media itself becomes the capture's creator;
+        // otherwise a selected-collection agent would keep seeing the result
+        // (and could re-add it to its grant) after the owner removed the media
+        // from that grant. The request stays recorded on capture_work.
+        const agent =
+          lease.created_by_agent_connection_id &&
+          m.created_by_agent_connection_id === lease.created_by_agent_connection_id
+            ? lease.created_by_agent_connection_id
+            : null;
         await tx.query(
           `INSERT INTO captures (id, owner_account_id, source, private_object_key, image_sha256, width, height,
              captured_at, focus, status, media_asset_id, created_by_agent_connection_id)

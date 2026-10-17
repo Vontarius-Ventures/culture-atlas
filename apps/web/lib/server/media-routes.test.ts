@@ -242,7 +242,7 @@ describe('GET /v2/events', () => {
       { id: upload.asset_id, kind: 'media', status: 'deleted' },
     ]);
   });
-  it('asks the client to resync when its cursor expired', async () => {
+  it('answers an expired cursor with 410 and a resync instruction before streaming', async () => {
     const owner = await browser();
     const past = createServiceContext(owner.principal, {
       db,
@@ -250,14 +250,17 @@ describe('GET /v2/events', () => {
       now: () => new Date(Date.now() - 2 * 86400000),
     });
     const old = await agentEvents.readEvents(past);
-    const text = await readStream(
-      await eventStream(request(`/v2/events?after_cursor=${old.next_cursor}`, owner), {
-        pollMs: 20,
-        maxStreamMs: 60,
-      }),
-    );
-    expect(text).toContain('event: resync');
-    expect(text).toContain('cursor_expired');
+    const response = await eventStream(request(`/v2/events?after_cursor=${old.next_cursor}`, owner), {
+      pollMs: 20,
+      maxStreamMs: 60,
+    });
+    // API contract: SSE retention 24h; an expired cursor returns 410 with a resync instruction.
+    expect(response.status).toBe(410);
+    expect(response.headers.get('content-type')).toMatch(/application\/json/);
+    expect((await response.json()).error).toMatchObject({
+      code: 'cursor_expired',
+      details: { action: 'resync' },
+    });
   });
   it('accepts enrolled installations and stops serving revoked ones', async () => {
     const owner = await browser();

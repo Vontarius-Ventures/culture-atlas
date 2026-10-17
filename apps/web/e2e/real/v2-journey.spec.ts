@@ -434,7 +434,7 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
     expect(caps.flags.concentrate_analysis_enabled).toBe(false);
     await expect(page.getByRole('button', { name: 'Explore this video' })).toBeDisabled();
     await expect(
-      page.getByText('Exploring is unavailable right now. Your video stays in your library.'),
+      page.getByText('Exploration is temporarily unavailable. Your video stays in your library.'),
     ).toBeVisible();
     const detail = await (await page.request.get(`/v2/media/${videoId}`)).json();
     const refused = await page.request.post(`/v2/media/${videoId}/analysis`, {

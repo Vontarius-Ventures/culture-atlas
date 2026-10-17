@@ -16,7 +16,7 @@ import {
   toErrorBody,
   traces,
   withIdempotency,
-  enforceAgentRate,
+  enforceAgentRequest,
   type AgentPrincipal,
   type Db,
   type DomainConfig,
@@ -151,7 +151,7 @@ export function buildMcpServer(
         captureV2: deps.captureContext && (tool.scopes.some((s) => s.startsWith('media:')) || tool.name === 'get_operation')
           ? await deps.captureContext(principal) : undefined,
       });
-      await enforceAgentRate(ctx, route.method !== 'GET');
+      await enforceAgentRequest(ctx, route.method !== 'GET');
       const run = async () => {
         const out = await tool.run(ctx, parsed.data);
         let body: unknown = out;

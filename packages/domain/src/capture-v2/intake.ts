@@ -15,7 +15,7 @@ import {
 import { assertCaptureAuthority, captureMutation } from './policy';
 import { CaptureQueue } from './queue';
 import type { CaptureV2Context } from './types';
-import { MEDIA_RANGE_MAX_BYTES } from '@culture-atlas/providers';
+import { MEDIA_RANGE_MAX_BYTES, multipartPartSize } from '@culture-atlas/providers';
 import { authorizeCaptureAgent } from './agent-fence';
 
 export const CAPTURE_PART_SIZE = 8388608;
@@ -181,13 +181,16 @@ export class MediaIntake {
                       Math.floor((row.expires_at.getTime() - this.ctx.now().getTime()) / 1000),
                     ),
                   ),
+                  multipartPartSize(row.expected_bytes, i + 1, CAPTURE_PART_SIZE),
                 ),
               ),
             )
           : [],
       verified_parts:
         (active || row.state === 'paused') && row.provider_multipart_id
-          ? await this.ctx.storage.listParts(row.staging_key, row.provider_multipart_id)
+          ? (await this.ctx.storage.listParts(row.staging_key, row.provider_multipart_id)).map(
+              (p) => ({ part_number: p.part_number, etag: p.etag }),
+            )
           : row.part_receipts,
       error_code: row.error_code,
       pause_reason: row.pause_reason,
@@ -430,6 +433,7 @@ export class MediaIntake {
               u.provider_multipart_id!,
               p,
               Math.min(900, Math.floor((u.expires_at.getTime() - this.ctx.now().getTime()) / 1000)),
+              multipartPartSize(u.expected_bytes, p, CAPTURE_PART_SIZE),
             ),
           ),
         ),

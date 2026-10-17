@@ -9,13 +9,18 @@ import {
   AppError,
   JOB_HANDLERS,
   MediaAnalysis,
+  agentMedia,
+  authorizeMedia,
+  collections,
   createCaptureV2Context,
   type PoolDb,
 } from '@culture-atlas/domain';
 import {
   createIsolatedDatabase,
   insertAccount,
+  insertAgentConnection,
   testConfig,
+  testContext,
   testProviders,
 } from '@culture-atlas/domain/testing';
 import {
@@ -383,6 +388,80 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
       },
     ]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('an agent that only requested the analysis is not the capture creator, so removal from its grant sticks', async () => {
+    const owner = await insertAccount(db);
+    const { accountId } = owner;
+    const assetId = await photoAsset(accountId, 'red');
+    const ownerCtx = testContext(owner, { db, config });
+    const granted = await collections.createCollection(ownerCtx, { name: 'Granted' });
+    await db.query(
+      'INSERT INTO collection_media_items (account_id, collection_id, asset_id) VALUES ($1, $2, $3)',
+      [accountId, granted.id, assetId],
+    );
+    const { principal } = await insertAgentConnection(
+      owner,
+      {
+        scopes: ['media:read', 'media:analyze', 'collections:read', 'collections:write', 'taste:write'],
+        libraryAccess: 'selected_collections',
+        collectionIds: [granted.id],
+      },
+      db,
+    );
+    const version = (
+      await db.query<{ authorization_version: number }>(
+        'SELECT authorization_version FROM agent_connections WHERE id=$1',
+        [principal.connectionId],
+      )
+    ).rows[0]!.authorization_version;
+    const agent = {
+      ...testContext({ ...principal, authorizationVersion: version }, { db, config }),
+      captureV2: createCaptureV2Context({
+        db,
+        storage,
+        authority: { kind: 'account', accountId, sessionId: null },
+      }),
+    };
+    const { gateway } = gatewayWith(() =>
+      envelope(JSON.stringify(reading([{ name: 'Mid-century modern' }]))),
+    );
+    const req = await agentMedia.analyzeMedia(
+      agent,
+      assetId,
+      { mode: 'photo', expected_generation: 1 },
+      randomUUID(),
+    );
+    await worker(gateway, accountId).drain();
+    const row = await analysisRow(req.analysis_id as string);
+    expect(row.state).toBe('complete');
+    const capture = (
+      await db.query('SELECT created_by_agent_connection_id FROM captures WHERE id=$1', [
+        row.capture_id,
+      ])
+    ).rows[0]!;
+    expect(capture.created_by_agent_connection_id).toBeNull();
+    const captureItem = (
+      await db.query<{ id: string }>('SELECT id FROM discovery_items WHERE capture_id=$1', [
+        row.capture_id,
+      ])
+    ).rows[0]!.id;
+
+    // The owner removes the media from the agent's only granted collection.
+    await db.query('DELETE FROM collection_media_items WHERE collection_id=$1 AND asset_id=$2', [
+      granted.id,
+      assetId,
+    ]);
+    await expect(authorizeMedia(agent, 'media:read', assetId)).rejects.toMatchObject({
+      code: 'not_found',
+    });
+    // collections:write cannot move the now-inaccessible capture back into the grant.
+    await expect(
+      collections.addCollectionItem(agent, { id: granted.id, item_id: captureItem, body: {} }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(authorizeMedia(agent, 'media:read', assetId)).rejects.toMatchObject({
+      code: 'not_found',
+    });
   });
 
   it('sampled video: <=8 timestamped frames, one bounded call each, aggregated candidates cite their frames, partial on a refusal', async () => {

@@ -113,12 +113,14 @@ export function httpStatusFor(code: ErrorCode): number {
   return ERROR_CODES[code];
 }
 
-/** Standard error body: {code, message, retryable, request_id} (+ optional details). */
+/** Standard error body: {code, message, retryable, request_id} (+ optional retry_after_ms, details). */
 export const ErrorBody = z.object({
   code: ErrorCodeSchema,
   message: z.string(),
   retryable: z.boolean(),
   request_id: z.string(),
+  /** Backoff hint (BACKEND-CONTRACTS standard error); mirrors the Retry-After header. */
+  retry_after_ms: z.number().int().nonnegative().optional(),
   details: z.unknown().optional(),
 });
 export type ErrorBody = z.infer<typeof ErrorBody>;
@@ -132,6 +134,8 @@ export function toErrorBody(err: unknown, requestId: string): { status: number; 
     retryable: appErr.retryable,
     request_id: requestId,
   };
+  if (appErr.retryAfter !== undefined && Number.isFinite(appErr.retryAfter) && appErr.retryAfter >= 0)
+    body.retry_after_ms = Math.round(appErr.retryAfter * 1000);
   if (appErr.details !== undefined) body.details = appErr.details;
   return { status: appErr.status, body };
 }

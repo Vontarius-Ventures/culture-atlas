@@ -163,6 +163,48 @@ export class MediaAnalysis {
     if (!rows[0]) throw new AppError('not_found');
     return this.projection(rows[0], true);
   }
+  /**
+   * DELETE /v2/media/{id}/analysis/{analysisId} — the owner cancels exploration
+   * that is waiting (credit or rate pause) or running. The queue row is
+   * cancelled, so a running worker's lease check fences publication; this
+   * cannot promise that upstream processing or billing stopped (BACKEND-CONTRACTS
+   * "Cancel cannot guarantee upstream processing/billing stopped"). Finished
+   * requests are returned unchanged. The used daily allowance is not refunded.
+   */
+  async cancel(assetId: string, analysisId: string, key: string) {
+    const ctx = this.ctx;
+    await assertCaptureAuthority(ctx, ctx.db);
+    await authorizeCaptureAgent(ctx, ctx.db, 'media.analyze', assetId);
+    return captureMutation(ctx, `analysis-cancel:${analysisId}`, key, { assetId, analysisId }, async (tx) => {
+      const { rows } = await tx.query(
+        `SELECT a.*,w.id AS job_id FROM media_analysis_requests a
+         JOIN media_assets m ON m.account_id=a.account_id AND m.id=a.asset_id AND m.deleted_at IS NULL
+         JOIN capture_work w ON w.account_id=a.account_id AND w.analysis_id=a.id
+         WHERE a.account_id=$1 AND a.asset_id=$2 AND a.id=$3 FOR UPDATE OF a`,
+        [ctx.authority.accountId, assetId, analysisId],
+      );
+      const row = rows[0];
+      if (!row) throw new AppError('not_found');
+      if (row.state !== 'queued' && row.state !== 'running') return this.projection(row, true);
+      await tx.query(
+        `UPDATE capture_work SET state='cancelled' WHERE account_id=$1 AND analysis_id=$2 AND state IN ('queued','running')`,
+        [ctx.authority.accountId, analysisId],
+      );
+      const updated = await tx.query(
+        `UPDATE media_analysis_requests SET state='cancelled',waiting_reason=NULL,completed_at=$3
+         WHERE account_id=$1 AND id=$2 RETURNING *`,
+        [ctx.authority.accountId, analysisId, ctx.now()],
+      );
+      await tx.query(
+        `UPDATE media_assets m SET analysis_status=CASE WHEN m.legacy_capture_id IS NOT NULL THEN 'complete' ELSE 'not_requested' END
+          WHERE m.account_id=$1 AND m.id=$2 AND m.analysis_status IN ('queued','running')
+            AND NOT EXISTS (SELECT 1 FROM media_analysis_requests o WHERE o.account_id=m.account_id AND o.asset_id=m.id
+                              AND o.state IN ('queued','running'))`,
+        [ctx.authority.accountId, assetId],
+      );
+      return this.projection({ ...updated.rows[0], job_id: row.job_id }, true);
+    });
+  }
   /** Locks account + request + live media and re-checks lease, owner, generation and agent fence. */
   async workerRow(tx: Db, lease: CaptureLease) {
     if (lease.kind !== 'analyze_media' || !lease.analysis_id) throw new AppError('invalid_input');

@@ -3,7 +3,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { Principal } from '../principal';
 import { clampShareRange, segmentByteLimit } from '../sharing/projection';
 import { insertCaptureWithAnalysis, insertItem, saveDirect } from '../test-support/library';
-import { closeTestDb, getTestDb, insertAccount, insertAgentConnection, insertAnonymousSession, testContext } from '../testing';
+import { closeTestDb, getTestDb, insertAccount, insertAgentConnection, insertAnonymousSession, testConfig, testContext } from '../testing';
+import { liftFeatureKill, setFeatureKill } from '../flags/feature-flags';
 import { createCollection, deleteCollection, updateCollection } from './collections';
 import {
   acceptInvitation,
@@ -323,6 +324,45 @@ describe('SHR-02 public-safe projection', () => {
     await expect(saveSharedItem(vctx, viewer, f.listening)).rejects.toMatchObject({ code: 'invalid_input' });
     await expect(saveSharedItem(vctx, viewer, f.capture.itemId)).rejects.toMatchObject({ code: 'not_found' });
     await expect(saveSharedItem(vctx, viewer, f.hidden)).rejects.toMatchObject({ code: 'not_found' });
+  });
+});
+
+describe('collection_sharing_enabled is enforced on the server', () => {
+  it('an owner kill stops link viewing, redemption, invitations and broadening, but never revocation', async () => {
+    const f = await fixture();
+    const { created, anon, viewer } = await linkShare(f, { include_media: true });
+    const restricted = await createShare(f.ctx, f.col.id, {});
+    const recipient = await verifiedAccount(`kill-${randomUUID()}@example.com`);
+    const email = (await db.query<{ email: string }>('SELECT email FROM account_emails WHERE account_id = $1', [recipient.accountId])).rows[0]!.email;
+    const invite = await createInvitation(f.ctx, restricted.share.id, { email });
+    await setFeatureKill(db, { flag: 'collection_sharing_enabled', accountId: f.owner.accountId, reason: 'incident', actor: 'test' });
+    const off = { code: 'service_unavailable', message: 'Sharing is temporarily unavailable.' };
+    await expect(getSharedCollection(anon, viewer)).rejects.toMatchObject(off);
+    await expect(getSharedMedia(anon, viewer, f.video, 'playback')).rejects.toMatchObject(off);
+    await expect(redeemLink(anon, { token: tokenOf(created.link!, 'share') })).rejects.toMatchObject(off);
+    await expect(createShare(f.ctx, f.col.id, { audience: 'link', confirm_policy: true })).rejects.toMatchObject(off);
+    await expect(createInvitation(f.ctx, restricted.share.id, { email: 'x@example.com' })).rejects.toMatchObject(off);
+    await expect(acceptInvitation(testContext(recipient), { token: tokenOf(invite.link, 'invite') })).rejects.toMatchObject(off);
+    await expect(updateShare(f.ctx, restricted.share.id, { include_media: true, confirm_broaden: true }, 1)).rejects.toMatchObject(off);
+    // Owners can still see and narrow or revoke what they shared.
+    expect((await listShares(f.ctx, f.col.id)).shares).toHaveLength(2);
+    // Lifting the kill restores the untouched share and its session.
+    await liftFeatureKill(db, { flag: 'collection_sharing_enabled', accountId: f.owner.accountId });
+    expect((await getSharedCollection(anon, viewer)).media.map((m) => m.id)).toEqual([f.video]);
+    await setFeatureKill(db, { flag: 'collection_sharing_enabled', accountId: f.owner.accountId, reason: 'incident', actor: 'test' });
+    await revokeShare(f.ctx, created.share.id);
+    await liftFeatureKill(db, { flag: 'collection_sharing_enabled', accountId: f.owner.accountId });
+    await expect(getSharedCollection(anon, viewer)).rejects.toMatchObject({ code: 'not_found' });
+  });
+
+  it('COLLECTION_SHARING_ENABLED=false turns sharing off for every owner', async () => {
+    const f = await fixture();
+    const { anon, viewer } = await linkShare(f);
+    const disabled = testConfig({ COLLECTION_SHARING_ENABLED: 'false' });
+    await expect(getSharedCollection(testContext(anon.principal, { config: disabled }), viewer))
+      .rejects.toMatchObject({ code: 'service_unavailable', retryable: false });
+    await expect(createShare(testContext(f.owner, { config: disabled }), f.col.id, {}))
+      .rejects.toMatchObject({ code: 'service_unavailable' });
   });
 });
 

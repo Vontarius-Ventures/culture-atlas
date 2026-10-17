@@ -429,7 +429,7 @@ fun SettingsScreen(controller: AppController, onGlasses: () -> Unit) {
                     },
                 )
             },
-            confirmButton = { Button(onClick = { confirm = false; scope.launch { controller.signOut(deleteDrafts = false) } }) { Text("Keep on this phone") } },
+            confirmButton = { Button(onClick = { confirm = false; scope.launch { controller.signOut(deleteDrafts = false) } }) { Text("Keep on this device") } },
             dismissButton = { TextButton(onClick = { confirm = false; scope.launch { controller.signOut(deleteDrafts = true) } }) { Text("Delete local drafts") } },
         )
     }

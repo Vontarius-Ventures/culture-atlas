@@ -8,7 +8,7 @@ import {
   agentMedia,
   auth,
   createServiceContext,
-  enforceAgentRate,
+  enforceAgentRequest,
   getDb,
   requireAgentConnection,
   toErrorBody,
@@ -107,7 +107,7 @@ export async function agentMediaRoute(request: NextRequest): Promise<Response> {
     const method = request.method;
     const path = new URL(request.url).pathname.replace(/\/$/, '');
     let ctx = createServiceContext(principal, { requestId, db, surface: 'rest' });
-    await enforceAgentRate(ctx, method !== 'GET');
+    await enforceAgentRequest(ctx, method !== 'GET');
     ctx = { ...ctx, captureV2: await agentCaptureContext(principal) };
     let result: unknown;
     let status = 200;

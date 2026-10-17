@@ -143,10 +143,7 @@ One Docker image runs the web app, the worker and the media worker. There are tw
   - CloudWatch alarms;
   - a USD 1 budget alert.
 
-  It has **never been deployed**. Whether it is free depends on the AWS account:
-  - **Accounts opened before 15 July 2025** (12-month free tier): it was sized to fit.
-  - **Newer accounts** (credit-based Free plan): it uses credits, roughly USD 15–27 a month.
-
+  It has **never been deployed**. It is **not free on any AWS account today**: the legacy 12-month free tier (accounts opened before 15 July 2025) has ended for every account, and newer accounts' credit-based Free plan pays for it from credits (roughly USD 15–27 a month) for a limited period, after which it bills.
   Video playback traffic beyond the free transfer allowance is the most likely real cost. A 1 GiB micro instance prepares only a few videos an hour. Check current terms in the AWS Free Tier page and Billing console before deploying.
 
 CI (`.github/workflows/ci.yml`) runs typecheck, lint, tests, a fresh migration and the build.

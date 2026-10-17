@@ -487,7 +487,8 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'ca-native-contract-'));
   storage = new LocalMultipartStorage(root, 'http://localhost:3399', 'native-contract-test-key');
   setDbForTesting(db);
-  setDomainConfigForTesting(testConfig());
+  // The operator has opted in to agent remote capture (default off) for the command journey.
+  setDomainConfigForTesting(testConfig({ AGENT_REMOTE_CAPTURE_ENABLED: 'true' }));
   identity.setIdentityMail(outbox);
   nativeSessions.setAuthorityLifecycle(endCaptureAuthority);
   setCaptureV2Runtime({
@@ -865,6 +866,7 @@ describe('native journey through the real handlers', () => {
     });
     const agent = testContext(
       (await auth.resolvePrincipal(db, { authorization: `Bearer ${connection.credential}` }))!,
+      { config: testConfig({ AGENT_REMOTE_CAPTURE_ENABLED: 'true' }) },
     );
     const sessionResponse = await phone.api('POST', '/v2/device/capture-sessions', {
       source: 'phone_camera',

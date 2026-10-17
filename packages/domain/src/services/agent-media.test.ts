@@ -7,7 +7,8 @@ import { LocalMultipartStorage } from '@culture-atlas/providers';
 import { createCaptureV2Context } from '../capture-v2/context';
 import type { CaptureIdentityAdapter } from '../capture-v2/types';
 import { createServiceContext } from '../context';
-import { closeTestDb, getTestDb, insertAccount, insertAgentConnection, testProviders } from '../testing';
+import { closeTestDb, getTestDb, insertAccount, insertAgentConnection, testContext, testProviders } from '../testing';
+import { createCollection } from './collections';
 import { beginUpload } from './agent-media';
 
 /**
@@ -74,5 +75,49 @@ describe('agent media upload on the merged schema', () => {
       [upload.upload_id],
     );
     expect(recorded.rows[0]!.authorization_version).toBe(3);
+  });
+});
+
+describe('selected-collection agents upload into a granted destination (media:write)', () => {
+  async function selected() {
+    const account = await insertAccount(db);
+    const owner = testContext(account);
+    const granted = await createCollection(owner, { name: 'Agent inbox' });
+    const other = await createCollection(owner, { name: 'Private' });
+    const agent = await insertAgentConnection(account, {
+      scopes: ['media:read', 'media:write'], libraryAccess: 'selected_collections', collectionIds: [granted.id],
+    }, db);
+    const version = (await db.query<{ authorization_version: number }>(
+      'SELECT authorization_version FROM agent_connections WHERE id=$1', [agent.principal.connectionId],
+    )).rows[0]!.authorization_version;
+    const storage = new LocalMultipartStorage(join(root, randomUUID()), 'http://127.0.0.1:3301', 'local-test-signing-key');
+    // With an authorization version the live capture fence (G5) runs, as in production.
+    const ctx = createServiceContext({ ...agent.principal, authorizationVersion: version }, {
+      db,
+      providers: testProviders(),
+      captureV2: createCaptureV2Context({ db, authority: account, storage, identity }),
+    });
+    const bytes = Buffer.from('agent photo bytes');
+    const body = (destination?: string) => ({
+      client_capture_id: randomUUID(), kind: 'photo', source: 'upload', filename: 'photo.png',
+      byte_size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), content_type: 'image/png',
+      ...(destination ? { destination_collection_id: destination } : {}),
+    });
+    return { account, granted, other, ctx, body };
+  }
+
+  it('starts an upload that names the granted collection and files the draft there', async () => {
+    const f = await selected();
+    const upload = await beginUpload(f.ctx, f.body(f.granted.id), randomUUID());
+    expect(upload.state).toBe('created');
+    const member = await db.query('SELECT 1 FROM collection_media_items WHERE collection_id=$1 AND asset_id=$2',
+      [f.granted.id, upload.asset_id]);
+    expect(member.rowCount).toBe(1);
+  });
+
+  it('still refuses no destination or a destination outside the grant', async () => {
+    const f = await selected();
+    await expect(beginUpload(f.ctx, f.body(), randomUUID())).rejects.toMatchObject({ code: 'invalid_input' });
+    await expect(beginUpload(f.ctx, f.body(f.other.id), randomUUID())).rejects.toMatchObject({ code: 'not_found' });
   });
 });

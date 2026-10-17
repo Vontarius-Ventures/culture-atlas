@@ -25,7 +25,8 @@ function decode(ctx: ServiceContext, cursor?: string) {
     const parsed = JSON.parse(Buffer.concat([decipher.update(data.subarray(28)), decipher.final()]).toString());
     const connection = ctx.principal.kind === 'agent' ? ctx.principal.connectionId : requireAccount(ctx.principal).accountId;
     if (parsed.connection !== connection || !Number.isSafeInteger(parsed.sequence) || parsed.sequence < 0) throw new Error('cursor');
-    if (ctx.now().getTime() - parsed.issued > 86_400_000) throw new AppError('cursor_expired');
+    if (ctx.now().getTime() - parsed.issued > 86_400_000)
+      throw new AppError('cursor_expired', { details: { action: 'resync', retention_hours: 24 } });
     return parsed.sequence as number;
   } catch (err) {
     if (err instanceof AppError) throw err;

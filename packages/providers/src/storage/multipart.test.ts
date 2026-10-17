@@ -31,24 +31,27 @@ describe('durable filesystem multipart test double', () => {
     const { root, storage } = await local(),
       key = `accounts/${randomUUID()}/staging/${randomUUID()}`;
     const id = await storage.begin(key, 'video/mp4'),
-      signed = await storage.signPart(key, id, 1, 900),
+      signed = await storage.signPart(key, id, 1, 900, 8),
       url = new URL(signed.url);
+    expect(url.searchParams.get('size')).toBe('8');
     const etag = await storage.acceptSignedPart(
       id,
       1,
       Number(url.searchParams.get('expires')),
       url.searchParams.get('signature')!,
       Readable.from([Buffer.from('original')]),
+      Number(url.searchParams.get('size')),
     );
     const restarted = new LocalMultipartStorage(root, 'http://localhost:3301', 'test-signing-key');
-    expect(await restarted.listParts(key, id)).toEqual([{ part_number: 1, etag }]);
+    expect(await restarted.listParts(key, id)).toEqual([{ part_number: 1, etag, size: 8 }]);
     await expect(
       restarted.acceptSignedPart(
         id,
         2,
         Number(url.searchParams.get('expires')),
         url.searchParams.get('signature')!,
-        Readable.from([Buffer.from('wrong-part')]),
+        Readable.from([Buffer.from('wrong-par')]),
+        8,
       ),
     ).rejects.toThrow('authorization');
     await restarted.finish(key, id, [{ etag, part_number: 1 }]);
@@ -77,7 +80,7 @@ describe('durable filesystem multipart test double', () => {
       key = `accounts/${randomUUID()}/staging/${randomUUID()}`;
     await expect(storage.begin('../escape', 'image/png')).rejects.toThrow('Invalid object key');
     const id = await storage.begin(key, 'image/png'),
-      signed = await storage.signPart(key, id, 1, 900),
+      signed = await storage.signPart(key, id, 1, 900, 1),
       url = new URL(signed.url);
     await expect(
       storage.acceptSignedPart(
@@ -86,8 +89,21 @@ describe('durable filesystem multipart test double', () => {
         0,
         url.searchParams.get('signature')!,
         Readable.from([Buffer.from('x')]),
+        1,
       ),
     ).rejects.toThrow('authorization');
+    const expires = Number(url.searchParams.get('expires')),
+      signature = url.searchParams.get('signature')!;
+    // The signed length binds the body: a 1-byte part URL cannot store more, or less.
+    await expect(
+      storage.acceptSignedPart(id, 1, expires, signature, Readable.from([Buffer.from('xx')]), 1),
+    ).rejects.toThrow('too large');
+    await expect(
+      storage.acceptSignedPart(id, 1, expires, signature, Readable.from([Buffer.from('xx')]), 2),
+    ).rejects.toThrow('authorization');
+    await expect(
+      storage.acceptSignedPart(id, 1, expires, signature, Readable.from([Buffer.alloc(0)]), 1),
+    ).rejects.toThrow('size mismatch');
     await expect(storage.writePart(id, 1, Readable.from([Buffer.alloc(8388609)]))).rejects.toThrow(
       'too large',
     );
@@ -134,6 +150,30 @@ describe('private S3 multipart adapter (mock transport, no live service)', () =>
     } as never);
     expect((await storage.read('accounts/a/staging/upload')).body).toBe(stream);
     await expect(storage.read('../escape')).rejects.toThrow('Invalid private object key');
+    client.destroy();
+  });
+  it('presigns UploadPart with the exact part length as a signed header and no body checksum', async () => {
+    const storage = new S3MultipartStorage({
+      bucket: 'private-test',
+      region: 'us-east-1',
+      credentials: { accessKeyId: 'test-only', secretAccessKey: 'test-only' },
+    });
+    const signed = await storage.signPart('accounts/a/staging/upload', 'multipart-fixture', 1, 3600, 1234);
+    const url = new URL(signed.url);
+    expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;host');
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
+    expect(url.searchParams.get('partNumber')).toBe('1');
+    expect([...url.searchParams.keys()].some((k) => k.toLowerCase().startsWith('x-amz-checksum'))).toBe(false);
+    await expect(storage.signPart('accounts/a/staging/upload', 'm', 1, 60, 0)).rejects.toThrow('Invalid part size');
+  });
+  it('reports stored part sizes from ListParts', async () => {
+    const client = new S3Client({ region: 'us-east-1' }),
+      send = vi.spyOn(client, 'send');
+    const storage = new S3MultipartStorage({ bucket: 'private-test', region: 'us-east-1', client });
+    send.mockResolvedValueOnce({ Parts: [{ PartNumber: 1, ETag: 'e', Size: 5_368_709_120 }], IsTruncated: false } as never);
+    expect(await storage.listParts('accounts/a/staging/upload', 'm')).toEqual([
+      { part_number: 1, etag: 'e', size: 5_368_709_120 },
+    ]);
     client.destroy();
   });
   it('fails cleanup when S3 reports per-object deletion errors', async () => {

@@ -2,6 +2,16 @@
 export interface MultipartPart {
   part_number: number;
   etag: string;
+  /** Stored byte size, when the provider reports it (ListParts). Never sent by clients. */
+  size?: number;
+}
+/** Byte length of `part` (1-based) when `totalBytes` is split into `partSize` chunks. */
+export function multipartPartSize(totalBytes: number, part: number, partSize: number): number {
+  if (!Number.isSafeInteger(totalBytes) || totalBytes < 1 || !Number.isSafeInteger(part) || part < 1)
+    throw new Error('Invalid multipart part');
+  const size = Math.min(partSize, totalBytes - (part - 1) * partSize);
+  if (size < 1) throw new Error('Invalid multipart part');
+  return size;
 }
 export interface MultipartInstruction {
   part_number: number;
@@ -12,11 +22,17 @@ export interface MultipartInstruction {
 }
 export interface MultipartStorage {
   begin(key: string, contentType: string): Promise<string>;
+  /**
+   * Signs one part PUT for exactly `byteSize` bytes. The length is part of the
+   * signature, so storage refuses a larger (or smaller) body before accepting
+   * any bytes beyond the upload's declared, quota-reserved size.
+   */
   signPart(
     key: string,
     uploadId: string,
     part: number,
     expiresInSeconds: number,
+    byteSize: number,
   ): Promise<MultipartInstruction>;
   listParts(key: string, uploadId: string): Promise<MultipartPart[]>;
   /** Must recover completion-after-lost-response by recognizing a sealed staging object. */

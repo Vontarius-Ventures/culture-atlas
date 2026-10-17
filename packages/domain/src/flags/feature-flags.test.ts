@@ -5,7 +5,10 @@ import { closeTestDb, getTestDb, insertAccount } from '../testing';
 import {
   FEATURE_FLAG_DEFAULTS,
   KILLABLE_FLAGS,
+  SERVICE_FEATURES,
   evaluateFeatureFlags,
+  evaluateServiceFeature,
+  requireServiceFeature,
   liftFeatureKill,
   resolveFeatureFlags,
   setFeatureKill,
@@ -301,5 +304,49 @@ describe('resolveFeatureFlags (server state)', () => {
     await expect(
       setFeatureKill(db, { flag: 'media_library', accountId: null, reason: 'x', actor: 'vitest' }),
     ).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+});
+
+describe('service-enforced flags', () => {
+  it('evaluate exactly like the capabilities evaluation for every env and kill combination', () => {
+    const values = [undefined, 'true', 'false'];
+    const kills = [[], ['agent_api_enabled'], ['collection_sharing_enabled'], ['agent_remote_capture_enabled'],
+      ['agent_api_enabled', 'agent_remote_capture_enabled']];
+    for (const api of values)
+      for (const sharing of values)
+        for (const remote of values)
+          for (const killedList of kills) {
+            const killed = new Set(killedList);
+            const env = { AGENT_API_ENABLED: api, COLLECTION_SHARING_ENABLED: sharing, AGENT_REMOTE_CAPTURE_ENABLED: remote };
+            const full = evaluateFeatureFlags(inputs({
+              killed,
+              agentApiConfigured: api !== 'false',
+              sharingConfigured: sharing !== 'false',
+              optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: remote === 'true' },
+            }));
+            for (const flag of SERVICE_FEATURES) {
+              const service = evaluateServiceFeature(flag, { killed, env });
+              expect(service.enabled, `${flag} ${JSON.stringify(env)} ${killedList}`).toBe(full.flags[flag]);
+              expect(service.reasons).toEqual(full.reasons[flag] ?? []);
+            }
+          }
+  });
+
+  it('requireServiceFeature reads account kills and env, and fails closed with a 503', async () => {
+    const owner = await insertAccount();
+    const ctx = { db, config: {} };
+    await expect(requireServiceFeature(ctx, owner.accountId, 'agent_api_enabled')).resolves.toBeUndefined();
+    await expect(requireServiceFeature(ctx, owner.accountId, 'agent_remote_capture_enabled')).rejects.toMatchObject({
+      code: 'service_unavailable', status: 503, retryable: false,
+    });
+    await setFeatureKill(db, { flag: 'collection_sharing_enabled', accountId: owner.accountId, reason: 't', actor: 't' });
+    await expect(requireServiceFeature(ctx, owner.accountId, 'collection_sharing_enabled')).rejects.toMatchObject({
+      code: 'service_unavailable', retryable: true, details: { reasons: ['temporarily_disabled'] },
+    });
+    // Another account is unaffected by this account's kill.
+    const other = await insertAccount();
+    await expect(requireServiceFeature(ctx, other.accountId, 'collection_sharing_enabled')).resolves.toBeUndefined();
+    await expect(requireServiceFeature({ db, config: { COLLECTION_SHARING_ENABLED: 'false' } }, other.accountId,
+      'collection_sharing_enabled')).rejects.toMatchObject({ code: 'service_unavailable', retryable: false });
   });
 });

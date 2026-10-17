@@ -379,7 +379,7 @@ test.describe('media detail', () => {
     // Exploring is unavailable (no qualified model): the button explains why.
     await expect(page.getByRole('button', { name: 'Explore this video' })).toBeDisabled();
     await expect(
-      page.getByText('Exploring is unavailable right now. Your video stays in your library.'),
+      page.getByText('Exploration is temporarily unavailable. Your video stays in your library.'),
     ).toBeVisible();
     await page.getByRole('button', { name: 'More' }).click();
     await expect(page.getByRole('link', { name: 'Download original' })).toBeVisible();
@@ -404,8 +404,51 @@ test.describe('media detail', () => {
       timestamp_ms: 24_000,
       expected_generation: 1,
     });
-    await page.getByRole('button', { name: 'Stop waiting' }).click();
+    // Cancel really cancels the request on the server (not only the polling).
+    await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(page.getByRole('button', { name: 'Explore this moment' })).toBeEnabled();
+    expect(
+      v2.log.some((r) => r.method === 'DELETE' && r.path.startsWith(`/v2/media/${id}/analysis/`)),
+    ).toBe(true);
+  });
+
+  test('a partial video result opens like a complete one instead of polling forever', async ({
+    page,
+  }) => {
+    const capture = '00000000-0000-4000-8000-00000000c0de';
+    const v2 = await openV2(page, '', {
+      media: [VIDEO_SEED],
+      analysis: true,
+      analysisStates: [
+        { state: 'running' },
+        { state: 'partial', capture_id: capture, result_url: `/captures/${capture}` },
+      ],
+    });
+    const id = [...v2.media.keys()][0]!;
+    await page.goto(`/library/media/${id}`);
+    await page.getByRole('button', { name: 'Explore this video' }).click();
+    await expect(page).toHaveURL(new RegExp(`/captures/${capture}$`), { timeout: 15_000 });
+  });
+
+  test('a paused request reads “Waiting to explore” with Cancel; an input failure explains what to do', async ({
+    page,
+  }) => {
+    const states: NonNullable<Parameters<typeof openV2>[2]>['analysisStates'] = [
+      { state: 'queued', waiting_reason: 'rate_limited' },
+    ];
+    const v2 = await openV2(page, '', { media: [VIDEO_SEED], analysis: true, analysisStates: states });
+    const id = [...v2.media.keys()][0]!;
+    await page.goto(`/library/media/${id}`);
+    await page.getByRole('button', { name: 'Explore this video' }).click();
+    await expect(page.getByText('Waiting to explore…')).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('button', { name: 'Explore this video' })).toBeEnabled();
+
+    states.splice(0, states.length, { state: 'failed', error_code: 'model_input_rejected' });
+    await page.getByRole('button', { name: 'Explore this video' }).click();
+    await expect(page.getByText(/We couldn’t explore this media\. Choose a different moment/)).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test('a video still preparing shows status and no play action', async ({ page }) => {

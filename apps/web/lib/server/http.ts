@@ -6,6 +6,7 @@ import {
   AppError,
   auth,
   createServiceContext,
+  enforceAgentAccess,
   enforceIpLimit,
   getDb,
   getDomainConfig,
@@ -197,6 +198,8 @@ export function apiRoute<C extends RouteContract>(
       }
 
       const ctx = createServiceContext(principal, { requestId, db, config, surface: 'rest' });
+      // agent_api_enabled (and its kill switch) applies to v1 and v2 agent calls alike.
+      await enforceAgentAccess(ctx);
       const setSession = (token: string, expiresAt: Date) => {
         newSession = { token, expiresAt };
       };

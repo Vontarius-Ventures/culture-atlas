@@ -29,7 +29,10 @@ import { isSafeObjectKey } from './signing';
 export class S3MultipartStorage implements MultipartStorage {
   private readonly client: S3Client;
   constructor(private readonly options: S3ClientConfig & { bucket: string; client?: S3Client }) {
-    this.client = options.client ?? new S3Client(options);
+    // WHEN_REQUIRED: a presigned UploadPart must not embed a checksum of the
+    // (empty) presigning body, or S3 rejects the client's real part.
+    this.client =
+      options.client ?? new S3Client({ requestChecksumCalculation: 'WHEN_REQUIRED', ...options });
   }
   private key(key: string): { Bucket: string; Key: string } {
     if (!isSafeObjectKey(key)) throw new Error('Invalid private object key');
@@ -46,14 +49,25 @@ export class S3MultipartStorage implements MultipartStorage {
     if (!r.UploadId) throw new Error('Missing multipart id');
     return r.UploadId;
   }
-  async signPart(key: string, uploadId: string, part: number, expiresInSeconds: number) {
+  async signPart(
+    key: string,
+    uploadId: string,
+    part: number,
+    expiresInSeconds: number,
+    byteSize: number,
+  ) {
+    if (!Number.isSafeInteger(byteSize) || byteSize < 1 || byteSize > 5 * 1024 ** 3)
+      throw new Error('Invalid part size');
     const ttl = Math.min(900, Math.max(1, expiresInSeconds));
+    // ContentLength makes content-length a signed header (X-Amz-SignedHeaders
+    // content-length;host): S3 rejects any body that is not exactly this size.
     const url = await getSignedUrl(
       this.client,
       new UploadPartCommand({
         ...this.key(key),
         UploadId: uploadId,
         PartNumber: part,
+        ContentLength: byteSize,
       }),
       { expiresIn: ttl },
     );
@@ -77,7 +91,12 @@ export class S3MultipartStorage implements MultipartStorage {
         }),
       );
       for (const p of r.Parts ?? []) {
-        if (p.PartNumber && p.ETag) parts.push({ part_number: p.PartNumber, etag: p.ETag });
+        if (p.PartNumber && p.ETag)
+          parts.push({
+            part_number: p.PartNumber,
+            etag: p.ETag,
+            ...(p.Size !== undefined ? { size: p.Size } : {}),
+          });
       }
       marker = r.IsTruncated ? r.NextPartNumberMarker : undefined;
     } while (marker);

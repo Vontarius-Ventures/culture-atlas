@@ -99,6 +99,27 @@ const uploadInput = () => ({
 });
 
 describe('v2 REST boundary', () => {
+  it('a 429 carries Retry-After and the standard retry_after_ms hint the native clients read', async () => {
+    const a = await browser();
+    const ip = `198.51.100.${Math.floor(Math.random() * 200) + 20}`;
+    setDomainConfigForTesting(testConfig({ IP_DAILY_REQUESTS: '1' }));
+    try {
+      const send = () =>
+        captureV2Route(request('/v2/uploads', a, 'POST', uploadInput(), { 'x-forwarded-for': ip }));
+      await send();
+      const limited = await send();
+      expect(limited.status).toBe(429);
+      const retryAfter = Number(limited.headers.get('retry-after'));
+      expect(retryAfter).toBeGreaterThan(0);
+      expect((await limited.json()).error).toMatchObject({
+        code: 'rate_limited',
+        retryable: true,
+        retry_after_ms: retryAfter * 1000,
+      });
+    } finally {
+      setDomainConfigForTesting(config);
+    }
+  });
   it('TEN-02 rejects switched cookie and missing account assertion before CSRF, idempotency, quota or storage effects', async () => {
     const a = await browser(),
       b = await browser(),

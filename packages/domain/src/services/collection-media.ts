@@ -3,6 +3,7 @@ import { authorizeAgent } from '../authz/agent-authorization';
 import { authorizeMedia, authorizeUploadDestination } from '../authz/agent-resources';
 import type { ServiceContext } from '../context';
 import { AppError } from '../errors';
+import { assertAgentCannotExposeMedia } from '../sharing/agent-guard';
 
 /** Central membership service for first-party, agent and shared projections. */
 async function collection(ctx: ServiceContext, id: string, write = false) {
@@ -19,6 +20,7 @@ export async function addMediaToCollection(ctx: ServiceContext, collectionId: st
   const grant = await collection(ctx, collectionId, true);
   // Selected agents cannot launder inaccessible media into their own grant.
   await authorizeMedia(grant.ctx, 'media:read', assetId);
+  await assertAgentCannotExposeMedia(ctx.db, grant.ctx.principal, grant.accountId, collectionId, ctx.now());
   await ctx.db.query(
     `INSERT INTO collection_media_items(account_id,collection_id,asset_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
     [grant.accountId, collectionId, assetId],
@@ -30,6 +32,7 @@ export async function addMediaToCollection(ctx: ServiceContext, collectionId: st
 export async function attachAgentUpload(ctx: ServiceContext, collectionId: string, assetId: string) {
   ctx = await authorizeUploadDestination(ctx, collectionId);
   if (ctx.principal.kind !== 'agent') throw new AppError('scope_denied');
+  await assertAgentCannotExposeMedia(ctx.db, ctx.principal, ctx.principal.accountId, collectionId, ctx.now());
   const { rowCount } = await ctx.db.query(
     `INSERT INTO collection_media_items(account_id,collection_id,asset_id)
      SELECT account_id,$2,id FROM media_assets WHERE account_id=$1 AND id=$3

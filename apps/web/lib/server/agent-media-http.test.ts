@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NextRequest } from 'next/server';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { agentPlatform, collections, setDbForTesting, setDomainConfigForTesting, type Scope } from '@culture-atlas/domain';
+import { agentPlatform, collections, liftFeatureKill, setDbForTesting, setDomainConfigForTesting, setFeatureKill, type Scope } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, insertAccount, testConfig, testContext } from '@culture-atlas/domain/testing';
 import { LocalMultipartStorage } from '@culture-atlas/providers';
 import { connectMcp } from '../../../demo-agent/src/client';
@@ -14,6 +14,7 @@ const { setCaptureV2Runtime, captureV2Route } = await import('./capture-v2');
 const mcp = await import('../../app/mcp/route');
 const agentContent = await import('../../app/v2/agent-media/[id]/content/[variant]/route');
 const operations = await import('../../app/v2/operations/[id]/route');
+const v1Collections = await import('../../app/v1/collections/route');
 
 const db = getTestDb();
 const config = testConfig({ APP_BASE_URL: 'http://localhost:3303' });
@@ -202,5 +203,35 @@ describe('AGT-01 MCP media tools in production wiring (G6)', () => {
     } finally {
       await client.close().catch(() => undefined);
     }
+  });
+});
+
+describe('agent_api_enabled kill switch is enforced on every agent surface', () => {
+  it('an account kill refuses REST v1, REST v2, the media gateway and MCP until it is lifted', async () => {
+    const f = await fixture(['media:read', 'collections:read']);
+    const segment = { params: Promise.resolve({}) };
+    expect((await captureV2Route(bearer('/v2/library', f.credential))).status).toBe(200);
+    expect((await v1Collections.GET(bearer('/v1/collections', f.credential), segment)).status).toBe(200);
+    await setFeatureKill(db, { flag: 'agent_api_enabled', accountId: f.owner.accountId, reason: 'incident', actor: 'test' });
+
+    const library = await captureV2Route(bearer('/v2/library', f.credential));
+    expect(library.status).toBe(503);
+    expect((await library.json()).error).toMatchObject({ code: 'service_unavailable', retryable: true });
+    expect((await captureV2Route(bearer(`/v2/media/${f.visible.id}`, f.credential))).status).toBe(503);
+    expect((await agentContent.GET(bearer(`/v2/agent-media/${f.visible.id}/content/playback`, f.credential))).status).toBe(503);
+    const v1 = await v1Collections.GET(bearer('/v1/collections', f.credential), segment);
+    expect(v1.status).toBe(503);
+    expect((await v1.json()).code).toBe('service_unavailable');
+    const client = await connectMcp({ url: `${BASE}/mcp`, token: f.credential, fetch: (input, init) => mcp.POST(new Request(input, init)) });
+    try {
+      const listed = await client.callTool('list_media', {});
+      expect(!listed.ok && listed.error.code).toBe('service_unavailable');
+    } finally {
+      await client.close();
+    }
+
+    // The grant itself is untouched: lifting the kill restores access.
+    await liftFeatureKill(db, { flag: 'agent_api_enabled', accountId: f.owner.accountId });
+    expect((await captureV2Route(bearer('/v2/library', f.credential))).status).toBe(200);
   });
 });

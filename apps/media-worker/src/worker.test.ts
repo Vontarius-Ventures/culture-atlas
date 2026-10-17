@@ -127,6 +127,7 @@ async function put(f: Fixture, u: MediaUploadResponse, part: number, bytes: Buff
     Number(url.searchParams.get('expires')),
     url.searchParams.get('signature')!,
     Readable.from([bytes.subarray((part - 1) * size, part * size)]),
+    Number(url.searchParams.get('size')),
   );
 }
 async function uploadAll(f: Fixture, request: ReturnType<typeof declare>, bytes: Buffer) {
@@ -493,6 +494,7 @@ describe('MED-04 interrupted transfers, expiry and orphan cleanup bound storage'
         Math.floor(Date.now() / 1000) - 1,
         url.searchParams.get('signature')!,
         Readable.from([bytes]),
+        Number(url.searchParams.get('size')),
       ),
     ).rejects.toThrow('authorization');
     await put(f, u, 1, bytes); // partially transferred, never completed

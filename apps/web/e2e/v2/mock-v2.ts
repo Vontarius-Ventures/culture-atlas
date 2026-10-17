@@ -92,6 +92,17 @@ export interface V2Options extends MockOptions {
   /** 'blocked' = server's current kill-switched evaluation (reference 09); 'device' = only device-local reasons (04). */
   glasses?: 'blocked' | 'device';
   analysis?: boolean;
+  /**
+   * Successive GET /v2/media/{id}/analysis/{aid} answers (fields over a queued
+   * default); the last one repeats. DELETE always answers cancelled.
+   */
+  analysisStates?: Array<{
+    state: 'queued' | 'running' | 'partial' | 'complete' | 'failed' | 'cancelled';
+    result_url?: string | null;
+    capture_id?: string | null;
+    waiting_reason?: string | null;
+    error_code?: string | null;
+  }>;
   videoUploads?: boolean;
   devices?: Array<Partial<Device> & { platform: 'ios' | 'android' }>;
   /** GET /v2/library fails with 503 the first N times. */
@@ -429,18 +440,22 @@ export class MockV2 {
       if (!d) return this.error(route, 404, 'not_found', 'Not found.');
       if (!this.opts.analysis)
         return this.error(route, 503, 'provider_unavailable', 'Analysis is unavailable.', true);
-      return this.json(
-        route,
-        202,
-        AnalyzeMediaResponse.parse({
-          analysis_id: m[2] ?? uuid(),
-          job_id: uuid(),
-          state: 'queued',
-          reused: false,
-          result_url: null,
-          capture_id: null,
-        }),
-      );
+      const base = {
+        analysis_id: m[2] ?? uuid(),
+        job_id: uuid(),
+        state: 'queued' as const,
+        reused: false,
+        result_url: null,
+        capture_id: null,
+      };
+      if (m[2] && method === 'DELETE')
+        return this.json(route, 200, AnalyzeMediaResponse.parse({ ...base, state: 'cancelled' }));
+      if (m[2] && method === 'GET' && this.opts.analysisStates?.length) {
+        const states = this.opts.analysisStates;
+        const next = states.length > 1 ? states.shift()! : states[0]!;
+        return this.json(route, 200, AnalyzeMediaResponse.parse({ ...base, ...next }));
+      }
+      return this.json(route, 202, AnalyzeMediaResponse.parse(base));
     }
 
     if ((m = /^\/v2\/media\/([^/]+)$/.exec(p))) {

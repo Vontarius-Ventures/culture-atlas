@@ -83,8 +83,9 @@ bookworm), PostgreSQL and the same private S3 bucket as the web app
 (`STORAGE_DRIVER=s3`; the filesystem driver is refused in production). For a small
 single-instance deployment (for example one 1 GiB AWS instance), run
 `MEDIA_WORKER_CONCURRENCY=1` and `MEDIA_WORKER_THREADS=1`: a 120s 1080p transcode is
-CPU-bound and is the heaviest workload in the system. Whether a given AWS free-tier
-or free-plan allowance covers this was not verified here (no AWS access).
+CPU-bound and is the heaviest workload in the system. No AWS allowance makes this
+free today: the legacy 12-month free tier has ended for every account, and the
+Free plan pays instance hours from credits ([deploy-aws.md](deploy-aws.md)).
 
 ## Not verified here
 

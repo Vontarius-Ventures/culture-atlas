@@ -3,6 +3,7 @@ import type { ServiceContext } from '../context';
 import type { Queryable } from '../db/pool';
 import type { Scope } from '../enums';
 import { AppError } from '../errors';
+import { requireServiceFeature } from '../flags/feature-flags';
 import type { AgentPrincipal } from '../principal';
 
 /**
@@ -50,6 +51,23 @@ export async function agentActivity(ctx: ServiceContext, action: string, targetI
     'INSERT INTO agent_activity(account_id,connection_id,action,target_id,created_at) VALUES($1,$2,$3,$4,$5)',
     [ctx.principal.accountId, ctx.principal.connectionId, action, targetId ?? null, ctx.now()],
   );
+}
+
+/**
+ * agent_api_enabled is enforced on every agent request (REST v1/v2, MCP,
+ * media gateway, events), so an operator kill stops agent access during an
+ * incident without a deploy. Grants are never deleted. The World Observer
+ * sensor bridge (purpose sensor_bridge) is not an agent API client.
+ */
+export async function enforceAgentAccess(ctx: ServiceContext): Promise<void> {
+  if (ctx.principal.kind !== 'agent' || ctx.principal.purpose !== 'agent') return;
+  await requireServiceFeature(ctx, ctx.principal.accountId, 'agent_api_enabled');
+}
+
+/** Agent API gate plus the per-connection request budget. */
+export async function enforceAgentRequest(ctx: ServiceContext, mutation: boolean): Promise<void> {
+  await enforceAgentAccess(ctx);
+  await enforceAgentRate(ctx, mutation);
 }
 
 export async function enforceAgentRate(ctx: ServiceContext, mutation: boolean) {
