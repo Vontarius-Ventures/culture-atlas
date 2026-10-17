@@ -14,7 +14,7 @@ import {
   type Capabilities,
   type MediaDetail,
 } from './media-api';
-import { ACCEPT_MEDIA } from './media-format';
+import { ACCEPT_MEDIA, glassesBlocked } from './media-format';
 import { ExperimentalBadge, FlowHeader, V2Notice } from './parts';
 import { loadCapabilities, useUploads } from './uploads-client';
 import { GlassesArt } from './V2Icon';
@@ -47,12 +47,6 @@ const REASON_GROUPS: Array<{ key: string; label: string; codes: string[]; text: 
     text: 'Camera access for your glasses is allowed in Meta AI on your phone.',
   },
 ];
-/** Account-wide or release blockers: no hand-off and no fake reconnect. */
-const BLOCKING = new Set([
-  'release_channel_ineligible',
-  'temporarily_disabled',
-  'rollout_unavailable',
-]);
 
 type HandoffState =
   | { state: 'none' }
@@ -115,7 +109,7 @@ export function GlassesView({ back }: { back: { href: string; label: string } })
   const reasons = caps && caps !== 'error' ? (caps.availability.meta_glasses?.reasons ?? []) : [];
   const available =
     caps && caps !== 'error' ? caps.availability.meta_glasses?.available === true : false;
-  const blocked = reasons.some((r) => BLOCKING.has(r));
+  const blocked = glassesBlocked(reasons);
   const groups = REASON_GROUPS.filter((g) => g.codes.some((c) => reasons.includes(c)));
 
   const onFiles = async (files: File[]) => {

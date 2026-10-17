@@ -304,9 +304,13 @@ export async function resolveFeatureFlags(
         list(env.META_GLASSES_QUALIFIED_BUILDS).includes(
           `${device.platform}@${device.app_version}`,
         ),
-      // Platform/release-channel entitlement verified by the operator.
-      channelEligible:
-        !!device && list(env.META_GLASSES_ENTITLED_PLATFORMS).includes(device.platform),
+      // Platform/release-channel entitlement verified by the operator. A browser
+      // has no app release of its own: it is eligible to explain setup and hand
+      // off to the phone when some native release is entitled. It still never
+      // captures (build_unsupported and the device checks stay false).
+      channelEligible: device
+        ? list(env.META_GLASSES_ENTITLED_PLATFORMS).includes(device.platform)
+        : !input.installationId && list(env.META_GLASSES_ENTITLED_PLATFORMS).length > 0,
       rolloutEligible:
         rollout === 'all' ||
         (rollout === 'allowlist' &&

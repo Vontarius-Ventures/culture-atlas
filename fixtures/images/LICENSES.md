@@ -31,6 +31,16 @@ The build environment could not reach Wikimedia Commons (`commons.wikimedia.org`
 
 Use the photos above as `display_metadata.image.url` (for example `/samples/feed/tea-rituals.jpg`) with `license: "project-original"` when seeding sample discovery items. Artists and films have no image, so the UI renders its text treatment. Never substitute a picture of a real performer or a film still without a license.
 
+## Capture platform v2 illustrations (project-owned)
+
+Drawn by `fixtures/images/generate-capture-illustrations.ts` the same way (SVG rendered to JPEG with sharp, deterministic). Same author and license as above. They replace earlier crops of the generated design references, which must not ship in the UI.
+
+| File | Used for | Subject |
+| --- | --- | --- |
+| `apps/web/public/capture/source-hero.jpg` | 02 capture chooser hero | Stoneware bowls, speckled pitcher and plate on an oak table, olive sprigs |
+| `apps/web/public/capture/glasses-hero.jpg` | 04 glasses connect hero | Black glasses (no brand) on linen, bowl with an olive sprig, a book |
+| `fixtures/capture-v2/*.jpg` | Seed media for the real-stack fidelity run (`apps/web/e2e/real/v2-fidelity.spec.ts`); never shipped | Armchair corner, olive jacket, coast, brick street, hydrangea courtyard, café interior, pendant lamps, window table, whitewashed alley |
+
 ## Replacing them with public-domain / CC0 photographs
 
 When Wikimedia Commons is reachable, `fixtures/images/fetch-commons.ts` can search Commons for files that are public domain or CC0 only. It does this with the `haslicense:unrestricted` search keyword, then re-checks each file's `LicenseShortName` in its extmetadata and rejects anything that is not public domain or CC0. It downloads a 1200 px rendition into `apps/web/public/samples/commons/` and appends each file's title, author, license and source URL to the table below. Review every downloaded image before use: check that it shows no identifiable people, logos or watermarks. Then point the sample items at the new paths.

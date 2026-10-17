@@ -8,7 +8,7 @@ import { setPendingCapture, takePendingCapture } from '@/lib/client/store';
 import { Icon } from '../Icon';
 import { COPY } from './copy';
 import { mediaErrorMessage, type Capabilities } from './media-api';
-import { ACCEPT_MEDIA } from './media-format';
+import { ACCEPT_MEDIA, glassesBlocked } from './media-format';
 import { ExperimentalBadge, FlowHeader, V2Notice } from './parts';
 import { loadCapabilities, limitsFrom, useUploads } from './uploads-client';
 import { V2Icon } from './V2Icon';
@@ -38,7 +38,9 @@ export function SourceView() {
       .catch(() => setCaps(null));
   }, [isAccount]);
 
-  const glassesAvailable = caps?.availability.meta_glasses?.available;
+  // A browser never captures from glasses itself; it explains setup and hands
+  // off to the phone. Only release/account blockers say "not available".
+  const glassesUnavailable = glassesBlocked(caps?.availability.meta_glasses?.reasons ?? []);
   const signedOut = session && !isAccount;
 
   const onFiles = async (files: File[]) => {
@@ -104,7 +106,7 @@ export function SourceView() {
                 <ExperimentalBadge />
               </span>
               <span className="source-option__sub">
-                {glassesAvailable === false
+                {glassesUnavailable
                   ? 'See why it is not available yet'
                   : 'Capture with your connected glasses'}
               </span>

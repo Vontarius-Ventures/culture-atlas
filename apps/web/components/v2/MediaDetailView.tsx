@@ -251,7 +251,7 @@ export function MediaDetailView({ id }: { id: string }) {
       {back}
       <div className="detail">
         <div>
-          <MediaStage item={item} seekRef={player} />
+          <MediaStage item={item} seekRef={player} moment={selectedFrame?.thumbnail_url ?? null} />
           <p className="detail__meta">{metaLine}</p>
           {isVideo && item.frames.length > 0 && (
             <section className="moments" aria-labelledby="moments-title">
@@ -471,9 +471,12 @@ interface PlayerHandle {
 function MediaStage({
   item,
   seekRef,
+  moment,
 }: {
   item: MediaDetail;
   seekRef: RefObject<PlayerHandle | null>;
+  /** The chosen moment's frame: shown as the still until playback starts. */
+  moment: string | null;
 }) {
   const m = item.media;
   if (m.kind === 'photo') {
@@ -489,7 +492,7 @@ function MediaStage({
     return (
       <VideoPlayer
         src={item.links.playback}
-        poster={item.links.poster}
+        poster={moment ?? item.links.poster}
         title={mediaTitle(m)}
         seekRef={seekRef}
         durationMs={m.duration_ms ?? 0}
