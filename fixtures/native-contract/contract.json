@@ -1,0 +1,175 @@
+{
+  "fixture_version": 1,
+  "contract_version": "2026-10-15.1",
+  "note": "Shared native client contract for apps/ios and apps/android. Values here are protocol facts the server enforces; the native unit tests and fixtures/native-contract/native-contract.test.ts both read this file.",
+  "api_prefix": "/v2",
+  "headers": {
+    "authorization_scheme": "Bearer",
+    "access_token_prefix": "cna_",
+    "idempotency_key": "Idempotency-Key",
+    "expected_account": "X-Atlas-Expected-Account",
+    "content_type_json": "application/json",
+    "etag": "ETag",
+    "retry_after": "Retry-After",
+    "request_id": "X-Request-Id"
+  },
+  "token_patterns": {
+    "access_token": "^cna_[A-Za-z0-9_-]{43}$",
+    "refresh_token": "^cnr_[A-Za-z0-9_-]{43}$",
+    "enrollment_grant": "^cne_[A-Za-z0-9_-]{43}$",
+    "refresh_request_id": "^[A-Za-z0-9_-]{43}$",
+    "pkce_code_verifier": "^[A-Za-z0-9._~-]{43,128}$",
+    "pkce_code_challenge": "^[A-Za-z0-9_-]{43}$",
+    "state_or_nonce_min_length": 32
+  },
+  "identity": {
+    "email_start": "POST /v2/identity/email/start",
+    "email_complete": "POST /v2/identity/email/complete",
+    "native_refresh": "POST /v2/identity/native/refresh",
+    "switch": "POST /v2/identity/switch",
+    "callbacks": {
+      "ios": "cultureatlas://identity/callback",
+      "android": "https://app.cultureatlas.com/identity/callback"
+    },
+    "callback_fragment_keys": [
+      "challenge_id",
+      "token",
+      "state",
+      "nonce"
+    ],
+    "access_token_lifetime_seconds": 600,
+    "refresh_lost_response_retry_window_seconds": 60,
+    "terminal_sign_out_codes": [
+      "token_revoked",
+      "token_expired"
+    ]
+  },
+  "routes": {
+    "capabilities": {
+      "route": "GET /v2/capabilities",
+      "server": "routed"
+    },
+    "enrollment_challenge": {
+      "route": "POST /v2/devices/enrollment/challenge",
+      "server": "routed"
+    },
+    "enroll": {
+      "route": "POST /v2/devices/enroll",
+      "server": "routed"
+    },
+    "device_status": {
+      "route": "PUT /v2/device/status",
+      "server": "routed"
+    },
+    "create_wearable": {
+      "route": "POST /v2/device/wearables",
+      "server": "routed"
+    },
+    "delete_wearable": {
+      "route": "DELETE /v2/device/wearables/{id}",
+      "server": "routed"
+    },
+    "create_capture_session": {
+      "route": "POST /v2/device/capture-sessions",
+      "server": "routed"
+    },
+    "arm_capture_session": {
+      "route": "POST /v2/device/capture-sessions/{id}/arm",
+      "server": "routed"
+    },
+    "end_capture_session": {
+      "route": "POST /v2/device/capture-sessions/{id}/end",
+      "server": "routed"
+    },
+    "create_upload": {
+      "route": "POST /v2/uploads",
+      "server": "routed"
+    },
+    "get_upload": {
+      "route": "GET /v2/uploads/{id}",
+      "server": "routed"
+    },
+    "upload_parts": {
+      "route": "POST /v2/uploads/{id}/parts",
+      "server": "routed"
+    },
+    "complete_upload": {
+      "route": "POST /v2/uploads/{id}/complete",
+      "server": "routed"
+    },
+    "abort_upload": {
+      "route": "DELETE /v2/uploads/{id}",
+      "server": "routed"
+    },
+    "library": {
+      "route": "GET /v2/library",
+      "server": "routed"
+    },
+    "media": {
+      "route": "GET /v2/media/{id}",
+      "server": "routed"
+    },
+    "poll_commands": {
+      "route": "GET /v2/device/commands",
+      "server": "domain_only"
+    },
+    "ack_command": {
+      "route": "POST /v2/device/commands/{id}/ack",
+      "server": "domain_only"
+    }
+  },
+  "uploads": {
+    "client_must_use_response_part_size": true,
+    "max_part_numbers_per_parts_request": 100,
+    "part_instruction_refresh_margin_seconds": 60,
+    "upload_session_lifetime_hours": 24,
+    "terminal_states": [
+      "committed",
+      "aborted",
+      "expired",
+      "rejected"
+    ],
+    "resumable_states": [
+      "created",
+      "uploading"
+    ],
+    "server_work_states": [
+      "verifying"
+    ],
+    "paused_reason_requires_original_account": "authority_ended"
+  },
+  "commands": {
+    "poll_wait_seconds": 25,
+    "heartbeat_interval_seconds": 15,
+    "server_stale_after_seconds": 30,
+    "command_max_expiry_seconds": 30,
+    "required_status_capability_keys": [
+      "photo",
+      "video"
+    ]
+  },
+  "capture": {
+    "native_clip_max_seconds": 60,
+    "countdown_from_seconds": 10,
+    "remote_arm_default_seconds": 600,
+    "remote_arm_max_seconds": 600,
+    "glasses_audio_default": false,
+    "auto_upload_default": "wifi_only",
+    "batch_max_files": 20,
+    "concurrent_transfers": 2
+  },
+  "content_types": {
+    "photo": [
+      "image/jpeg",
+      "image/png",
+      "image/webp"
+    ],
+    "video": [
+      "video/mp4",
+      "video/quicktime",
+      "video/webm"
+    ]
+  },
+  "wire_uuid_case": "lowercase",
+  "wire_uuid_note": "Send every UUID in JSON bodies, paths and headers in lowercase. The enrollment proof signs the installation_public_id string exactly as the body carries it."
+}

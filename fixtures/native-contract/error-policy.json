@@ -1,0 +1,56 @@
+{
+  "fixture_version": 1,
+  "note": "How the native apps react to server error codes ({error:{code,message,retryable,request_id,retry_after_ms?}}). 'status' must equal the server's HTTP mapping (packages/domain/src/errors.ts). Messages shown to people come from the app's own copy, never from model output.",
+  "codes": [
+    { "code": "invalid_input", "status": 400, "action": "surface_no_retry" },
+    { "code": "unauthenticated", "status": 401, "action": "sign_in_required" },
+    { "code": "token_expired", "status": 401, "action": "refresh_then_retry_once" },
+    { "code": "token_revoked", "status": 401, "action": "sign_in_required" },
+    { "code": "scope_denied", "status": 403, "action": "feature_unavailable_keep_local" },
+    { "code": "account_required", "status": 403, "action": "sign_in_required" },
+    { "code": "csrf_failed", "status": 403, "action": "surface_no_retry" },
+    { "code": "not_found", "status": 404, "action": "reload_state" },
+    { "code": "conflict", "status": 409, "action": "reload_state" },
+    { "code": "account_mismatch", "status": 409, "action": "lock_to_original_account" },
+    { "code": "action_required", "status": 409, "action": "show_local_action" },
+    { "code": "idempotency_conflict", "status": 409, "action": "reload_state" },
+    { "code": "idempotency_in_progress", "status": 409, "action": "retry_backoff" },
+    { "code": "cursor_expired", "status": 410, "action": "resync" },
+    { "code": "payload_too_large", "status": 413, "action": "reject_item" },
+    { "code": "rate_limited", "status": 429, "action": "retry_backoff" },
+    { "code": "quota_exceeded", "status": 429, "action": "pause_until_quota" },
+    { "code": "service_unavailable", "status": 503, "action": "retry_backoff" },
+    { "code": "provider_unavailable", "status": 503, "action": "retry_backoff" },
+    { "code": "internal", "status": 500, "action": "retry_backoff" }
+  ],
+  "unknown_code_action": "retry_backoff_if_retryable_else_surface",
+  "switch_endpoint_terminal_codes": ["token_revoked", "token_expired"],
+  "backoff": {
+    "base_seconds": 2,
+    "factor": 2,
+    "max_seconds": 300,
+    "retry_after_wins_when_larger": true,
+    "schedule_without_jitter": [
+      { "attempt": 1, "delay_seconds": 2 },
+      { "attempt": 2, "delay_seconds": 4 },
+      { "attempt": 3, "delay_seconds": 8 },
+      { "attempt": 8, "delay_seconds": 256 },
+      { "attempt": 9, "delay_seconds": 300 },
+      { "attempt": 20, "delay_seconds": 300 }
+    ],
+    "retry_after_cases": [
+      { "attempt": 1, "retry_after_seconds": 30, "delay_seconds": 30 },
+      { "attempt": 9, "retry_after_seconds": 30, "delay_seconds": 300 }
+    ]
+  },
+  "refresh": {
+    "note": "A new refresh_request_id (32 random bytes, base64url) is persisted with the old refresh token BEFORE dispatch. A lost response may be retried with the SAME token and request id within 60 seconds; the returned pair is committed to secure storage before the pending attempt is cleared.",
+    "cases": [
+      { "name": "success_commits_then_clears", "outcome": "success", "elapsed_seconds": 1, "action": "commit_tokens_then_clear_pending" },
+      { "name": "lost_response_retries_same_id", "outcome": "network_error", "elapsed_seconds": 30, "action": "retry_same_request_id" },
+      { "name": "lost_response_too_late", "outcome": "network_error", "elapsed_seconds": 61, "action": "sign_in_required" },
+      { "name": "rejected_refresh", "outcome": "http_401", "elapsed_seconds": 1, "action": "sign_in_required" },
+      { "name": "server_busy_retries_same_id_in_window", "outcome": "http_503", "elapsed_seconds": 5, "action": "retry_same_request_id" }
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Experimental flavor only: Meta glasses connectivity and SDK configuration.
+     The store flavor's merged manifest contains none of this.
+     The meta-data names below could not be checked against the SDK from this
+     repository (no network); confirm them against the pinned SDK's setup guide
+     on the first experimental build (docs/native.md, "Android SDK binding"). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+
+    <application>
+        <meta-data
+            android:name="com.meta.wearable.mwdat.APPLICATION_ID"
+            android:value="${metaAppId}" />
+        <meta-data
+            android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
+            android:value="${metaClientToken}" />
+    </application>
+</manifest>

@@ -1,0 +1,74 @@
+{
+  "fixture_version": 1,
+  "note": "Multipart planning. Clients always use part_size from the upload response (the server currently issues 8388608). Part N covers bytes [offset, offset+length) of the plaintext file. Resume asks GET /v2/uploads/{id} first, merges server verified_parts with local receipts (server etag wins for the same part), sends only missing parts, and completes with every part in ascending order.",
+  "server_part_size": 8388608,
+  "plans": [
+    { "name": "one_byte", "byte_size": 1, "part_size": 8388608, "parts": [[1, 0, 1]] },
+    { "name": "typical_photo", "byte_size": 2457600, "part_size": 8388608, "parts": [[1, 0, 2457600]] },
+    { "name": "exact_one_part", "byte_size": 8388608, "part_size": 8388608, "parts": [[1, 0, 8388608]] },
+    { "name": "one_byte_over", "byte_size": 8388609, "part_size": 8388608, "parts": [[1, 0, 8388608], [2, 8388608, 1]] },
+    {
+      "name": "glasses_clip",
+      "byte_size": 20971521,
+      "part_size": 8388608,
+      "parts": [[1, 0, 8388608], [2, 8388608, 8388608], [3, 16777216, 4194305]]
+    },
+    { "name": "tiny_part_size", "byte_size": 12, "part_size": 5, "parts": [[1, 0, 5], [2, 5, 5], [3, 10, 2]] }
+  ],
+  "max_video": { "byte_size": 262144000, "part_size": 8388608, "part_count": 32, "last_part": [32, 260046848, 2097152] },
+  "parts_request_batches": [
+    { "name": "under_limit", "missing": [2, 3], "max_per_request": 100, "batches": [[2, 3]] },
+    {
+      "name": "over_limit",
+      "missing_range": [1, 205],
+      "max_per_request": 100,
+      "batch_ranges": [[1, 100], [101, 200], [201, 205]]
+    }
+  ],
+  "resume": [
+    {
+      "name": "server_verified_first_part",
+      "part_count": 3,
+      "server_verified": [{ "part_number": 1, "etag": "\"s1\"" }],
+      "local_receipts": [],
+      "missing": [2, 3],
+      "complete_after_sending": [
+        { "part_number": 1, "etag": "\"s1\"" },
+        { "part_number": 2, "etag": "\"new2\"" },
+        { "part_number": 3, "etag": "\"new3\"" }
+      ]
+    },
+    {
+      "name": "server_etag_wins_over_local",
+      "part_count": 2,
+      "server_verified": [{ "part_number": 2, "etag": "\"server2\"" }],
+      "local_receipts": [{ "part_number": 2, "etag": "\"local2\"" }, { "part_number": 1, "etag": "\"local1\"" }],
+      "missing": [],
+      "complete_after_sending": [
+        { "part_number": 1, "etag": "\"local1\"" },
+        { "part_number": 2, "etag": "\"server2\"" }
+      ]
+    },
+    {
+      "name": "nothing_uploaded",
+      "part_count": 2,
+      "server_verified": [],
+      "local_receipts": [],
+      "missing": [1, 2],
+      "complete_after_sending": [
+        { "part_number": 1, "etag": "\"new1\"" },
+        { "part_number": 2, "etag": "\"new2\"" }
+      ]
+    }
+  ],
+  "next_step": [
+    { "name": "committed_reuses_asset", "server_state": "committed", "action": "mark_committed" },
+    { "name": "verifying_waits", "server_state": "verifying", "action": "await_server" },
+    { "name": "created_sends_parts", "server_state": "created", "action": "send_missing_parts" },
+    { "name": "uploading_sends_parts", "server_state": "uploading", "action": "send_missing_parts" },
+    { "name": "paused_needs_original_account", "server_state": "paused", "action": "lock_until_original_account" },
+    { "name": "rejected_is_terminal", "server_state": "rejected", "action": "surface_rejection" },
+    { "name": "expired_restarts", "server_state": "expired", "action": "restart_with_new_client_capture_id" },
+    { "name": "aborted_restarts", "server_state": "aborted", "action": "restart_with_new_client_capture_id" }
+  ]
+}
