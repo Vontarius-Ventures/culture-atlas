@@ -3,8 +3,8 @@ import type { CapabilityEntry } from '../capabilities';
 import { ModelProfileSchema, type ModelProfile } from '../concentrate/profiles';
 import { ProviderError } from '../errors';
 import { attemptSignal, backoffDelay, sleep, type Sleep } from '../http/resilience';
-import type { ModelSpendLedger } from './budget';
-import { strictJsonSchema, validateStrictShape } from './schema';
+import type { FinishDetails, ModelSpendLedger, RoleCircuit } from './budget';
+import { structuredOutputContract } from './schema';
 import type {
   GatewayCall,
   GatewayOptions,
@@ -13,8 +13,43 @@ import type {
   StructuredTransport,
 } from './types';
 
+/**
+ * Readiness ladder (CONCENTRATE.md "Budget and readiness"). All values are
+ * computed from local configuration, qualification artifacts and durable
+ * ledger state. Nothing here sends a model request.
+ *  configured          key + profile present, privacy assertions hold
+ *  catalog-compatible  profile matches a stored catalog snapshot entry
+ *  qualified           a passing qualification artifact matches this profile
+ *  available           qualified and observed a validated response
+ *  degraded            temporarily throttled (429 pause) or open spend pause pending expiry
+ *  unavailable         missing config, open role circuit, credit/cost pause
+ */
 export type GatewayReadiness =
   'configured' | 'catalog-compatible' | 'qualified' | 'available' | 'degraded' | 'unavailable';
+export interface ReadinessDetail {
+  state: GatewayReadiness;
+  reason?:
+    | 'not_configured'
+    | 'not_qualified'
+    | 'credits'
+    | 'cost_overrun'
+    | 'rate_limited'
+    | RoleCircuit['reason'];
+  retryAfterMs?: number;
+}
+/** Operator alert: safe codes only, never payloads, keys or error bodies. */
+export interface GatewayAlert {
+  code:
+    | 'auth_failed'
+    | 'credits_exhausted'
+    | 'unknown_model'
+    | 'policy_route_unavailable'
+    | 'route_mismatch'
+    | 'rate_limited';
+  role: ModelProfile['role'];
+  status?: number;
+  requestId?: string;
+}
 
 export class StructuredResponseRunner {
   readonly profile: ModelProfile;
@@ -23,12 +58,15 @@ export class StructuredResponseRunner {
   constructor(
     profile: ModelProfile,
     private readonly transport: StructuredTransport,
-    private readonly ledger: ModelSpendLedger,
+    readonly ledger: ModelSpendLedger,
     private readonly defaults: {
       identity?: ModelIdentity;
       sleep?: Sleep;
       now?: () => number;
       allowTestStore?: boolean;
+      /** Readiness below 'qualified' when no passing artifact matches the profile. */
+      qualification?: 'configured' | 'catalog-compatible' | 'qualified';
+      onAlert?: (alert: GatewayAlert) => void;
     } = {},
   ) {
     this.profile = ModelProfileSchema.parse(profile);
@@ -47,10 +85,31 @@ export class StructuredResponseRunner {
     };
   }
   /** Read-only local evidence and durable circuit state. Never sends a model probe. */
+  async readinessDetail(): Promise<ReadinessDetail> {
+    const circuit = await this.ledger.circuit(this.profile.role);
+    if (this.disabled || circuit)
+      return { state: 'unavailable', reason: circuit?.reason ?? 'auth' };
+    const pause = await this.ledger.status();
+    if (pause?.reason === 'rate_limited')
+      return {
+        state: 'degraded',
+        reason: 'rate_limited',
+        retryAfterMs: pause.until === null ? undefined : Math.max(0, pause.until - this.now()),
+      };
+    if (pause) return { state: 'unavailable', reason: pause.reason };
+    const qualification = this.defaults.qualification ?? 'qualified';
+    if (qualification !== 'qualified') return { state: qualification, reason: 'not_qualified' };
+    return { state: this.observed ? 'available' : 'qualified' };
+  }
   async readiness(): Promise<GatewayReadiness> {
-    if (this.disabled) return 'unavailable';
-    if (await this.ledger.status()) return 'degraded';
-    return this.observed ? 'available' : 'qualified';
+    return (await this.readinessDetail()).state;
+  }
+  private alert(alert: Omit<GatewayAlert, 'role'>): void {
+    try {
+      this.defaults.onAlert?.({ ...alert, role: this.profile.role });
+    } catch {
+      // Alert sinks never affect inference control flow.
+    }
   }
   async run<T extends z.ZodType>(
     request: GatewayCall<T>,
@@ -62,6 +121,7 @@ export class StructuredResponseRunner {
     usage?: { inputTokens?: number; outputTokens?: number };
     attemptId: string;
     responseId: string | null;
+    requestId: string | null;
     actualProvider: string | null;
   }> {
     const profile = this.profile;
@@ -78,7 +138,8 @@ export class StructuredResponseRunner {
         'unavailable',
         'Model role disabled pending operator review',
       );
-    const jsonSchema = strictJsonSchema(request.schema);
+    const contract = structuredOutputContract(request.schema);
+    const jsonSchema = contract.jsonSchema;
     if (!/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(request.schemaName))
       throw new ProviderError('model-gateway', 'bad_request', 'Invalid schema name');
     const textBytes =
@@ -123,6 +184,7 @@ export class StructuredResponseRunner {
     const timeout = Math.min(options.timeoutMs ?? profile.timeoutMs, profile.timeoutMs);
     // Total role deadline, including retries. Never multiply the per-role deadline.
     const deadline = started + timeout;
+    // Atlas is the single retry owner (gateway fallbacks are disabled): at most one retry.
     const retries = Math.min(1, Math.max(0, options.maxRetries ?? 1));
     for (let attempt = 0; ; attempt++) {
       if (options.signal?.aborted)
@@ -193,15 +255,17 @@ export class StructuredResponseRunner {
           (response.actualProvider !== null && response.actualProvider !== profile.provider)
         ) {
           this.disabled = true;
-          throw new ProviderError(
-            'model-gateway',
-            'invalid_response',
-            'Returned route does not match qualified profile',
+          throw Object.assign(
+            new ProviderError(
+              'model-gateway',
+              'invalid_response',
+              'Returned route does not match qualified profile',
+            ),
+            { routeMismatch: true },
           );
         }
         try {
-          const candidate: unknown = JSON.parse(response.text);
-          validateStrictShape(candidate, jsonSchema);
+          const candidate = contract.decode(JSON.parse(response.text));
           result = request.schema.parse(candidate);
           request.validate?.(result);
         } catch {
@@ -222,26 +286,51 @@ export class StructuredResponseRunner {
                 'Model request failed',
               );
         outcome = failure.kind;
-        if (failure.kind === 'auth' || failure.kind === 'not_found' || failure.status === 422)
-          this.disabled = true;
       } finally {
         if (onAbort) sig.signal.removeEventListener('abort', onAbort);
         sig.dispose();
       }
+      const details: FinishDetails = { requestId: failure?.requestId ?? null };
+      if (failure) {
+        if (failure.kind === 'auth') {
+          details.circuit = { role: profile.role, reason: 'auth' };
+          this.alert({ code: 'auth_failed', status: failure.status, requestId: failure.requestId });
+        } else if (failure.kind === 'not_found') {
+          details.circuit = { role: profile.role, reason: 'unknown_model' };
+          this.alert({
+            code: 'unknown_model',
+            status: failure.status,
+            requestId: failure.requestId,
+          });
+        } else if (failure.status === 422) {
+          // No policy-eligible (ZDR) route: never downgrade privacy.
+          details.circuit = { role: profile.role, reason: 'policy' };
+          this.alert({
+            code: 'policy_route_unavailable',
+            status: 422,
+            requestId: failure.requestId,
+          });
+        } else if ((failure as { routeMismatch?: boolean }).routeMismatch) {
+          details.circuit = { role: profile.role, reason: 'route_mismatch' };
+          this.alert({ code: 'route_mismatch' });
+        } else if (failure.status === 402) {
+          details.pause = { reason: 'credits', until: null };
+          this.alert({ code: 'credits_exhausted', status: 402, requestId: failure.requestId });
+        } else if (failure.kind === 'rate_limited') {
+          details.pause = {
+            reason: 'rate_limited',
+            until: this.now() + Math.max(failure.retryAfterMs ?? 30_000, 1000),
+          };
+          this.alert({
+            code: 'rate_limited',
+            status: failure.status,
+            requestId: failure.requestId,
+          });
+        }
+        if (details.circuit) this.disabled = true;
+      }
       // Persist completion/circuit BEFORE returning or retrying. Storage failure fails closed.
-      await this.ledger.finish(
-        attemptId,
-        outcome,
-        response,
-        failure?.status === 402
-          ? { reason: 'credits', until: null }
-          : failure?.kind === 'rate_limited'
-            ? {
-                reason: 'rate_limited',
-                until: this.now() + Math.max(failure.retryAfterMs ?? 30_000, 1000),
-              }
-            : undefined,
-      );
+      await this.ledger.finish(attemptId, outcome, response, details);
       options.onAttempt?.({
         provider: 'model-gateway',
         operation: profile.role,
@@ -262,12 +351,13 @@ export class StructuredResponseRunner {
           usage: response!.usage ?? undefined,
           attemptId,
           responseId: response!.id,
+          requestId: response!.requestId ?? null,
           actualProvider: response!.actualProvider,
         };
       }
       // No timeout retry: uncertain upstream billing and an exhausted deadline.
       // 429 is requeued by the scheduler, not retried in-process. Only a bounded
-      // transient provider failure may retry, with a NEW reservation.
+      // transient provider failure (424/5xx/network) may retry, with a NEW reservation.
       if (failure.kind !== 'server' || attempt >= retries) throw failure;
       const wait = Math.max(backoffDelay(attempt), failure.retryAfterMs ?? 0);
       if (this.now() + wait >= deadline) throw failure;

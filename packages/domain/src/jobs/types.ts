@@ -22,6 +22,11 @@ export const JobPayloads = {
       .optional(),
     /** Optional targeted retry: only these sections are recomputed. */
     sections: z.array(z.string()).optional(),
+    /**
+     * v2 media analysis whose validated vision reading (Concentrate, possibly
+     * aggregated over video frames) replaces the observe stage's VLM call.
+     */
+    media_analysis_id: Uuid.optional(),
   }),
   discover_related: z.object({
     discovery_job_id: Uuid,

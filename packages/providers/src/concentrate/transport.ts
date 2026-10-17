@@ -33,8 +33,8 @@ const Envelope = z
       .default([]),
     usage: z
       .object({
-        input_tokens: z.number().int().nonnegative(),
-        output_tokens: z.number().int().nonnegative(),
+        input_tokens: z.number().int().nonnegative().nullable().optional(),
+        output_tokens: z.number().int().nonnegative().nullable().optional(),
       })
       .loose()
       .nullable()
@@ -42,7 +42,17 @@ const Envelope = z
   })
   .loose();
 
-export function parseResponse(value: unknown): GatewayResponse {
+/** Documented request-correlation headers, read only when present. */
+const REQUEST_ID_HEADERS = ['x-request-id', 'request-id'];
+function requestIdFrom(headers: Headers): string | null {
+  for (const name of REQUEST_ID_HEADERS) {
+    const value = headers.get(name);
+    if (value && /^[\w.:-]{1,200}$/.test(value)) return value;
+  }
+  return null;
+}
+
+export function parseResponse(value: unknown, requestId: string | null = null): GatewayResponse {
   const parsed = Envelope.safeParse(value);
   if (!parsed.success)
     throw new ProviderError('concentrate', 'invalid_response', 'Invalid Responses envelope');
@@ -52,12 +62,17 @@ export function parseResponse(value: unknown): GatewayResponse {
   const refusal =
     response.output.some((item) => item.type === 'refusal') ||
     blocks.some((block) => block.type === 'refusal');
+  // A nonstreaming call that is still queued/in progress is not a completed result.
   const incomplete =
     response.incomplete_details != null ||
     response.status === 'incomplete' ||
+    response.status === 'in_progress' ||
+    response.status === 'queued' ||
     messages.some((item) => item.status === 'incomplete');
+  const usage = response.usage;
   return {
     id: response.id ?? null,
+    requestId,
     model: response.model ?? null,
     // No documented upstream-provider response field. Never infer execution from requested route.
     actualProvider: null,
@@ -66,16 +81,18 @@ export function parseResponse(value: unknown): GatewayResponse {
       .map((block) => block.text ?? '')
       .join(''),
     outcome:
-      response.error != null || response.status === 'failed'
+      response.error != null || response.status === 'failed' || response.status === 'cancelled'
         ? 'error'
         : refusal
           ? 'refusal'
           : incomplete
             ? 'incomplete'
             : 'complete',
-    usage: response.usage
-      ? { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens }
-      : null,
+    // Partial or missing counts are unknown usage, never zero.
+    usage:
+      usage && typeof usage.input_tokens === 'number' && typeof usage.output_tokens === 'number'
+        ? { inputTokens: usage.input_tokens, outputTokens: usage.output_tokens }
+        : null,
   };
 }
 
@@ -106,7 +123,12 @@ export function buildResponsesRequest(request: GatewayRequest): Record<string, u
   };
 }
 
-function errorKind(status: number): ProviderErrorKind {
+/**
+ * Vendor status -> Atlas kind (CONCENTRATE.md failure table). The runner owns
+ * policy: 401/403 and 404/422 open a durable role circuit, 402 pauses all AI,
+ * 429 pauses dispatch until Retry-After, 424/5xx allow one bounded retry.
+ */
+export function errorKind(status: number): ProviderErrorKind {
   if (status === 401 || status === 403) return 'auth';
   if (status === 402) return 'budget_exhausted';
   if (status === 404) return 'not_found';
@@ -137,7 +159,10 @@ export function createConcentrateTransport(config: {
       body: JSON.stringify(buildResponsesRequest(request)),
       signal: options.signal,
     });
-    if (!response.ok)
+    const requestId = requestIdFrom(response.headers);
+    if (!response.ok) {
+      // Never read the error body: it may echo prompts, media or credentials.
+      await response.body?.cancel().catch(() => undefined);
       throw new ProviderError(
         'concentrate',
         errorKind(response.status),
@@ -145,8 +170,10 @@ export function createConcentrateTransport(config: {
         {
           status: response.status,
           retryAfterMs: parseRetryAfter(response.headers.get('retry-after')),
+          requestId: requestId ?? undefined,
         },
       );
+    }
     // Bound unexpected response bodies; never retain raw payload in errors or logs.
     if (!response.body)
       throw new ProviderError('concentrate', 'invalid_response', 'Empty Responses envelope');
@@ -168,7 +195,7 @@ export function createConcentrateTransport(config: {
         }
         chunks.push(chunk.value);
       }
-      return parseResponse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      return parseResponse(JSON.parse(Buffer.concat(chunks).toString('utf8')), requestId);
     } catch (error) {
       if (error instanceof ProviderError) throw error;
       if (options.signal.aborted) throw error;

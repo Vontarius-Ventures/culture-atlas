@@ -123,7 +123,6 @@ importers:
       '@culture-atlas/providers':
         specifier: workspace:*
         version: link:../../packages/providers
-    devDependencies:
       sharp:
         specifier: 0.35.5
         version: 0.35.5(@types/node@22.20.4)

@@ -23,6 +23,11 @@ export class MediaAnalysis {
       reused,
       capture_id: row.capture_id ?? null,
       result_url: row.capture_id ? `/captures/${row.capture_id}` : null,
+      // Additive v2 fields: why queued work waits (AI paused / throttled), a safe
+      // failure code, and the frame-cited vision summary (no model certainty).
+      waiting_reason: (row.waiting_reason as string | null | undefined) ?? null,
+      error_code: (row.error_code as string | null | undefined) ?? null,
+      result: (row.result as Record<string, unknown> | null | undefined) ?? null,
     };
   }
   async request(id: string, raw: unknown, key: string) {
@@ -30,6 +35,12 @@ export class MediaAnalysis {
       ctx = this.ctx;
     await assertCaptureAuthority(ctx, ctx.db);
     await authorizeCaptureAgent(ctx, ctx.db, 'media.analyze', id);
+    // Unconfigured/unqualified/circuit-open AI is refused before any allowance is
+    // used. A credit or rate pause still accepts and queues: captures never wait on AI.
+    if (ctx.analysisAvailability && (await ctx.analysisAvailability(input.mode)) === 'unavailable')
+      throw new AppError('service_unavailable', {
+        message: 'Exploration is temporarily unavailable.',
+      });
     return captureMutation(ctx, `analyze:${id}`, key, input, async (tx) => {
       const { rows } = await tx.query(
         `SELECT * FROM media_assets WHERE account_id=$1 AND id=$2 AND deleted_at IS NULL FOR UPDATE`,
@@ -152,7 +163,8 @@ export class MediaAnalysis {
     if (!rows[0]) throw new AppError('not_found');
     return this.projection(rows[0], true);
   }
-  private async workerRow(tx: Db, lease: CaptureLease) {
+  /** Locks account + request + live media and re-checks lease, owner, generation and agent fence. */
+  async workerRow(tx: Db, lease: CaptureLease) {
     if (lease.kind !== 'analyze_media' || !lease.analysis_id) throw new AppError('invalid_input');
     await tx.query(`SELECT id FROM accounts WHERE id=$1 FOR UPDATE`, [lease.account_id]);
     const { rows } = await tx.query(
@@ -180,6 +192,17 @@ export class MediaAnalysis {
         [lease.account_id, lease.asset_id, lease.generation, selected.map((f) => f.id)],
       );
       if (frames.rows.length !== selected.length) throw new AppError('conflict');
+      // Photos are analyzed from their normalized derivative, never the original.
+      const normalized =
+        row.kind === 'photo'
+          ? (
+              await tx.query(
+                `SELECT id,object_key,width,height FROM media_derivatives WHERE account_id=$1 AND asset_id=$2
+                 AND generation=$3 AND kind='normalized' ORDER BY created_at DESC,id LIMIT 1`,
+                [lease.account_id, lease.asset_id, lease.generation],
+              )
+            ).rows[0]
+          : undefined;
       await tx.query(
         `UPDATE media_analysis_requests SET state='running' WHERE account_id=$1 AND id=$2`,
         [lease.account_id, lease.analysis_id],
@@ -199,6 +222,14 @@ export class MediaAnalysis {
         mode: row.mode,
         focus: row.focus,
         originalKey: row.original_key,
+        normalized: normalized
+          ? {
+              id: normalized.id as string,
+              objectKey: normalized.object_key as string,
+              width: normalized.width as number,
+              height: normalized.height as number,
+            }
+          : null,
         frames: selected.map((f) => ({
           ...f,
           objectKey: frames.rows.find((d) => d.id === f.id)!.object_key,

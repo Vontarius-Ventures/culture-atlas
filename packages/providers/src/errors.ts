@@ -22,12 +22,14 @@ export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly status?: number;
   readonly retryAfterMs?: number;
+  /** Gateway request id for operator correlation (never a secret). */
+  readonly requestId?: string;
 
   constructor(
     provider: string,
     kind: ProviderErrorKind,
     message: string,
-    options: { status?: number; retryAfterMs?: number; cause?: unknown } = {},
+    options: { status?: number; retryAfterMs?: number; cause?: unknown; requestId?: string } = {},
   ) {
     super(message, { cause: options.cause });
     this.name = 'ProviderError';
@@ -35,6 +37,7 @@ export class ProviderError extends Error {
     this.kind = kind;
     this.status = options.status;
     this.retryAfterMs = options.retryAfterMs;
+    this.requestId = options.requestId;
   }
 
   /** Transient errors are retried with backoff (bounded per stage). */

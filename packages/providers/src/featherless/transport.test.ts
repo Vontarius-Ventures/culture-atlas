@@ -37,8 +37,8 @@ const chat = (content: string, finish = 'stop') => ({
 const image = { bytes: new Uint8Array([0xff, 0xd8, 0xff]), mediaType: 'image/jpeg' as const };
 
 describe('featherless provider', () => {
-  it('is the default LLM provider and reports unavailable without FEATHERLESS_API_KEY', async () => {
-    const config = loadProviderConfig({});
+  it('is an explicit rollback provider and reports unavailable without FEATHERLESS_API_KEY', async () => {
+    const config = loadProviderConfig({ LLM_PROVIDER: 'featherless' });
     expect(config.LLM_PROVIDER).toBe('featherless');
     const vlm = createVlm(config);
     expect(vlm.capability()).toMatchObject({ status: 'unavailable', reason: 'not_configured' });
@@ -47,7 +47,7 @@ describe('featherless provider', () => {
   });
 
   it('is unverified with a key until the first successful call', () => {
-    const vlm = createVlm(loadProviderConfig({ FEATHERLESS_API_KEY: 'fk' }));
+    const vlm = createVlm(loadProviderConfig({ LLM_PROVIDER: 'featherless', FEATHERLESS_API_KEY: 'fk' }));
     expect(vlm.id).toBe('vlm:featherless:google/gemma-3-27b-it');
     expect(vlm.capability()).toMatchObject({ status: 'unverified', provider: 'featherless:google/gemma-3-27b-it' });
   });

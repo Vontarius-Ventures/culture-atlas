@@ -98,6 +98,14 @@ export interface CaptureV2Context {
   /** Compatibility adapter retains the existing capture/collection/taste deletion rules. */
   deleteAnalysisCapture?: (tx: Db, accountId: string, captureId: string) => Promise<void>;
   readLegacyObject?: MultipartStorage['read'];
+  /**
+   * Read-only model readiness for an analysis mode (no paid probe). 'waiting'
+   * (credit/rate pause) still queues; 'unavailable' refuses before any allowance
+   * is consumed. Absent means no gate (the worker classifies instead).
+   */
+  analysisAvailability?: (
+    mode: 'photo' | 'selected_frame' | 'sampled_video',
+  ) => Promise<'available' | 'waiting' | 'unavailable'>;
 }
 export interface AuthorityEnded {
   accountId: string;

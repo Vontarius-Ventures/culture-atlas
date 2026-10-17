@@ -84,7 +84,8 @@ describe('AI-01 structured runner, fake transports only', () => {
     });
     const { runner, store } = setup(transport);
     await expect(runner.run(request)).rejects.toMatchObject({ kind });
-    await expect(runner.readiness()).resolves.toBe('degraded');
+    // Credits exhausted is unavailable until an operator resumes; 429 is a temporary degradation.
+    await expect(runner.readiness()).resolves.toBe(status === 402 ? 'unavailable' : 'degraded');
     await expect(
       runner.run(request, { modelIdentity: { ...identity, attemptKey: 'next' } }),
     ).rejects.toMatchObject({ kind });

@@ -7,7 +7,7 @@ import {
   type QlooResponse,
   type QlooTag,
   type RequestBudget,
-  type VlmAnalysis,
+  VlmAnalysis,
   type VlmCandidate,
 } from '@culture-atlas/providers';
 import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionStatus, type SectionStatus } from '../enums';
@@ -358,6 +358,7 @@ export class CaptureCompiler {
 
   private async observe(rejectedNames: string[], confirmed: { name: string } | null): Promise<ObserveOutput> {
     const { ctx } = this;
+    if (ctx.payload.media_analysis_id) return this.observeFromMedia(ctx.payload.media_analysis_id, rejectedNames);
     if (!this.capture.private_object_key) throw new AppError('internal', { message: 'Capture image is missing.', retryable: false });
     const object = await ctx.providers.storage.get(this.capture.private_object_key);
     if (!object) {
@@ -424,6 +425,46 @@ export class CaptureCompiler {
       });
       throw err;
     }
+  }
+
+  /**
+   * v2 media analysis already produced a validated reading for this capture
+   * (owner, capture link and media liveness re-checked here). No second model call.
+   */
+  private async observeFromMedia(mediaAnalysisId: string, rejectedNames: string[]): Promise<ObserveOutput> {
+    const { rows } = await this.ctx.db.query<{ observation: unknown; observation_model: string | null }>(
+      `SELECT a.observation, a.observation_model FROM media_analysis_requests a
+         JOIN media_assets m ON m.account_id = a.account_id AND m.id = a.asset_id AND m.deleted_at IS NULL
+        WHERE a.id = $1 AND a.capture_id = $2 AND a.account_id = $3 AND a.observation IS NOT NULL`,
+      [mediaAnalysisId, this.capture.id, this.capture.owner_account_id],
+    );
+    const row = rows[0];
+    if (!row) {
+      await this.ctx.ensureActive();
+      throw new AppError('not_found', { message: 'This media is no longer available.', retryable: false });
+    }
+    const analysis = VlmAnalysis.parse(row.observation);
+    const rejected = new Set(rejectedNames.map(normalizeName));
+    analysis.candidates = analysis.candidates.filter((c) => !rejected.has(normalizeName(c.name)));
+    const model = row.observation_model ?? 'unknown';
+    await recordProviderQuery(this.ctx.db, {
+      parent: { analysisId: this.analysisId },
+      provider: 'vlm',
+      operation: 'analyze_image',
+      request: { source: 'media_analysis', media_analysis_id: mediaAnalysisId },
+      results: {
+        model,
+        observations: analysis.observations.length,
+        candidates: analysis.candidates.map((c) => ({ id: c.id, name: c.name, type: c.type, relation: c.relation, certainty: c.certainty })),
+        quality: analysis.quality,
+        uncertainty: analysis.uncertainty.overall,
+      },
+      status: 'ok',
+      durationMs: 0,
+      queryContext: { stage: 'observe', source: 'media_analysis' },
+      traceId: this.traceId,
+    });
+    return { analysis, model };
   }
 
   /**

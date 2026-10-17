@@ -22,6 +22,7 @@ export interface ProviderRegistry {
   readonly research: ResearchProvider;
   readonly qloo: QlooProvider;
   readonly storage: ObjectStorage;
+  /** Present only with LLM_PROVIDER=concentrate (the default). */
   readonly modelGateway?: ReturnType<typeof createModelGateway>;
   capabilities(): CapabilityMatrix;
 }
@@ -36,6 +37,8 @@ export function createProviderRegistry(
   gatewayOptions: ModelGatewayOptions = {},
 ): ProviderRegistry {
   const config = loadProviderConfig(env);
+  // No cross-gateway fallback: with Concentrate selected and a role unavailable,
+  // that role is unavailable. Featherless/Anthropic are explicit rollback only.
   const modelGateway =
     config.LLM_PROVIDER === 'concentrate' ? createModelGateway(config, gatewayOptions) : undefined;
   const vlm = overrides.vlm ?? modelGateway?.vlm ?? createVlm(config);
@@ -86,9 +89,20 @@ export function createProviderRegistry(
 }
 
 let shared: ProviderRegistry | undefined;
+let runtimeGatewayOptions: ModelGatewayOptions = {};
+
+/**
+ * Process startup hook: the domain layer registers its pool-level database
+ * getter (durable spend ledger) and the worker its alert sink before the
+ * shared registry is built. Without it Concentrate roles stay unavailable.
+ */
+export function configureProviderRuntime(options: { gateway?: ModelGatewayOptions }): void {
+  runtimeGatewayOptions = { ...runtimeGatewayOptions, ...options.gateway };
+  shared = undefined;
+}
 
 export function getProviders(): ProviderRegistry {
-  shared ??= createProviderRegistry();
+  shared ??= createProviderRegistry(process.env, {}, runtimeGatewayOptions);
   return shared;
 }
 
