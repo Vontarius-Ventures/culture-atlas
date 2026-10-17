@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { activityLabel, consentSummary, dayTime, expiresIn, lastUsed } from './agents-sharing-format';
+import { activityLabel, connectionScopeLine, consentSummary, dayTime, expiresIn, lastUsed } from './agents-sharing-format';
 import { ConnectAgentView, DEFAULT_AGENT_SCOPES } from './AgentPlatformView';
 
 vi.mock('@/lib/client/session', () => ({ useSession: () => ({ isAccount: true, session: { principal: { kind: 'account' } } }) }));
@@ -9,6 +9,20 @@ vi.mock('@/lib/client/api', () => ({
   newIdempotencyKey: () => 'key',
 }));
 afterEach(cleanup);
+
+describe('connection card capability line (screen 10)', () => {
+  it('lists capabilities in consent order and leaves collection reading to the Collections line', () => {
+    expect(connectionScopeLine(['collections:read', 'preferences:read', 'setup:read'], 'selected_collections')).toBe(
+      'View device setup · Read preferences',
+    );
+    expect(connectionScopeLine(['media:read', 'collections:read', 'setup:read'], 'none')).toBe(
+      'View device setup · View collections · View photos and videos',
+    );
+    expect(connectionScopeLine(['devices:command', 'preferences:write', 'preferences:read'], 'all')).toBe(
+      'Read preferences · Change preferences · Request capture',
+    );
+  });
+});
 
 describe('agent consent interface (screen 11)', () => {
   it('starts with setup/preferences only, no library, media or capture control', () => {

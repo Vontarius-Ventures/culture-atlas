@@ -18,7 +18,8 @@
 }
 
 .as-card {
-  margin: 40px 0;
+  /* The mockup gallery's 40 px gap between sections is not repeated under the app header. */
+  margin: 0 0 40px;
   padding: 24px;
   background: var(--as-surface);
   border: 1px solid var(--line);

@@ -144,10 +144,10 @@
 .filter-row {
   display: flex;
   gap: var(--space-2);
-  margin: 0 0 var(--space-6);
+  margin: 0 0 var(--space-3);
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 3px;
+  padding: 0 3px;
   margin-left: -3px;
 }
 
@@ -155,26 +155,53 @@
   display: none;
 }
 
+/*
+ * Pills look 36 px tall, as in the mockups, inside a 44 px hit target: the
+ * visible surface is a pseudo-element, so the button keeps its full height.
+ */
 .pill {
+  position: relative;
+  isolation: isolate;
   flex: none;
   min-height: var(--control-min-height);
-  padding: 0 var(--space-6);
+  padding: 0 18px;
   border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--quiet);
+  border: 0;
+  background: transparent;
   color: var(--ink);
-  font-size: 16px;
+  font-size: 15px;
   cursor: pointer;
+}
+
+.pill::before {
+  content: '';
+  position: absolute;
+  inset: 4px 0;
+  z-index: -1;
+  border-radius: 999px;
+  background: var(--quiet);
   transition: background-color var(--transition-fast) ease;
 }
 
-.pill:hover {
+.pill:hover::before {
   background: var(--line);
 }
 
 .pill[aria-pressed='true'] {
-  background: var(--accent);
   color: var(--on-accent);
+}
+
+.pill[aria-pressed='true']::before {
+  background: var(--accent);
+}
+
+.pill:focus-visible {
+  outline: none;
+}
+
+.pill:focus-visible::before {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
 }
 
 @media (max-width: 767px) {
@@ -182,7 +209,9 @@
     margin-right: calc(-1 * var(--gutter));
     padding-right: var(--gutter);
   }
-  .pill {
+  /* Mockup 04: the pills share the row's width when they fit; otherwise the row scrolls. */
+  .filter-row .pill {
+    flex: 1 0 auto;
     padding: 0 var(--space-4);
   }
 }
@@ -195,7 +224,8 @@
   padding: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-8) var(--space-6);
+  /* Mockups 01 and 02: narrow 16 px gutters between images. */
+  gap: 20px var(--space-4);
   align-items: start;
 }
 
@@ -228,7 +258,7 @@
   .grid--three,
   .grid--related {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-6) var(--space-3);
+    gap: var(--space-4) var(--space-3);
   }
 }
 
@@ -269,7 +299,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-2);
-  margin-top: var(--space-3);
+  margin-top: 10px;
 }
 
 .card__title {
@@ -547,6 +577,17 @@
   gap: var(--space-8) var(--space-6);
 }
 
+/* Mockup 07: the index opens with generous space above the heading. */
+.page--collections > .page-head {
+  margin-top: var(--space-16);
+}
+
+@media (max-width: 767px) {
+  .page--collections > .page-head {
+    margin-top: var(--space-4);
+  }
+}
+
 .cover {
   position: relative;
 }
@@ -556,7 +597,8 @@
   gap: 3px;
   border-radius: var(--radius-image);
   overflow: hidden;
-  aspect-ratio: 3 / 4;
+  /* Mockup 07 covers are a little taller than 3:4. */
+  aspect-ratio: 8 / 11;
   background: var(--quiet);
 }
 
@@ -1654,15 +1696,17 @@
 
 .item-detail__layout {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1fr);
+  /* Mockup 06: two equal columns, large image left. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-12);
   align-items: start;
-  margin-top: var(--space-4);
+  margin-top: var(--space-2);
 }
 
 .item-detail__media {
   position: relative;
-  aspect-ratio: 4 / 5;
+  /* Between square and 4:5 (guide), close to the mockup's framing. */
+  aspect-ratio: 6 / 7;
   max-height: calc(100vh - var(--header-height) - 96px);
   width: 100%;
   border-radius: var(--radius-image);
@@ -1698,12 +1742,28 @@
 }
 
 .item-detail__actions .button--primary {
-  min-width: 150px;
-  min-height: 52px;
+  min-width: 140px;
+  min-height: 48px;
+}
+
+.item-detail__actions .example-label {
+  align-self: center;
+}
+
+.item-detail .disclosures {
+  margin-top: var(--space-2);
+}
+
+@media (min-width: 768px) {
+  /* Mockup 06: roomy disclosure rows with the chevron set in from the divider. */
+  .item-detail .disclosure__button {
+    min-height: 76px;
+    padding: 0 var(--space-4);
+  }
 }
 
 .related {
-  margin-top: var(--space-8);
+  margin-top: var(--space-4);
 }
 
 .related__more {
@@ -1919,8 +1979,9 @@
 
 .plan__layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
-  gap: var(--space-8);
+  /* Mockup 03: the film takes the larger share; food and music sit beside it. */
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 28px;
   align-items: start;
 }
 
@@ -2431,4 +2492,27 @@ body:has(.dialog-scrim) .toast {
 .inspired__img--text.text-art--style,
 .inspired__img--text.text-art--brand {
   background: #ddd6c6;
+}
+
+/* Mockup 03: the film panel starts soon after the summary line. */
+.plan > .page-head {
+  margin-bottom: var(--space-6);
+}
+
+/* Mockups 02 and 03: the page heading follows the Back link closely. */
+.back-link + .page-head {
+  margin-top: var(--space-1);
+  margin-bottom: var(--space-6);
+}
+
+@media (max-width: 767px) {
+  /* The plan's only header action is the More menu: keep it beside the heading. */
+  .plan > .page-head {
+    flex-direction: row;
+  }
+}
+
+/* Keep the Example result line close under a title that has an item menu. */
+.card__menu {
+  margin-bottom: -12px;
 }
