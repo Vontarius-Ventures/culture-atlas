@@ -19,6 +19,8 @@ export interface CaptureLimits {
   captureVideoMaxDurationMs: number;
   accountQuotaBytes: number;
   derivativeAllowanceBytes: number;
+  /** Explicit user-requested analyses per account per UTC day. */
+  analysisDailyLimit: number;
 }
 export const DEFAULT_CAPTURE_LIMITS: CaptureLimits = {
   photoMaxBytes: 15728640,
@@ -28,6 +30,7 @@ export const DEFAULT_CAPTURE_LIMITS: CaptureLimits = {
   captureVideoMaxDurationMs: 60000,
   accountQuotaBytes: 5368709120,
   derivativeAllowanceBytes: 33554432,
+  analysisDailyLimit: 50,
 };
 export interface VerifiedMedia {
   contentType: string;

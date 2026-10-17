@@ -3,6 +3,7 @@
 # One image for the culture atlas web app and the job worker.
 #   web (default):  next start on $PORT (default 3000)
 #   worker:         docker run <image> pnpm worker
+#   media worker:   docker run <image> pnpm media-worker   (capture v2 verify/prepare/cleanup; uses ffmpeg)
 #   migrations:     docker run <image> pnpm db:migrate   (run before each release)
 #
 # Workspace packages ship TypeScript source; the worker and scripts run under
@@ -25,6 +26,7 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/web/package.json apps/web/
 COPY apps/worker/package.json apps/worker/
+COPY apps/media-worker/package.json apps/media-worker/
 COPY apps/demo-agent/package.json apps/demo-agent/
 COPY apps/sensor-bridge/package.json apps/sensor-bridge/
 COPY packages/domain/package.json packages/domain/
@@ -39,7 +41,13 @@ RUN pnpm --filter @culture-atlas/web build
 
 FROM base AS runtime
 ENV NODE_ENV=production \
-    PORT=3000
+    PORT=3000 \
+    MEDIA_WORKER_SCRATCH_DIR=/tmp/culture-atlas-media
+# ffmpeg/ffprobe for the media worker (Debian bookworm package). The worker only
+# advertises video after its startup self-test passes with this exact build.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /app /app
 USER node
 EXPOSE 3000

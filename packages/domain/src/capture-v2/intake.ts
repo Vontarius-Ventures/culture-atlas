@@ -15,6 +15,7 @@ import {
 import { assertCaptureAuthority, captureMutation } from './policy';
 import { CaptureQueue } from './queue';
 import type { CaptureV2Context } from './types';
+import { MEDIA_RANGE_MAX_BYTES } from '@culture-atlas/providers';
 import { authorizeCaptureAgent } from './agent-fence';
 
 export const CAPTURE_PART_SIZE = 8388608;
@@ -67,6 +68,83 @@ export async function loadCaptureUpload(
 }
 export function mediaObjectPrefix(accountId: string, assetId: string, generation: number): string {
   return `accounts/${accountId}/media/${assetId}/${generation}`;
+}
+/** Parsed `Range: bytes=` request. `suffix` is the `bytes=-N` form. */
+export type ByteRangeRequest = { start: number; end?: number } | { suffix: number };
+export interface MediaContent {
+  body: AsyncIterable<Uint8Array>;
+  contentType: string;
+  /** Bytes in this response body. */
+  byteSize: number;
+  totalSize: number;
+  start: number;
+  end: number;
+  partial: boolean;
+}
+export const MEDIA_RANGE_WINDOW_BYTES = MEDIA_RANGE_MAX_BYTES;
+export class MediaRangeNotSatisfiable extends Error {
+  constructor(readonly totalSize: number) {
+    super('Range not satisfiable');
+  }
+}
+export function parseByteRange(header: string | null): ByteRangeRequest | undefined | 'invalid' {
+  if (!header) return undefined;
+  const parsed = /^bytes=(\d{0,15})-(\d{0,15})$/.exec(header.trim());
+  if (!parsed || (!parsed[1] && !parsed[2])) return 'invalid';
+  if (!parsed[1]) return { suffix: Number(parsed[2]) };
+  return { start: Number(parsed[1]), ...(parsed[2] ? { end: Number(parsed[2]) } : {}) };
+}
+export function resolveByteRange(
+  range: ByteRangeRequest,
+  totalSize: number,
+): { start: number; end: number } {
+  let start: number, end: number;
+  if ('suffix' in range) {
+    if (range.suffix <= 0) throw new MediaRangeNotSatisfiable(totalSize);
+    start = Math.max(0, totalSize - range.suffix);
+    end = totalSize - 1;
+  } else {
+    start = range.start;
+    end = Math.min(range.end ?? totalSize - 1, totalSize - 1);
+  }
+  if (start > end || start >= totalSize) throw new MediaRangeNotSatisfiable(totalSize);
+  return { start, end };
+}
+/** Small legacy photos have no ranged reader; slice a bounded stream. */
+async function sliceObject(
+  object: { body: AsyncIterable<Uint8Array>; contentType: string; byteSize: number },
+  range: ByteRangeRequest | undefined,
+): Promise<MediaContent> {
+  const total = object.byteSize;
+  if (!range)
+    return {
+      body: object.body,
+      contentType: object.contentType,
+      byteSize: total,
+      totalSize: total,
+      start: 0,
+      end: total - 1,
+      partial: false,
+    };
+  const { start, end } = resolveByteRange(range, total);
+  async function* slices() {
+    let offset = 0;
+    for await (const chunk of object.body) {
+      if (offset + chunk.length > start && offset <= end)
+        yield chunk.subarray(Math.max(0, start - offset), Math.min(chunk.length, end - offset + 1));
+      offset += chunk.length;
+      if (offset > end) break;
+    }
+  }
+  return {
+    body: slices(),
+    contentType: object.contentType,
+    byteSize: end - start + 1,
+    totalSize: total,
+    start,
+    end,
+    partial: true,
+  };
 }
 export class MediaIntake {
   readonly queue: CaptureQueue;
@@ -607,6 +685,49 @@ export class MediaIntake {
           : null,
     };
   }
+  /** Failed preparation of a safely stored original can be retried; rejected uploads cannot. */
+  async retryPreparation(id: string, raw: unknown, key: string) {
+    const input = DeleteMediaRequest.parse(raw);
+    await authorizeCaptureAgent(this.ctx, this.ctx.db, 'media.prepare', id);
+    await captureMutation(this.ctx, `retry-preparation:${id}`, key, input, async (tx) => {
+      const { rows } = await tx.query(
+        `SELECT generation,status,original_key FROM media_assets WHERE account_id=$1 AND id=$2
+         AND deleted_at IS NULL FOR UPDATE`,
+        [this.ctx.authority.accountId, id],
+      );
+      const m = rows[0];
+      if (!m) throw new AppError('not_found');
+      if (m.generation !== input.expected_generation) throw new AppError('conflict');
+      if (m.status !== 'failed' || !m.original_key)
+        throw new AppError('conflict', {
+          message: 'Only media that failed preparation after upload can be retried.',
+        });
+      if (!this.ctx.mediaCreationEnabled)
+        throw new AppError('service_unavailable', {
+          message: 'Media preparation is temporarily paused.',
+        });
+      await tx.query(
+        `UPDATE media_assets SET status='processing',error_code=NULL WHERE account_id=$1 AND id=$2`,
+        [this.ctx.authority.accountId, id],
+      );
+      const reset = await tx.query(
+        `UPDATE capture_work SET state='queued',attempts=0,error_code=NULL,lease_token=NULL,
+           lease_expires_at=NULL,available_at=$4,completed_at=NULL
+         WHERE account_id=$1 AND asset_id=$2 AND generation=$3 AND kind='prepare_media'
+           AND analysis_id IS NULL AND state IN ('failed','cancelled')`,
+        [this.ctx.authority.accountId, id, m.generation, this.ctx.now()],
+      );
+      if (!reset.rowCount)
+        await this.queue.enqueue(tx, {
+          accountId: this.ctx.authority.accountId,
+          assetId: id,
+          generation: m.generation,
+          kind: 'prepare_media',
+        });
+      return { id };
+    });
+    return this.detail(id);
+  }
   async updateMedia(id: string, raw: unknown, key: string) {
     const input = UpdateMediaRequest.parse(raw);
     await authorizeCaptureAgent(this.ctx, this.ctx.db, 'media.update', id);
@@ -627,7 +748,11 @@ export class MediaIntake {
     });
     return this.detail(id);
   }
-  async content(id: string, variant: string) {
+  /**
+   * Owner/installation/agent-authorized media gateway. Every call (and every range)
+   * rechecks ownership and tombstones, so deletion takes effect for links already issued.
+   */
+  async content(id: string, variant: string, range?: ByteRangeRequest): Promise<MediaContent> {
     await assertCaptureAuthority(this.ctx, this.ctx.db);
     await authorizeCaptureAgent(
       this.ctx,
@@ -636,18 +761,39 @@ export class MediaIntake {
       id,
     );
     const { rows } = await this.ctx.db.query(
-      `SELECT m.original_key,m.legacy_imported,d.object_key,c.private_object_key AS legacy_private_key FROM media_assets m
+      `SELECT m.original_key,m.legacy_imported,m.byte_size AS original_size,d.object_key,d.byte_size AS derivative_size,
+         c.private_object_key AS legacy_private_key FROM media_assets m
        LEFT JOIN media_derivatives d ON d.account_id=m.account_id AND d.asset_id=m.id AND d.generation=m.generation AND d.id::text=$3
        LEFT JOIN captures c ON c.id=m.legacy_capture_id AND c.owner_account_id=m.account_id AND c.deleted_at IS NULL
        WHERE m.account_id=$1 AND m.id=$2 AND m.deleted_at IS NULL AND m.status IN ('processing','ready','failed')`,
       [this.ctx.authority.accountId, id, variant],
     );
     const legacyKey = variant === 'legacy' ? rows[0]?.legacy_private_key : null;
-    if (legacyKey && this.ctx.readLegacyObject) return this.ctx.readLegacyObject(legacyKey);
+    if (legacyKey && this.ctx.readLegacyObject)
+      return sliceObject(await this.ctx.readLegacyObject(legacyKey), range);
     const objectKey = variant === 'original' ? rows[0]?.original_key : rows[0]?.object_key;
     if (!objectKey) throw new AppError('not_found');
     if (variant === 'original' && rows[0]?.legacy_imported && this.ctx.readLegacyObject)
-      return this.ctx.readLegacyObject(objectKey);
-    return this.ctx.storage.read(objectKey);
+      return sliceObject(await this.ctx.readLegacyObject(objectKey), range);
+    const totalSize = Number(
+      variant === 'original' ? rows[0]!.original_size : rows[0]!.derivative_size,
+    );
+    if (!range || !Number.isSafeInteger(totalSize) || totalSize < 1) {
+      const object = await this.ctx.storage.read(objectKey);
+      return sliceObject(object, range);
+    }
+    const bounds = resolveByteRange(range, totalSize);
+    // Each authorized range is bounded server-side; media elements request the next window.
+    const end = Math.min(bounds.end, bounds.start + MEDIA_RANGE_WINDOW_BYTES - 1);
+    const part = await this.ctx.storage.getRange(objectKey, { start: bounds.start, end });
+    return {
+      body: part.body,
+      contentType: part.contentType,
+      byteSize: part.byteSize,
+      totalSize: part.totalSize,
+      start: part.start,
+      end: part.end,
+      partial: true,
+    };
   }
 }

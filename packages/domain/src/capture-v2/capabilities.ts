@@ -104,7 +104,7 @@ export function evaluateCaptureCapabilities(
       account_quota_bytes: limits.accountQuotaBytes,
       batch_max_files: 20,
       concurrent_transfers: 2,
-      analysis_daily_limit: 50,
+      analysis_daily_limit: limits.analysisDailyLimit,
       video_analysis_max_frames: 8,
     },
     availability: {

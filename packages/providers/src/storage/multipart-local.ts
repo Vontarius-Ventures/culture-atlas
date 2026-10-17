@@ -1,10 +1,15 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile, stat, readdir, unlink, copyFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { MultipartPart, MultipartStorage } from './multipart-types';
+import type {
+  IncompleteUploadInfo,
+  MultipartPart,
+  MultipartStorage,
+  StoredObjectInfo,
+} from './multipart-types';
 import { validateMediaRange, boundedMediaChunks } from './multipart-types';
 import { isSafeObjectKey } from './signing';
 
@@ -218,5 +223,53 @@ export class LocalMultipartStorage implements MultipartStorage {
       }
     };
     await walk(directory);
+  }
+  async *list(prefix: string): AsyncIterable<StoredObjectInfo> {
+    const base = join(this.root, 'objects');
+    const start = this.object(prefix.replace(/\/+$/, ''));
+    const walk = async function* (path: string): AsyncIterable<StoredObjectInfo> {
+      let entries;
+      try {
+        entries = await readdir(path, { withFileTypes: true });
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') return;
+        throw e;
+      }
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        const child = join(path, entry.name);
+        if (entry.isDirectory()) yield* walk(child);
+        else if (entry.isFile() && !entry.name.endsWith('.json')) {
+          const info = await stat(child);
+          yield {
+            key: relative(base, child).split(sep).join('/'),
+            byteSize: info.size,
+            lastModified: info.mtime,
+          };
+        }
+      }
+    };
+    yield* walk(start);
+  }
+  async *listIncompleteUploads(prefix: string): AsyncIterable<IncompleteUploadInfo> {
+    let ids: string[];
+    try {
+      ids = await readdir(join(this.root, 'multipart'));
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw e;
+    }
+    for (const id of ids.sort()) {
+      if (!/^[a-f0-9-]{36}$/.test(id)) continue;
+      const metadataPath = join(this.upload(id), 'metadata.json');
+      let m: { key: string; closed: boolean };
+      try {
+        m = JSON.parse(await readFile(metadataPath, 'utf8'));
+      } catch {
+        continue;
+      }
+      if (m.closed || !m.key.startsWith(prefix)) continue;
+      yield { key: m.key, uploadId: id, initiatedAt: (await stat(metadataPath)).mtime };
+    }
   }
 }

@@ -18,6 +18,7 @@
     "db:setup": "bash scripts/dev-db.sh",
     "db:migrate": "tsx scripts/migrate.ts",
     "worker": "pnpm --filter @culture-atlas/worker start",
+    "media-worker": "pnpm --filter @culture-atlas/media-worker start",
     "sensor-bridge": "pnpm --filter @culture-atlas/sensor-bridge exec tsx src/main.ts",
     "demo-agent": "pnpm --filter @culture-atlas/demo-agent start",
     "qloo:probe": "tsx scripts/qloo-probe.ts",

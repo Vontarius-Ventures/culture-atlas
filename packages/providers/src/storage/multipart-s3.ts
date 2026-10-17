@@ -8,6 +8,7 @@ import {
   HeadObjectCommand,
   ListPartsCommand,
   ListObjectsV2Command,
+  ListMultipartUploadsCommand,
   DeleteObjectsCommand,
   PutObjectCommand,
   S3Client,
@@ -16,7 +17,12 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import type { Readable } from 'node:stream';
-import type { MultipartPart, MultipartStorage } from './multipart-types';
+import type {
+  IncompleteUploadInfo,
+  MultipartPart,
+  MultipartStorage,
+  StoredObjectInfo,
+} from './multipart-types';
 import { validateMediaRange, boundedMediaChunks } from './multipart-types';
 import { isSafeObjectKey } from './signing';
 
@@ -190,5 +196,43 @@ export class S3MultipartStorage implements MultipartStorage {
       }
       token = page.IsTruncated ? page.NextContinuationToken : undefined;
     } while (token);
+  }
+  async *list(prefix: string): AsyncIterable<StoredObjectInfo> {
+    this.key(prefix);
+    let token: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.options.bucket,
+          Prefix: `${prefix.replace(/\/+$/, '')}/`,
+          ContinuationToken: token,
+        }),
+      );
+      for (const o of page.Contents ?? []) {
+        if (o.Key && isSafeObjectKey(o.Key))
+          yield { key: o.Key, byteSize: o.Size ?? 0, lastModified: o.LastModified ?? new Date(0) };
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+  }
+  async *listIncompleteUploads(prefix: string): AsyncIterable<IncompleteUploadInfo> {
+    this.key(prefix);
+    let keyMarker: string | undefined, uploadIdMarker: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListMultipartUploadsCommand({
+          Bucket: this.options.bucket,
+          Prefix: `${prefix.replace(/\/+$/, '')}/`,
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadIdMarker,
+        }),
+      );
+      for (const u of page.Uploads ?? []) {
+        if (u.Key && u.UploadId && isSafeObjectKey(u.Key))
+          yield { key: u.Key, uploadId: u.UploadId, initiatedAt: u.Initiated ?? new Date(0) };
+      }
+      keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+      uploadIdMarker = page.IsTruncated ? page.NextUploadIdMarker : undefined;
+    } while (keyMarker);
   }
 }

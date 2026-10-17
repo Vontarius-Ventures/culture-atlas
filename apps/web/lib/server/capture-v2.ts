@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import type { NextRequest } from 'next/server';
@@ -18,6 +17,9 @@ import {
   enforceIpLimit,
   assertCaptureAuthority,
   hasQualifiedVideoWorker,
+  captureLimitsFromEnv,
+  parseByteRange,
+  MediaRangeNotSatisfiable,
   type CaptureV2Context,
   type InstallationAuthority,
   type CaptureIdentityAdapter,
@@ -27,7 +29,8 @@ import {
 } from '@culture-atlas/domain';
 import {
   LocalMultipartStorage,
-  S3MultipartStorage,
+  MultipartStorageUnavailableError,
+  createMultipartStorage,
   loadProviderConfig,
   getProviders,
   type MultipartStorage,
@@ -55,32 +58,15 @@ export function configureCaptureV2Runtime(value: Partial<CaptureV2Runtime>): voi
 export function getCaptureV2Storage(): MultipartStorage {
   if (runtime.storage) return runtime.storage;
   if (storage) return storage;
-  const config = loadProviderConfig();
-  if (config.STORAGE_DRIVER === 's3') {
-    if (!config.S3_BUCKET)
-      throw new AppError('service_unavailable', {
-        message: 'Private media storage is not configured.',
-      });
-    storage = new S3MultipartStorage({
-      bucket: config.S3_BUCKET,
-      region: config.S3_REGION,
-      endpoint: config.S3_ENDPOINT,
-      forcePathStyle: config.S3_FORCE_PATH_STYLE,
-      credentials:
-        config.S3_ACCESS_KEY_ID && config.S3_SECRET_ACCESS_KEY
-          ? { accessKeyId: config.S3_ACCESS_KEY_ID, secretAccessKey: config.S3_SECRET_ACCESS_KEY }
-          : undefined,
+  try {
+    storage = createMultipartStorage(loadProviderConfig(), {
+      production: process.env.NODE_ENV === 'production',
+      fallbackSigningSecret: getDomainConfig().SESSION_SECRET,
     });
-  } else {
-    if (process.env.NODE_ENV === 'production')
-      throw new AppError('service_unavailable', {
-        message: 'Production media requires private S3 storage.',
-      });
-    storage = new LocalMultipartStorage(
-      resolve(config.STORAGE_LOCAL_DIR, 'capture-v2'),
-      config.APP_BASE_URL,
-      config.STORAGE_SIGNING_SECRET ?? getDomainConfig().SESSION_SECRET,
-    );
+  } catch (error) {
+    if (error instanceof MultipartStorageUnavailableError)
+      throw new AppError('service_unavailable', { message: error.message });
+    throw error;
   }
   return storage;
 }
@@ -90,9 +76,7 @@ async function jsonBody(request: NextRequest): Promise<unknown> {
     throw new AppError('invalid_input');
   let length = 0;
   const chunks: Uint8Array[] = [];
-  for await (const chunk of Readable.fromWeb(
-    request.body as NodeReadableStream<Uint8Array>,
-  )) {
+  for await (const chunk of Readable.fromWeb(request.body as NodeReadableStream<Uint8Array>)) {
     length += chunk.length;
     if (length > 1048576)
       throw new AppError('payload_too_large', { message: 'Request metadata is too large.' });
@@ -103,13 +87,6 @@ async function jsonBody(request: NextRequest): Promise<unknown> {
   } catch {
     throw new AppError('invalid_input');
   }
-}
-function integerEnv(name: string, fallback: number): number {
-  const value = process.env[name];
-  if (!value) return fallback;
-  const n = Number(value);
-  if (!Number.isSafeInteger(n) || n <= 0) throw new AppError('service_unavailable');
-  return n;
 }
 function rejectShareAuthority(request: NextRequest): void {
   if (
@@ -158,13 +135,7 @@ export async function createCaptureV2HttpContext(
       };
     },
   });
-  ctx.limits = {
-    ...ctx.limits,
-    accountQuotaBytes: integerEnv('ACCOUNT_MEDIA_QUOTA_BYTES', ctx.limits.accountQuotaBytes),
-    photoMaxBytes: integerEnv('MEDIA_PHOTO_MAX_BYTES', ctx.limits.photoMaxBytes),
-    photoMaxPixels: integerEnv('MEDIA_PHOTO_MAX_PIXELS', ctx.limits.photoMaxPixels),
-    videoMaxBytes: integerEnv('MEDIA_VIDEO_MAX_BYTES', ctx.limits.videoMaxBytes),
-  };
+  ctx.limits = captureLimitsFromEnv(process.env, ctx.limits);
   return ctx;
 }
 /** Native-only HTTP context for P5 command claim/ack; cookies and share tokens confer no authority. */
@@ -331,57 +302,44 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
     else if (path === '/v2/media/batch-delete' && method === 'POST') {
       result = await intake.batchDelete(body, key);
     } else if (
-      (match = /^\/v2\/media\/([^/]+)(?:\/(analysis|content)(?:\/([^/]+))?)?$/.exec(path))
+      (match = /^\/v2\/media\/([^/]+)(?:\/(analysis|content|preparation)(?:\/([^/]+))?)?$/.exec(
+        path,
+      ))
     ) {
       const id = z.uuid().parse(match[1]);
       if (match[2] === 'content' && match[3] && method === 'GET') {
-        const object = await intake.content(id, match[3]);
-        const range = request.headers.get('range');
-        let start = 0,
-          end = object.byteSize - 1,
-          partial = false;
-        if (range) {
-          const parsed = /^bytes=(\d*)-(\d*)$/.exec(range);
-          if (!parsed || (!parsed[1] && !parsed[2]))
-            return new Response(null, {
-              status: 416,
-              headers: { ...headers, 'content-range': `bytes */${object.byteSize}` },
-            });
-          start = parsed[1] ? Number(parsed[1]) : Math.max(0, object.byteSize - Number(parsed[2]));
-          end = parsed[1] ? (parsed[2] ? Math.min(Number(parsed[2]), end) : end) : end;
-          partial = true;
-          if (start > end || start >= object.byteSize)
-            return new Response(null, {
-              status: 416,
-              headers: { ...headers, 'content-range': `bytes */${object.byteSize}` },
-            });
+        const range = parseByteRange(request.headers.get('range'));
+        if (range === 'invalid') return new Response(null, { status: 416, headers });
+        let object;
+        try {
+          object = await intake.content(id, match[3], range);
+        } catch (error) {
+          if (!(error instanceof MediaRangeNotSatisfiable)) throw error;
+          return new Response(null, {
+            status: 416,
+            headers: { ...headers, 'content-range': `bytes */${error.totalSize}` },
+          });
         }
-        async function* slices() {
-          let offset = 0;
-          for await (const chunk of object.body) {
-            if (offset + chunk.length > start && offset <= end)
-              yield chunk.subarray(
-                Math.max(0, start - offset),
-                Math.min(chunk.length, end - offset + 1),
-              );
-            offset += chunk.length;
-            if (offset > end) break;
-          }
-        }
-        return new Response(Readable.toWeb(Readable.from(slices())) as ReadableStream, {
-          status: partial ? 206 : 200,
+        return new Response(Readable.toWeb(Readable.from(object.body)) as ReadableStream, {
+          status: object.partial ? 206 : 200,
           headers: {
             ...headers,
             'content-type': object.contentType,
-            'content-length': String(end - start + 1),
+            'content-length': String(object.byteSize),
             'accept-ranges': 'bytes',
             'x-content-type-options': 'nosniff',
-            ...(partial ? { 'content-range': `bytes ${start}-${end}/${object.byteSize}` } : {}),
+            'content-disposition': match[3] === 'original' ? 'attachment' : 'inline',
+            ...(object.partial
+              ? { 'content-range': `bytes ${object.start}-${object.end}/${object.totalSize}` }
+              : {}),
           },
         });
       }
       if (match[2] === 'analysis' && method === 'POST' && !match[3]) {
         result = await analysis.request(id, body, key);
+        status = 202;
+      } else if (match[2] === 'preparation' && method === 'POST' && !match[3]) {
+        result = await intake.retryPreparation(id, body, key);
         status = 202;
       } else if (match[2] === 'analysis' && method === 'GET' && match[3])
         result = await analysis.get(id, z.uuid().parse(match[3]));

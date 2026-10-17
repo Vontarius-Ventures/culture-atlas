@@ -46,6 +46,9 @@ No request accepts an account ID, installation ID override, object key or bucket
 | POST `/v2/media/batch-delete` | BatchDeleteMediaRequest | BatchDeleteMediaResponse, explicit partial results |
 | POST `/v2/media/{id}/analysis` | AnalyzeMediaRequest | 202 AnalyzeMediaResponse |
 | GET `/v2/media/{id}/analysis/{analysisId}` | none | AnalyzeMediaResponse |
+| POST `/v2/media/{id}/preparation` | DeleteMediaRequest shape `{expected_generation}` | 202 MediaDetailResponse (`processing`); only `failed` media with a sealed original, else409 |
+| GET `/v2/media/{id}/content/{variant}` | `Range: bytes=` optional | 200/206 bytes; each request reauthorizes; ranged reads return at most one 8 MiB window; 416 with `Content-Range: bytes */size` when unsatisfiable |
+| GET `/v2/events` | `after_cursor` or `Last-Event-ID` | SSE `batch` events of own media/command ids+status (owners also receive `deleted`); `resync` on expired cursor; session cookie, agent token or `cna_` installation bearer |
 
 Persist `client_capture_id` **and original owner** before taking/uploading media.
 One upload per batch file; at most20 files and2 concurrent transfers on clients.
@@ -63,6 +66,10 @@ S3 CORS must allow PUT and expose ETag. No reusable storage credentials.
 Completion only queues verification. Poll GET upload/media, never assume a202
 means ready. Workers validate length, signature, digest and decoded limits, then
 seal to an immutable key and transactionally publish a preparation job.
+Verification failures set `error_code` on the upload and media: `unsupported_media`
+(container/codec/signature/decode), `duration_exceeded`, `unsupported_image`,
+`payload_too_large`, `invalid_input` (size/digest mismatch). The media worker is
+documented in `docs/media-worker.md`.
 No automatic analysis. State: created/uploading/verifying/committed, with terminal
 aborted/expired/rejected. Library status is independent:
 pending_upload/verifying/processing/ready/failed/deleted.

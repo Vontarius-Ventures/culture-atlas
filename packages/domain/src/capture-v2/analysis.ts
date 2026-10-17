@@ -90,7 +90,7 @@ export class MediaAnalysis {
           tx,
           `account:${ctx.authority.accountId}`,
           'media_analyses',
-          50,
+          ctx.limits.analysisDailyLimit,
           ctx.now(),
         ))
       ) {

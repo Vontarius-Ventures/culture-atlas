@@ -50,7 +50,11 @@ export async function readEvents(ctx: ServiceContext, cursor?: string) {
   const items: Array<{ id: string; kind: string; status: string }> = [];
   for (const row of rows) {
     try {
-      if (row.resource_kind === 'media') await authorizeMedia(ctx, 'media:read', row.resource_id);
+      if (row.resource_kind === 'media' && row.status === 'deleted' && ctx.principal.kind !== 'agent') {
+        // Owners must learn about deletions to drop cached items; IDs and status only.
+        const owned = await ctx.db.query('SELECT 1 FROM media_assets WHERE id=$1 AND account_id=$2', [row.resource_id, account.accountId]);
+        if (!owned.rowCount) continue;
+      } else if (row.resource_kind === 'media') await authorizeMedia(ctx, 'media:read', row.resource_id);
       else if (row.resource_kind === 'command') await getCommand(ctx, row.resource_id);
       else if (!hasScope(ctx.principal, 'preferences:read')) continue;
       // Account ID is not exposed in preference-change events.
