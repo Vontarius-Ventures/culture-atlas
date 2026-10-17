@@ -203,9 +203,10 @@ describe('production identity runtime (G1, G2, G8)', () => {
       ensureServerRuntime({ IDENTITY_MAIL_DRIVER: 'ses' });
       expect(identity.hasIdentityMail()).toBe(false);
       // Logged without any configuration values.
-      expect(errors.mock.calls.flat().join(' ')).toBe(
-        '{"level":"error","event":"identity_mail_misconfigured"}',
-      );
+      expect(errors).toHaveBeenCalledTimes(1);
+      const line = JSON.parse(String(errors.mock.calls[0]![0]));
+      expect(Object.keys(line).sort()).toEqual(['event', 'level', 'time']);
+      expect(line).toMatchObject({ level: 'error', event: 'identity_mail_misconfigured' });
     } finally {
       errors.mockRestore();
       identity.setIdentityMail(outbox);
@@ -607,5 +608,53 @@ describe('server-side feature flags and kill switches over HTTP', () => {
       delete process.env.FEATURE_KILL_SWITCHES;
     }
     expect((await upload()).status).toBe(201);
+  });
+});
+
+describe('PUT/DELETE /v2/device/push-token', () => {
+  it('only the phone registers its own token; it is encrypted and never echoed', async () => {
+    const { devicePushTokenRoute } = await import('./device-push-http');
+    setDomainConfigForTesting(
+      testConfig({ CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64') }),
+    );
+    try {
+      const signedIn = await nativeSignIn();
+      const enrolled = await enrollPhone(signedIn.enrollment_grant);
+      const { access_token: access, account_id: accountId } = enrolled.native_session;
+      const token = 'cd'.repeat(32);
+      const call = (method: string, headers: Record<string, string>, body?: unknown) =>
+        devicePushTokenRoute(
+          new NextRequest('http://localhost:3310/v2/device/push-token', {
+            method,
+            headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...headers },
+            body: body ? JSON.stringify(body) : undefined,
+          }),
+        );
+      const put = await call('PUT', phone(access, accountId), {
+        provider: 'apns',
+        token,
+        environment: 'production',
+      });
+      expect(put.status).toBe(200);
+      const text = await put.text();
+      expect(text).not.toContain(token);
+      expect(JSON.parse(text)).toEqual({ registered: true, provider: 'apns' });
+      // Browser cookies confer nothing on this route.
+      const owner = await browserSession(accountId);
+      const browser = await call(
+        'PUT',
+        { cookie: owner.cookie, 'x-csrf-token': owner.csrf, 'idempotency-key': randomUUID() },
+        { provider: 'apns', token, environment: 'production' },
+      );
+      expect(browser.status).toBe(401);
+      const del = await call('DELETE', phone(access, accountId));
+      expect(del.status).toBe(200);
+      const row = await db.query(`SELECT push_provider FROM mobile_installations WHERE id=$1`, [
+        enrolled.installation.id,
+      ]);
+      expect(row.rows[0]!.push_provider).toBeNull();
+    } finally {
+      setDomainConfigForTesting(config);
+    }
   });
 });

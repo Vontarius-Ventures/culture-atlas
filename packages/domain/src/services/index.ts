@@ -24,3 +24,4 @@ export * as traces from './traces';
 export * as cards from './cards';
 export * as display from './display';
 export { createCaptureIdentityAdapter, createNativePrincipalResolver } from './capture-identity';
+export * as devicePush from './device-push';

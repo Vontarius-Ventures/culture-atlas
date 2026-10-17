@@ -487,7 +487,8 @@ export class CaptureDevice {
 export async function endCaptureAuthority(tx: Db, event: AuthorityEnded): Promise<void> {
   await tx.query(`SELECT id FROM accounts WHERE id=$1 FOR UPDATE`, [event.accountId]);
   await tx.query(
-    `UPDATE mobile_installations SET authority_ended_at=$3,readiness='unavailable',app_state='terminated'
+    `UPDATE mobile_installations SET authority_ended_at=$3,readiness='unavailable',app_state='terminated',
+       push_provider=NULL,push_environment=NULL,push_token_ciphertext=NULL,push_token_key_id=NULL,push_updated_at=NULL
      WHERE account_id=$1 AND ($2::uuid IS NULL OR id=$2)`,
     [event.accountId, event.installationId, event.now],
   );
