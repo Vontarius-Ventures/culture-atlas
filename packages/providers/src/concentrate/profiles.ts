@@ -165,8 +165,16 @@ function findString(value: unknown, needle: string): boolean {
 /** Offline check: the pinned model id and provider appear in the snapshot the profile names. */
 export function catalogCompatible(profile: ModelProfile, snapshot: CatalogSnapshot): boolean {
   if (Date.parse(snapshot.fetched_at) !== Date.parse(profile.catalogSnapshotAt)) return false;
-  const entry = snapshot.models.find((m) => m.id === profile.model);
-  return !!entry && findString(entry, profile.provider);
+  // Profiles pin "<provider>/<model>"; catalog entries list the bare model id
+  // with its providers keyed underneath.
+  const modelId = profile.model.slice(profile.provider.length + 1);
+  const entry = snapshot.models.find((m) => m.id === modelId || m.id === profile.model);
+  if (!entry) return false;
+  const providers = (entry as { providers?: unknown }).providers;
+  if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+    return Object.prototype.hasOwnProperty.call(providers, profile.provider);
+  }
+  return findString(entry, profile.provider);
 }
 
 export type QualificationState = 'configured' | 'catalog-compatible' | 'qualified';

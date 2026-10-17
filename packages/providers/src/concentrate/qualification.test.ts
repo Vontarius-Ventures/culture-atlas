@@ -7,6 +7,7 @@ import { MemorySpendStore, ModelSpendLedger } from '../model-gateway/budget';
 import { createModelGateway } from './gateway';
 import {
   CATALOG_SNAPSHOT_FILE,
+  catalogCompatible,
   profileHash,
   qualificationState,
   type QualificationArtifact,
@@ -159,5 +160,25 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
       },
     );
     expect(gateway.runners.research_text?.profile.model).toBe('fixture/model-1');
+  });
+});
+
+describe('catalogCompatible against the live catalog shape', () => {
+  // GET /v1/models lists bare model ids with providers keyed by slug.
+  const live = {
+    kind: 'concentrate-catalog-snapshot',
+    fetched_at: profile.catalogSnapshotAt,
+    pages: 1,
+    models: [{ id: 'gpt-5-nano', slug: 'gpt-5-nano', providers: { openai: { provider_slug: 'openai' }, azure: { provider_slug: 'azure' } } }],
+  };
+  const pinned = { ...profile, model: 'openai/gpt-5-nano', provider: 'openai' };
+
+  it('matches a provider/model pin to the bare catalog id and its provider key', () => {
+    expect(catalogCompatible(pinned, live)).toBe(true);
+  });
+
+  it('rejects a provider the model is not served by, and an unlisted model', () => {
+    expect(catalogCompatible({ ...pinned, model: 'bedrock/gpt-5-nano', provider: 'bedrock' }, live)).toBe(false);
+    expect(catalogCompatible({ ...pinned, model: 'openai/gpt-9' }, live)).toBe(false);
   });
 });
