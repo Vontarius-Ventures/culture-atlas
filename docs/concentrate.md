@@ -205,6 +205,30 @@ person, billing reconciliation, and the ZDR/logging settings on the key, which
 the operator verifies in the Concentrate dashboard and records in
 `privacyVerifiedAt`.
 
+## Live qualification attempts (2026-10-17)
+
+First runs against the operator's real key, `vision_photo` role, 16 owned
+illustrations (`apps/web/public/samples`), one request each, `--spend-cap-usd 1`.
+No role is qualified yet.
+
+| Profile | Result | Outcomes | Latency p50 / p95 | Notes |
+| --- | --- | --- | --- | --- |
+| `openai/gpt-5-nano` | fail 2/16 | 14 `incomplete_response` | 15.2 s / 20.9 s | Reasoning model: hidden reasoning tokens exhaust `max_output_tokens` (4000) before the JSON is written. |
+| `deepinfra/gemma-3-27b` | fail 3/16 | 13 `timeout` | 23.9 s / 29.0 s | Hits the 30 s per-attempt deadline. |
+| `deepinfra/mistral-small-3.2` | fail 3/16 | 13 `timeout` | 20.7 s / 23.5 s | Same. |
+
+Diagnosis: the gateway and network are fast (a one-sentence image request
+returns in 1.5–5.5 s on these routes). The full `VlmAnalysis` reading is the
+bottleneck: one complete mistral-small-3.2 reading wrote 781 output tokens in
+14.2 s (about 55 tokens/s), and readings with more observations, candidates,
+rationales and region boxes exceed 30 s. Model choice alone will not meet the
+30 s deadline or the 10 s first-section target; the reading must get shorter
+(fewer and terser candidates/observations, optional or dropped region boxes) or
+be split into a fast first section and a follow-up call.
+
+The catalog fix needed to run these at all (provider/model pins vs bare catalog
+ids) landed in `packages/providers/src/concentrate/profiles.ts`.
+
 ## Deployment configuration
 
 **Render** (`render.yaml`): set `CONCENTRATE_API_KEY`,
