@@ -35,8 +35,8 @@ explicitly for workers/tests. The default HTTP path fails closed if recoverable
 identity is not configured. Native refresh, email delivery and device SDK
 qualification belong to their owning packages.
 
-P2 media workers claim CaptureQueue verify_upload/prepare_media/purge_media/
-cleanup_upload. Dispatch to MediaPreparation verifyUpload/prepareMedia/cleanup.
+P2 media workers (`apps/media-worker`, `pnpm media-worker`, see docs/media-worker.md)
+claim CaptureQueue verify_upload/prepare_media/purge_media/cleanup_upload. Dispatch to MediaPreparation verifyUpload/prepareMedia/cleanup.
 P4 claims analyze_media and uses MediaAnalysis loadWork/publish; no automatic AI.
 Heartbeat at most every10s with60s leases. Maximum lease extension300s; bound
 individual storage/decoder operations below5min, stop on heartbeat failure.

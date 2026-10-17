@@ -147,4 +147,49 @@ describe('private S3 multipart adapter (mock transport, no live service)', () =>
     await expect(storage.deletePrefix('accounts/a/media/id')).rejects.toThrow('cleanup failed');
     client.destroy();
   });
+  it('paginates reconciliation inventories with scoped prefixes', async () => {
+    const client = new S3Client({ region: 'us-east-1' }),
+      send = vi.spyOn(client, 'send');
+    const storage = new S3MultipartStorage({ bucket: 'private-test', region: 'us-east-1', client });
+    const at = new Date('2026-10-01T00:00:00Z');
+    send.mockResolvedValueOnce({
+      Contents: [{ Key: 'accounts/a/media/m/1/original', Size: 5, LastModified: at }],
+      IsTruncated: true,
+      NextContinuationToken: 'page-2',
+    } as never);
+    send.mockResolvedValueOnce({
+      Contents: [
+        { Key: 'accounts/a/staging/m/u', Size: 7, LastModified: at },
+        { Key: '../escape' },
+      ],
+      IsTruncated: false,
+    } as never);
+    const objects = [];
+    for await (const o of storage.list('accounts/a')) objects.push(o);
+    expect(objects).toEqual([
+      { key: 'accounts/a/media/m/1/original', byteSize: 5, lastModified: at },
+      { key: 'accounts/a/staging/m/u', byteSize: 7, lastModified: at },
+    ]);
+    expect(send.mock.calls[0]![0].input).toMatchObject({
+      Bucket: 'private-test',
+      Prefix: 'accounts/a/',
+    });
+    expect(send.mock.calls[1]![0].input).toMatchObject({ ContinuationToken: 'page-2' });
+    send.mockResolvedValueOnce({
+      Uploads: [{ Key: 'accounts/a/staging/m/u', UploadId: 'mp-1', Initiated: at }],
+      IsTruncated: true,
+      NextKeyMarker: 'accounts/a/staging/m/u',
+      NextUploadIdMarker: 'mp-1',
+    } as never);
+    send.mockResolvedValueOnce({ Uploads: [], IsTruncated: false } as never);
+    const uploads = [];
+    for await (const u of storage.listIncompleteUploads('accounts/a')) uploads.push(u);
+    expect(uploads).toEqual([{ key: 'accounts/a/staging/m/u', uploadId: 'mp-1', initiatedAt: at }]);
+    expect(send.mock.calls[3]![0].input).toMatchObject({
+      Prefix: 'accounts/a/',
+      KeyMarker: 'accounts/a/staging/m/u',
+      UploadIdMarker: 'mp-1',
+    });
+    client.destroy();
+  });
 });

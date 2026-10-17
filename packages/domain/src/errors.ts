@@ -9,6 +9,8 @@ import { z } from 'zod';
 export const ERROR_CODES = {
   invalid_input: 400,
   unsupported_image: 400,
+  unsupported_media: 400,
+  duration_exceeded: 400,
   csrf_failed: 403,
   unauthenticated: 401,
   token_expired: 401,
@@ -48,6 +50,8 @@ const DEFAULT_RETRYABLE: Partial<Record<ErrorCode, boolean>> = {
 const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   invalid_input: 'The request is not valid.',
   unsupported_image: 'Use a JPEG, PNG or WebP photo.',
+  unsupported_media: 'This file could not be decoded. Use an MP4, MOV or WebM video with a supported codec.',
+  duration_exceeded: 'This video is longer than the allowed duration.',
   csrf_failed: 'The request could not be verified. Refresh and try again.',
   unauthenticated: 'Sign in to continue.',
   token_expired: 'This connection has expired.',

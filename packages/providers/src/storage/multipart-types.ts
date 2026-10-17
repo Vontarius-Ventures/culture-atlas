@@ -47,6 +47,20 @@ export interface MultipartStorage {
   delete(key: string): Promise<void>;
   /** Worker-only namespace cleanup, never accepts an untrusted client prefix. */
   deletePrefix(prefix: string): Promise<void>;
+  /** Worker-only reconciliation inventory of committed objects under a trusted prefix. */
+  list?(prefix: string): AsyncIterable<StoredObjectInfo>;
+  /** Worker-only inventory of multipart uploads that were never completed or aborted. */
+  listIncompleteUploads?(prefix: string): AsyncIterable<IncompleteUploadInfo>;
+}
+export interface StoredObjectInfo {
+  key: string;
+  byteSize: number;
+  lastModified: Date;
+}
+export interface IncompleteUploadInfo {
+  key: string;
+  uploadId: string;
+  initiatedAt: Date;
 }
 export const MEDIA_RANGE_MAX_BYTES = 8388608;
 export const MEDIA_STREAM_CHUNK_BYTES = 65536;

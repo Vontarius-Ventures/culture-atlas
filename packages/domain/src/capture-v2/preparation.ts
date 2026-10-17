@@ -157,6 +157,10 @@ export class MediaPreparation {
         source === 'upload'
           ? this.ctx.limits.videoMaxDurationMs
           : this.ctx.limits.captureVideoMaxDurationMs;
+      if (Number.isSafeInteger(duration) && duration > max)
+        throw new AppError('duration_exceeded', {
+          message: 'This video is longer than the allowed duration.',
+        });
       if (
         !Number.isSafeInteger(duration) ||
         duration <= 0 ||
