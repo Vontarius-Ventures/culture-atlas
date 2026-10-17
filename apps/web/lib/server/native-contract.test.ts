@@ -754,8 +754,11 @@ describe('native journey through the real handlers', () => {
     const capabilities = await caps.json();
     expect(schemas.CaptureCapabilitiesResponse.safeParse(capabilities).success).toBe(true);
     expect(shapeOf(capabilities)).toEqual(shapeOf(messages.capabilities_response!.body));
+    // Server-side flag evaluation (feature-flags.ts) for a freshly heartbeated
+    // phone whose build is not an operator-qualified SDK build.
     expect(capabilities.availability.meta_glasses.reasons).toEqual(
-      gate.cases.find((c) => c.name === 'today_server_default_lists_every_reason')!.server.reasons,
+      gate.cases.find((c) => c.name === 'enrolled_phone_server_flags_without_qualified_sdk')!.server
+        .reasons,
     );
   });
 

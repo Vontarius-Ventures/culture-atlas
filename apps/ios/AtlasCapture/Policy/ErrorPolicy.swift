@@ -29,7 +29,7 @@ public enum ErrorPolicy {
     case "idempotency_in_progress", "rate_limited", "service_unavailable", "provider_unavailable", "internal":
       return .retryBackoff
     case "cursor_expired": return .resync
-    case "payload_too_large": return .rejectItem
+    case "payload_too_large", "unsupported_media", "duration_exceeded": return .rejectItem
     case "quota_exceeded": return .pauseUntilQuota
     default: return retryable ? .retryBackoff : .retryBackoffIfRetryableElseSurface
     }

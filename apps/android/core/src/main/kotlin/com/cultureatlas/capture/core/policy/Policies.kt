@@ -141,7 +141,7 @@ object ErrorPolicy {
         "idempotency_in_progress", "rate_limited", "service_unavailable", "provider_unavailable", "internal" ->
             Action.RETRY_BACKOFF
         "cursor_expired" -> Action.RESYNC
-        "payload_too_large" -> Action.REJECT_ITEM
+        "payload_too_large", "unsupported_media", "duration_exceeded" -> Action.REJECT_ITEM
         "quota_exceeded" -> Action.PAUSE_UNTIL_QUOTA
         else -> if (retryable) Action.RETRY_BACKOFF else Action.RETRY_BACKOFF_IF_RETRYABLE_ELSE_SURFACE
     }

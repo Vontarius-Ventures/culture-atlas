@@ -27,7 +27,10 @@ beforeAll(async () => {
   storage = new LocalMultipartStorage(root, BASE, 'private-test-key');
   setDbForTesting(db);
   setDomainConfigForTesting(config);
-  setCaptureV2Runtime({ storage });
+  // The Concentrate gateway is not configured in tests, so its read-only
+  // readiness reports 'unavailable'. These tests are about the agent grant, so
+  // they admit analysis explicitly; the honest refusal is asserted below.
+  setCaptureV2Runtime({ storage, analysisAvailability: async () => 'available' });
 });
 afterAll(async () => {
   setCaptureV2Runtime({});
@@ -141,6 +144,27 @@ describe('AGT-01 agent REST media parity (G7)', () => {
     const op = await operations.GET(bearer(`/v2/operations/${analysis.analysis_id}`, f.credential), { params: Promise.resolve({ id: analysis.analysis_id }) });
     expect(op.status).toBe(200);
     expect(await op.json()).toMatchObject({ kind: 'analysis', state: 'queued', result_id: f.visible.id });
+  });
+
+  it('refuses analyze_media honestly when no model gateway is ready (default readiness)', async () => {
+    setCaptureV2Runtime({ storage });
+    try {
+      const f = await fixture(['media:read', 'media:analyze']);
+      const refused = await captureV2Route(bearer(`/v2/media/${f.visible.id}/analysis`, f.credential, {
+        method: 'POST', body: { mode: 'photo', expected_generation: 1 },
+      }));
+      expect(refused.status).toBe(503);
+      const body = await refused.json();
+      expect(body.error.code).toBe('service_unavailable');
+      expect(body.error.message).toBe('Exploration is temporarily unavailable.');
+      const work = await db.query(
+        `SELECT count(*)::int AS n FROM capture_work WHERE created_by_agent_connection_id = $1`,
+        [f.connectionId],
+      );
+      expect(work.rows[0]?.n).toBe(0);
+    } finally {
+      setCaptureV2Runtime({ storage, analysisAvailability: async () => 'available' });
+    }
   });
 });
 

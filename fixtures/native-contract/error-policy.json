@@ -17,6 +17,8 @@
     { "code": "idempotency_in_progress", "status": 409, "action": "retry_backoff" },
     { "code": "cursor_expired", "status": 410, "action": "resync" },
     { "code": "payload_too_large", "status": 413, "action": "reject_item" },
+    { "code": "unsupported_media", "status": 400, "action": "reject_item" },
+    { "code": "duration_exceeded", "status": 400, "action": "reject_item" },
     { "code": "rate_limited", "status": 429, "action": "retry_backoff" },
     { "code": "quota_exceeded", "status": 429, "action": "pause_until_quota" },
     { "code": "service_unavailable", "status": 503, "action": "retry_backoff" },

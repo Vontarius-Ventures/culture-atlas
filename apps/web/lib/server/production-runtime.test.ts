@@ -14,6 +14,7 @@ import {
   endCaptureAuthority,
   setFeatureKill,
   liftFeatureKill,
+  schemas,
 } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, insertAccount, testConfig } from '@culture-atlas/domain/testing';
 import { LocalMultipartStorage } from '@culture-atlas/providers';
@@ -521,10 +522,12 @@ describe('server-side feature flags and kill switches over HTTP', () => {
     );
     expect(response.status).toBe(200);
     const body = await response.json();
+    // Clients validate this response; the flags map stays boolean-only.
+    expect(schemas.CaptureCapabilitiesResponse.safeParse(body).success).toBe(true);
+    expect(body.flags).not.toHaveProperty('meta_glasses_label');
     expect(body.flags).toMatchObject({
       media_library: true,
       meta_glasses_entry_visible: true,
-      meta_glasses_label: 'Experimental',
       meta_glasses_capture_enabled: false,
       remote_glasses_capture_enabled: false,
     });

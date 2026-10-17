@@ -26,6 +26,13 @@
       "expect": { "state": "unavailable", "reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "temporarily_disabled"], "show_camera_and_upload": true, "allow_capture": false }
     },
     {
+      "name": "enrolled_phone_server_flags_without_qualified_sdk",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": false, "reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "permission_required"] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "streaming", "recording": false },
+      "expect": { "state": "unavailable", "reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported"], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
       "name": "only_local_reasons_let_user_register",
       "build_includes_sdk": true,
       "server": { "meta_glasses_entry_visible": true, "available": false, "reasons": ["permission_required", "user_action_required"] },

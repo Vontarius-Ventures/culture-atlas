@@ -50,8 +50,10 @@ export interface CaptureV2Runtime {
   verifier?: CaptureV2Context['verifier'];
   storage?: MultipartStorage;
   agentAuthorization?: CaptureV2Context['agentAuthorization'];
-  /** Model gateway readiness for concentrate_analysis_enabled; absent means not ready. */
+  /** Model gateway readiness for concentrate_analysis_enabled; defaults to the gateway's read-only readiness. */
   analysisReadiness?: () => Promise<AnalysisReadiness>;
+  /** Per-mode analysis admission (POST /v2/media/{id}/analysis); defaults to model-readiness.ts. */
+  analysisAvailability?: CaptureV2Context['analysisAvailability'];
 }
 /** Server-side flag evaluation behind each HTTP context (feature-flags.json activation rules). */
 const contextFlags = new WeakMap<CaptureV2Context, FeatureFlagEvaluation>();
@@ -159,7 +161,7 @@ export async function createCaptureV2HttpContext(
       !killed.has('camera_photo') &&
       !killed.has('file_photo_upload'),
     glassesEnabled: flags.flags.meta_glasses_capture_enabled,
-    analysisAvailability,
+    analysisAvailability: runtime.analysisAvailability ?? analysisAvailability,
     deleteAnalysisCapture: async (tx, accountId, captureId) => {
       const legacy = createServiceContext(
         { kind: 'account', accountId, sessionId: null, isDemoOwner: false },

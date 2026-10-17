@@ -534,6 +534,13 @@
           "video": {
             "available": true,
             "reasons": []
+          },
+          "remote_glasses": {
+            "available": false,
+            "reasons": [
+              "glasses_unavailable",
+              "arm_on_phone_required"
+            ]
           }
         }
       }

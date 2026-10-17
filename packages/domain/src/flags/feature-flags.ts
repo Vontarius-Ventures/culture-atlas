@@ -181,9 +181,15 @@ export function applyFeatureFlagsToCapabilities<
   T extends { flags: Record<string, unknown>; availability: Record<string, unknown> },
 >(base: T, evaluation: FeatureFlagEvaluation): T {
   const reasons = (flag: FeatureFlagName) => evaluation.reasons[flag] ?? [];
+  // The wire `flags` map is boolean-only (CaptureCapabilitiesResponse). The
+  // constant `meta_glasses_label` is presentation copy (design/copy.json
+  // "capture.experimental"), so it stays server-side instead of breaking
+  // clients that validate the response.
+  const { meta_glasses_label: _label, ...booleanFlags } = evaluation.flags;
+  void _label;
   return {
     ...base,
-    flags: { ...base.flags, ...evaluation.flags },
+    flags: { ...base.flags, ...booleanFlags },
     availability: {
       ...base.availability,
       meta_glasses: {
