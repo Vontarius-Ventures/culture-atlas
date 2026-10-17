@@ -82,6 +82,13 @@ cd apps/web && E2E_BASE_URL=http://localhost:3300 V2_MAIL_DIR=$IDENTITY_MAIL_FIL
 The v1 journey (`e2e/real/journey.spec.ts`) still runs against the production
 build, as described in the README.
 
+**Production build, offline.** `scripts/local-aws.ts` runs loopback stand-ins
+for S3 and SESv2. With them, both journeys pass against `next start`
+(`STORAGE_DRIVER=s3`, `IDENTITY_MAIL_DRIVER=ses`), and `V2_MAIL_DIR` points at
+the stand-in's `mail/` directory. The environment is in
+[design-fidelity-v2-capture.md](design-fidelity-v2-capture.md#commands). The
+stand-ins verify no signatures, so they do not prove real S3 or SES behaviour.
+
 ## What this journey does not prove
 
 - **Real MP4 playback in a browser.** It was not observed: Playwright's

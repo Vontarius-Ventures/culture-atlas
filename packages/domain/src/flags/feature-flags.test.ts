@@ -213,6 +213,19 @@ describe('resolveFeatureFlags (server state)', () => {
     expect((await resolve({}, null as unknown as string)).flags.meta_glasses_capture_enabled).toBe(
       false,
     );
+    // ...but it is told the release is entitled (so it can hand setup off to
+    // the phone) only when the operator entitled a native platform.
+    expect(
+      (await resolve({}, null as unknown as string)).reasons.meta_glasses_capture_enabled,
+    ).not.toContain('release_channel_ineligible');
+    expect(
+      (await resolve({ META_GLASSES_ENTITLED_PLATFORMS: undefined }, null as unknown as string))
+        .reasons.meta_glasses_capture_enabled,
+    ).toContain('release_channel_ineligible');
+    // An unknown or revoked installation id is not treated as a browser.
+    expect((await resolve({}, randomUUID())).reasons.meta_glasses_capture_enabled).toContain(
+      'release_channel_ineligible',
+    );
     // Remote capture additionally needs a locally armed glasses session.
     expect((await resolve()).flags.remote_glasses_capture_enabled).toBe(false);
     await db.query(

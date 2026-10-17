@@ -279,7 +279,6 @@ export function DevicesView() {
  * armed only on the phone itself, so the browser shows it read-only.
  */
 export function DeviceDetailView({ id }: { id: string }) {
-  const toast = useToast();
   const { devices, error, signedOut, load } = useDevices();
   const [now, setNow] = useState(() => Date.now());
   const [mode, setMode] = useState<'photo' | 'video'>('photo');
@@ -440,24 +439,6 @@ export function DeviceDetailView({ id }: { id: string }) {
           Remote capture is off. Turn it on in the culture atlas app on this phone and choose which
           agents may ask; it turns off by itself after 10 minutes.
         </p>
-      </section>
-
-      <section className="remote" aria-labelledby="remove-title">
-        <h2 id="remove-title" className="remote__title">
-          Remove this phone
-        </h2>
-        <p className="remote__text">
-          It stops uploading and taking requests right away. Past media stays in your library.
-        </p>
-        <div style={{ marginTop: 12 }}>
-          <RemoveDevice
-            device={device}
-            onRemoved={() => {
-              toast.show({ message: `${deviceName(device)} removed` });
-              void load();
-            }}
-          />
-        </div>
       </section>
     </div>
   );

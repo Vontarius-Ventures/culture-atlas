@@ -444,6 +444,10 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
   } catch (error) {
     const safe = error instanceof z.ZodError ? new AppError('invalid_input') : error;
     const result = toErrorBody(safe, requestId);
+    // Same rule as the /v1 handler: unexpected failures are logged by request id
+    // (no request body or credentials), so an operator can find the cause.
+    if (result.status >= 500 && result.body.code === 'internal')
+      console.error(`[v2] ${requestId}`, error);
     return Response.json({ error: result.body }, { status: result.status, headers });
   }
 }

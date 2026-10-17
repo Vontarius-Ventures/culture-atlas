@@ -20,6 +20,18 @@ export interface ClientLimits {
   concurrent_transfers: number;
 }
 
+/**
+ * Glasses reasons that are account-wide or release blockers (SCREEN-CONTRACT 09:
+ * no hand-off and no fake reconnect). Other reasons are setup steps on the phone.
+ */
+export const GLASSES_BLOCKING_REASONS: ReadonlySet<string> = new Set([
+  'release_channel_ineligible',
+  'temporarily_disabled',
+  'rollout_unavailable',
+]);
+export const glassesBlocked = (reasons: readonly string[]) =>
+  reasons.some((r) => GLASSES_BLOCKING_REASONS.has(r));
+
 /** PRODUCT-AND-ARCHITECTURE defaults, used until GET /v2/capabilities answers. */
 export const DEFAULT_LIMITS: ClientLimits = {
   photo_max_bytes: 15 * 1024 * 1024,
