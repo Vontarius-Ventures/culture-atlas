@@ -1,6 +1,16 @@
 # culture atlas
 
-> Planned capture platform extension: [v2.1 design specification](specs/capture-platform-v2/README.md). Covers independent multi-user camera/glasses capture, video/uploads, Concentrate, agent access and collection sharing. This is a design handoff; current implementation behavior is unchanged.
+> **Capture platform v2 is built and integrated, but not yet released** ([v2.1 specification](specs/capture-platform-v2/README.md), [status and gaps](docs/v2-gap-report.md)). Its parts:
+>
+> - a private photo and video library;
+> - browser camera and resumable uploads;
+> - an ffmpeg media worker;
+> - Concentrate as the model gateway;
+> - agent access to selected collections, media and phones;
+> - collection sharing;
+> - iOS and Android capture apps.
+>
+> The web and server parts pass their tests and a real-stack browser journey. The native apps, Meta glasses, live model output, S3, email and push delivery, and any AWS deployment have **not** been run. See "What is not verified" below.
 
 **Capture something you like. Discover more you will like.**
 
@@ -12,8 +22,10 @@ It uses a vision model to read the photo, Qloo's cultural graph for related disc
 
 | Piece | Status |
 | --- | --- |
-| Vision and text models (Featherless) | Implemented. Needs `FEATHERLESS_API_KEY` (or `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`). Not yet run against the live API. Without it, uploaded photos are kept and show "We can’t look at this photo yet" with a retry. The three "Try an example" photos instead replay a hand-reviewed reading with reviewed sample picks, labeled "Example result" and never presented as Qloo results ([docs/pipeline.md](docs/pipeline.md#example-replays)). |
-| Qloo | Adapter implemented against the documented API (`/search`, `/v2/tags`, `/v2/insights`, `/v2/trending`, `/trends/entity`). **The hackathon key has not been issued yet**, so every Qloo capability reports `unavailable` and Wear/Play/Watch show "Related discoveries are taking longer". Results are never invented. Replayed fixtures are labeled "Example result". Run `pnpm qloo:probe` when the key arrives ([docs/qloo-probes.md](docs/qloo-probes.md)). |
+| Vision and text models: **Concentrate (default)** | `LLM_PROVIDER` unset means Concentrate. Every role (`vision_photo`, `vision_video_frame`, `research_text`, `composer`) stays `unavailable` until all of these exist: `CONCENTRATE_API_KEY`, qualified role profiles (`CONCENTRATE_PROFILES_JSON` or `CONCENTRATE_PROFILE_FILE`), qualification artifacts (`CONCENTRATE_QUALIFICATION_DIR`, from `pnpm qualify:concentrate`) and spend ceilings (`MODEL_DAILY_SPEND_LIMIT_USD` and the rest). **No model has been qualified and no live Concentrate call has been made** ([docs/concentrate.md](docs/concentrate.md)). Until then, uploads are kept and show "We can’t look at this photo yet", and v2 "Explore" says exploration is unavailable. Sessions without an account get no AI under Concentrate, because spend is tied to an account. |
+| Rollback models: Featherless or Anthropic | Explicit operator rollback only: `LLM_PROVIDER=featherless` with `FEATHERLESS_API_KEY`, or `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`. Nothing falls back to them automatically. v2 media analysis is unavailable under either. Neither has been run against its live API. |
+| Example photos | The three "Try an example" photos replay a hand-reviewed reading with reviewed sample picks. They are labeled "Example result" and never presented as Qloo results ([docs/pipeline.md](docs/pipeline.md#example-replays)). |
+| Qloo | Adapter implemented against the documented API (`/search`, `/v2/tags`, `/v2/insights`, `/v2/trending`, `/trends/entity`). A one-off probe with the hackathon key (2026-10-17, [docs/capability-matrix.md](docs/capability-matrix.md)) found:<br>- search, tags and insights with explainability answer;<br>- trending returns nothing;<br>- entity trends return 404.<br>Without a key, or when Qloo is unreachable, Wear/Play/Watch show "Related discoveries are taking longer". Results are never invented, and replayed fixtures are labeled "Example result" ([docs/qloo-probes.md](docs/qloo-probes.md)). |
 | Reference research | Wikipedia/Wikimedia REST with real source URLs; claims extracted by the text model. |
 | World Sensor import | Implemented (server polling and an outbound bridge). The relay runs only on the operator's machine and was not reachable during development, so it is tested against a mock relay modeled on the Sensor asset API. Route names still need checking against the real relay ([docs/sensor.md](docs/sensor.md)). |
 | Live capability report | `GET /v1/health` and [docs/capability-matrix.md](docs/capability-matrix.md) |
@@ -28,8 +40,11 @@ pnpm db:setup            # starts PostgreSQL 16 (needs root), creates role cultu
 pnpm db:migrate          # applies db/migrations
 cp .env.example .env     # fill in what you have; empty values count as unset
 pnpm dev                 # app, REST /v1 and MCP /mcp on http://localhost:3000
-pnpm worker              # job worker (second terminal)
+pnpm worker              # job worker: v1 jobs and v2 media analysis (second terminal)
+pnpm media-worker        # capture v2: verify, prepare (ffmpeg) and clean up uploads (third terminal)
 ```
+
+The media worker needs `ffmpeg` and `ffprobe` on the PATH. At startup it encodes short test clips and runs them through its own verifier and preparer. It reports video as available only if that self-test passes. To use the v2 library, sign in through `/identity`. Locally, `IDENTITY_MAIL_DRIVER=file` writes the sign-in link to `IDENTITY_MAIL_FILE_DIR` instead of sending mail.
 
 Open http://localhost:3000, choose "Try an example" or upload a photo. Without provider keys the app still runs: captures, collections and plans work, and sections that need a provider show honest partial states.
 
@@ -49,7 +64,9 @@ pnpm worker &
 E2E_BASE_URL=http://localhost:3200 pnpm --filter @culture-atlas/web test:e2e:real
 ```
 
-It browses, tries an example, uploads, creates an account, saves into a collection, makes a movie night from mixed items and connects an agent to one collection. Screenshots land in `apps/web/e2e/screenshots/real-*.png` (credentials masked). The desktop run writes the agent token to `apps/web/test-results/agent-token.txt` (git-ignored), so you can then run `DEMO_AGENT_TOKEN=$(cat apps/web/test-results/agent-token.txt) pnpm demo-agent -- --url http://localhost:3200/mcp --collection "Slow Sunday"`.
+It browses, tries an example, uploads, creates an account, saves into a collection, makes a movie night from mixed items and connects an agent to one collection.
+
+The capture v2 journey (`e2e/real/v2-journey.spec.ts`) runs against `next dev`, the worker and the media worker. It covers sign-up, photo and video upload, the library, video detail and the unavailable exploration state. It also covers collections, a fake native client enrolling and running a remote command, an agent over REST and MCP, and a shared link opened and then revoked. Commands are in [docs/v2-real-stack.md](docs/v2-real-stack.md). Screenshots land in `apps/web/e2e/screenshots/real-*.png` (credentials masked). The desktop run writes the agent token to `apps/web/test-results/agent-token.txt` (git-ignored), so you can then run `DEMO_AGENT_TOKEN=$(cat apps/web/test-results/agent-token.txt) pnpm demo-agent -- --url http://localhost:3200/mcp --collection "Slow Sunday"`.
 
 ## Environment
 
@@ -60,7 +77,10 @@ All names are in [.env.example](.env.example) with defaults in comments. The one
 | `DATABASE_URL` | everything | default `postgres://culture_atlas:culture_atlas@localhost:5432/culture_atlas` |
 | `SESSION_SECRET` | production | Session and CSRF HMAC secret; required when `NODE_ENV=production` |
 | `APP_BASE_URL` | production | Public URL; cookies are `Secure` when it is https |
-| `FEATHERLESS_API_KEY` | photo analysis, research, plans | `LLM_PROVIDER` defaults to `featherless`. Models: `VLM_MODEL`, `RESEARCH_MODEL`, `COMPOSER_MODEL` (default `google/gemma-3-27b-it`; the VLM model must accept images). `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY` is the alternative. |
+| `CONCENTRATE_API_KEY`, `CONCENTRATE_PROFILES_JSON`, `CONCENTRATE_QUALIFICATION_DIR`, `MODEL_*_SPEND_LIMIT_USD` | photo/video analysis, research, plans | Concentrate is the default gateway. All of these are required before any role is ready ([docs/concentrate.md](docs/concentrate.md)). |
+| `LLM_PROVIDER`, `FEATHERLESS_API_KEY` / `ANTHROPIC_API_KEY` | explicit rollback only | `featherless` or `anthropic`. Models: `VLM_MODEL`, `RESEARCH_MODEL`, `COMPOSER_MODEL` |
+| `IDENTITY_MAIL_DRIVER` (`ses` / `file` / `none`), `IDENTITY_MAIL_FROM` | v2 email sign-in | `file` is local only; production uses Amazon SES |
+| `FEATURE_KILL_SWITCHES`, `META_GLASSES_*` | v2 feature flags | Server-side flags; kill switches can only turn features off (`pnpm ops:kill`) |
 | `QLOO_API_KEY`, `QLOO_API_URL` | related discoveries | Key pending; default URL `https://hackathon.api.qloo.com` |
 | `WIKIMEDIA_USER_AGENT` | reference research | Descriptive User-Agent with contact info |
 | `STORAGE_DRIVER` | media | `local` (default, `.data/objects`, needs `STORAGE_SIGNING_SECRET`), `s3` (deployments) or `memory` (tests) |
@@ -97,7 +117,10 @@ The spec requires at least one discovery per live demo path to trace back to a s
 | Command | What it does |
 | --- | --- |
 | `pnpm dev` / `pnpm build` | Next.js dev server / type-check every package and `next build` |
-| `pnpm worker` | Job worker: analyses, related discovery, plans, World Sensor polling, hourly purge |
+| `pnpm worker` | Job worker: analyses (v1 and v2 media), related discovery, plans, World Sensor polling, hourly purge |
+| `pnpm media-worker` | Capture v2 media worker: upload verification, ffmpeg preparation, cleanup, upload expiry, storage reconciliation |
+| `pnpm qualify:concentrate` | Concentrate catalog snapshot and (only with `--confirm-paid-requests`) paid role qualification |
+| `pnpm ops:kill` / `ops:metrics` / `ops:backup` / `ops:restore-drill` | Feature kill switches, CloudWatch health metrics, logical backup, restore drill |
 | `pnpm db:setup` / `pnpm db:migrate` | Local PostgreSQL setup / apply migrations to `DATABASE_URL` |
 | `pnpm test` / `pnpm test:e2e` | Vitest / Playwright |
 | `pnpm qloo:probe` | Qloo contract probes; writes `docs/capability-matrix.md` (needs `QLOO_API_KEY`) |
@@ -107,7 +130,35 @@ The spec requires at least one discovery per live demo path to trace back to a s
 
 ## Deploying
 
-One Docker image runs the web app and the worker; `render.yaml` is a Render blueprint with Postgres. See [docs/deploy.md](docs/deploy.md). CI (`.github/workflows/ci.yml`) runs typecheck, lint, tests, a fresh migration and the build.
+One Docker image runs the web app, the worker and the media worker. There are two ways to deploy it:
+
+- **Render:** `render.yaml` is a Render blueprint with Postgres ([docs/deploy.md](docs/deploy.md)).
+- **AWS:** see [docs/deploy-aws.md](docs/deploy-aws.md) and `infra/aws/`. The CloudFormation template creates:
+  - one t3.micro with Caddy for HTTPS;
+  - PostgreSQL on RDS db.t4g.micro or on the instance;
+  - a private S3 bucket;
+  - settings in SSM;
+  - CloudWatch alarms;
+  - a USD 1 budget alert.
+
+  It has **never been deployed**. Whether it is free depends on the AWS account:
+  - **Accounts opened before 15 July 2025** (12-month free tier): it was sized to fit.
+  - **Newer accounts** (credit-based Free plan): it uses credits, roughly USD 15–27 a month.
+
+  Video playback traffic beyond the free transfer allowance is the most likely real cost. A 1 GiB micro instance prepares only a few videos an hour. Check current terms in the AWS Free Tier page and Billing console before deploying.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, tests, a fresh migration and the build.
+
+## What is not verified
+
+These are written and, where possible, unit- or contract-tested, but have not run for real:
+
+- **Native apps.** The iOS and Android capture apps (`apps/ios`, `apps/android`) have never been compiled or run. There is no Xcode, Android SDK or Kotlin compiler here. The Android Meta SDK binding is written from documentation and unchecked.
+- **Glasses and phones.** Nothing has run on Meta glasses or on a physical phone (DEV-01..03, and the device parts of MED-04/05 and TEN-01).
+- **Models.** No Concentrate model is qualified and no live call has been made. Billing reconciliation is manual.
+- **Browser video playback.** MP4 playback in a real browser was not observed: Playwright's Chromium has no H.264. The stream was decoded with ffmpeg instead.
+- **External services.** S3 (multipart, CORS, ListMultipartUploads), SES email, APNs/FCM push and the AWS stack were tested against local fakes only.
+- **Release qualification.** There is no store or SDK eligibility evidence, no independent two-user trial and no cloud restore drill.
 
 ## Documentation
 
@@ -119,18 +170,31 @@ One Docker image runs the web app and the worker; `render.yaml` is a Render blue
 - [World Sensor](docs/sensor.md): poll and bridge modes, setup, guarantees, verifying the relay
 - [Capability matrix](docs/capability-matrix.md) and [Qloo probes](docs/qloo-probes.md)
 - [Privacy and retention](docs/privacy.md): what is kept, deletion, provider retention TODOs
-- [Deploy](docs/deploy.md)
+- [Deploy](docs/deploy.md) and [Deploy on AWS](docs/deploy-aws.md)
+- Capture platform v2:
+  - [gap report](docs/v2-gap-report.md);
+  - [real-stack journey](docs/v2-real-stack.md);
+  - [contract](docs/capture-v2-contract.md);
+  - [operations](docs/capture-v2-operations.md);
+  - [media worker](docs/media-worker.md);
+  - [Concentrate](docs/concentrate.md);
+  - [sharing](docs/sharing.md);
+  - [native apps](docs/native.md);
+  - [runbooks](docs/runbooks/).
 - Research: [World Sensor integration review](research/world-sensor-qloo-integration.md), [Qloo feasibility](research/qloo-style-feasibility.md)
 
 ## Repository layout
 
 ```
-apps/web            Next.js: consumer UI, REST /v1, MCP /mcp, demo inspector
-apps/worker         DB-backed job worker
+apps/web            Next.js: consumer UI, REST /v1 and /v2, MCP /mcp, demo inspector
+apps/worker         DB-backed job worker (v1 jobs, v2 media analysis)
+apps/media-worker   Capture v2 upload verification and ffmpeg preparation
+apps/ios, apps/android  Native capture apps (source only; not compiled here)
+infra/aws           CloudFormation, Compose and Caddy for the AWS shape
 apps/demo-agent     Independent MCP client
 apps/sensor-bridge  Outbound World Sensor bridge (runs next to the relay)
 packages/domain     Domain services, schemas, authorization, jobs, World Sensor import
-packages/providers  VLM, text, Qloo, research and storage adapters
+packages/providers  Model gateway (Concentrate; Featherless/Anthropic rollback), Qloo, research, storage, mail and push adapters
 packages/agent-gateway  MCP tools over the domain services
 db/migrations       Plain SQL migrations
 fixtures            Recorded-shape fixtures, the mock relay, sample inputs

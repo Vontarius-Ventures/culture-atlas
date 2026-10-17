@@ -1,316 +1,198 @@
 # capture platform v2: gap report
 
-Date: 2026-10-17. Branch `claude/wizardly-cannon-yu8trw`, after merging
-`capture-v2/identity`, `capture-v2/p1-domain-infra`, `capture-v2/p4-concentrate`
-and `capture-v2/p5-agents`. Authority: `specs/capture-platform-v2/` (v2.1).
+Date: 2026-10-17. Branch `claude/wizardly-cannon-yu8trw`. Authority: `specs/capture-platform-v2/` (v2.1).
 
-This report covers what the code in this tree does today. It does not claim
-any runtime acceptance case is complete. Status values:
+This report replaces the earlier one, written before the package branches were merged. It describes the tree after these merges:
 
-- **done**: implemented and covered by automated tests in this repo.
-- **partial**: some code exists, but production wiring, a sub-requirement or
-  verification is missing (the gap is named).
-- **missing**: no implementation in this tree.
+| Branch | Package |
+| --- | --- |
+| `v2/media` | media worker, verifier and preparer, library backend |
+| `v2/concentrate` | Concentrate gateway and v2 media analysis |
+| `v2/identity-ops` | production identity wiring, feature flags, push, ops, AWS |
+| `v2/agents-sharing` | collection sharing, agent media wiring, screens 10–13 |
+| `v2/capture-ui` | web screens 01–09 |
+| `v2/native` | iOS and Android apps, native contract fixtures |
 
-## 0. Tree health (this change)
+Status values:
+
+- **done:** implemented and covered by automated tests in this repo.
+- **done (server):** the server side is done; the client or device part is not proven.
+- **partial:** something named is still missing.
+- **missing:** not implemented.
+- **unverified:** written, but it cannot run in this environment (no toolchain, device, key or network).
+
+## 0. Tree health
 
 | Check | Result |
 | --- | --- |
-| `pnpm install --frozen-lockfile` | passes |
-| `pnpm typecheck` | passes |
-| `pnpm lint` | passes (fixed: unused `z` import in `packages/domain/src/services/agent-platform.ts`; setState inside an effect in `apps/web/components/views/AgentPlatformView.tsx`) |
-| `pnpm test` | 71 files / 541 tests pass, 4 consecutive full runs |
+| `pnpm install --frozen-lockfile` | passes (the lockfile merged cleanly; `pnpm install` made no changes) |
+| `pnpm typecheck`, `pnpm lint` | pass |
+| `pnpm test` | 104 files, 791 tests pass (two full runs after integration) |
+| Fresh-database migrate | 20 migrations apply; a second run applies nothing |
 | `pnpm build` | passes |
-| Fresh-database migrate | passes (was failing at `071_agent_resources_commands.sql`) |
+| Playwright mock suite (`pnpm test:e2e`, 1440/390/360/320) | 317 passed and 5 skipped (desktop-only cases). Two other desktop tests timed out on a cold `next dev` compile and passed on rerun. |
+| Real-stack v1 journey (`next start` + worker) | 3 of 3 widths pass |
+| Real-stack v2 journey (`next dev` + worker + media worker) | 3 of 3 widths pass ([v2-real-stack.md](v2-real-stack.md)) |
 
-Fixes made while merging:
+### Integration fixes made while merging
 
-1. **Duplicate migration objects.** `055_agent_media_fences.sql` (p1 line) and
-   `071_agent_resources_commands.sql` (p5 line) both added
-   `media_assets.created_by_agent_connection_id` and an owner-scoped foreign
-   key. Both files are now order-independent: columns use `ADD COLUMN IF NOT
-   EXISTS`, and foreign keys and pairing checks are added only if missing. 055
-   backfills `authorization_version` for agent-created rows from
-   `agent_media_uploads`. Rows with no recorded version get `0`, which matches
-   no live grant, so they fail closed. No file was renumbered.
-   `packages/domain/src/db/migrate.ts` accepts the exact pre-merge checksums of
-   those two files (`RECONCILED_CHECKSUMS`) and updates the stored record.
-   Any other edited migration is still refused.
-   `packages/domain/src/db/migration-reconcile.test.ts` covers four cases:
-   - a fresh database;
-   - a database that applied the p1 line, then upgraded;
-   - a database that applied the p5 line with agent rows, then upgraded;
-   - an unknown edit to an applied file, which is still rejected.
+1. **Analysis readiness for the feature flags.** The feature flags reported analysis as "not ready" no matter what. `concentrate_analysis_enabled` now comes from the gateway's read-only readiness (`model-readiness.ts` `photoAnalysisReadiness`). A credit pause counts as provider-ready but budget-unavailable.
+2. **`meta_glasses_label` in the capabilities response.** The flag merge put this string into the boolean `flags` map of `/v2/capabilities`. The web client and native apps validate that map against `CaptureCapabilitiesResponse`, so the response would have been rejected. The label now stays server-side (it is copy). `production-runtime.test.ts` now checks the response against the schema.
+3. **Analysis admission is injectable.** `CaptureV2Runtime.analysisAvailability` lets tests that are about agent grants admit analysis. A new test asserts the default honest refusal: 503 "Exploration is temporarily unavailable." with no work queued.
+4. **One storage directory for all workers.** The analysis worker built its own storage and resolved `STORAGE_LOCAL_DIR` from its own working directory. It now uses the shared `createMultipartStorage`, so the web app, media worker and analysis worker read the same files.
+5. **Native contract fixtures.** They gained the `unsupported_media` and `duration_exceeded` codes (both mapped to `reject_item` in the Swift and Kotlin error policies) and the `remote_glasses` availability entry. A capability-gate case now matches the server's real flag evaluation for an enrolled phone.
+6. **One test-database helper.** `createIsolatedDatabase` serves both the concentrate and identity-ops call shapes.
 
-   All three upgrade paths end with the same schema shape. The pre-merge files
-   are kept as test fixtures in `packages/domain/src/db/pre-merge-migrations/`.
-2. **Agent upload broke the p1 pairing check.** p5 `beginUpload` set
-   `created_by_agent_connection_id` without `authorization_version`, which 055's
-   CHECK rejects. It now records both together
-   (`packages/domain/src/services/agent-media.ts`). Test:
-   `packages/domain/src/services/agent-media.test.ts`.
-3. **Root cause of the `demo.test.ts` "job … not claimable" flake.**
-   `claimJobs` locked with `FOR UPDATE SKIP LOCKED`. Inserting a
-   `trace_events` or `job_stages` row takes `FOR KEY SHARE` on the job row (for
-   example while an agent's `get_job` poll is traced). `FOR UPDATE` conflicts
-   with that lock, so a worker could see a job as `queued` and still fail to
-   lease it. The claim now uses `FOR NO KEY UPDATE SKIP LOCKED`
-   (`packages/domain/src/jobs/queue.ts`). A deterministic regression test is
-   in `packages/domain/src/jobs/queue.test.ts` ("claims a queued job while
-   another transaction is writing a trace or stage row for it"); it failed
-   before the fix. `claimCommands` in `services/agent-commands.ts` uses the same
-   lock against `device_command_ack_keys`. It was left unchanged because ack
-   writes also update the command row; check it when device delivery is wired.
+### Fixes found by the real-stack v2 journey
 
-## 1. Cross-cutting integration gaps (highest priority)
+1. **Moment order.** Video moments were returned in arbitrary order. They now come back in timestamp order (`capture-v2/intake.ts`), with a regression check in `apps/media-worker/src/worker.test.ts`.
+2. **Link share with media.** Creating the link left the panel saying "Currently private" while the link was already live and media inclusion awaited confirmation. The panel now refreshes as soon as the link exists.
+3. **Shared view copy.** It said "Nothing has been shared in this collection yet." above the shared photos and videos.
+4. **Player notice.** "This video cannot play in this browser" was dark text on the dark player bar.
 
-These seams were built and tested separately on each line. Nothing connects
-them in the running app, so most of v2 is unreachable in production today.
+## 1. Cross-cutting gaps from the previous report
 
-| # | Gap | Effect | Where |
+| # | Gap | Status | Where |
 | --- | --- | --- | --- |
-| G1 | `setCaptureV2Runtime` / `configureCaptureV2Runtime` is never called outside tests. No production `CaptureIdentityAdapter` wraps the identity services (`services/identity.ts` `requireRecoverableAccount`, `services/native-sessions.ts` grant/issue/revoke/resolve). | Every `/v2/uploads`, device enrollment and `cna_` native call returns `service_unavailable`. | `apps/web/lib/server/capture-v2.ts:38-55`; `docs/capture-v2-operations.md` describes the wiring that is still missing |
-| G2 | `setAuthorityLifecycle(endCaptureAuthority)` is not registered at startup. | Sign-out-all, account switch and installation revocation do not fence pending uploads or arming in production. | `services/native-sessions.ts:15`, `capture-v2/devices.ts` |
-| G3 | The worker does not process `capture_work`: no `verify_upload`, `prepare_media`, `purge_media`, `cleanup_upload` or `analyze_media` loop, and no `heartbeatMediaWorker`. | Uploads never leave `verifying`, and video is never enabled (needs a fresh qualified-worker heartbeat). | `apps/worker/src/worker.ts` (no capture-v2 imports); `capture-v2/queue.ts`, `preparation.ts`, `analysis.ts`, `capabilities.ts` |
-| G4 | No production `MediaVerifier`/`MediaPreparer` for video. The default `photoMediaVerifier` rejects video. There is no ffmpeg/ffprobe adapter, and ffmpeg is not in the `Dockerfile`. | Video upload and playback cannot work. | `capture-v2/context.ts:6`, `types.ts:155` |
-| G5 | No production `CaptureAgentAuthorization`. Agent-created `capture_work` fails closed (`scope_denied`) in the worker. | Agent uploads and agent analysis never complete. | `capture-v2/agent-fence.ts`, `types.ts:159` |
-| G6 | MCP `handleMcpRequest` is created without `captureContext`. | MCP media tools (`list_media`, `get_media`, `begin_upload`, `complete_upload`, `get_operation` for uploads) return `service_unavailable` in production. | `packages/agent-gateway/src/server.ts:282`, `apps/web/app/mcp/route.ts` |
-| G7 | Agent REST media is not routed. The v2 catch-all rejects `Bearer cat_` with `scope_denied`, yet `agentMedia.getMedia` returns `/v2/agent-media/...` links that have no route, and `docs/api/agent-platform.openapi.json` lists `/v2/library`, `/v2/media/{id}` and `/v2/uploads` for agents. | The spec says REST is authoritative; today only MCP exposes agent media (and G6 blocks that). | `apps/web/lib/server/capture-v2.ts:236-252`, `services/agent-media.ts:22-29` |
-| G8 | No production identity mail adapter (`setIdentityMail` is never called). | Email sign-in, verify and recover fail closed in production, so no account can become "recoverable", which G1 requires. | `services/identity-mail.ts` |
-| G9 | Concentrate `createModelGateway` is not wired into the v2 analysis worker or the v1 pipeline (it needs a durable ledger plus verified job identity). | AI over v2 media is unavailable. Featherless remains the v1 default. | `packages/providers/src/registry.ts:40`, `docs/concentrate.md` |
+| G1 | Production `CaptureIdentityAdapter` and native resolver | done | `apps/web/lib/server/runtime.ts`, `services/capture-identity.ts`; real-stack journey |
+| G2 | Authority lifecycle hook (sign-out, switch and revocation fence uploads and arming) | done | `runtime.ts` registers `endCaptureAuthority` |
+| G3 | Worker processes `capture_work` | done | `apps/media-worker` handles verify, prepare, purge and cleanup; `apps/worker/src/media-analysis.ts` handles analyze |
+| G4 | Video verifier and preparer (ffmpeg) | done | `apps/media-worker/src/{verifier,probe,preparer,qualify}.ts`; ffmpeg is in the `Dockerfile` |
+| G5 | Production `CaptureAgentAuthorization` | done | `authz/capture-agent-authorization.ts`, the default in `agent-fence.ts` |
+| G6 | MCP media tools get a capture context | done | `app/mcp/route.ts` → `agentCaptureContext`; real-stack journey (`list_media`, `get_media`) |
+| G7 | Agent REST media | done | the `cat_` hook in `captureV2Route` → `agent-media-http.ts`; real-stack journey |
+| G8 | Identity mail adapter | done (SES unverified) | `providers/mail/identity-mail.ts` supports SES, a file mailbox (dev only) and none |
+| G9 | Concentrate wired into v1 and v2 analysis | done in code; **no qualified model** | `providers/concentrate`, `model-gateway`, `apps/worker/src/media-analysis.ts` |
 
 ## 2. Delivery packages (BUILD-AND-ACCEPTANCE.md)
 
-| Package | Status | Evidence | What remains |
-| --- | --- | --- | --- |
-| 1 Domain and infrastructure | **partial** | Migrations 051–057 and 065–080; owner-composite FKs; `capture-v2/intake.ts`, `queue.ts`, `policy.ts`; S3/local multipart (`packages/providers/src/storage/multipart-*.ts`); `scripts/capture-backup.ts`; lifecycle isolation tests | G1–G3; outbox/reconciliation job is not scheduled; `inference_attempts` and `consent_records` tables are missing (`model_gateway_attempts` covers part of inference_attempts); restore drill not exercised |
-| 2 Camera and uploads | **partial** (backend) / **missing** (UI) | Upload state machine, quota reservation, resumable parts, delete/abort races, photo verify/prepare (`capture-v2/intake.ts`, `preparation.ts`) | Video verifier/preparer (G4); worker loop (G3); every v2 web screen (section 5); native camera |
-| 3 Observer extraction | **missing** | None. Reference source: `/home/user/worldcompilersensor/WorldCompilerSensor/Wearables/MetaWearablesService.swift`, `.../ClipRecorder.swift`, `.../Library/LibraryStore.swift`, `.../Library/LibraryUploader.swift`, `Shared/Assets.swift` | iOS adapters, an independent Android adapter, relay/auth replacement, SDK license obligations. There is no iOS or Android project in this repo. |
-| 4 Concentrate | **partial** | Responses transport, profiles, strict schema runner, budget ledger, 402/429/timeout handling (`packages/providers/src/concentrate/*`, `model-gateway/*`, `065_model_gateway.sql`), all against fixtures | G9; no qualified model IDs; operator-qualified live suite; privacy/ZDR settings evidence |
-| 5 Agent platform | **partial** | v2 scopes and consent, setup/preferences, connection lifecycle, OAuth PKCE and refresh rotation, commands, events, activity, OpenAPI (`docs/api/agent-platform.openapi.json`), tool catalog (`docs/api/agent-tools-v2.json`), MCP tools | G5–G7; `analyze_media` MCP tool missing; device delivery HTTP routes missing (section 3) |
-| 6 Collection sharing | **missing** | `collection_media_items` (071) only | Tables (`collection_shares`, `collection_share_members`, `share_invites`, `audit_events`), all 8 routes, `ShareProjection`, recipient media gateway, screens 12–13. `rejectShareAuthority` in `capture-v2.ts` only guards owner routes. |
-| 7 Release qualification | **missing** | CI runs install/typecheck/lint/test/migrate/build (`.github/workflows/ci.yml`) | Independent-user/device trial, store/SDK eligibility evidence, accessibility audit, runbooks/alerts, restore drill, hosting (section 7) |
-
-## 3. Backend endpoints (BACKEND-CONTRACTS.md)
-
-Routed by `apps/web/app/v2/[...capture]/route.ts`, which calls
-`captureV2Route` in `apps/web/lib/server/capture-v2.ts` unless noted. "Prod"
-lists the cross-cutting gaps from section 1 that block the route in a real
-deployment.
-
-| Route | Status | Implementation | Prod blockers |
-| --- | --- | --- | --- |
-| GET /v2/capabilities | done | `capture-v2.ts:291`, `capture-v2/capabilities.ts` | none |
-| POST /v2/devices/enroll (+ `/enrollment/challenge`) | done (server) | `capture-v2.ts:394-399`, `capture-v2/devices.ts` | G1, G8; no native client |
-| GET /v2/devices | done | `capture-v2.ts:400` | G1 for native |
-| DELETE /v2/devices/{id} | done | `capture-v2.ts:405` | G2 |
-| PUT /v2/device/status | done | `capture-v2.ts:408` | G1 |
-| POST /v2/device/wearables | done (server) | `capture-v2.ts:410` | G1; no native SDK |
-| DELETE /v2/device/wearables/{id} | done (server) | `capture-v2.ts:413` | G1 |
-| POST /v2/device/capture-sessions | done | `capture-v2.ts:416` | G1 |
-| POST /v2/device/capture-sessions/{id}/arm | done | `capture-v2.ts:420` | G1 |
-| POST /v2/device/capture-sessions/{id}/end | done | `capture-v2.ts:420` | G1 |
-| POST /v2/uploads | done | `capture-v2.ts:312`, `capture-v2/intake.ts` | G1 |
-| GET /v2/uploads/{id} | done | `capture-v2.ts:317` | G1 |
-| POST /v2/uploads/{id}/parts | done | `capture-v2.ts:318` (also `/resume`) | G1 |
-| POST /v2/uploads/{id}/complete | done | `capture-v2.ts:322` | G1, G3 (stays `verifying`) |
-| DELETE /v2/uploads/{id} | done | `capture-v2.ts:325` | G1 |
-| GET /v2/library | done | `capture-v2.ts:329` | G1 |
-| GET /v2/media/{id} | done | `capture-v2.ts:388` (+ `/content/{variant}` range gateway) | G1, G3 |
-| PATCH /v2/media/{id} | done | `capture-v2.ts:389` | G1 |
-| POST /v2/media/{id}/analysis | partial | `capture-v2.ts:383`, `capture-v2/analysis.ts` (request/lease/publish) | G3, G9: requests queue but never run |
-| DELETE /v2/media/{id} | done | `capture-v2.ts:390` | G1; G3 for purge |
-| POST /v2/media/batch-delete | done | `capture-v2.ts:331` | G1 |
-| POST /v2/devices/{id}/commands | done | `apps/web/app/v2/devices/[id]/commands/route.ts`, `services/agent-commands.ts` | none for agents/owners; phone side missing |
-| GET /v2/device/commands | partial | domain `claimCommands` (`services/agent-commands.ts:120`) | **no HTTP route** |
-| POST /v2/device/commands/{id}/ack | partial | domain `acknowledgeCommand` (`services/agent-commands.ts:145`) | **no HTTP route** |
-| GET /v2/commands/{id} | done | `apps/web/app/v2/commands/[id]/route.ts` | none |
-| GET /v2/events | partial | `apps/web/app/v2/events/route.ts`, `services/agent-events.ts` (24h cursor → `cursor_expired` → 410 with resync message) | The stream polls the database every 1s and closes after 25s; clients reconnect with `Last-Event-ID`. There is no push or LISTEN/NOTIFY. Owner media/command events only advance once G3 is in place. |
-
-Required tables: all present except `inference_attempts` and
-`consent_records` (section 2, package 1).
-
-## 4. Agent and sharing endpoints (AGENTS-AND-SHARING.md)
-
-| Route | Status | Implementation |
+| Package | Status | What remains |
 | --- | --- | --- |
-| GET /v2/me/setup | done | `apps/web/app/v2/me/setup/route.ts`, `services/agent-platform.ts:64` |
-| GET /v2/me/preferences | done | `app/v2/me/preferences/route.ts`, `agent-platform.ts:22` |
-| PATCH /v2/me/preferences | done (If-Match, 412) | same, `agent-platform.ts:46` |
-| GET /v2/agent-connections | done | `app/v2/agent-connections/route.ts` |
-| POST /v2/agent-connections | done | same, `agent-platform.ts:102` |
-| PATCH /v2/agent-connections/{id} | done (narrowing only) | `app/v2/agent-connections/[id]/route.ts`, `agent-platform.ts:117` |
-| POST /v2/agent-connections/{id}/rotate | done | `app/v2/agent-connections/[id]/rotate/route.ts` |
-| DELETE /v2/agent-connections/{id} | done | `app/v2/agent-connections/[id]/route.ts` |
-| POST /v2/devices/{id}/commands | done | see section 3 |
-| GET /v2/operations/{id} | done | `app/v2/operations/[id]/route.ts`, `services/agent-operations.ts` (upload outcomes blocked by G3/G5) |
-| GET /v2/events | partial | see section 3 |
-| OAuth authorize/token + `.well-known` metadata | done | `app/v2/oauth/{authorize,token}/route.ts`, `app/.well-known/*`, `services/agent-oauth.ts` |
-| Agent activity | done | `app/v2/agent-activity/route.ts` |
-| Collection media membership (supporting) | done | `app/v2/collections/[id]/media[/asset_id]/route.ts`, `services/collection-media.ts` |
-| Agent REST media (`/v2/library`, `/v2/media`, `/v2/uploads` with `cat_`) | missing | G7 |
-| GET/POST /v2/collections/{id}/shares | missing | none |
-| PATCH /v2/shares/{id} | missing | none |
-| DELETE /v2/shares/{id} | missing | none |
-| POST /v2/shares/{id}/invitations | missing | none |
-| POST /v2/share-invitations/accept | missing | none |
-| POST /v2/shared/redeem | missing | none |
-| GET /v2/shared/collection | missing | none |
-| GET /v2/shared/media/{id} | missing | none |
+| 1 Domain and infrastructure | done (server) | `consent_records` table still missing. The restore drill was tested locally only, not in the cloud. The reconciliation sweep is untested at scale. |
+| 2 Camera and uploads (web) | done | Upload drafts in IndexedDB are not encrypted at rest. The 'Uploading' filter makes three status queries and has no pagination. Real browser MP4 playback was not observed (MED-05). |
+| 3 Observer extraction / native | **unverified** | The iOS and Android apps have never been compiled or run. The Android Meta SDK binding is unchecked. Store and SDK eligibility has no evidence. |
+| 4 Concentrate | done in code; **unverified live** | No qualified profile and no live qualification run. ZDR and logging not verified on a real key. Billing reconciliation is manual. Alerts are log lines only. |
+| 5 Agent platform | done | Rate limits are per connection only (no per-account or per-endpoint budget). |
+| 6 Collection sharing | done | Revocation reaches open viewers by polling, not push. The shared-media player was not checked in a browser able to decode MP4. |
+| 7 Release qualification | **missing** | Independent two-user and device trial, store and SDK eligibility, cloud deploy, cloud restore drill, alert routing |
 
-MCP tools (`packages/agent-gateway/src/tools.ts`). Present: get_setup,
-get_preferences, update_preferences, list_media, get_media, begin_upload,
-complete_upload, list_collections, get_collection, add_collection_item,
-remove_collection_item, request_capture, get_operation. **Missing:
-`analyze_media`.** The v1 `analyze_capture` remains. Media tools are blocked
-in production by G6.
+## 3. Routes (BACKEND-CONTRACTS.md, AGENTS-AND-SHARING.md)
 
-## 5. Screens 01–13 (SCREEN-CONTRACT.md)
+Every route in both documents is implemented and routed.
 
-The web navigation is still the v1 set, Discover / Collections / Plans
-(`apps/web/components/AppShell.tsx:20`). The spec requires Library as a fourth
-destination.
+These routes were added since the last report:
 
-| Screen | Route | Status | Notes |
+- `GET /v2/device/commands` and `POST /v2/device/commands/{id}/ack` (native `cna_` sessions only);
+- `PUT`/`DELETE /v2/device/push-token`;
+- `POST /v2/media/{id}/preparation` (retry);
+- all sharing routes (`/v2/collections/{id}/shares`, `/v2/shares/{id}[/invitations]`, `/v2/share-invitations/accept`, `/v2/shared/{redeem,collection,media/{id}/{variant}}`);
+- agent REST media and the `analyze_media` tool.
+
+`GET /v2/events` is still a 1-second database poll that closes after 25 seconds; clients reconnect with `Last-Event-ID`. It now:
+
+- sends deletion events to the owner;
+- accepts `cna_` tokens, re-checking revocation on every poll;
+- sends keepalives;
+- sends a resync event when the cursor has expired.
+
+## 4. Screens 01–13 (SCREEN-CONTRACT.md)
+
+| Screen | Status | Evidence |
+| --- | --- | --- |
+| 01/08 Library, 02 Source, 03 Camera, 06 Uploads, 07 Video detail | done (web) | mock suite at 1440/390/360/320; real-stack journey for 01, 06, 07 and 08 |
+| 04/05/09 Glasses | done (web explanation and phone hand-off); native **unverified** | `/capture/glasses`, `/settings/devices`. The glasses are always unavailable until an operator lists qualified SDK builds. |
+| 10/11 Agents | done | mock suite with axe; real-stack journey |
+| 12/13 Sharing | done | mock suite with axe; real-stack journey (link, separate viewer, revoke) |
+
+Deviations from the mockups are listed in [design-deviations.md](design-deviations.md). Hero images and fixtures are crops of the generated mockups; replace them with licensed photography before release.
+
+## 5. Acceptance IDs
+
+"Here" means this container: Node 22, PostgreSQL 16, ffmpeg, and Playwright Chromium without H.264. There is no Xcode, Android SDK or kotlinc, no provider key in use, and network access is npm only.
+
+| ID | Status | Evidence | Not verifiable here |
 | --- | --- | --- | --- |
-| 01 Library desktop | /library | missing | no page; v2 library API exists |
-| 02 Source mobile | /capture | partial | `app/capture/page.tsx` is the v1 photo flow (`CaptureView.tsx` → `/v1` `createCapture`). There is no camera/glasses/upload source picker and no signed phone hand-off. |
-| 03 Camera mobile | browser camera | partial | `CaptureStart.tsx` uses `<input capture>` for photos only. No video recording, no mic state, no Retake/Keep step. Native camera is missing. |
-| 04 Glasses connect | Settings → Devices | missing | needs native |
-| 05 Glasses ready | native | missing | needs native |
-| 06 Uploads desktop | /uploads | missing | resumable API exists |
-| 07 Video detail | /library/:id | missing | range gateway exists |
-| 08 Library mobile | /library | missing | |
-| 09 Glasses unavailable | native/web | missing | capability reasons exist in `/v2/capabilities` |
-| 10 Agents | /settings/agents | done | `components/views/AgentPlatformView.tsx`, `app/settings/agents/page.tsx`; DOM tests. Exact-copy and 320px audit not done. |
-| 11 Agent permission | /settings/agents/new (+ `/authorize` OAuth consent) | done | `ConnectAgentView`; DOM tests for default scopes and download separation |
-| 12 Collection share | /collections/:id/share | missing | |
-| 13 Shared collection | /shared | missing | |
+| TEN-01 | done (server) | `worker.test.ts` TEN-01, `isolation.test.ts`, `lifecycle.test.ts` | two real phones on separate networks |
+| TEN-02 | done (server) | `native-contract.test.ts`, `capture-v2.test.ts`, `worker.test.ts` | native client behavior |
+| MED-01 | done (server) | `worker.test.ts` MED-01 (real ffmpeg) | live billing reconciliation |
+| MED-02 | done | `worker.test.ts` MED-02 | |
+| MED-03 | done | `worker.test.ts` MED-03, `media.test.ts` (damaged, truncated, mislabeled, codec, duration) | real device recordings that log harmless decoder errors |
+| MED-04 | done (server) | `worker.test.ts` MED-04 (2-part resume, expired links, abandoned multipart) | app kill or offline on a device; real S3 |
+| MED-05 | **partial** | prepared MP4 checked with ffprobe and a full ffmpeg decode, including through the ranged gateway (real-stack journey) | playback in Chrome, Safari, iOS and Android |
+| DEV-01 | **unverified** | none | physical glasses |
+| DEV-02 | done (server) | `device-commands-http.test.ts`, `native-contract.test.ts`; real-stack journey runs the command lifecycle over HTTP | execution on a phone |
+| DEV-03 | **unverified** | none | interruptions on a physical device |
+| AI-01 | partial | contract fixtures and property tests (`schema.test.ts`, `contract.test.ts`, `media-analysis.test.ts`) | qualified live models |
+| AI-02 | done with fakes | 402 pause and resume, 429 Retry-After, spend caps | live credit exhaustion |
+| AGT-01 | done | `agent-media-http.test.ts`; real-stack journey over REST and MCP | |
+| AGT-02 | done | `agent-platform.test.ts` | |
+| SHR-01 | done | `collection-shares.test.ts`, `share-http.test.ts`; real-stack journey | |
+| SHR-02 | done | `collection-shares.test.ts` | |
+| UX-01 | done (web) | mock suite with axe at 1440/390/360/320; real-stack screenshots `real-v2-*` | native screens |
+| OPS-01 | partial | restore drill test (real `pg_dump`/`pg_restore`), ops metrics, runbooks | cloud deploy, alerts delivered, cloud restore drill |
 
-## 6. Acceptance IDs
+## 6. Hosting on AWS
 
-"Here" means this container: Node 22, PostgreSQL 16, ffmpeg, Chromium
-Playwright. There is no Android SDK, no Xcode, no provider keys, and outbound
-network is limited to npm.
+The user asked to host on AWS if it can run within free limits. `infra/aws/` and [deploy-aws.md](deploy-aws.md) contain:
 
-| ID | Status | Automated evidence | Verifiable here | Not verifiable here |
-| --- | --- | --- | --- | --- |
-| TEN-01 | partial | `capture-v2/lifecycle.test.ts` "denies guessed upload/media IDs…", `services/isolation.test.ts` | DB/HTTP isolation with two accounts | two real phones on separate networks |
-| TEN-02 | done (server) | `apps/web/lib/server/capture-v2.test.ts` "TEN-02…", `lifecycle.test.ts` "account switch…", `native-sessions.test.ts` | yes | native client behaviour |
-| MED-01 | partial | `lifecycle.test.ts` "duplicate completion and worker restart…", `model-gateway/runner.test.ts` | yes, with fakes | live billing reconciliation |
-| MED-02 | done (server) | `lifecycle.test.ts` "delete while verifier is running…", "abort racing complete…" | yes | |
-| MED-03 | partial | `lifecycle.test.ts` MIME/size/quota/corrupt/dimension tests | yes; a real ffprobe corrupt-video test is possible once G4 exists | |
-| MED-04 | partial (server) | `lifecycle.test.ts` "refreshes part authorization…", `multipart.test.ts` | server side | app termination/offline on devices |
-| MED-05 | missing | none | browser codecs via Playwright once G4 + UI exist | iOS/Android playback |
-| DEV-01 | missing | none | no | physical glasses |
-| DEV-02 | done (server) | `services/agent-commands.test.ts` (arming, stale heartbeat, revoked, duplicate, unknown) | yes | phone execution |
-| DEV-03 | missing | none | no | physical device interruptions |
-| AI-01 | partial | `concentrate/*.test.ts`, `model-gateway/runner.test.ts` (fixtures only) | schema/failure classes with fakes | qualified live models |
-| AI-02 | partial | `model-gateway/budget.test.ts` | yes, with fakes | live credit exhaustion |
-| AGT-01 | partial | `services/agent-platform.test.ts`, `agent-privacy.test.ts`, `collection-media.test.ts` | yes | REST media parity (G7) |
-| AGT-02 | done | `agent-platform.test.ts` (If-Match, rotation, OAuth replay, refresh reuse) | yes | |
-| SHR-01 | missing | none | yes, once built | |
-| SHR-02 | missing | none | yes, once built | |
-| UX-01 | partial (2 of 13) | `AgentPlatformView.dom.test.tsx` | Playwright at 1440/390/320 once screens exist | native screens |
-| OPS-01 | missing | CI only | migrations and lease recovery locally | cloud deploy, alerts, restore drill |
+- a CloudFormation template: one t3.micro, PostgreSQL on RDS db.t4g.micro or on the instance, a private versioned S3 bucket with CORS that exposes `ETag` and lifecycle rules, least-privilege IAM, SSM parameters, 9 alarms and a USD 1 budget;
+- a Compose file for web, worker and media worker;
+- Caddy for HTTPS;
+- deploy, rollback and backup scripts.
 
-## 7. Hosting (AWS free tier request)
+All of it is statically tested (`scripts/aws-infra.test.ts`, `docker compose config`). **None of it has been deployed.** There was no `cfn-lint`, no `aws cloudformation deploy` and no Docker image build here.
 
-Nothing in the repo targets AWS yet. `render.yaml` and the `Dockerfile` target
-Render or any Docker host (`docs/deploy.md`). Required runtime pieces:
+Whether it is free depends on when the AWS account was opened. These terms were not checked against AWS (no network), so verify them in the AWS Free Tier page and Billing console:
 
-- web and worker containers from the one image;
-- PostgreSQL 16;
-- a private S3 bucket with multipart lifecycle rules (`docs/capture-v2-operations.md`);
-- outbound HTTPS to the model and Qloo providers;
-- ffmpeg in the worker image once G4 lands.
-
-The AWS mapping would be:
-
-- one small EC2 instance running both containers (or ECS on EC2);
-- RDS for PostgreSQL 16 on the smallest single-AZ class;
-- S3 with lifecycle rules for incomplete multipart uploads (1 day) and staging (2 days).
-
-Free-tier fit has **not been verified**: there was no network access to AWS
-documentation, and AWS changed its free-tier model for accounts created from
-July 2025 (credit-based free plan) compared with the older 12-month offers. The
-operator must confirm current limits for:
-
-- EC2 hours and instance class;
-- RDS instance class, hours and storage;
-- S3 storage, requests and data transfer.
+- **Opened before 15 July 2025** (12-month free tier): the stack was sized to fit; expected about USD 0 a month.
+- **Opened on or after 15 July 2025** (credit-based Free plan): roughly USD 15–27 a month, paid from credits while they last.
 
 Risks:
 
-- 1 GiB-class instances are tight for Next.js, the worker, sharp and ffmpeg
-  together;
-- video transcoding may need a larger or burst instance;
-- data transfer out for video playback is the most likely cost to exceed a
-  free allowance.
+- Video data transfer beyond about 100 GB a month is the most likely real cost.
+- A 1 GiB t3.micro prepares only a few videos an hour on earned CPU credits.
+- A single instance cannot meet a 99.9% availability target.
 
-Hosting work that remains:
+Other notes:
 
-- infrastructure as code (Terraform, CDK or CloudFormation);
-- IAM least-privilege roles for web and worker;
-- S3 CORS for the app origin;
-- secrets in SSM Parameter Store or Secrets Manager;
-- RDS automated backups plus a tested restore;
-- alarms for queue age, error rate and storage cleanup;
-- spend alarms on the AWS account.
+- The S3 `staging` lifecycle rule only matches objects tagged `atlas-lifecycle=staging`. The multipart adapter does not set that tag yet, so cleanup relies on the one-day incomplete-upload rule and the media worker's reconciliation.
+- A production web server refuses local media storage and the file mailbox by design, so a real deploy needs S3 and SES configured.
 
-## 8. Gap list by area
+## 7. Remaining work, by area
 
-**Media pipeline + library backend**:
+**Media and library**
+- `consent_records` table.
+- Encrypt upload drafts in IndexedDB.
+- Pagination for the 'Uploading' filter.
+- Scene-diversity frame selection (frames are evenly spaced, `frames-v1`).
+- Measure the cost of reconciliation at scale.
+- Tag staging objects for the S3 lifecycle rule.
+- Test the Debian bookworm ffmpeg 5.1 build used by the Docker image.
 
-- G1–G5;
-- worker loop for `capture_work` (verify/prepare/purge/cleanup/analyze) and the qualified-worker heartbeat;
-- ffmpeg/ffprobe video verifier and preparer (probe → validate → MP4 → poster → ≤8 frames);
-- reconciliation/outbox sweeper;
-- `inference_attempts` and `consent_records` tables;
-- HTTP routes for `GET /v2/device/commands` and `POST /v2/device/commands/{id}/ack`.
+**Concentrate**
+- Qualify profiles with a live key (`pnpm qualify:concentrate --confirm-paid-requests`).
+- Collect ZDR and logging evidence.
+- Automate billing reconciliation.
+- Route alerts somewhere.
+- A Cancel action for queued analysis.
 
-**Web capture UI**:
+**Agents and sharing**
+- Per-account and per-endpoint agent budgets.
+- Push revocation to open viewers.
+- A web UI for arming and capture-session listing (arming happens on the phone only).
+- Let installation tokens list agent connections; until then the phone's arming sheet falls back to "choose agents on the web".
 
-- screens 01, 06, 07 and 08 (Library, Uploads, Video detail, mobile Library);
-- v2 `/capture` source picker and browser camera with video, mic state and Retake/Keep (02/03);
-- Library added to navigation;
-- glasses-unavailable explanation (09);
-- signed phone hand-off;
-- persisted drafts and the sign-out draft choice.
+**Native**
+- Compile and test on Xcode and the Android SDK.
+- Verify the Android Meta SDK binding and the licence copy step.
+- Generate the Gradle wrapper.
+- Publish `assetlinks.json`.
+- Run the device acceptance rows.
+- Store and SDK eligibility.
 
-**Concentrate + analysis**:
-
-- wire `createModelGateway` into the v2 analysis worker with ledger and job identity (G9);
-- qualified model/profile IDs;
-- operator-run live qualification suite;
-- ZDR/logging evidence;
-- `analyze_media` MCP tool.
-
-**Agents + sharing**:
-
-- production `CaptureAgentAuthorization` (G5);
-- MCP `captureContext` wiring (G6);
-- agent REST media routes, plus fixing the `/v2/agent-media` links (G7);
-- the whole of collection sharing: tables, 8 routes, ShareProjection, recipient range gateway, screens 12–13, SHR-01/02 tests.
-
-**Native iOS/Android**: everything (package 3). That covers:
-
-- native camera, drafts and upload spool;
-- the Meta wearables adapter ported from Observer;
-- enrollment and refresh clients;
-- command receipt and ack;
-- local remote-arming UI;
-- an Android adapter built independently.
-
-No Swift or Kotlin toolchain exists here, so none of it can be compiled or
-tested in this environment.
-
-**Identity/devices + ops/hosting**:
-
-- production identity mail adapter (G8);
-- capture runtime identity adapter and lifecycle hook (G1, G2);
-- deployment target (AWS mapping above);
-- alerts and SLO metrics;
-- staging restore drill using `scripts/capture-backup.ts`;
-- store/SDK eligibility evidence;
-- an independent two-user trial.
+**Ops and hosting**
+- First AWS deploy as staging.
+- SES domain verification.
+- APNs and FCM credentials.
+- A cloud restore drill.
+- An independent two-user trial.
