@@ -3,6 +3,7 @@ import { getProviders, type ProviderRegistry } from '@culture-atlas/providers';
 import { getDomainConfig, type DomainConfig } from './config';
 import { getDb, type Db } from './db/pool';
 import type { Principal } from './principal';
+import type { CaptureV2Context } from './capture-v2/types';
 
 /**
  * Everything a service function needs. REST handlers, MCP tools and server
@@ -20,6 +21,8 @@ export interface ServiceContext {
   traceId?: string;
   /** Surface the call came from (for traces/metrics). */
   surface: 'rest' | 'mcp' | 'web' | 'worker' | 'test';
+  /** Trusted runtime adapter, never accepted from an HTTP/tool payload. */
+  captureV2?: CaptureV2Context;
 }
 
 export function createServiceContext(
@@ -35,5 +38,6 @@ export function createServiceContext(
     now: overrides.now ?? (() => new Date()),
     traceId: overrides.traceId,
     surface: overrides.surface ?? 'rest',
+    captureV2: overrides.captureV2,
   };
 }

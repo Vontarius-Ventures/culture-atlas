@@ -41,6 +41,9 @@ export interface AgentPrincipal {
   allowedCollectionIds: readonly string[];
   sensorConnectionId: string | null;
   expiresAt: Date;
+  /** Absent on v1 in-process callers; never implies any device grant. */
+  allowedInstallationIds?: readonly string[];
+  authorizationVersion?: number;
 }
 
 /** Worker / maintenance code acting outside a request. Never exposed over HTTP. */

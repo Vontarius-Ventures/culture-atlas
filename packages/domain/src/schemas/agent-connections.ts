@@ -33,6 +33,8 @@ export const AgentConnectionDto = z.object({
   scopes: z.array(Scope),
   library_access: LibraryAccess,
   collection_ids: z.array(Uuid),
+  installation_ids: z.array(Uuid).optional(),
+  authorization_version: z.number().int().positive().optional(),
   credential_prefix: z.string(),
   created_at: Timestamp,
   expires_at: Timestamp,

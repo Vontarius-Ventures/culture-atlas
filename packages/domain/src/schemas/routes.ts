@@ -15,6 +15,7 @@ import * as S from './sensor-connections';
 import * as T from './taste';
 import * as Tr from './traces';
 import * as U from './uploads';
+import { AGENT_ROUTES } from './agent-routes';
 
 /**
  * Machine-readable REST contract. apps/web route handlers, the MCP gateway,
@@ -56,6 +57,7 @@ export interface RouteContract {
 const JobParams = z.object({ id: Uuid });
 
 export const ROUTES = {
+  ...AGENT_ROUTES,
   getSession: { method: 'GET', path: '/v1/session', auth: 'public', scopes: [], response: Auth.SessionResponse, status: 200, idempotent: false, extension: true },
   createAccount: { method: 'POST', path: '/v1/accounts', auth: 'any', scopes: [], body: Auth.CreateAccountRequest, response: Auth.CreateAccountResponse, status: 201, idempotent: true, oneTimeSecrets: ['csrf_token'], extension: true },
   signIn: { method: 'POST', path: '/v1/session/sign-in', auth: 'any', scopes: [], body: Auth.SignInRequest, response: Auth.SignInResponse, status: 200, idempotent: false, extension: true },

@@ -61,6 +61,14 @@ export const SCOPES = [
   'taste:write',
   'plans:read',
   'plans:write',
+  'setup:read',
+  'preferences:read',
+  'preferences:write',
+  'media:read',
+  'media:download',
+  'media:write',
+  'media:analyze',
+  'devices:command',
 ] as const;
 export const Scope = z.enum(SCOPES);
 export type Scope = z.infer<typeof Scope>;
