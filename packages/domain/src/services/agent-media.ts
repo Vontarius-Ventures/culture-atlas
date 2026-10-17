@@ -1,6 +1,7 @@
 import { requireAccount } from '../authz';
 import { agentActivity, authorizeAgent } from '../authz/agent-authorization';
 import { authorizeMedia, authorizeUploadDestination, mediaGrantPredicate } from '../authz/agent-resources';
+import { MediaAnalysis } from '../capture-v2/analysis';
 import { MediaIntake } from '../capture-v2/intake';
 import type { CaptureV2Context } from '../capture-v2/types';
 import type { ServiceContext } from '../context';
@@ -10,13 +11,20 @@ import { Uuid } from '../schemas/common';
 import { attachAgentUpload } from './collection-media';
 
 
-/** A trusted, explicit bridge. The adapter can never choose a different owner. */
+/**
+ * A trusted, explicit bridge. The adapter can never choose a different owner,
+ * and an agent principal always reaches the capture modules AS that agent, so
+ * their own live fence (CaptureAgentAuthorization) runs at every checkpoint.
+ */
 function capture(ctx: ServiceContext): CaptureV2Context {
   const account = requireAccount(ctx.principal);
   if (!ctx.captureV2 || ctx.captureV2.authority.accountId !== account.accountId) {
     throw new AppError('service_unavailable', { message: 'Media services are not configured for this connection.' });
   }
-  return { ...ctx.captureV2, db: ctx.db, now: ctx.now };
+  const agent = ctx.principal.kind === 'agent' && ctx.principal.authorizationVersion !== undefined
+    ? { connectionId: ctx.principal.connectionId, authorizationVersion: ctx.principal.authorizationVersion }
+    : ctx.captureV2.agent;
+  return { ...ctx.captureV2, db: ctx.db, now: ctx.now, agent };
 }
 
 export async function getMedia(ctx: ServiceContext, id: string) {
@@ -128,4 +136,31 @@ export async function completeUpload(ctx: ServiceContext, id: string, input: unk
 export async function abortUpload(ctx: ServiceContext, id: string, key: string) {
   ctx = await ownedUpload(ctx, id);
   return new MediaIntake(capture(ctx)).abortUpload(id, key);
+}
+
+/**
+ * POST /v2/media/{id}/analysis for agents (MCP analyze_media). Requires
+ * media:analyze on media inside the live grant; the analysis module enforces
+ * explicit request, readiness, the daily allowance and spend limits, and the
+ * queued work is fenced to this connection's authorization version.
+ */
+export async function analyzeMedia(ctx: ServiceContext, id: string, raw: unknown, key: string) {
+  ({ ctx } = await authorizeMedia(ctx, 'media:analyze', id));
+  const result = await new MediaAnalysis(capture(ctx)).request(id, raw, key);
+  await agentActivity(ctx, 'media.analyze', id);
+  // Owner result links can reveal capture reasoning; agents poll get_operation.
+  return { analysis_id: result.analysis_id, job_id: result.job_id, state: result.state, reused: result.reused };
+}
+
+/** Current state of an analysis this agent may read (media:read on the analyzed media). */
+export async function getAnalysis(ctx: ServiceContext, analysisId: string) {
+  ctx = await authorizeAgent(ctx, 'media:read');
+  const account = requireAccount(ctx.principal);
+  const { rows } = await ctx.db.query<{ asset_id: string; state: string; error_code: string | null }>(
+    'SELECT asset_id, state, error_code FROM media_analysis_requests WHERE account_id = $1 AND id = $2',
+    [account.accountId, analysisId],
+  );
+  if (!rows[0]) return null;
+  await authorizeMedia(ctx, 'media:read', rows[0].asset_id);
+  return { id: analysisId, asset_id: rows[0].asset_id, state: rows[0].state, error_code: rows[0].error_code };
 }

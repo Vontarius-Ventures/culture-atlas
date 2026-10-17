@@ -14,6 +14,7 @@ export * as plans from './plans';
 export * as agentConnections from './agent-connections';
 export * as agentPlatform from './agent-platform';
 export * as collectionMedia from './collection-media';
+export * as collectionShares from './collection-shares';
 export * as agentCommands from './agent-commands';
 export * as agentMedia from './agent-media';
 export * as agentOperations from './agent-operations';

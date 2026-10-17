@@ -675,7 +675,7 @@ describe('worker leases, explicit analysis and device proof', () => {
     );
     await expect(enroll()).rejects.toMatchObject({ code: 'token_revoked' });
   });
-  it('agent work rechecks persisted authorization before byte verification and denies missing adapters', async () => {
+  it('agent work rechecks persisted authorization before byte verification; the default live check denies unregistered drafts', async () => {
     const f = await fixture(),
       agent = await insertAgentConnection(f.account),
       authorizationVersion = 1;
@@ -698,7 +698,9 @@ describe('worker leases, explicit analysis and device proof', () => {
     );
     const lease = await f.queue.claim(['verify_upload'], 60, f.account.accountId),
       read = vi.spyOn(f.storage, 'read');
-    await expect(f.worker.verifyUpload(lease!)).rejects.toMatchObject({ code: 'scope_denied' });
+    // No injected adapter: the production live grant check runs (G5). This draft
+    // was never registered as an upload of that connection, so it is denied.
+    await expect(f.worker.verifyUpload(lease!)).rejects.toMatchObject({ code: 'not_found' });
     expect(read).not.toHaveBeenCalled();
     const persisted = await db.query(
       `SELECT created_by_agent_connection_id,authorization_version FROM capture_work WHERE id=$1`,

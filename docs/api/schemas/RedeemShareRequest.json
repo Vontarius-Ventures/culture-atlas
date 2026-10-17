@@ -1,0 +1,17 @@
+{
+  "$id": "https://culture-atlas.invalid/schemas/v2/RedeemShareRequest.json",
+  "title": "RedeemShareRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 512
+    }
+  },
+  "required": [
+    "token"
+  ],
+  "additionalProperties": false
+}

@@ -63,6 +63,13 @@ export const TOOLS = [
     run: (ctx, input) => agentMedia.completeUpload(ctx, input.upload_id, input.completion, input.idempotency_key),
   }),
   define({
+    name: 'analyze_media', title: 'Request analysis of permitted media',
+    description: 'Explicitly request analysis of one permitted, prepared photo or selected video moments. Analysis is never automatic; consent, the daily allowance and spend limits apply. Returns an analysis_id: check it with get_operation. No result links or private reasoning are returned.',
+    scopes: ['media:analyze'], startsJob: false,
+    input: z.strictObject({ media_id: Uuid, idempotency_key: Uuid, request: schemas.AnalyzeMediaRequest }),
+    run: (ctx, input) => agentMedia.analyzeMedia(ctx, input.media_id, input.request, input.idempotency_key),
+  }),
+  define({
     name: 'get_operation', title: 'Check a permitted operation',
     description: 'Check an authorized asynchronous upload, analysis or capture command. This does not broaden resource access.',
     scopes: [], startsJob: false, input: z.strictObject({ operation_id: Uuid }),
@@ -287,7 +294,7 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 export const SPEC_TOOL_NAMES = [
-  'list_media', 'get_media', 'begin_upload', 'complete_upload', 'get_operation',
+  'list_media', 'get_media', 'begin_upload', 'complete_upload', 'analyze_media', 'get_operation',
   'request_capture',
   'get_setup',
   'get_preferences', 'update_preferences',

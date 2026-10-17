@@ -6,6 +6,7 @@ import type {
   CaptureAgentAuthorization,
   CaptureAgentOperation,
 } from './types';
+import { captureAgentAuthorization } from '../authz/capture-agent-authorization';
 
 export async function authorizeCaptureAgent(
   ctx: CaptureV2Context,
@@ -14,8 +15,9 @@ export async function authorizeCaptureAgent(
   resourceId: string | null,
 ): Promise<void> {
   if (!ctx.agent) return;
-  if (!ctx.agentAuthorization) throw new AppError('scope_denied');
-  const allowed = await ctx.agentAuthorization.authorize(db, {
+  // Production default (G5): the live grant check. Tests may inject another.
+  const authorization = ctx.agentAuthorization ?? captureAgentAuthorization;
+  const allowed = await authorization.authorize(db, {
     accountId: ctx.authority.accountId,
     connectionId: ctx.agent.connectionId,
     operation,
@@ -29,7 +31,7 @@ export async function authorizeCaptureAgent(
 export async function assertCaptureWorkAgent(
   db: Db,
   lease: CaptureLease,
-  authorization?: CaptureAgentAuthorization,
+  authorization: CaptureAgentAuthorization = captureAgentAuthorization,
 ): Promise<void> {
   const { rows } = await db.query(
     `SELECT created_by_agent_connection_id,authorization_version,asset_id FROM capture_work WHERE account_id=$1 AND id=$2`,
@@ -38,7 +40,6 @@ export async function assertCaptureWorkAgent(
   const row = rows[0];
   if (!row) throw new AppError('not_found');
   if (!row.created_by_agent_connection_id) return;
-  if (!authorization) throw new AppError('scope_denied');
   const allowed = await authorization.authorize(db, {
     accountId: lease.account_id,
     connectionId: row.created_by_agent_connection_id,

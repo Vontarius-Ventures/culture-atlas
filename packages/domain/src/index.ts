@@ -18,3 +18,4 @@ export * from './util/cursor';
 export * from './util/stable-json';
 export * from './util/time';
 export * from './capture-v2';
+export { clampShareRange, segmentByteLimit, SHARE_SEGMENT_SECONDS, SHARE_SEGMENT_MAX_BYTES } from './sharing/projection';

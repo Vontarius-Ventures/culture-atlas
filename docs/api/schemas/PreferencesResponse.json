@@ -1,0 +1,136 @@
+{
+  "$id": "https://culture-atlas.invalid/schemas/v2/PreferencesResponse.json",
+  "title": "PreferencesResponse",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "2.1"
+    },
+    "request_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "user_set": {
+      "type": "object",
+      "properties": {
+        "theme": {
+          "type": "string",
+          "enum": [
+            "system",
+            "light",
+            "dark"
+          ]
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "en",
+            "es",
+            "fr",
+            "de",
+            "ja"
+          ]
+        },
+        "default_capture_mode": {
+          "type": "string",
+          "enum": [
+            "photo",
+            "video"
+          ]
+        },
+        "video_muted": {
+          "type": "boolean"
+        },
+        "exploration": {
+          "type": "string",
+          "enum": [
+            "familiar",
+            "balanced",
+            "adventurous"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "effective": {
+      "type": "object",
+      "properties": {
+        "theme": {
+          "type": "string",
+          "enum": [
+            "system",
+            "light",
+            "dark"
+          ]
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "en",
+            "es",
+            "fr",
+            "de",
+            "ja"
+          ]
+        },
+        "default_capture_mode": {
+          "type": "string",
+          "enum": [
+            "photo",
+            "video"
+          ]
+        },
+        "video_muted": {
+          "type": "boolean"
+        },
+        "exploration": {
+          "type": "string",
+          "enum": [
+            "familiar",
+            "balanced",
+            "adventurous"
+          ]
+        }
+      },
+      "required": [
+        "theme",
+        "language",
+        "default_capture_mode",
+        "video_muted",
+        "exploration"
+      ],
+      "additionalProperties": false
+    },
+    "analysis_consent": {
+      "type": "object",
+      "properties": {
+        "automatic_analysis": {
+          "type": "boolean",
+          "const": false
+        },
+        "requires_explicit_request": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "automatic_analysis",
+        "requires_explicit_request"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "version",
+    "user_set",
+    "effective",
+    "analysis_consent"
+  ]
+}
