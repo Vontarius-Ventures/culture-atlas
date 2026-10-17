@@ -1,0 +1,664 @@
+{
+  "fixture_version": 1,
+  "note": "Phone-side remote command processing (BACKEND-CONTRACTS 'Remote command state', DEV-02). The phone persists a receipt BEFORE executing, never re-executes a command it has a receipt for, reports unknown when a crash makes the shutter outcome unknowable, ignores expired commands, and keeps Stop available locally. Ack sequences are per command, start at 1 and only increase. 'succeeded' means the local file is durably recorded; cloud upload is reported separately by asset commit.",
+  "clip_max_seconds": 60,
+  "decisions": [
+    {
+      "name": "fresh_photo_command_executes",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "execute",
+        "persist_receipt": "executing",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "executing"
+          }
+        ],
+        "duration_seconds": null
+      }
+    },
+    {
+      "name": "duplicate_delivery_after_success_resends_stored_ack",
+      "now": "2026-10-17T12:00:12Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": {
+        "state": "succeeded",
+        "last_ack_sequence": 2,
+        "local_capture_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+        "draft_saved": true,
+        "result_asset_id": "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+      },
+      "command": {
+        "command_id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "resend_ack",
+        "persist_receipt": "succeeded",
+        "acks": [
+          {
+            "sequence": 2,
+            "state": "succeeded",
+            "result_asset_id": "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a"
+          }
+        ]
+      }
+    },
+    {
+      "name": "crash_after_durable_save_reports_success_without_retaking",
+      "now": "2026-10-17T12:00:20Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": {
+        "state": "executing",
+        "last_ack_sequence": 1,
+        "local_capture_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+        "draft_saved": true,
+        "result_asset_id": null
+      },
+      "command": {
+        "command_id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "resend_ack",
+        "persist_receipt": "succeeded",
+        "acks": [
+          {
+            "sequence": 2,
+            "state": "succeeded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "crash_with_unknown_shutter_outcome_reports_unknown",
+      "now": "2026-10-17T12:00:20Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": {
+        "state": "executing",
+        "last_ack_sequence": 1,
+        "local_capture_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+        "draft_saved": false,
+        "result_asset_id": null
+      },
+      "command": {
+        "command_id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "resend_ack",
+        "persist_receipt": "unknown",
+        "acks": [
+          {
+            "sequence": 2,
+            "state": "unknown",
+            "safe_error": "outcome_unknown"
+          }
+        ]
+      }
+    },
+    {
+      "name": "expired_start_never_executes_after_reconnect",
+      "now": "2026-10-17T12:01:00Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "video",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "start_video",
+        "duration_seconds": 30,
+        "capture_client_id": "9b0c1d2e-3f4a-4b5c-9d6e-7f8a9b0c1d2e",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "skip_expired",
+        "persist_receipt": null,
+        "acks": []
+      }
+    },
+    {
+      "name": "disarmed_phone_refuses",
+      "now": "2026-10-17T12:10:00Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "0c1d2e3f-4a5b-4c6d-8e7f-8a9b0c1d2e3f",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "1d2e3f4a-5b6c-4d7e-9f8a-9b0c1d2e3f4a",
+        "expires_at": "2026-10-17T12:10:20Z"
+      },
+      "expect": {
+        "decision": "refuse",
+        "persist_receipt": "failed",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "failed",
+            "safe_error": "permission_denied"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stale_generation_refuses",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 2,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "2e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "3f4a5b6c-7d8e-4f9a-8b0c-2d3e4f5a6b7c",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "refuse",
+        "persist_receipt": "failed",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "failed",
+            "safe_error": "permission_denied"
+          }
+        ]
+      }
+    },
+    {
+      "name": "other_session_refuses",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "4a5b6c7d-8e9f-4a0b-9c1d-3e4f5a6b7c8d",
+        "session_id": "ffffffff-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "5b6c7d8e-9f0a-4b1c-8d2e-4f5a6b7c8d9e",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "refuse",
+        "persist_receipt": "failed",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "failed",
+            "safe_error": "permission_denied"
+          }
+        ]
+      }
+    },
+    {
+      "name": "source_not_ready_reports_device_unavailable",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": false,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "6c7d8e9f-0a1b-4c2d-9e3f-5a6b7c8d9e0f",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "capture_photo",
+        "duration_seconds": null,
+        "capture_client_id": "7d8e9f0a-1b2c-4d3e-8f4a-6b7c8d9e0f1a",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "refuse",
+        "persist_receipt": "failed",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "failed",
+            "safe_error": "device_unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "name": "mode_mismatch_reports_device_unavailable",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "photo",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "8e9f0a1b-2c3d-4e4f-9a5b-7c8d9e0f1a2b",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "start_video",
+        "duration_seconds": 20,
+        "capture_client_id": "9f0a1b2c-3d4e-4f5a-8b6c-8d9e0f1a2b3c",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "refuse",
+        "persist_receipt": "failed",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "failed",
+            "safe_error": "device_unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "name": "low_storage_reports_storage_full",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "video",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": false
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "0a1b2c3d-4e5f-4a6b-9c7d-9e0f1a2b3c4d",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "start_video",
+        "duration_seconds": 20,
+        "capture_client_id": "1b2c3d4e-5f6a-4b7c-8d8e-0f1a2b3c4d5e",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "refuse",
+        "persist_receipt": "failed",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "failed",
+            "safe_error": "storage_full"
+          }
+        ]
+      }
+    },
+    {
+      "name": "start_video_duration_is_clamped",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "video",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "2c3d4e5f-6a7b-4c8d-8e9f-1a2b3c4d5e6f",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "start_video",
+        "duration_seconds": null,
+        "capture_client_id": "3d4e5f6a-7b8c-4d9e-9f0a-2b3c4d5e6f7a",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "execute",
+        "persist_receipt": "executing",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "executing"
+          }
+        ],
+        "duration_seconds": 60
+      }
+    },
+    {
+      "name": "start_while_recording_reports_device_unavailable",
+      "now": "2026-10-17T12:00:10Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "video",
+        "source_ready": true,
+        "recording_command_id": "2c3d4e5f-6a7b-4c8d-8e9f-1a2b3c4d5e6f",
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "4e5f6a7b-8c9d-4e0f-8a1b-3c4d5e6f7a8b",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "start_video",
+        "duration_seconds": 10,
+        "capture_client_id": "5f6a7b8c-9d0e-4f1a-9b2c-4d5e6f7a8b9c",
+        "expires_at": "2026-10-17T12:00:30Z"
+      },
+      "expect": {
+        "decision": "refuse",
+        "persist_receipt": "failed",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "failed",
+            "safe_error": "device_unavailable"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stop_video_stops_recording_even_after_arm_expired",
+      "now": "2026-10-17T12:09:30Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "video",
+        "source_ready": true,
+        "recording_command_id": "2c3d4e5f-6a7b-4c8d-8e9f-1a2b3c4d5e6f",
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "6a7b8c9d-0e1f-4a2b-8c3d-5e6f7a8b9c0d",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "stop_video",
+        "duration_seconds": null,
+        "capture_client_id": "7b8c9d0e-1f2a-4b3c-9d4e-6f7a8b9c0d1e",
+        "expires_at": "2026-10-17T12:09:50Z"
+      },
+      "expect": {
+        "decision": "execute",
+        "persist_receipt": "executing",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "executing"
+          }
+        ],
+        "duration_seconds": null
+      }
+    },
+    {
+      "name": "stop_video_when_idle_is_a_successful_no_op",
+      "now": "2026-10-17T12:05:00Z",
+      "local": {
+        "armed_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "armed_generation": 1,
+        "arm_expires_at": "2026-10-17T12:09:00Z",
+        "session_mode": "video",
+        "source_ready": true,
+        "recording_command_id": null,
+        "storage_ok": true
+      },
+      "receipt": null,
+      "command": {
+        "command_id": "8c9d0e1f-2a3b-4c4d-9e5f-7a8b9c0d1e2f",
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "action": "stop_video",
+        "duration_seconds": null,
+        "capture_client_id": "9d0e1f2a-3b4c-4d5e-8f6a-8b9c0d1e2f3a",
+        "expires_at": "2026-10-17T12:05:20Z"
+      },
+      "expect": {
+        "decision": "acknowledge_no_op",
+        "persist_receipt": "succeeded",
+        "acks": [
+          {
+            "sequence": 1,
+            "state": "executing"
+          },
+          {
+            "sequence": 2,
+            "state": "succeeded"
+          }
+        ]
+      }
+    }
+  ],
+  "outcomes": [
+    {
+      "outcome": "saved",
+      "ack": {
+        "state": "succeeded"
+      }
+    },
+    {
+      "outcome": "interrupted_with_file",
+      "ack": {
+        "state": "succeeded"
+      },
+      "draft_flag": "interrupted"
+    },
+    {
+      "outcome": "interrupted_without_file",
+      "ack": {
+        "state": "failed",
+        "safe_error": "interrupted"
+      }
+    },
+    {
+      "outcome": "storage_full",
+      "ack": {
+        "state": "failed",
+        "safe_error": "storage_full"
+      }
+    },
+    {
+      "outcome": "permission_denied",
+      "ack": {
+        "state": "failed",
+        "safe_error": "permission_denied"
+      }
+    },
+    {
+      "outcome": "device_unavailable",
+      "ack": {
+        "state": "failed",
+        "safe_error": "device_unavailable"
+      }
+    },
+    {
+      "outcome": "unknown",
+      "ack": {
+        "state": "unknown",
+        "safe_error": "outcome_unknown"
+      }
+    }
+  ],
+  "server_accepted_sequences": [
+    {
+      "name": "photo_success",
+      "acks": [
+        {
+          "sequence": 1,
+          "state": "executing"
+        },
+        {
+          "sequence": 2,
+          "state": "succeeded",
+          "with_result_asset": true
+        }
+      ],
+      "final_state": "succeeded"
+    },
+    {
+      "name": "awaiting_user_then_success",
+      "acks": [
+        {
+          "sequence": 1,
+          "state": "awaiting_user"
+        },
+        {
+          "sequence": 2,
+          "state": "executing"
+        },
+        {
+          "sequence": 3,
+          "state": "succeeded"
+        }
+      ],
+      "final_state": "succeeded"
+    },
+    {
+      "name": "crash_unknown",
+      "acks": [
+        {
+          "sequence": 1,
+          "state": "executing"
+        },
+        {
+          "sequence": 2,
+          "state": "unknown",
+          "safe_error": "outcome_unknown"
+        }
+      ],
+      "final_state": "unknown"
+    },
+    {
+      "name": "refused",
+      "acks": [
+        {
+          "sequence": 1,
+          "state": "failed",
+          "safe_error": "permission_denied"
+        }
+      ],
+      "final_state": "failed"
+    },
+    {
+      "name": "duplicate_ack_is_idempotent",
+      "acks": [
+        {
+          "sequence": 1,
+          "state": "executing"
+        },
+        {
+          "sequence": 1,
+          "state": "executing"
+        },
+        {
+          "sequence": 2,
+          "state": "succeeded"
+        },
+        {
+          "sequence": 2,
+          "state": "succeeded"
+        }
+      ],
+      "final_state": "succeeded"
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "fixture_version": 1,
+  "note": "Effective Meta glasses availability on a phone is the intersection of the server capability policy and local state (PRODUCT-AND-ARCHITECTURE 'Experimental release policy', feature-flags.json). Client flags never grant access. Distribution reasons from the server block the feature with no reconnect action; only local reasons (permission/user action) can be resolved on the phone. The entry stays visible and labelled Experimental; unavailable states always offer camera and uploads.",
+  "distribution_reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "temporarily_disabled"],
+  "local_reasons": ["permission_required", "user_action_required"],
+  "cases": [
+    {
+      "name": "public_build_without_sdk",
+      "build_includes_sdk": false,
+      "server": { "meta_glasses_entry_visible": true, "available": false, "reasons": ["build_unsupported"] },
+      "local": { "registration": "unavailable", "permission": "unknown", "device_available": false, "stream": "stopped", "recording": false },
+      "expect": { "state": "unavailable", "reasons": ["build_unsupported"], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "server_kill_switch_blocks_even_when_ready_locally",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": false, "reasons": ["temporarily_disabled"] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "streaming", "recording": false },
+      "expect": { "state": "unavailable", "reasons": ["temporarily_disabled"], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "today_server_default_lists_every_reason",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": false, "reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "permission_required", "user_action_required", "temporarily_disabled"] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "streaming", "recording": false },
+      "expect": { "state": "unavailable", "reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "temporarily_disabled"], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "only_local_reasons_let_user_register",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": false, "reasons": ["permission_required", "user_action_required"] },
+      "local": { "registration": "unregistered", "permission": "unknown", "device_available": false, "stream": "stopped", "recording": false },
+      "expect": { "state": "not_connected", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "registering",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registering", "permission": "unknown", "device_available": false, "stream": "stopped", "recording": false },
+      "expect": { "state": "registering", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "radio_connected_without_camera_permission",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "denied", "device_available": true, "stream": "stopped", "recording": false },
+      "expect": { "state": "awaiting_permission", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "registered_waiting_for_glasses",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": false, "stream": "stopped", "recording": false },
+      "expect": { "state": "not_connected", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "connecting",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "starting", "recording": false },
+      "expect": { "state": "connecting", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "ready",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "streaming", "recording": false },
+      "expect": { "state": "ready", "reasons": [], "show_camera_and_upload": true, "allow_capture": true }
+    },
+    {
+      "name": "recording",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "streaming", "recording": true },
+      "expect": { "state": "recording", "reasons": [], "show_camera_and_upload": true, "allow_capture": true }
+    },
+    {
+      "name": "paused_stream_is_not_ready",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "paused", "recording": false },
+      "expect": { "state": "connecting", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "lost_device_is_disconnected",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": false, "stream": "stopped", "recording": false, "was_connected": true },
+      "expect": { "state": "disconnected", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    },
+    {
+      "name": "sdk_error",
+      "build_includes_sdk": true,
+      "server": { "meta_glasses_entry_visible": true, "available": true, "reasons": [] },
+      "local": { "registration": "registered", "permission": "granted", "device_available": true, "stream": "stopped", "recording": false, "error": "glasses_app_update_required" },
+      "expect": { "state": "error", "reasons": [], "show_camera_and_upload": true, "allow_capture": false }
+    }
+  ],
+  "status_freshness": [
+    { "name": "fresh", "last_status_age_seconds": 10, "may_show_ready": true },
+    { "name": "stale", "last_status_age_seconds": 31, "may_show_ready": false }
+  ],
+  "phone_camera": [
+    { "name": "photo_and_video", "flags": { "camera_photo": true, "camera_video": true }, "photo": true, "video": true },
+    { "name": "video_not_qualified", "flags": { "camera_photo": true, "camera_video": false }, "photo": true, "video": false },
+    { "name": "creation_paused", "flags": { "camera_photo": false, "camera_video": false }, "photo": false, "video": false }
+  ]
+}

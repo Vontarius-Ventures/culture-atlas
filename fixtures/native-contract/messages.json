@@ -1,0 +1,455 @@
+{
+  "fixture_version": 1,
+  "note": "Example wire messages the native apps send and decode. 'schema' names a zod export in @culture-atlas/domain (schemas.* or identity.*). A null schema means the server has no exported zod type for it; the TS journey test compares the real server response shape to this example instead. Values are illustrative, never real credentials.",
+  "messages": {
+    "email_start_ios": {
+      "direction": "request",
+      "route": "POST /v2/identity/email/start",
+      "schema": "identity.EmailStart",
+      "body": {
+        "email": "reader@example.test",
+        "purpose": "sign_in",
+        "destination": "ios",
+        "state": "c3RhdGUtdmFsdWUtZm9yLWZpeHR1cmVzLW9ubHktMDAwMDAx",
+        "nonce": "bm9uY2UtdmFsdWUtZm9yLWZpeHR1cmVzLW9ubHktMDAwMDAx",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+      }
+    },
+    "email_start_android": {
+      "direction": "request",
+      "route": "POST /v2/identity/email/start",
+      "schema": "identity.EmailStart",
+      "body": {
+        "email": "reader@example.test",
+        "purpose": "recover",
+        "destination": "android",
+        "state": "c3RhdGUtdmFsdWUtZm9yLWZpeHR1cmVzLW9ubHktMDAwMDAy",
+        "nonce": "bm9uY2UtdmFsdWUtZm9yLWZpeHR1cmVzLW9ubHktMDAwMDAy",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+      }
+    },
+    "email_start_response": {
+      "direction": "response",
+      "route": "POST /v2/identity/email/start",
+      "schema": null,
+      "body": { "accepted": true, "message": "If this request is eligible, check your email to continue." }
+    },
+    "email_complete_request": {
+      "direction": "request",
+      "route": "POST /v2/identity/email/complete",
+      "schema": "identity.EmailComplete",
+      "body": {
+        "challenge_id": "4f1d9a52-7b8c-4e3d-9a10-2b3c4d5e6f70",
+        "token": "dG9rZW4tZnJvbS1jYWxsYmFjay1mcmFnbWVudC0wMDAwMDE",
+        "state": "c3RhdGUtdmFsdWUtZm9yLWZpeHR1cmVzLW9ubHktMDAwMDAx",
+        "nonce": "bm9uY2UtdmFsdWUtZm9yLWZpeHR1cmVzLW9ubHktMDAwMDAx",
+        "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+      }
+    },
+    "email_complete_native_response": {
+      "direction": "response",
+      "route": "POST /v2/identity/email/complete",
+      "schema": null,
+      "body": {
+        "account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "enrollment_grant": "cne_ExampleGrantValueOnlyNotACredential_0000001",
+        "platform": "ios",
+        "claimed": { "captures": 0, "saved_items": 0 }
+      }
+    },
+    "refresh_request": {
+      "direction": "request",
+      "route": "POST /v2/identity/native/refresh",
+      "schema": null,
+      "body": {
+        "refresh_token": "cnr_ExampleRefreshValueOnlyNotACredential_00001",
+        "installation_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+        "refresh_request_id": "UmVmcmVzaFJlcXVlc3RJZEV4YW1wbGVWYWx1ZTAwMDE"
+      }
+    },
+    "native_session_tokens": {
+      "direction": "response",
+      "route": "POST /v2/identity/native/refresh",
+      "schema": "schemas.EnrolledCaptureDeviceResponse.shape.native_session",
+      "body": {
+        "session_id": "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
+        "installation_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+        "account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "access_token": "cna_ExampleAccessValueOnlyNotACredential_000001",
+        "refresh_token": "cnr_ExampleRefreshValueOnlyNotACredential_00002",
+        "access_expires_at": "2026-10-17T12:10:00.000Z",
+        "refresh_expires_at": "2026-11-16T12:00:00.000Z"
+      }
+    },
+    "switch_response": {
+      "direction": "response",
+      "route": "POST /v2/identity/switch",
+      "schema": null,
+      "body": {
+        "signed_out": true,
+        "pending_upload_account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "pending_upload_policy": "original_account_only"
+      }
+    },
+    "enrollment_challenge_request": {
+      "direction": "request",
+      "route": "POST /v2/devices/enrollment/challenge",
+      "schema": "schemas.EnrollmentChallengeRequest",
+      "body": {
+        "enrollment_grant": "cne_ExampleGrantValueOnlyNotACredential_0000001",
+        "installation_public_id": "7d4f2c1e-3b5a-4c8d-9e0f-1a2b3c4d5e6f",
+        "platform": "ios",
+        "public_key": {
+          "kty": "EC",
+          "crv": "P-256",
+          "x": "y78prLi1mVpPfuR581hgwLWtz8ZUgFKChSFJs78sf0I",
+          "y": "DbbRMPo2Ni4DSHGN3ouYPbUkEMZOcHzsFKl_S5IN8Lo"
+        }
+      }
+    },
+    "enrollment_challenge_response": {
+      "direction": "response",
+      "route": "POST /v2/devices/enrollment/challenge",
+      "schema": null,
+      "body": {
+        "nonce": "n0nce-For-Test-Vectors_0123456789abcdefghijk",
+        "expires_at": "2026-10-17T12:05:00.000Z"
+      }
+    },
+    "enroll_request": {
+      "direction": "request",
+      "route": "POST /v2/devices/enroll",
+      "schema": "schemas.EnrollCaptureDeviceRequest",
+      "body": {
+        "platform": "ios",
+        "app_version": "1.0.0 (1)",
+        "installation_public_id": "7d4f2c1e-3b5a-4c8d-9e0f-1a2b3c4d5e6f",
+        "enrollment_grant": "cne_ExampleGrantValueOnlyNotACredential_0000001",
+        "proof": {
+          "nonce": "n0nce-For-Test-Vectors_0123456789abcdefghijk",
+          "signature": "tHwZgXBAUCwE2dAKiR_om3go1DLcjKnPzLWufJOGCPoveqFLo8XYkMDrpIXwZioJQHhm0chmCfaJjOHiYPV8QA",
+          "public_key": {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": "y78prLi1mVpPfuR581hgwLWtz8ZUgFKChSFJs78sf0I",
+            "y": "DbbRMPo2Ni4DSHGN3ouYPbUkEMZOcHzsFKl_S5IN8Lo"
+          }
+        },
+        "capabilities": { "photo": true, "video": true, "meta_glasses_sdk": false }
+      }
+    },
+    "enroll_response": {
+      "direction": "response",
+      "route": "POST /v2/devices/enroll",
+      "schema": "schemas.EnrolledCaptureDeviceResponse",
+      "body": {
+        "installation": {
+          "id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+          "platform": "ios",
+          "app_version": "1.0.0 (1)",
+          "revision": 1,
+          "last_seen_at": "2026-10-17T12:00:00.000Z",
+          "revoked_at": null,
+          "capabilities": { "photo": true, "video": true, "meta_glasses_sdk": false },
+          "readiness": "unavailable",
+          "app_state": "foreground"
+        },
+        "native_session": {
+          "session_id": "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f",
+          "installation_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+          "account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+          "access_token": "cna_ExampleAccessValueOnlyNotACredential_000001",
+          "refresh_token": "cnr_ExampleRefreshValueOnlyNotACredential_00001",
+          "access_expires_at": "2026-10-17T12:10:00.000Z",
+          "refresh_expires_at": "2026-11-16T12:00:00.000Z"
+        }
+      }
+    },
+    "device_status_request": {
+      "direction": "request",
+      "route": "PUT /v2/device/status",
+      "schema": "schemas.DeviceStatusRequest",
+      "body": {
+        "sequence": 42,
+        "capabilities": { "photo": true, "video": true, "microphone": false, "meta_glasses_sdk": false },
+        "readiness": "ready",
+        "app_state": "foreground"
+      }
+    },
+    "create_wearable_request": {
+      "direction": "request",
+      "route": "POST /v2/device/wearables",
+      "schema": "schemas.CreateWearableRequest",
+      "body": {
+        "sdk_reference": "sha256:4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        "display_name": "My glasses",
+        "capabilities": { "photo": true, "video": true, "audio": false },
+        "permission_state": "granted"
+      }
+    },
+    "create_capture_session_request": {
+      "direction": "request",
+      "route": "POST /v2/device/capture-sessions",
+      "schema": "schemas.CreateCaptureSessionRequest",
+      "body": {
+        "source": "phone_camera",
+        "mode": "photo",
+        "local_session_id": "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"
+      }
+    },
+    "capture_session_response": {
+      "direction": "response",
+      "route": "POST /v2/device/capture-sessions",
+      "schema": "schemas.CaptureSessionResponse",
+      "body": {
+        "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+        "generation": 1,
+        "state": "active",
+        "remote_arm_expires_at": null
+      }
+    },
+    "arm_request": {
+      "direction": "request",
+      "route": "POST /v2/device/capture-sessions/{id}/arm",
+      "schema": "schemas.ArmCaptureSessionRequest",
+      "body": {
+        "enabled": true,
+        "duration_seconds": 600,
+        "allowed_agent_connection_ids": ["8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a"]
+      }
+    },
+    "disarm_request": {
+      "direction": "request",
+      "route": "POST /v2/device/capture-sessions/{id}/arm",
+      "schema": "schemas.ArmCaptureSessionRequest",
+      "body": { "enabled": false, "duration_seconds": 1, "allowed_agent_connection_ids": [] }
+    },
+    "end_session_request": {
+      "direction": "request",
+      "route": "POST /v2/device/capture-sessions/{id}/end",
+      "schema": "schemas.EndCaptureSessionRequest",
+      "body": { "reason": "user_stopped" }
+    },
+    "create_upload_photo_request": {
+      "direction": "request",
+      "route": "POST /v2/uploads",
+      "schema": "schemas.CreateMediaUploadRequest",
+      "body": {
+        "client_capture_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9f0a1b2c3d",
+        "kind": "photo",
+        "source": "phone_camera",
+        "filename": "IMG_0001.jpg",
+        "content_type": "image/jpeg",
+        "byte_size": 2457600,
+        "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "captured_at": "2026-10-17T11:58:12.000Z",
+        "capture_session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e"
+      }
+    },
+    "create_upload_glasses_video_request": {
+      "direction": "request",
+      "route": "POST /v2/uploads",
+      "schema": "schemas.CreateMediaUploadRequest",
+      "body": {
+        "client_capture_id": "1b2c3d4e-5f6a-4b7c-9d8e-9f0a1b2c3d4e",
+        "kind": "video",
+        "source": "meta_glasses",
+        "filename": "glasses-clip.mov",
+        "content_type": "video/quicktime",
+        "byte_size": 20971521,
+        "sha256": "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+        "captured_at": "2026-10-17T11:59:01.000Z"
+      }
+    },
+    "upload_response": {
+      "direction": "response",
+      "route": "POST /v2/uploads",
+      "schema": "schemas.MediaUploadResponse",
+      "body": {
+        "asset_id": "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a",
+        "upload_id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
+        "state": "created",
+        "expires_at": "2026-10-18T12:00:00.000Z",
+        "part_size": 8388608,
+        "part_count": 1,
+        "parts": [
+          {
+            "part_number": 1,
+            "method": "PUT",
+            "url": "https://media.example.test/staging/part?signature=example",
+            "headers": {},
+            "expires_at": "2026-10-17T12:15:00.000Z"
+          }
+        ],
+        "verified_parts": [],
+        "error_code": null,
+        "pause_reason": null
+      }
+    },
+    "upload_paused_response": {
+      "direction": "response",
+      "route": "GET /v2/uploads/{id}",
+      "schema": "schemas.MediaUploadResponse",
+      "body": {
+        "asset_id": "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a",
+        "upload_id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
+        "state": "paused",
+        "expires_at": "2026-10-18T12:00:00.000Z",
+        "part_size": 8388608,
+        "part_count": 3,
+        "parts": [],
+        "verified_parts": [{ "part_number": 1, "etag": "\"5d41402abc4b2a76b9719d911017c592\"" }],
+        "error_code": "authority_ended",
+        "pause_reason": "authority_ended"
+      }
+    },
+    "upload_parts_request": {
+      "direction": "request",
+      "route": "POST /v2/uploads/{id}/parts",
+      "schema": "schemas.UploadPartsRequest",
+      "body": { "part_numbers": [2, 3] }
+    },
+    "upload_parts_response": {
+      "direction": "response",
+      "route": "POST /v2/uploads/{id}/parts",
+      "schema": null,
+      "body": {
+        "parts": [
+          {
+            "part_number": 2,
+            "method": "PUT",
+            "url": "https://media.example.test/staging/part?n=2&signature=example",
+            "headers": {},
+            "expires_at": "2026-10-17T12:15:00.000Z"
+          }
+        ]
+      }
+    },
+    "complete_upload_request": {
+      "direction": "request",
+      "route": "POST /v2/uploads/{id}/complete",
+      "schema": "schemas.CompleteMediaUploadRequest",
+      "body": {
+        "parts": [
+          { "part_number": 1, "etag": "\"5d41402abc4b2a76b9719d911017c592\"" },
+          { "part_number": 2, "etag": "\"7d793037a0760186574b0282f2f435e7\"" },
+          { "part_number": 3, "etag": "\"0cc175b9c0f1b6a831c399e269772661\"" }
+        ]
+      }
+    },
+    "native_command_batch": {
+      "direction": "response",
+      "route": "GET /v2/device/commands",
+      "schema": "schemas.NativeCommandBatch",
+      "body": {
+        "schema_version": "2.1",
+        "request_id": "1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a",
+        "items": [
+          {
+            "command_id": "5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c",
+            "session_id": "6b7c8d9e-0f1a-4b2c-9d3e-4f5a6b7c8d9e",
+            "generation": 1,
+            "action": "capture_photo",
+            "delivery_sequence": 17,
+            "duration_seconds": null,
+            "capture_client_id": "7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f",
+            "authorization_version": 3,
+            "state": "delivered",
+            "expires_at": "2026-10-17T12:00:30.000Z",
+            "result_asset_id": null,
+            "error_code": null
+          }
+        ],
+        "next_sequence": 17
+      }
+    },
+    "command_ack_executing": {
+      "direction": "request",
+      "route": "POST /v2/device/commands/{id}/ack",
+      "schema": "schemas.CommandAck",
+      "body": { "sequence": 1, "state": "executing" }
+    },
+    "command_ack_succeeded": {
+      "direction": "request",
+      "route": "POST /v2/device/commands/{id}/ack",
+      "schema": "schemas.CommandAck",
+      "body": { "sequence": 2, "state": "succeeded", "result_asset_id": "3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a" }
+    },
+    "command_ack_unknown": {
+      "direction": "request",
+      "route": "POST /v2/device/commands/{id}/ack",
+      "schema": "schemas.CommandAck",
+      "body": { "sequence": 2, "state": "unknown", "safe_error": "outcome_unknown" }
+    },
+    "command_ack_failed": {
+      "direction": "request",
+      "route": "POST /v2/device/commands/{id}/ack",
+      "schema": "schemas.CommandAck",
+      "body": { "sequence": 1, "state": "failed", "safe_error": "device_unavailable" }
+    },
+    "command_ack_awaiting_user": {
+      "direction": "request",
+      "route": "POST /v2/device/commands/{id}/ack",
+      "schema": "schemas.CommandAck",
+      "body": { "sequence": 1, "state": "awaiting_user" }
+    },
+    "capabilities_response": {
+      "direction": "response",
+      "route": "GET /v2/capabilities",
+      "schema": "schemas.CaptureCapabilitiesResponse",
+      "body": {
+        "contract_version": "2026-10-15.1",
+        "flags": {
+          "media_library": true,
+          "camera_photo": true,
+          "camera_video": true,
+          "file_photo_upload": true,
+          "file_video_upload": true,
+          "meta_glasses_entry_visible": true,
+          "meta_glasses_capture_enabled": false,
+          "meta_glasses_audio_enabled": false,
+          "remote_glasses_capture_enabled": false,
+          "automatic_analysis": false,
+          "native_video_model_input": false,
+          "concentrate_analysis_enabled": false,
+          "agent_api_enabled": false,
+          "collection_sharing_enabled": false,
+          "agent_remote_capture_enabled": false
+        },
+        "limits": {
+          "photo_max_bytes": 15728640,
+          "photo_max_pixels": 40000000,
+          "video_max_bytes": 262144000,
+          "video_max_duration_ms": 120000,
+          "capture_video_max_duration_ms": 60000,
+          "account_quota_bytes": 5368709120,
+          "batch_max_files": 20,
+          "concurrent_transfers": 2,
+          "analysis_daily_limit": 50,
+          "video_analysis_max_frames": 8
+        },
+        "availability": {
+          "meta_glasses": {
+            "available": false,
+            "reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "permission_required", "user_action_required", "temporarily_disabled"]
+          },
+          "analysis": { "available": false, "reasons": ["provider_unavailable"] },
+          "video": { "available": true, "reasons": [] }
+        }
+      }
+    },
+    "error_body": {
+      "direction": "response",
+      "route": "*",
+      "schema": "schemas.CaptureV2Error",
+      "body": {
+        "error": {
+          "code": "account_mismatch",
+          "message": "The signed-in account changed. Return to the original account before retrying.",
+          "retryable": false,
+          "request_id": "0e1f2a3b-4c5d-4e6f-8a7b-9c0d1e2f3a4b"
+        }
+      }
+    }
+  }
+}
