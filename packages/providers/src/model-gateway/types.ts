@@ -35,11 +35,15 @@ export interface GatewayRequest {
   maxOutputTokens: number;
 }
 export interface GatewayResponse {
+  /** Responses object id, when returned. */
   id: string | null;
+  /** Gateway request id from a response header, when returned (never invented). */
+  requestId?: string | null;
   model: string | null;
   actualProvider: string | null;
   text: string;
   outcome: 'complete' | 'refusal' | 'incomplete' | 'error';
+  /** Null when the gateway omits usage or either count: unknown, never zero. */
   usage: { inputTokens: number; outputTokens: number } | null;
 }
 /** One HTTP attempt, no retries, no Anthropic fields, tools, or gateway fallback. */

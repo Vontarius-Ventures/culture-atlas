@@ -19,13 +19,21 @@ export const DEFAULT_MODELS = {
 } as const;
 
 const BaseProviderConfigSchema = z.object({
-  /** Which LLM service backs the VLM and text models. */
-  LLM_PROVIDER: z.enum(['featherless', 'anthropic', 'concentrate']).default('featherless'),
+  /**
+   * Which LLM gateway backs the VLM and text models. Concentrate is the v2
+   * default. featherless/anthropic remain explicit operational rollback
+   * options only: nothing ever falls back to them automatically.
+   */
+  LLM_PROVIDER: z.enum(['featherless', 'anthropic', 'concentrate']).default('concentrate'),
   CONCENTRATE_API_KEY: optional,
   CONCENTRATE_BASE_URL: z
     .literal('https://api.concentrate.ai/v1')
     .default('https://api.concentrate.ai/v1'),
   CONCENTRATE_PROFILE_FILE: optional,
+  /** Same array as CONCENTRATE_PROFILE_FILE, inline (for hosted secret/parameter stores). */
+  CONCENTRATE_PROFILES_JSON: optional,
+  /** Directory with catalog-snapshot.json and qualification artifacts (scripts/qualify-concentrate.ts). */
+  CONCENTRATE_QUALIFICATION_DIR: optional,
   CONCENTRATE_REQUIRE_ZDR: z
     .enum(['true', 'false'])
     .default('true')

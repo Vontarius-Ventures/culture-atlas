@@ -22,6 +22,7 @@
     "sensor-bridge": "pnpm --filter @culture-atlas/sensor-bridge exec tsx src/main.ts",
     "demo-agent": "pnpm --filter @culture-atlas/demo-agent start",
     "qloo:probe": "tsx scripts/qloo-probe.ts",
+    "qualify:concentrate": "tsx scripts/qualify-concentrate.ts",
     "mock-relay": "pnpm --filter @culture-atlas/sensor-bridge mock-relay"
   },
   "devDependencies": {

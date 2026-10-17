@@ -17,9 +17,20 @@ describe('provider registry', () => {
   it('uses the configured base URL and model defaults', () => {
     const reg = createProviderRegistry({ QLOO_API_URL: 'https://qloo.example.test' });
     expect(reg.config.QLOO_API_URL).toBe('https://qloo.example.test');
-    expect(reg.config.LLM_PROVIDER).toBe('featherless');
-    expect(reg.config.VLM_MODEL).toBe('google/gemma-3-27b-it');
+    // Concentrate is the default gateway and has no baked-in model: profiles pin qualified IDs.
+    expect(reg.config.LLM_PROVIDER).toBe('concentrate');
+    expect(reg.config.VLM_MODEL).toBe('');
+    expect(reg.modelGateway).toBeDefined();
+    // Explicit operational rollback options keep their defaults.
+    expect(createProviderRegistry({ LLM_PROVIDER: 'featherless' }).config.VLM_MODEL).toBe('google/gemma-3-27b-it');
     expect(createProviderRegistry({ LLM_PROVIDER: 'anthropic' }).config.VLM_MODEL).toBe('claude-sonnet-5-5');
+  });
+
+  it('never falls back to Featherless when Concentrate is the default but unconfigured', () => {
+    const reg = createProviderRegistry({ STORAGE_DRIVER: 'memory', FEATHERLESS_API_KEY: 'configured-for-rollback-only' });
+    expect(reg.vlm.id).not.toContain('featherless');
+    expect(reg.vlm.capability()).toMatchObject({ status: 'unavailable', reason: 'not_configured' });
+    expect(reg.text.capability()).toMatchObject({ status: 'unavailable', reason: 'not_configured' });
   });
 
   it('accepts overrides; fake Qloo results are marked as replays unless live', async () => {

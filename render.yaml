@@ -21,12 +21,28 @@ envVarGroups:
       # base64 of 32 random bytes (openssl rand -base64 32). Needed for World Sensor poll mode.
       - key: CREDENTIAL_ENCRYPTION_KEY
         sync: false
+      # Concentrate is the default model gateway (LLM_PROVIDER unset). Every role
+      # stays unavailable until the key, qualified profiles, qualification
+      # artifacts and spend ceilings below are set (docs/concentrate.md);
+      # capture, library and uploads work regardless.
+      - key: CONCENTRATE_API_KEY
+        sync: false
+      # JSON array of qualified role profiles (exact provider/model ids).
+      - key: CONCENTRATE_PROFILES_JSON
+        sync: false
+      # Directory on the worker/web image holding catalog-snapshot.json and the
+      # passing qualification artifacts from `pnpm qualify:concentrate`.
+      - key: CONCENTRATE_QUALIFICATION_DIR
+        sync: false
+      - key: MODEL_DAILY_SPEND_LIMIT_USD
+        sync: false
+      - key: MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD
+        sync: false
+      - key: MODEL_MAX_UNKNOWN_SPEND_USD
+        sync: false
+      # Explicit rollback only (set LLM_PROVIDER=featherless); never an automatic fallback.
       - key: FEATHERLESS_API_KEY
         sync: false
-      # Concentrate is NOT enabled by this blueprint. After qualification, set
-      # LLM_PROVIDER=concentrate explicitly and configure the secret/profile and
-      # spend assertions listed in docs/concentrate.md on the analysis worker.
-      # Keep the Featherless secret for explicit rollback only, never fallback.
       # Leave empty until the hackathon key arrives: Qloo then reports "unavailable", never fake data.
       - key: QLOO_API_KEY
         sync: false

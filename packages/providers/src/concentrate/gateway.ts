@@ -1,42 +1,111 @@
 import type { ProviderConfig } from '../config';
 import { ModelSpendLedger, type SpendLimits } from '../model-gateway/budget';
 import { PostgresSpendStore, type GatewayDb } from '../model-gateway/postgres';
-import { StructuredResponseRunner } from '../model-gateway/runner';
+import {
+  StructuredResponseRunner,
+  type GatewayAlert,
+  type ReadinessDetail,
+} from '../model-gateway/runner';
 import type { ModelIdentity, ModelRole, StructuredTransport } from '../model-gateway/types';
 import { UnavailableTextModel, UnavailableVlm } from '../unavailable';
 import type { VlmProvider } from '../vlm/types';
 import type { TextModelProvider } from '../text/types';
-import { loadModelProfiles, type ModelProfiles } from './profiles';
+import {
+  loadModelProfiles,
+  parseModelProfiles,
+  qualificationState,
+  type ModelProfile,
+  type ModelProfiles,
+  type QualificationState,
+} from './profiles';
 import { ConcentrateTextModel, ConcentrateVlm } from './providers';
 import { createConcentrateTransport } from './transport';
 
+export const MODEL_ROLES = [
+  'vision_photo',
+  'vision_video_frame',
+  'research_text',
+  'composer',
+] as const satisfies readonly ModelRole[];
+
 export interface ModelGatewayOptions {
-  db?: GatewayDb;
+  /** Pool-level handle for the durable ledger, or a lazy getter (only called when configured). */
+  db?: GatewayDb | (() => GatewayDb);
   ledger?: ModelSpendLedger;
   profiles?: ModelProfiles;
   identity?: ModelIdentity;
   transport?: StructuredTransport;
+  /** Defaults to qualificationState(profile, CONCENTRATE_QUALIFICATION_DIR). */
+  qualification?: (profile: ModelProfile) => QualificationState;
+  onAlert?: (alert: GatewayAlert) => void;
   /** Explicit test-only escape hatch. Never inferred from NODE_ENV or enabled by registry. */
   allowTestStore?: boolean;
 }
 
-export function createModelGateway(
-  config: ProviderConfig,
-  options: ModelGatewayOptions = {},
-): {
+export interface RoleReadiness extends ReadinessDetail {
+  role: ModelRole;
+  /** Pinned provider/model for operators; omitted from consumer projections. */
+  model: string | null;
+}
+
+export interface ModelGateway {
   vlm: VlmProvider;
   videoFrames: VlmProvider;
   text: TextModelProvider;
   composer: TextModelProvider;
+  /** Only qualified roles get a dispatching runner. */
   runners: Partial<Record<ModelRole, StructuredResponseRunner>>;
   ledger?: ModelSpendLedger;
-} {
-  const unavailable = () => ({
+  /** Read-only per-role readiness (no paid probe, no network). */
+  readiness(): Promise<Record<ModelRole, RoleReadiness>>;
+}
+
+function spendLimits(config: ProviderConfig): SpendLimits | undefined {
+  return config.MODEL_DAILY_SPEND_LIMIT_USD &&
+    config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD &&
+    config.MODEL_MAX_UNKNOWN_SPEND_USD
+    ? {
+        dailyMicros: Math.floor(config.MODEL_DAILY_SPEND_LIMIT_USD * 1_000_000),
+        accountDailyMicros: Math.floor(config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD * 1_000_000),
+        maxUnknownMicros: Math.floor(config.MODEL_MAX_UNKNOWN_SPEND_USD * 1_000_000),
+        accountDailyAnalyses: config.ACCOUNT_DAILY_MEDIA_ANALYSES,
+      }
+    : undefined;
+}
+
+function configuredProfiles(config: ProviderConfig, options: ModelGatewayOptions): ModelProfiles {
+  if (options.profiles) return options.profiles;
+  if (config.CONCENTRATE_PROFILES_JSON)
+    return parseModelProfiles(JSON.parse(config.CONCENTRATE_PROFILES_JSON));
+  if (config.CONCENTRATE_PROFILE_FILE) return loadModelProfiles(config.CONCENTRATE_PROFILE_FILE);
+  return {};
+}
+
+/**
+ * Concentrate model gateway. Every role is independently unavailable when its
+ * profile is missing, unqualified or circuit-open; media storage never depends
+ * on it. There is no cross-gateway fallback: when Concentrate cannot serve a
+ * role, that role is unavailable (Featherless/Anthropic are only reachable by
+ * an operator explicitly setting LLM_PROVIDER for rollback).
+ */
+export function createModelGateway(
+  config: ProviderConfig,
+  options: ModelGatewayOptions = {},
+): ModelGateway {
+  const unavailableReadiness = async () =>
+    Object.fromEntries(
+      MODEL_ROLES.map((role) => [
+        role,
+        { role, model: null, state: 'unavailable', reason: 'not_configured' } as RoleReadiness,
+      ]),
+    ) as Record<ModelRole, RoleReadiness>;
+  const unavailable = (): ModelGateway => ({
     vlm: new UnavailableVlm('not_configured'),
     videoFrames: new UnavailableVlm('not_configured'),
     text: new UnavailableTextModel('not_configured'),
     composer: new UnavailableTextModel('not_configured'),
     runners: {},
+    readiness: unavailableReadiness,
   });
   if (
     !config.CONCENTRATE_API_KEY ||
@@ -44,27 +113,18 @@ export function createModelGateway(
     config.CONCENTRATE_ALLOW_CONTENT_LOGGING
   )
     return unavailable();
-  const limits: SpendLimits | undefined =
-    config.MODEL_DAILY_SPEND_LIMIT_USD &&
-    config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD &&
-    config.MODEL_MAX_UNKNOWN_SPEND_USD
-      ? {
-          dailyMicros: Math.floor(config.MODEL_DAILY_SPEND_LIMIT_USD * 1_000_000),
-          accountDailyMicros: Math.floor(config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD * 1_000_000),
-          maxUnknownMicros: Math.floor(config.MODEL_MAX_UNKNOWN_SPEND_USD * 1_000_000),
-          accountDailyAnalyses: config.ACCOUNT_DAILY_MEDIA_ANALYSES,
-        }
-      : undefined;
+  const limits = spendLimits(config);
+  const db = typeof options.db === 'function' ? options.db() : options.db;
   const ledger =
     options.ledger ??
-    (options.db && limits
-      ? new ModelSpendLedger(new PostgresSpendStore(options.db), limits)
-      : undefined);
+    (db && limits ? new ModelSpendLedger(new PostgresSpendStore(db), limits) : undefined);
   if (!ledger || (!ledger.store.durable && !options.allowTestStore)) return unavailable();
-  const profiles =
-    options.profiles ??
-    (config.CONCENTRATE_PROFILE_FILE ? loadModelProfiles(config.CONCENTRATE_PROFILE_FILE) : {});
+  const profiles = configuredProfiles(config, options);
+  const qualify =
+    options.qualification ??
+    ((profile: ModelProfile) => qualificationState(profile, config.CONCENTRATE_QUALIFICATION_DIR));
   const runners: Partial<Record<ModelRole, StructuredResponseRunner>> = {};
+  const states: Partial<Record<ModelRole, QualificationState>> = {};
   const models = {
     vision_photo: config.VLM_MODEL,
     vision_video_frame: config.VLM_MODEL,
@@ -77,14 +137,18 @@ export function createModelGateway(
       apiKey: config.CONCENTRATE_API_KEY,
       baseUrl: config.CONCENTRATE_BASE_URL,
     });
-  for (const role of ['vision_photo', 'vision_video_frame', 'research_text', 'composer'] as const) {
+  for (const role of MODEL_ROLES) {
     const profile = profiles[role];
     // Optional environment IDs are assertions against qualified profiles, never replacements.
     if (!profile || profile.role !== role || (models[role] && models[role] !== profile.model))
       continue;
+    states[role] = qualify(profile);
+    // Only a qualified profile may dispatch. Lower states are reported, not used.
+    if (states[role] !== 'qualified') continue;
     runners[role] = new StructuredResponseRunner(profile, transport, ledger, {
       identity: options.identity,
       allowTestStore: options.allowTestStore,
+      onAlert: options.onAlert,
     });
   }
   return {
@@ -102,5 +166,23 @@ export function createModelGateway(
       : new UnavailableTextModel('not_configured'),
     runners,
     ledger,
+    async readiness() {
+      const out = {} as Record<ModelRole, RoleReadiness>;
+      for (const role of MODEL_ROLES) {
+        const runner = runners[role];
+        const profile = profiles[role];
+        if (runner)
+          out[role] = { role, model: profile!.model, ...(await runner.readinessDetail()) };
+        else if (states[role])
+          out[role] = {
+            role,
+            model: profile!.model,
+            state: states[role]!,
+            reason: 'not_qualified',
+          };
+        else out[role] = { role, model: null, state: 'unavailable', reason: 'not_configured' };
+      }
+      return out;
+    },
   };
 }

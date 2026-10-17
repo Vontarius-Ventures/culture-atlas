@@ -1,143 +1,236 @@
-# Model gateway: Concentrate (Phase A)
+# Model gateway: Concentrate
 
-The current default remains Featherless. `LLM_PROVIDER=concentrate` is an
-explicit switch, not an endpoint override. Qloo remains independent.
-There are **no qualified production model IDs** in this change. Tests use
-`fixture/model-1`, which is synthetic and must never be deployed.
+Concentrate is the **default** model gateway (`LLM_PROVIDER` unset or
+`concentrate`). Featherless and Anthropic remain only as explicit operational
+rollbacks (`LLM_PROVIDER=featherless|anthropic`); nothing ever falls back to
+them automatically, and v2 media analysis is unavailable under a rollback
+provider. Qloo stays independent.
 
-## Implemented boundary
+**No production model is qualified in this repository.** Every test uses
+synthetic ids such as `fixture/model-1`, which must never be deployed. Without a
+key, qualified profiles, a durable ledger and spend ceilings every role reports
+`unavailable`; capture, library, uploads and playback keep working.
 
-`createModelGateway(config, { db, profiles, identity })` creates photo,
-video-frame, research and composer adapters. `db` must be a pool-level handle
-compatible with domain `Db`. Migration `065_model_gateway.sql` must be applied.
-Alternatively inject a `ModelSpendLedger` backed by a durable `SpendStore`.
-No ledger means unavailable roles. Missing profiles disable only those roles.
-Every dispatch also requires verified account/job/stage identity. The default
-registry intentionally cannot run Concentrate until the worker supplies these
-dependencies. Asset-analysis worker integration is a separate stacked change.
+Authority: `specs/capture-platform-v2/CONCENTRATE.md`.
 
-```ts
-const modelIdentity = identityFromCaptureLease(lease, 'observe:frame:1500');
-const gateway = createModelGateway(providerConfig, {
-  db,
-  profiles,
-  identity: modelIdentity,
-});
-await gateway.videoFrames.analyzeImage(
-  { image: normalizedJpeg },
-  {
-    signal,
-    modelIdentity,
-  },
-);
+## What runs where
+
+| Piece | Code |
+| --- | --- |
+| Responses transport (`POST /v1/responses`, nonstreaming, `input_text` + `input_image` JPEG data URIs, `text.format` strict `json_schema`, instructions separate from data, no tools, no redirects, bounded body, error bodies never read) | `packages/providers/src/concentrate/transport.ts` |
+| Strict schema transform with proven inverse | `packages/providers/src/model-gateway/schema.ts` |
+| Role profiles, catalog snapshot, qualification artifacts, profile hash | `packages/providers/src/concentrate/profiles.ts`, `catalog.ts` |
+| Runner (validation, deadlines, single retry owner, error matrix, circuits, alerts, readiness) | `packages/providers/src/model-gateway/runner.ts` |
+| Spend ledger (`inference_attempts`, global/account/unknown caps, credit pause, role circuits) | `packages/providers/src/model-gateway/budget.ts`, `postgres.ts`, `db/migrations/066_inference_attempts.sql` |
+| Gateway factory + read-only per-role readiness | `packages/providers/src/concentrate/gateway.ts` |
+| Per-job identity for v1 jobs | `packages/providers/src/model-gateway/identity.ts`, used by `apps/worker/src/worker.ts` |
+| v2 media analysis state (frame checkpoints, aggregation with frame citations, AI-only pauses, publication) | `packages/domain/src/capture-v2/analysis-run.ts`, `analysis.ts`, `db/migrations/067_media_analysis_runs.sql` |
+| v2 media analysis loop (claims, bounded JPEGs, dispatch, classification) | `apps/worker/src/media-analysis.ts`, started by `apps/worker/src/main.ts` |
+| Request gate + `concentrate_analysis_enabled` | `apps/web/lib/server/model-readiness.ts`, wired in `apps/web/lib/server/capture-v2.ts` |
+| Operator qualification | `scripts/qualify-concentrate.ts` (`pnpm qualify:concentrate`) |
+
+## Structured output: the strict transform
+
+Atlas zod schemas are converted with `structuredOutputContract(schema)`:
+
+- every object becomes `additionalProperties:false` with **all** keys required;
+- an optional (non-nullable) key becomes required `T | null`, and the decoder
+  removes the null again before zod, so absence stays expressible;
+- value constraints that strict routes commonly reject (`minLength`, `maximum`,
+  `maxItems`, `pattern`, `format`, `default`, …) are removed from the schema that
+  is sent. Atlas still enforces every one: the decoded output is parsed by the
+  **original** zod schema plus semantic checks (VLM ids, cross-references,
+  geometry);
+- unrepresentable schemas (records, `unknown`/`any`, tuples, open objects,
+  `not`/`allOf`/conditionals) fail before dispatch. There is no permissive
+  `{type:object}` fallback.
+
+Equivalence is proven by property tests rather than asserted:
+`checkContractEquivalence` (`packages/providers/src/testing/schema-fuzz.ts`)
+generates zod-valid values from the original schema (including absent optional
+keys), shows each one encodes to a provider-schema-valid value and decodes back
+to an equal zod-valid value, and that adding an unknown key or deleting any key
+anywhere is rejected by the strict decoder. It runs over `VlmAnalysis`,
+`RawExtraction` (research), the composer schemas (`FilmIdeas`, `ArtistIdeas`,
+`DishIdeas`, `PlanProse`) and the compiler's `DishIdeas`
+(`model-gateway/schema.test.ts`, `capture-v2/analysis-run.test.ts`).
+
+## Response parsing
+
+All `output` items are scanned; only `message` items' `output_text` parts form
+the answer (reasoning items are ignored). `refusal` parts, `status:
+incomplete|in_progress|queued`, `incomplete_details`, `status:
+failed|cancelled` and `error` objects are distinct outcomes. `usage` is nullable
+and a partial usage object counts as unknown (never zero). The response `id`,
+returned `model` and a `x-request-id`/`request-id` header (when present) are
+recorded. The upstream provider is recorded only when a response discloses it;
+otherwise `actual_provider` stays `NULL` (never inferred from the requested
+route).
+
+## Error matrix (runner policy)
+
+| Condition | Runner / ledger | Consumer |
+| --- | --- | --- |
+| 400 | `bad_request`, no retry | “We couldn’t explore this media.” |
+| 401 / 403 | `auth`; **durable role circuit** (`model_gateway_control.circuits`), alert `auth_failed` | “Exploration is temporarily unavailable.” |
+| 402 | `budget_exhausted`; **global AI-only pause** until an operator resumes; alert `credits_exhausted` | request stays queued (`waiting_reason: ai_paused`) |
+| 404 | `not_found`; role circuit, alert `unknown_model` | unavailable |
+| 422 | role circuit (`policy`), never a privacy downgrade, alert `policy_route_unavailable` | unavailable |
+| 424 / 5xx / network | one bounded retry inside the deadline with a new reservation | retried, then an honest failure |
+| 429 | dispatch pause until `Retry-After` (default 30 s); the scheduler re-queues, the runner never spins | `waiting_reason: rate_limited` |
+| refusal / incomplete / invalid JSON / schema / cross-reference / returned-model or disclosed-route mismatch | distinct classified failure, no repair, no publication; a route mismatch also opens the role circuit | explained without the raw payload |
+| timeout / cancellation | no retry; the charge stays `unknown` | |
+
+Raw error bodies are never read. Keys, image base64 and provider text never
+reach logs, alerts, errors or the ledger (asserted in `contract.test.ts`).
+
+**Deadlines and retry ownership.** Vision attempts 30 s, text 15 s (profile
+cap), photo job 90 s, sampled-video job 180 s. Atlas is the single retry owner
+(`CONCENTRATE_GATEWAY_FALLBACKS_ENABLED` must stay `false`). Per frame: round 0
+may use the runner's one retry, round 1 gets one attempt, so at most three HTTP
+attempts per frame/role. Schema repair is not configured.
+
+## Budgets and `inference_attempts`
+
+Each HTTP attempt reserves its profile's worst-case `reservationMicros` under a
+global row lock before dispatch. Global daily, per-account daily, outstanding
+unknown spend and per-account daily analysis counts must all pass. The store
+loads only the rows a decision needs (the UTC day, every unsettled attempt, the
+target) instead of the whole history. Usage tokens are recorded but are not a
+dollar charge: every attempt stays `unknown` until billing evidence settles it
+with `ledger.reconcile(id, actualCostMicros)`; a charge above its reservation
+pauses dispatch (`cost_overrun`). Stale reservations never expire on their own.
+Migration 066 copies 065's `model_gateway_attempts` rows so outstanding charges
+stay counted.
+
+Operator controls: `ledger.resume()` clears the global pause;
+`ledger.resume({ roles: ['vision_photo'] })` or `{ roles: 'all' }` also closes
+role circuits. Do this only after restoring credits or re-qualifying.
+
+## Readiness (no paid probes)
+
+`gateway.readiness()` reports per role, from local evidence only:
+
+| State | Meaning |
+| --- | --- |
+| `configured` | key, profile and privacy assertions present |
+| `catalog-compatible` | the pinned model id and provider appear in the stored catalog snapshot the profile names |
+| `qualified` | a passing qualification artifact matches this exact profile hash, with enough fixtures |
+| `available` | qualified and a validated response was observed |
+| `degraded` | throttled (429 pause) |
+| `unavailable` | missing pieces, open role circuit, credit or cost pause |
+
+Only `qualified` profiles get a dispatching runner. `GET /v2/capabilities`
+reports `concentrate_analysis_enabled` true only when the photo role is
+qualified/available now. `POST /v2/media/{id}/analysis` refuses with “Exploration
+is temporarily unavailable.” (503) **before** using the daily allowance when the
+role is unavailable; during a credit or rate pause it accepts and queues.
+
+## v2 media analysis
+
+1. `POST /v2/media/{id}/analysis` (modes `photo`, `selected_frame`,
+   `sampled_video`) queues `analyze_media` work (≤ 8 frames, server-owned ids
+   and timestamps).
+2. The worker claims photo and video work in separate slots (default 2 / 1) so
+   interactive photos are not stuck behind videos; accounts with less running
+   work go first. While AI is paused it claims nothing.
+3. Each bounded JPEG (the photo's normalized derivative or an extracted frame,
+   re-encoded into the profile's byte/pixel/dimension bounds) is sent once per
+   frame with identity `media:<analysis>:<frame>:r<round>`. Every outcome is
+   checkpointed in `media_analysis_frames`. A dispatch whose outcome was lost
+   (crash after reservation) is recorded `unknown` and **never re-sent**; its
+   charge stays counted (MED-01).
+4. Frame readings are aggregated: duplicate candidates (normalized name + type)
+   merge and cite every frame (`frame_id`, `timestamp_ms`); `depicted` needs one
+   frame's strong evidence; frame-local boxes are dropped for multi-frame
+   readings; certainty never reaches consumers.
+5. Publication re-checks lease, owner, generation and tombstone in one
+   transaction, creates a capture linked to the asset, and queues the existing
+   cultural compiler with `media_analysis_id`, which uses the stored reading
+   instead of a second VLM call (Qloo resolution, research and recommendations
+   proceed as for v1). `GET /v2/media/{id}/analysis/{analysis_id}` adds
+   `waiting_reason`, `error_code` and `result` (`note: “We explore selected
+   moments, not every frame.”`, per-frame states, cited candidates).
+6. 402 / 429 return the work to the queue **without** consuming an attempt;
+   media stays `ready`. Deleting the asset fences publication and a trigger
+   removes stored readings.
+
+v1 jobs (captures, plans, related discovery) get a fresh verified identity per
+model call (`v1:<job type>:a<attempt>:<operation>:<n>`). Session-only
+(anonymous) jobs get none, so the budgeted gateway refuses them: anonymous AI is
+unavailable under Concentrate.
+
+## Profiles
+
+`CONCENTRATE_PROFILE_FILE` (path) or `CONCENTRATE_PROFILES_JSON` (inline, for
+hosted parameter stores) holds an array of `ModelProfileSchema` objects, one per
+role. Each pins gateway, role, exact `provider/model` and provider, an empty
+`allowedFallbackProviders`, output/input caps, image byte/pixel/dimension/count
+caps, timeout, structured-output support, ZDR requirement and eligibility,
+content logging off, privacy verification time, prompt/schema/pricing versions,
+catalog snapshot time, qualification artifact id and the worst-case
+`reservationMicros`. `VLM_MODEL` / `RESEARCH_MODEL` / `COMPOSER_MODEL`, if set,
+are assertions against profiles, never replacements.
+
+## Qualification (deliberate operator action)
+
+```sh
+# Key in a private file (chmod 600) outside the repository.
+export CONCENTRATE_API_KEY_FILE=/secure/concentrate-key
+# 1. Catalog snapshot (GET /v1/models, paginated; no inference).
+pnpm qualify:concentrate --catalog --out-dir /secure/concentrate-qualification
+# 2. Pin a model/provider from the snapshot; set catalogSnapshotAt to its fetched_at.
+#    Dry run: prints the plan, sends nothing.
+pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
+  --fixtures /secure/owned-fixtures/photos --out-dir /secure/concentrate-qualification \
+  --max-requests 12 --spend-cap-usd 2
+# 3. Same command plus --confirm-paid-requests sends real, billed requests.
 ```
 
-The structural lease seam uses P1's `account_id`, `job_id`, `asset_id`,
-`attempt_id`. Account/job/stage identifies the logical billable attempt.
-`attempt_id` is audit-only, so reclaiming a queue lease cannot silently rebill
-the same stage. Retries inside one invocation append a bounded attempt suffix.
-An already-reserved stage fails closed, even after a crash or successful
-response: reconcile/recover its durable stage output rather than send twice.
-The queue owner must checkpoint validated results and fence publication on
-lease, account, asset generation and tombstone. This provider package has no
-asset mutation or deletion capability.
+Fixture layout: photos as image files (≥ 10, owned and varied); videos as one
+directory per video containing `<timestamp_ms>.jpg` frames (≥ 3 videos, ≤ 8
+frames each); text roles as `{system, prompt, schema: reference_notes|plan_prose}`
+JSON files (≥ 3). A persistent request counter in the out dir is reserved
+before every request and survives re-runs; the worst-case reservation must fit
+the spend cap; there are no retries; the run stops at 401/402/404/422/429. The
+artifact `<qualificationArtifactId>.json` holds aggregates only (counts,
+outcomes, p50/p95 latency, token usage, profile hash) — no media, prompts,
+outputs or keys. Ship the out dir with the deployment as
+`CONCENTRATE_QUALIFICATION_DIR`; a role becomes dispatchable only when its
+artifact passes and matches the profile hash exactly (any profile edit requires
+re-qualification).
 
-## Profiles and privacy
+What a passing run still does not prove: cultural-label quality judged by a
+person, billing reconciliation, and the ZDR/logging settings on the key, which
+the operator verifies in the Concentrate dashboard and records in
+`privacyVerifiedAt`.
 
-`CONCENTRATE_PROFILE_FILE` contains an array of independently qualified profiles.
-See `ModelProfileSchema` in `packages/providers/src/concentrate/profiles.ts`
-for the complete strict contract. All fields are mandatory. Each profile pins:
+## Deployment configuration
 
-- `gateway: concentrate`, role, version, exact `provider/model` and provider.
-- Empty `allowedFallbackProviders`. No auto-routing, model fallback, alternate
-  gateway or automatic billing switch is supported in Phase A.
-- Output/input token and UTF-8 text/schema-byte caps; JPEG count, byte, pixel,
-  and dimension caps. Text deadlines are at most 15 seconds, vision 30.
-- Structured-output support, ZDR eligibility, logging off, verified privacy
-  timestamp, catalog timestamp and qualification artifact ID.
-- Prompt/schema/pricing versions and worst-case `reservationMicros` (integer
-  millionths of USD), including image and capped input/output charges.
+**Render** (`render.yaml`): set `CONCENTRATE_API_KEY`,
+`CONCENTRATE_PROFILES_JSON`, `CONCENTRATE_QUALIFICATION_DIR` and the three
+`MODEL_*_USD` ceilings as secrets on the shared group (web reads readiness; the
+worker dispatches). Keep `FEATHERLESS_API_KEY` only for an explicit rollback.
 
-`VLM_MODEL`, `RESEARCH_MODEL`, `COMPOSER_MODEL`, if set, must match qualified
-profiles. There is no implicit composer-to-research model fallback.
-Profiles require operator verification of ZDR ON and content logging OFF on
-the actual key/workspace, and the selected model/provider's detailed catalog.
-Environment assertions do not change vendor settings. No invented privacy
-flags, idempotency headers, reasoning or tool settings are sent.
+**AWS** (single EC2 host or ECS on EC2, RDS PostgreSQL, S3, as mapped in
+`docs/v2-gap-report.md` §7): keep `CONCENTRATE_API_KEY` in Secrets Manager or an
+SSM `SecureString` parameter and `CONCENTRATE_PROFILES_JSON` in SSM, injected
+into both containers at start; never bake them into the image. Copy the
+qualification out dir onto the host (or into the image, it holds no secrets)
+and point `CONCENTRATE_QUALIFICATION_DIR` at it. The worker needs outbound HTTPS
+to `api.concentrate.ai` only for analysis; requests carry bounded JPEGs (tens of
+kB per frame), so model traffic is not a meaningful AWS data-transfer cost
+compared with video playback. Whether the deployment fits AWS's free offer has
+not been verified here (no AWS access); Concentrate usage is billed by
+Concentrate against the operator's credits, independently of AWS.
 
-The Responses adapter uses only `https://api.concentrate.ai/v1/responses`,
-nonstreaming JSON Schema output, instructions separate from input data, bounded
-JPEG data URIs, no tools and no redirects. It scans all output messages for
-text/refusal/incomplete/error outcomes. Atlas independently rejects missing or
-extra keys, invalid JSON, schema/semantic failures, model/route mismatches,
-and invalid VLM cross-references/geometry. Unrepresentable schemas fail before
-dispatch, without a permissive object/unknown fallback.
+## Remaining release gates
 
-Video analysis accepts 1–8 ordered server-owned frame derivatives and effective
-timestamps, up to a 180-second overall deadline. Partial frame results retain
-their timestamp/derivative linkage; the model cannot assign it. No native video
-endpoint is assumed. Byte decoding/normalization remains media preparation's
-responsibility; the VLM checks JPEG metadata and qualified limits.
-
-## Durable spending and failure handling
-
-Set positive `MODEL_DAILY_SPEND_LIMIT_USD`,
-`MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD`, and
-`ACCOUNT_DAILY_MEDIA_ANALYSES`. Each HTTP attempt reserves its profile's
-qualified worst-case amount before dispatch. A global PostgreSQL row lock
-serializes global/account checks and commits the attempt before any HTTP work.
-Retries get new reservations and consult the same allowance.
-
-Reserved and unknown attempts remain counted, including across midnight,
-worker restarts and abandoned leases. A daily analysis count uses unique
-account/job identity. Completed token usage is recorded but is **not** proof of
-the actual dollar charge. All dispatched attempts remain unknown until the
-operator's billing reconciler calls `ledger.reconcile(id, actualCostMicros)`.
-Only explicit billing evidence can settle zero; missing usage never does.
-Stale reservations never expire automatically. A charge exceeding its qualified
-reservation pauses dispatch. Reconciliation is idempotent and conflicting
-amounts fail. The initial store loads operational ledger metadata under a
-global lock for correctness; high-volume deployments should replace its query
-strategy with equivalent locked aggregates, not weaken policy.
-
-402 persists a global AI-only pause. Restore credits/profile readiness and
-explicitly call `ledger.resume()` before recovery. No paid health probe or
-cross-gateway fallback occurs. 429 records Retry-After, persists a dispatch
-pause and returns to the scheduler instead of spinning/retrying in-process.
-Authentication, unknown-model and privacy-route failures disable that role
-instance pending operator reconstruction. Scheduler retries must obey this
-status and the ledger. One transient provider retry is permitted within the
-total role deadline and independently reserved. Timeout/cancellation can leave
-upstream work and charges; neither is automatically retried. Refusal, incomplete,
-invalid schema and policy failures never trigger schema repair in Phase A.
-
-`runner.readiness()` is read-only and distinguishes qualified, available,
-degraded and unavailable evidence. Configuration/catalog compatibility are
-offline profile-loader gates, not inference probes. Registry capabilities are
-synchronous configuration/last-observed summaries; use async readiness for
-durable credit/throttle state. Keep metadata/library/capture/upload/deletion
-available when AI pauses. Never expose error bodies, prompts, image base64,
-keys or operator billing state in consumer errors.
-
-## Validation and remaining release gates
-
-Offline fake-fetch/transport tests cover AI-01 failure classifications and
-AI-02 reservation/unknown accounting. Real PostgreSQL tests cover concurrent
-global/account caps, crash persistence, attempt deduplication, transactional
-rollback, credit circuit persistence and reconciliation. Existing Featherless
-and Anthropic tests remain required.
-
-No network/model calls, account inspection, real credits, real privacy settings,
-model catalog or live cultural-label quality were qualified in Phase A.
-Production stays blocked until deliberate live qualification using owned
-fixtures: at least ten varied photos and three short videos, research/composer
-schemas, real image interpretation, timestamps, privacy, exact routes,
-cost/latency and safe failure handling.
-
-Before any Phase B call, build and review a one-request-per-invocation harness
-with a persistent hard counter in a private 0700 directory/0600 file outside
-the repository. Read the key only from its approved private file. Use no SDK or
-transport retries, reserve the counter before request, and count unknown outcomes.
-Proposed initial cap: **four requests**, one per role, to verify basic Responses,
-image and schema contracts before seeking a separate larger fixture allowance.
-Four requests are not production qualification.
+- No qualified model ids; no live run of the qualification script yet (no key or
+  network here). A mock pass is not production qualification.
+- Billing reconciliation feed (who calls `ledger.reconcile`) is not automated.
+- ZDR / content-logging settings on the real key are unverified.
+- Alerts are emitted as structured log lines (`[alert] model_gateway {…}`);
+  routing them to a pager/alarm is deployment work.
+- MCP `analyze_media` tool and agent REST media routes belong to the agents
+  module.

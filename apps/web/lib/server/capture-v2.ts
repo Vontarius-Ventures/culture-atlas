@@ -36,6 +36,7 @@ import {
   type MultipartStorage,
 } from '@culture-atlas/providers';
 import { abuseLimitIp } from './http';
+import { analysisAvailability, photoAnalysisReady } from './model-readiness';
 
 /** Identity/P2 integration seam. Server startup must register before enabling those capabilities. */
 export interface CaptureV2Runtime {
@@ -118,6 +119,7 @@ export async function createCaptureV2HttpContext(
       process.env.CAPTURE_VIDEO_UPLOAD_ENABLED !== 'false',
     ),
     mediaCreationEnabled: process.env.CAPTURE_MEDIA_CREATION_ENABLED !== 'false',
+    analysisAvailability,
     deleteAnalysisCapture: async (tx, accountId, captureId) => {
       const legacy = createServiceContext(
         { kind: 'account', accountId, sessionId: null, isDemoOwner: false },
@@ -274,7 +276,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
             locallyReady: false,
             killed: true,
           },
-          analysisReady: false,
+          analysisReady: await photoAnalysisReady(),
           agentApiEnabled: false,
           sharingEnabled: false,
         },

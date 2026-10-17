@@ -26,14 +26,15 @@ describe('role profiles and adapters, offline', () => {
   ])('fails closed on unqualified routing/privacy profile %j', (changes) => {
     expect(ModelProfileSchema.safeParse({ ...profile, ...changes }).success).toBe(false);
   });
-  it('keeps Featherless default and Qloo independent when Concentrate is missing its durable dependencies', () => {
+  it('defaults to Concentrate, never falls back to Featherless, and keeps Qloo independent without durable dependencies', () => {
     const reg = createProviderRegistry({
       LLM_PROVIDER: 'concentrate',
       CONCENTRATE_API_KEY: 'synthetic',
       FEATHERLESS_API_KEY: 'configured-other',
       STORAGE_DRIVER: 'memory',
     });
-    expect(loadProviderConfig({}).LLM_PROVIDER).toBe('featherless');
+    expect(loadProviderConfig({}).LLM_PROVIDER).toBe('concentrate');
+    expect(loadProviderConfig({ LLM_PROVIDER: 'featherless' }).LLM_PROVIDER).toBe('featherless');
     expect(reg.vlm.capability().status).toBe('unavailable');
     expect(reg.text.capability().status).toBe('unavailable');
     expect(reg.storage.capability().objects.status).toBe('available');
@@ -47,6 +48,7 @@ describe('role profiles and adapters, offline', () => {
         profiles: { research_text: profile },
         identity,
         transport: vi.fn(async () => response),
+        qualification: () => 'qualified',
         allowTestStore: true,
       },
     );
