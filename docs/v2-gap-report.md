@@ -1,8 +1,8 @@
 # capture platform v2: gap report
 
-Date: 2026-10-17. Branch `claude/wizardly-cannon-yu8trw`. Authority: `specs/capture-platform-v2/` (v2.1).
+Date: 2026-10-17. Branch `claude/wizardly-cannon-yu8trw`. All real-stack rows ran against the production build (`next start`) with `STORAGE_DRIVER=s3` and `IDENTITY_MAIL_DRIVER=ses` pointed at `scripts/local-aws.ts`, never a real AWS account. Authority: `specs/capture-platform-v2/` (v2.1).
 
-This report replaces the earlier one, written before the package branches were merged. It describes the tree after these merges:
+This report describes the final tree after the package merges listed below, the two design-fidelity branches (`fidelity/v2-capture`, `fidelity/v1-and-account`) and the fixes for the last review round (section 8).
 
 | Branch | Package |
 | --- | --- |
@@ -12,27 +12,35 @@ This report replaces the earlier one, written before the package branches were m
 | `v2/agents-sharing` | collection sharing, agent media wiring, screens 10–13 |
 | `v2/capture-ui` | web screens 01–09 |
 | `v2/native` | iOS and Android apps, native contract fixtures |
+| `fidelity/v2-capture` | screens 01–09 matched to their references on the real stack |
+| `fidelity/v1-and-account` | v1 screens and screens 10–13 matched to their references |
 
-Status values:
+Status values (a row can carry more than one):
 
-- **done:** implemented and covered by automated tests in this repo.
-- **done (server):** the server side is done; the client or device part is not proven.
-- **partial:** something named is still missing.
+- **done:** everything the spec names for it is implemented and covered by automated tests in this repo.
+- **verified-here:** also driven end to end in this container on the real stack: the production build (`next start`), the job worker, the media worker with ffmpeg, PostgreSQL 16, and the offline S3/SES stand-ins from `scripts/local-aws.ts`.
+- **partial:** something the spec names is still missing; the missing piece is listed.
+- **needs-physical-device:** written, but only a real phone or real Meta glasses can prove it.
+- **needs-live-keys:** needs Concentrate (or Qloo) keys and a paid qualification run.
+- **needs-AWS-account:** needs a real AWS account (S3, SES, deploy, alerts).
 - **missing:** not implemented.
-- **unverified:** written, but it cannot run in this environment (no toolchain, device, key or network).
 
-## 0. Tree health
+"Here" means this container: Node 22, PostgreSQL 16, ffmpeg, Playwright Chromium built without H.264/AAC, no Xcode, Android SDK or kotlinc, no provider keys, network access to the npm registry only.
+
+## 0. Tree health (final gate)
 
 | Check | Result |
 | --- | --- |
-| `pnpm install --frozen-lockfile` | passes (the lockfile merged cleanly; `pnpm install` made no changes) |
+| `pnpm install --frozen-lockfile` | passes, no changes |
 | `pnpm typecheck`, `pnpm lint` | pass |
-| `pnpm test` | 104 files, 791 tests pass (two full runs after integration) |
-| Fresh-database migrate | 20 migrations apply; a second run applies nothing |
-| `pnpm build` | passes |
-| Playwright mock suite (`pnpm test:e2e`, 1440/390/360/320) | 317 passed and 5 skipped (desktop-only cases). Two other desktop tests timed out on a cold `next dev` compile and passed on rerun. |
-| Real-stack v1 journey (`next start` + worker) | 3 of 3 widths pass |
-| Real-stack v2 journey (`next dev` + worker + media worker) | 3 of 3 widths pass ([v2-real-stack.md](v2-real-stack.md)) |
+| `pnpm test` | 105 files, 820 tests pass (one earlier run hit a transient `DROP DATABASE … permission denied` in `migration-reconcile.test.ts` cleanup; it passed alone and in the final full run) |
+| Fresh-database migrate | 21 migrations apply to a fresh database (including `095_analysis_capture_creator.sql`); a second run applies nothing |
+| `pnpm build` (`next build`) | passes |
+| Playwright mock suite (`pnpm test:e2e`, 1440/390/360/320) | 326 passed, 5 skipped (desktop-only cases); one v1 save-picker test failed once on a checkbox click and passed 12 of 12 on `--repeat-each 3` |
+| Real-stack v1 journey (`e2e/real/journey.spec.ts`, production build) | 3 of 3 widths pass (1440/390/360) |
+| Real-stack v2 journey (`e2e/real/v2-journey.spec.ts`, production build, worker, media worker) | 3 of 3 widths pass, with `AGENT_REMOTE_CAPTURE_ENABLED=true` for the command step ([v2-real-stack.md](v2-real-stack.md)) |
+| Fidelity, capture 01–09 (`e2e/real/v2-fidelity.spec.ts`, both phases) | pass (seed, 01–08 with the experimental rollout configured, 09 without it) |
+| Fidelity, v1 and 10–13 (`playwright.fidelity.config.ts`) | 30 of 30 pass (1440/390/320) |
 
 ### Integration fixes made while merging
 
@@ -61,54 +69,50 @@ Status values:
 | G5 | Production `CaptureAgentAuthorization` | done | `authz/capture-agent-authorization.ts`, the default in `agent-fence.ts` |
 | G6 | MCP media tools get a capture context | done | `app/mcp/route.ts` → `agentCaptureContext`; real-stack journey (`list_media`, `get_media`) |
 | G7 | Agent REST media | done | the `cat_` hook in `captureV2Route` → `agent-media-http.ts`; real-stack journey |
-| G8 | Identity mail adapter | done (SES unverified) | `providers/mail/identity-mail.ts` supports SES, a file mailbox (dev only) and none |
-| G9 | Concentrate wired into v1 and v2 analysis | done in code; **no qualified model** | `providers/concentrate`, `model-gateway`, `apps/worker/src/media-analysis.ts` |
+| G8 | Identity mail adapter | done; verified-here against the local SES stand-in; needs-AWS-account for real SES | `providers/mail/identity-mail.ts` supports SES, a file mailbox (dev only) and none |
+| G9 | Concentrate wired into v1 and v2 analysis | done in code; **needs-live-keys** (no qualified model) | `providers/concentrate`, `model-gateway`, `apps/worker/src/media-analysis.ts` |
 
 ## 2. Delivery packages (BUILD-AND-ACCEPTANCE.md)
 
 | Package | Status | What remains |
 | --- | --- | --- |
-| 1 Domain and infrastructure | done (server) | `consent_records` table still missing. The restore drill was tested locally only, not in the cloud. The reconciliation sweep is untested at scale. |
-| 2 Camera and uploads (web) | done | Upload drafts in IndexedDB are not encrypted at rest. The 'Uploading' filter makes three status queries and has no pagination. Real browser MP4 playback was not observed (MED-05). |
-| 3 Observer extraction / native | **unverified** | The iOS and Android apps have never been compiled or run. The Android Meta SDK binding is unchecked. Store and SDK eligibility has no evidence. |
-| 4 Concentrate | done in code; **unverified live** | No qualified profile and no live qualification run. ZDR and logging not verified on a real key. Billing reconciliation is manual. Alerts are log lines only. |
-| 5 Agent platform | done | Rate limits are per connection only (no per-account or per-endpoint budget). |
-| 6 Collection sharing | done | Revocation reaches open viewers by polling, not push. The shared-media player was not checked in a browser able to decode MP4. |
-| 7 Release qualification | **missing** | Independent two-user and device trial, store and SDK eligibility, cloud deploy, cloud restore drill, alert routing |
+| 1 Domain and infrastructure | **partial**; verified-here | The `consent_records` table from the BACKEND-CONTRACTS persistence table does not exist (no migration defines it). The restore drill ran locally only (needs-AWS-account for the cloud drill). The reconciliation sweep is untested at scale. |
+| 2 Camera and uploads (web) | **partial**; verified-here | Upload drafts kept in IndexedDB are **not encrypted** at rest (SCREEN-CONTRACT: "encrypt retained drafts"). Sign-out with pending drafts now offers Keep on this device or Delete local drafts. The 'Uploading' filter makes three status queries and has no pagination. Browser MP4 playback was not observed (MED-05: Playwright's Chromium has no H.264). |
+| 3 Observer extraction / native | **needs-physical-device** | The iOS and Android apps have never been compiled or run here (no Xcode, Android SDK or kotlinc). The Android Meta SDK binding is unchecked. Store and SDK eligibility has no evidence. |
+| 4 Concentrate | done in code; **needs-live-keys** | No qualified profile and no live call. ZDR and logging not verified on a real key. Billing reconciliation is manual. Alerts are log lines only. The CONCENTRATE failure-matrix consumer states (400, 429 with Cancel, unavailable) and a real cancel are now in place. |
+| 5 Agent platform | **partial** | Only the per-connection limit exists (10 mutations and 60 reads a minute, `authz/agent-authorization.ts`); the per-account and per-endpoint agent budgets AGENTS-AND-SHARING names are missing. Kill switches (`agent_api_enabled`, `agent_remote_capture_enabled`) are now enforced on every agent surface. |
+| 6 Collection sharing | done; verified-here | Revocation reaches open viewers on their next request or range (polling), not by push. The shared-media player was not checked in a browser that decodes MP4. |
+| 7 Release qualification | **missing**; needs-physical-device; needs-AWS-account | Independent two-user and device trial, store and SDK eligibility, cloud deploy, cloud restore drill, alert routing. |
 
 ## 3. Routes (BACKEND-CONTRACTS.md, AGENTS-AND-SHARING.md)
 
-Every route in both documents is implemented and routed.
+Every route in both route tables is implemented and routed. The last one missing was the spec path `GET /v2/shared/media/{id}`, which now serves the default share-safe rendition (`app/v2/shared/media/[id]/route.ts`, tested in `share-http.test.ts`) next to `/v2/shared/media/{id}/{variant}`.
 
-These routes were added since the last report:
+Additions beyond the tables:
 
 - `GET /v2/device/commands` and `POST /v2/device/commands/{id}/ack` (native `cna_` sessions only);
 - `PUT`/`DELETE /v2/device/push-token`;
 - `POST /v2/media/{id}/preparation` (retry);
-- all sharing routes (`/v2/collections/{id}/shares`, `/v2/shares/{id}[/invitations]`, `/v2/share-invitations/accept`, `/v2/shared/{redeem,collection,media/{id}/{variant}}`);
+- `DELETE /v2/media/{id}/analysis/{analysis_id}` (cancel waiting or running exploration; publication is fenced, upstream billing is not promised to stop);
 - agent REST media and the `analyze_media` tool.
 
-`GET /v2/events` is still a 1-second database poll that closes after 25 seconds; clients reconnect with `Last-Event-ID`. It now:
+Error bodies follow the standard shape including `retry_after_ms` when there is a backoff hint, and 429/503 responses on the `/v2` capture and device-command routes also send `Retry-After`.
 
-- sends deletion events to the owner;
-- accepts `cna_` tokens, re-checking revocation on every poll;
-- sends keepalives;
-- sends a resync event when the cursor has expired.
+`GET /v2/events` is a 1-second database poll that closes after 25 seconds; clients reconnect with `Last-Event-ID`. It sends deletion events to the owner, accepts `cna_` tokens (revocation re-checked on every poll), sends keepalives, and answers an expired cursor (24 h) with **HTTP 410** `cursor_expired` and `details.action: "resync"` before any stream starts, as the API contract says. Push delivery of events is not implemented.
 
 ## 4. Screens 01–13 (SCREEN-CONTRACT.md)
 
 | Screen | Status | Evidence |
 | --- | --- | --- |
-| 01/08 Library, 02 Source, 03 Camera, 06 Uploads, 07 Video detail | done (web) | mock suite at 1440/390/360/320; real-stack journey for 01, 06, 07 and 08 |
-| 04/05/09 Glasses | done (web explanation and phone hand-off); native **unverified** | `/capture/glasses`, `/settings/devices`. The glasses are always unavailable until an operator lists qualified SDK builds. |
-| 10/11 Agents | done | mock suite with axe; real-stack journey |
-| 12/13 Sharing | done | mock suite with axe; real-stack journey (link, separate viewer, revoke) |
+| 01/08 Library, 02 Source, 03 Camera, 06 Uploads, 07 Video detail | done; verified-here (web) | mock suite at 1440/390/360/320; real-stack journey and fidelity run ([design-fidelity-v2-capture.md](design-fidelity-v2-capture.md)) |
+| 04/05/09 Glasses | done (web explanation and phone hand-off); **needs-physical-device** for the native screens | `/capture/glasses`, `/settings/devices`. The 05 "Ready" screenshots come from a scripted phone stand-in, not real glasses. Glasses are unavailable until an operator lists qualified SDK builds. |
+| 10/11 Agents | done; verified-here | mock suite with axe; real-stack journey and fidelity run |
+| 12/13 Sharing | done; verified-here | mock suite with axe; real-stack journey (link, separate viewer, revoke) and fidelity run |
+| v1 01–07 | done; verified-here | [design-fidelity-v1-and-account.md](design-fidelity-v1-and-account.md) |
 
-Deviations from the mockups are listed in [design-deviations.md](design-deviations.md). Hero images and fixtures are crops of the generated mockups; replace them with licensed photography before release.
+Deviations from the mockups are listed in [design-deviations.md](design-deviations.md) and the two fidelity documents. Hero images and fixtures are the project's own illustrations (`fixtures/images/LICENSES.md`); licensed photography is still needed before release.
 
 ## 5. Acceptance IDs
-
-"Here" means this container: Node 22, PostgreSQL 16, ffmpeg, and Playwright Chromium without H.264. There is no Xcode, Android SDK or kotlinc, no provider key in use, and network access is npm only.
 
 | ID | Status | Evidence | Not verifiable here |
 | --- | --- | --- | --- |
@@ -117,19 +121,19 @@ Deviations from the mockups are listed in [design-deviations.md](design-deviatio
 | MED-01 | done (server) | `worker.test.ts` MED-01 (real ffmpeg) | live billing reconciliation |
 | MED-02 | done | `worker.test.ts` MED-02 | |
 | MED-03 | done | `worker.test.ts` MED-03, `media.test.ts` (damaged, truncated, mislabeled, codec, duration) | real device recordings that log harmless decoder errors |
-| MED-04 | done (server) | `worker.test.ts` MED-04 (2-part resume, expired links, abandoned multipart) | app kill or offline on a device; real S3 |
+| MED-04 | done (server) | `worker.test.ts` MED-04 (2-part resume, expired links, abandoned multipart); part URLs bind each part's exact length and oversized stored parts abort the upload (`multipart.test.ts`, `lifecycle.test.ts`) | needs-physical-device (app kill, offline); needs-AWS-account (real S3 enforcing the signed `content-length`) |
 | MED-05 | **partial** | prepared MP4 checked with ffprobe and a full ffmpeg decode, including through the ranged gateway (real-stack journey) | playback in Chrome, Safari, iOS and Android |
-| DEV-01 | **unverified** | none | physical glasses |
-| DEV-02 | done (server) | `device-commands-http.test.ts`, `native-contract.test.ts`; real-stack journey runs the command lifecycle over HTTP | execution on a phone |
-| DEV-03 | **unverified** | none | interruptions on a physical device |
-| AI-01 | partial | contract fixtures and property tests (`schema.test.ts`, `contract.test.ts`, `media-analysis.test.ts`) | qualified live models |
-| AI-02 | done with fakes | 402 pause and resume, 429 Retry-After, spend caps | live credit exhaustion |
-| AGT-01 | done | `agent-media-http.test.ts`; real-stack journey over REST and MCP | |
+| DEV-01 | **needs-physical-device** | none (the fidelity run's glasses are a scripted stand-in and do not count) | physical glasses |
+| DEV-02 | done (server) | `device-commands-http.test.ts`, `native-contract.test.ts`, `agent-commands.test.ts` (remote capture off by default; kills stop requests, claims and execution); real-stack journey runs the command lifecycle over HTTP with the operator opt-in | needs-physical-device (execution on a phone) |
+| DEV-03 | **needs-physical-device** | none | interruptions on a physical device |
+| AI-01 | partial; **needs-live-keys** | contract fixtures and property tests (`schema.test.ts`, `contract.test.ts`, `media-analysis.test.ts`) | qualified live models |
+| AI-02 | done with fakes; needs-live-keys | 402 pause and resume, 429 Retry-After, spend caps; the UI shows "Waiting to explore" with a real Cancel | live credit exhaustion |
+| AGT-01 | done; verified-here | `agent-media-http.test.ts` (including the `agent_api_enabled` kill on REST v1/v2, media gateway and MCP), `media-analysis.test.ts` (analysis does not make the agent the capture creator), `collection-media.test.ts` (no media into media-including shares); real-stack journey over REST and MCP | |
 | AGT-02 | done | `agent-platform.test.ts` | |
-| SHR-01 | done | `collection-shares.test.ts`, `share-http.test.ts`; real-stack journey | |
+| SHR-01 | done; verified-here | `collection-shares.test.ts` (including the `collection_sharing_enabled` kill), `share-http.test.ts`; real-stack journey | |
 | SHR-02 | done | `collection-shares.test.ts` | |
-| UX-01 | done (web) | mock suite with axe at 1440/390/360/320; real-stack screenshots `real-v2-*` | native screens |
-| OPS-01 | partial | restore drill test (real `pg_dump`/`pg_restore`), ops metrics, runbooks | cloud deploy, alerts delivered, cloud restore drill |
+| UX-01 | done (web); verified-here | mock suite with axe at 1440/390/360/320; real-stack screenshots `real-v2-*` and the fidelity sets | needs-physical-device (native screens) |
+| OPS-01 | partial; **needs-AWS-account** | restore drill test (real `pg_dump`/`pg_restore`), ops metrics, runbooks, kill switches enforced in services (`feature-flags.test.ts` keeps the service and capabilities evaluations equal) | cloud deploy, alerts delivered, cloud restore drill |
 
 ## 6. Hosting on AWS
 
@@ -142,10 +146,12 @@ The user asked to host on AWS if it can run within free limits. `infra/aws/` and
 
 All of it is statically tested (`scripts/aws-infra.test.ts`, `docker compose config`). **None of it has been deployed.** There was no `cfn-lint`, no `aws cloudformation deploy` and no Docker image build here.
 
-Whether it is free depends on when the AWS account was opened. These terms were not checked against AWS (no network), so verify them in the AWS Free Tier page and Billing console:
+**It is not free on any AWS account today.** These terms were not checked against AWS (no network), so verify them in the AWS Free Tier page and Billing console:
 
-- **Opened before 15 July 2025** (12-month free tier): the stack was sized to fit; expected about USD 0 a month.
-- **Opened on or after 15 July 2025** (credit-based Free plan): roughly USD 15–27 a month, paid from credits while they last.
+- **Legacy 12-month free tier** (accounts opened before 15 July 2025): it lasted 12 months from account creation, so it ended for every such account by 14 July 2026 at the latest. The stack was sized for it, but that USD 0 case no longer exists.
+- **Credit-based Free plan** (accounts opened on or after 15 July 2025): roughly USD 15 a month with `DatabaseMode=instance` or USD 27 with RDS, **paid from credits** for a limited period (assumed 6 months); after that it bills or the account closes.
+
+So the answer to "host it on AWS if it can run free" is: only as a credit-funded trial, not indefinitely. Status: **needs-AWS-account**.
 
 Risks:
 
@@ -157,42 +163,64 @@ Other notes:
 
 - The S3 `staging` lifecycle rule only matches objects tagged `atlas-lifecycle=staging`. The multipart adapter does not set that tag yet, so cleanup relies on the one-day incomplete-upload rule and the media worker's reconciliation.
 - A production web server refuses local media storage and the file mailbox by design, so a real deploy needs S3 and SES configured.
+- Presigned part URLs now sign `content-length` and no longer embed a checksum of the empty presigning body (`requestChecksumCalculation: WHEN_REQUIRED`); a real bucket has not confirmed either.
 
 ## 7. Remaining work, by area
 
 **Media and library**
-- `consent_records` table.
-- Encrypt upload drafts in IndexedDB.
+- `consent_records` table (Package 1 stays partial until it exists).
+- Encrypt upload drafts in IndexedDB (Package 2 stays partial until then).
 - Pagination for the 'Uploading' filter.
 - Scene-diversity frame selection (frames are evenly spaced, `frames-v1`).
 - Measure the cost of reconciliation at scale.
 - Tag staging objects for the S3 lifecycle rule.
 - Test the Debian bookworm ffmpeg 5.1 build used by the Docker image.
 
-**Concentrate**
+**Concentrate** (needs-live-keys)
 - Qualify profiles with a live key (`pnpm qualify:concentrate --confirm-paid-requests`).
 - Collect ZDR and logging evidence.
 - Automate billing reconciliation.
 - Route alerts somewhere.
-- A Cancel action for queued analysis.
 
 **Agents and sharing**
-- Per-account and per-endpoint agent budgets.
+- Per-account and per-endpoint agent budgets (Package 5 stays partial until then).
 - Push revocation to open viewers.
 - A web UI for arming and capture-session listing (arming happens on the phone only).
 - Let installation tokens list agent connections; until then the phone's arming sheet falls back to "choose agents on the web".
 
-**Native**
+**Native** (needs-physical-device)
 - Compile and test on Xcode and the Android SDK.
 - Verify the Android Meta SDK binding and the licence copy step.
 - Generate the Gradle wrapper.
 - Publish `assetlinks.json`.
-- Run the device acceptance rows.
+- Run the device acceptance rows (DEV-01, DEV-03, MED-04/05 on devices).
 - Store and SDK eligibility.
 
-**Ops and hosting**
-- First AWS deploy as staging.
+**Ops and hosting** (needs-AWS-account)
+- First AWS deploy as staging, on Free plan credits.
 - SES domain verification.
 - APNs and FCM credentials.
 - A cloud restore drill.
 - An independent two-user trial.
+
+**Known issue noted by the fidelity run, not fixed**
+- Opening `/identity` as the very first request can create two anonymous sessions, so the emailed link then fails as "expired or already used" ([design-fidelity-v2-capture.md](design-fidelity-v2-capture.md), problem 4).
+
+## 8. Last review round: what changed
+
+| Finding | Outcome |
+| --- | --- |
+| Agent remote capture, agent API and sharing kill switches not enforced on the server | Fixed. `requireServiceFeature` (`flags/feature-flags.ts`) is evaluated in `requestCapture`, phone claims and the pre-execution ack (`agent-commands.ts`), in every agent surface (`enforceAgentAccess`: v1 `apiRoute`, `agentRoute`, the agent media gateway, MCP, open event streams) and in sharing (create, broaden, invite, accept, redeem, view; revoke and list keep working). Remote capture is off unless `AGENT_REMOTE_CAPTURE_ENABLED=true`. Regression tests in `agent-commands.test.ts`, `agent-media-http.test.ts`, `collection-shares.test.ts`, `feature-flags.test.ts`. |
+| Analysis makes the agent the capture creator (grant laundering) | Fixed. Only an agent that uploaded the media becomes the capture's creator (`analysis-run.ts`); migration `095_analysis_capture_creator.sql` clears existing rows. Regression test in `apps/worker/src/media-analysis.test.ts`. |
+| Agent `collections:write` can expose media to link holders | Fixed. `assertAgentCannotExposeMedia` refuses agent additions of media, and of capture items, to collections with a live share that includes media. Tests in `collection-media.test.ts`. |
+| Presigned UploadPart URLs do not bind length | Fixed. S3 signs `content-length` per part, the local driver signs the size, and verification aborts uploads with wrongly sized stored parts. Tests in `multipart.test.ts`, `lifecycle.test.ts`. |
+| Selected-collection agents cannot start uploads | Fixed. The destination now reaches intake's fence. Tests in `agent-media.test.ts`. |
+| 'partial' analysis polls forever | Fixed (`explore-state.ts`); unit and mock-browser tests. |
+| CONCENTRATE failure-matrix consumer states missing | Fixed: "We couldn’t explore this media." with a next step, "Waiting to explore" with a real Cancel (new cancel route), "Exploration is temporarily unavailable." |
+| Web sign-out ignores pending local uploads | Fixed: Keep on this device or Delete local drafts (`SettingsView.dom.test.tsx`). Encryption of retained drafts is still missing. |
+| No `retry_after_ms`; no `Retry-After` on `/v2` capture 429 | Fixed (`errors.ts`, `capture-v2.ts`, `device-commands-http.ts`). |
+| Expired SSE cursor returns 200 with a resync event | Fixed: HTTP 410 with `details.action: "resync"`. |
+| AWS docs offer the legacy free tier as USD 0 | Fixed in `deploy-aws.md`, `README.md`, this report, `media-worker.md` and the template text. |
+| This report labelled packages done while pieces were missing | Fixed: Packages 1, 2 and 5 are partial; the bare `GET /v2/shared/media/{id}` route was added. |
+| Fidelity doc presented scripted phone and glasses as real | Fixed in `design-fidelity-v2-capture.md`. |
+| Source screen claims connected glasses in a browser | Fixed (`glassesEntryLine`). |

@@ -109,3 +109,7 @@ The "Match" column is our own verdict after the last screenshots: **exact** mean
 
 - The **v2 capture references 01–09** are outside this pass. Library and Uploads keep their reference 08 header and dock; see `docs/design-deviations.md`.
 - **Responsive breakpoints, tokens and copy** are unchanged.
+
+## Re-run after merging both fidelity branches (final gate)
+
+The `fidelity/v2-capture` branch also changed the shared mobile bottom bar (12 px labels, 22 px icons) and `v2.css`, so this suite was run again on the merged tree (production build, worker, fresh database, `scripts/seed-fidelity.ts`): 30 of 30 captures pass at 1440, 390 and 320 px with no horizontal scroll. The mobile screenshots now show the v2 bottom-bar proportions under the v1 "+ Capture" header pill; the verdicts in the table above are unchanged (all close; 07 and 12 near exact).

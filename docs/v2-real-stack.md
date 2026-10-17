@@ -71,6 +71,8 @@ export STORAGE_DRIVER=local STORAGE_LOCAL_DIR=$PWD/.data/e2e-objects
 export IDENTITY_MAIL_DRIVER=file IDENTITY_MAIL_FILE_DIR=$PWD/.data/e2e-mail
 # Run without provider keys so every state is the honest unavailable one:
 export QLOO_API_KEY= CONCENTRATE_API_KEY=
+# Agent remote capture is off by default (feature-flags.json); step 9 needs the operator opt-in:
+export AGENT_REMOTE_CAPTURE_ENABLED=true
 pnpm db:migrate
 (cd apps/web && pnpm exec next dev --port 3300) &
 pnpm worker &

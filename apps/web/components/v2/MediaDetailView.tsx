@@ -212,6 +212,8 @@ export function MediaDetailView({ id }: { id: string }) {
 
   const explore = async () => {
     setAnalysisError(null);
+    // Forget the previous (cancelled or failed) request before polling restarts.
+    setAnalysis(null);
     setExploring(true);
     try {
       const res = await mediaApi.analyze(id, {

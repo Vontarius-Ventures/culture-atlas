@@ -113,3 +113,7 @@ The spec seeds once and keeps its state in `.data/v2-fidelity/` (git-ignored): t
 - The fidelity spec: both phases passed.
 
 Updated mock screenshots in `apps/web/e2e/screenshots/v2/`, and the phone-width v1 screenshots, show the new heroes and the shared bottom navigation.
+
+## Re-run after merging both fidelity branches (final gate)
+
+Both fidelity branches changed `apps/web/components/v2/v2.css` and the shared mobile shell, so every screen was captured again on the merged tree: production build, job worker, media worker, PostgreSQL 16 and the `scripts/local-aws.ts` S3/SES stand-ins, fresh database. Both phases passed (`main`: seed plus 01–08; `unavailable`: 09). The merged shell keeps reference 08 on Library and Uploads (Capture pill above the four-item bar, gear for Settings) and the v1 "+ Capture" header pill on v1 surfaces. The only intended visual change from this pass is the 02 glasses line ("Set up on your phone with the culture atlas app"). Verdicts in the table above are unchanged: 01, 02, 03, 04, 06, 07, 08 and 09 close; 05 divergent in composition (no browser glasses preview), with glasses state produced by a scripted phone.

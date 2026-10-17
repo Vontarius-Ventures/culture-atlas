@@ -20,6 +20,23 @@ sudo atlas-ops pnpm ops:kill list
   redacts these from application logs.
 - Prefer a kill switch to a deploy. Kills only turn features off; the library,
   deletion and already captured media keep working.
+
+## Agent and sharing kill switches
+
+These are enforced by the services on every request (not only reported by
+`GET /v2/capabilities`), globally (`FEATURE_KILL_SWITCHES` or a kill without
+an account) or for one account (`--account <uuid>`):
+
+| Kill | Effect while active (answers 503 `service_unavailable`) |
+| --- | --- |
+| `agent_api_enabled` | Every agent call: REST v1 and v2, MCP tool calls, the agent media gateway, open event streams (on their next poll) and agent capture requests. Grants are kept; lifting the kill restores access. |
+| `agent_remote_capture_enabled` | New capture requests; queued commands are cancelled when the phone next claims; a delivered command fails its pre-execution check. Off by default anyway until `AGENT_REMOTE_CAPTURE_ENABLED=true`. |
+| `collection_sharing_enabled` | Viewing shared collections and media, redeeming links, accepting invitations, creating or broadening shares. Owners can still list, narrow and revoke. Shares, sessions and memberships are kept. |
+
+```sh
+sudo atlas-ops pnpm ops:kill kill agent_api_enabled --reason "<why>"
+sudo atlas-ops pnpm ops:kill kill collection_sharing_enabled --account <uuid> --reason "<why>"
+```
 - Never delete queue rows, outbox rows or bucket prefixes to "fix" a backlog.
 - Never point restore tooling at production.
 
