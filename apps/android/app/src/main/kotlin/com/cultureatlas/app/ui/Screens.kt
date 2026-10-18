@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.cultureatlas.app.AppController
 import com.cultureatlas.app.AppGraph
+import com.cultureatlas.app.notify.ReadyNoticeCenter
 import com.cultureatlas.capture.core.contract.AgentConnection
 import com.cultureatlas.capture.core.contract.MediaKind
 import com.cultureatlas.capture.core.contract.MediaSource
@@ -56,7 +57,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun LibraryScreen(controller: AppController) {
+fun LibraryScreen(controller: AppController, notices: ReadyNoticeCenter) {
     val drafts by controller.drafts.collectAsState()
     val locked by controller.lockedDraftsExist.collectAsState()
     LazyColumn(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -66,13 +67,17 @@ fun LibraryScreen(controller: AppController) {
             Text("Uploading does not start analysis.", color = AtlasColors.muted)
         }
         if (drafts.isEmpty()) item { Text("Nothing here yet. Take a photo or video, or upload files from your phone.") }
-        items(drafts, key = { it.id }) { DraftRow(controller, it) }
+        items(drafts, key = { it.id }) { DraftRow(controller, notices, it) }
         if (locked) item { LockedDraftsNotice() }
     }
 }
 
 @Composable
-private fun DraftRow(controller: AppController, draft: DraftRecord) {
+private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draft: DraftRecord) {
+    val exploring by notices.exploring.collectAsState()
+    val scope = rememberCoroutineScope()
+    // Asked at the moment of use: the user just chose to explore a photo.
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
         Row {
             Text(if (draft.kind == MediaKind.PHOTO) "Photo" else "Video", Modifier.padding(end = 8.dp))
@@ -88,6 +93,30 @@ private fun DraftRow(controller: AppController, draft: DraftRecord) {
             }
             DraftRecord.Status.QUEUED -> if (!draft.allowCellular) {
                 TextButton(onClick = { controller.keep(draft, allowCellular = true) }) { Text("Upload using mobile data") }
+            }
+            DraftRecord.Status.COMMITTED -> {
+                val assetId = draft.assetId
+                if (draft.kind == MediaKind.PHOTO && assetId != null) {
+                    // The user starts exploring; screen 17 tells them when it is ready.
+                    if (assetId.lowercase() in exploring) {
+                        Text(
+                            "Looking at your photo. This takes a few seconds.",
+                            color = AtlasColors.muted,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        )
+                    } else {
+                        TextButton(onClick = {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            scope.launch {
+                                if (!notices.explore(assetId)) {
+                                    controller.message.value = "Exploring isn't available right now. Your photo is safe in your library."
+                                }
+                            }
+                        }) { Text("Explore this photo") }
+                    }
+                }
             }
             DraftRecord.Status.FAILED, DraftRecord.Status.REJECTED -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (draft.status == DraftRecord.Status.FAILED) Button(onClick = { controller.retry(draft) }) { Text("Retry") }
@@ -405,7 +434,7 @@ private fun reasonText(reason: String) = when (reason) {
 }
 
 @Composable
-fun SettingsScreen(controller: AppController, onGlasses: () -> Unit) {
+fun SettingsScreen(controller: AppController, onGlasses: () -> Unit, onTaste: () -> Unit) {
     var confirm by remember { mutableStateOf(false) }
     val drafts by controller.drafts.collectAsState()
     val pending = drafts.count { it.status != DraftRecord.Status.COMMITTED }
@@ -413,6 +442,8 @@ fun SettingsScreen(controller: AppController, onGlasses: () -> Unit) {
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
         OutlinedButton(onClick = onGlasses) { Text("Meta glasses (Experimental)") }
+        // Screen 18: picks grouped by category, add more, exclusions.
+        OutlinedButton(onClick = onTaste) { Text(com.cultureatlas.capture.core.onboarding.OnboardingCopy.TASTE_TITLE) }
         Text("Uploads use Wi-Fi unless you choose mobile data for an item.", color = AtlasColors.muted)
         Button(onClick = { confirm = true }) { Text("Sign out or switch account") }
     }

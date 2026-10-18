@@ -121,4 +121,18 @@ class AtlasApi(val http: AtlasHttp, val sessions: SessionManager) {
         )
 
     suspend fun agentConnections(): AgentConnectionList = get("/v2/agent-connections", AgentConnectionList.serializer())
+
+    companion object {
+        /**
+         * The /v1 owner routes this client calls with its installation session
+         * (native owner bridge, fixtures/native-contract/onboarding.json). The
+         * server refuses the installation token on every other /v1 route.
+         */
+        val ONBOARDING_OPERATIONS: Set<String> = setOf(
+            "GET /v1/onboarding/state", "GET /v1/onboarding/catalog", "GET /v1/onboarding/search",
+            "POST /v1/onboarding/picks", "DELETE /v1/onboarding/picks/{id}", "PUT /v1/onboarding/exclusions",
+            "POST /v1/onboarding/complete", "GET /v1/onboarding/seed", "GET /v1/taste/picks", "POST /v1/taste/picks",
+            "DELETE /v1/taste/picks/{id}",
+        )
+    }
 }

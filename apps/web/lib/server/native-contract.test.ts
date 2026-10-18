@@ -18,6 +18,8 @@ import {
   type KeyObject,
 } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer as createH2Server } from 'node:http2';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NextRequest } from 'next/server';
@@ -31,6 +33,7 @@ import {
   agentPlatform,
   auth,
   createServiceContext,
+  devicePush,
   endCaptureAuthority,
   enrollmentSignaturePayload,
   evaluateCaptureCapabilities,
@@ -39,15 +42,24 @@ import {
   schemas,
   setDbForTesting,
   setDomainConfigForTesting,
+  NATIVE_OWNER_OPERATIONS,
+  toErrorBody,
   type CaptureIdentityAdapter,
   type CaptureLimits,
 } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, testConfig, testContext } from '@culture-atlas/domain/testing';
-import { LocalMultipartStorage } from '@culture-atlas/providers';
+import {
+  ApnsPushDriver,
+  FcmPushDriver,
+  LocalMultipartStorage,
+  NoopPushDriver,
+} from '@culture-atlas/providers';
 
 vi.mock('server-only', () => ({}));
 const { captureV2Route, setCaptureV2Runtime } = await import('./capture-v2');
 const { identityRoute } = await import('./identity-http');
+const { apiRoute } = await import('./http');
+const { devicePushTokenRoute } = await import('./device-push-http');
 
 type Json = Record<string, unknown>;
 const load = async <T = Json>(name: string): Promise<T> =>
@@ -215,7 +227,14 @@ const reference = {
 
 function resolveSchema(name: string): z.ZodType {
   const [root, ...path] = name.split('.');
-  let target: unknown = root === 'schemas' ? schemas : root === 'identity' ? identity : undefined;
+  let target: unknown =
+    root === 'schemas'
+      ? schemas
+      : root === 'identity'
+        ? identity
+        : root === 'devicePush'
+          ? devicePush
+          : undefined;
   for (const key of path) target = (target as Record<string, unknown> | undefined)?.[key];
   if (!target || typeof (target as z.ZodType).safeParse !== 'function')
     throw new Error(`Unknown schema ${name}`);
@@ -488,7 +507,13 @@ beforeAll(async () => {
   storage = new LocalMultipartStorage(root, 'http://localhost:3399', 'native-contract-test-key');
   setDbForTesting(db);
   // The operator has opted in to agent remote capture (default off) for the command journey.
-  setDomainConfigForTesting(testConfig({ AGENT_REMOTE_CAPTURE_ENABLED: 'true' }));
+  setDomainConfigForTesting(
+    testConfig({
+      AGENT_REMOTE_CAPTURE_ENABLED: 'true',
+      // Push token registration (ready notices) encrypts tokens at rest.
+      CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
+    }),
+  );
   identity.setIdentityMail(outbox);
   nativeSessions.setAuthorityLifecycle(endCaptureAuthority);
   setCaptureV2Runtime({
@@ -1142,5 +1167,578 @@ describe('native journey through the real handlers', () => {
       { noAuth: true, expectedAccount: grant.account_id },
     );
     expect(accepted.status).toBe(201);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spec amendment 2.2 (package E): native taste onboarding and ready notices.
+// onboarding.json and ready-notice.json hold the decision tables the Swift and
+// Kotlin clients implement; the reference implementations below are the third
+// copy, checked against the server schemas, copy file and push drivers.
+// ---------------------------------------------------------------------------
+
+type SeedCase = {
+  name: string;
+  state: string;
+  categories: string[];
+  elapsed_ms: number;
+  expect: 'wait' | 'advance' | 'background';
+};
+type ReadyCase = {
+  name: string;
+  state: string;
+  app: 'background' | 'foreground' | 'viewing';
+  watched: boolean;
+  notified: boolean;
+  age_hours: number;
+  expect: { notice: 'none' | 'toast' | 'notification'; keep_watching: boolean };
+};
+const onboardingFixture = await load<{
+  auth: {
+    operations: string[];
+    mutation_headers: string[];
+    error_body: string;
+    other_v1_routes_refuse_with: string;
+  };
+  routes: Record<string, { route: string; operation: string }>;
+  limits: Record<string, number>;
+  categories: string[];
+  category_copy_keys: Record<string, string>;
+  exclusion_suggestions: string[];
+  copy: Record<string, string>;
+  steps: { n: number; id: string; title_key: string; primary_key: string; back: boolean }[];
+  step_label_example: { n: number; text: string };
+  counter: { picks: number; text: string; progress: number; can_complete: boolean }[];
+  search: { debounce_ms: number; cases: { name: string; input: string; expect: string | null }[] };
+  exclusions: {
+    cases: {
+      name: string;
+      current: string[];
+      input: string;
+      expect: { list: string[]; rejected: string | null };
+    }[];
+    toggle_cases: { name: string; current: string[]; term: string; expect: string[] }[];
+    display_examples: { term: string; label: string }[];
+  };
+  entry: {
+    cases: {
+      name: string;
+      onboarding_flag: boolean;
+      state: { required: boolean; picks_count: number } | null;
+      error: string | null;
+      expect: string;
+    }[];
+  };
+  complete: { cases: { name: string; picks: number; error: string | null; expect: string }[] };
+  seed: { default_poll_ms: number; max_wait_ms: number; cases: SeedCase[] };
+}>('onboarding.json');
+const readyFixture = await load<{
+  push: {
+    reference_pattern: string;
+    apns: { headers: Record<string, string>; body: Json };
+    fcm: { android: Json; data: Json };
+    invalid_wakes: { name: string; apns_body: Json; fcm_data: Json }[];
+    register: {
+      route: string;
+      clear_route: string;
+      providers: Record<'ios' | 'android', string>;
+      apns_token_pattern: string;
+      examples: Record<'ios' | 'android', string>;
+    };
+  };
+  watch: {
+    start_route: string;
+    poll_route: string;
+    max_watched: number;
+    expire_after_hours: number;
+  };
+  copy: Record<string, string>;
+  decisions: ReadyCase[];
+}>('ready-notice.json');
+const designCopy = JSON.parse(
+  await readFile(
+    new URL('../../../../specs/capture-platform-v2/design/copy.json', import.meta.url),
+    'utf8',
+  ),
+) as Record<string, string>;
+
+/** Reference implementations of the native onboarding and ready-notice rules. */
+const onboardingReference = {
+  counter(picks: number) {
+    const min = onboardingFixture.limits.min_picks!;
+    const left = Math.max(0, min - picks);
+    return {
+      text:
+        left === 0
+          ? designCopy['onboarding.counter.ready']!
+          : designCopy[`onboarding.counter.${left}`]!,
+      progress: Math.min(picks, min),
+      can_complete: picks >= min,
+    };
+  },
+  searchQuery(input: string): string | null {
+    const q = input.trim();
+    const { search_query_min_chars: min, search_query_max_chars: max } = onboardingFixture.limits;
+    return q.length >= min! && q.length <= max! ? q : null;
+  },
+  addExclusion(current: string[], raw: string): { list: string[]; rejected: string | null } {
+    const value = raw.trim().replace(/\s+/g, ' ');
+    if (!value) return { list: current, rejected: 'empty' };
+    if (value.length > onboardingFixture.limits.exclusion_max_chars!)
+      return { list: current, rejected: 'too_long' };
+    if (current.some((c) => c.toLowerCase() === value.toLowerCase()))
+      return { list: current, rejected: 'duplicate' };
+    if (current.length >= onboardingFixture.limits.exclusions_max!)
+      return { list: current, rejected: 'full' };
+    return { list: [...current, value], rejected: null };
+  },
+  toggleExclusion(current: string[], term: string): string[] {
+    const present = current.some((c) => c.toLowerCase() === term.toLowerCase());
+    return present
+      ? current.filter((c) => c.toLowerCase() !== term.toLowerCase())
+      : onboardingReference.addExclusion(current, term).list;
+  },
+  label: (term: string) => term.charAt(0).toUpperCase() + term.slice(1),
+  entry(c: {
+    onboarding_flag: boolean;
+    state: { required: boolean } | null;
+    error: string | null;
+  }): string {
+    if (!c.onboarding_flag) return 'app';
+    if (c.error) {
+      if (c.error === 'not_found' || c.error === 'scope_denied') return 'app';
+      // error-policy.json sign_in_required codes, plus a refresh that failed.
+      const signIn = errorPolicy.codes.find((e) => e.code === c.error)?.action === 'sign_in_required';
+      if (signIn || c.error === 'token_expired') return 'sign_in';
+      return 'retry';
+    }
+    return c.state?.required ? 'onboarding' : 'app';
+  },
+  complete(c: { picks: number; error: string | null }): string {
+    if (c.picks < onboardingFixture.limits.min_picks!) return 'disabled';
+    if (c.error === 'conflict') return 'reload_state';
+    if (c.error) return 'retry';
+    return 'building';
+  },
+  seed(c: SeedCase): SeedCase['expect'] {
+    if (c.categories.includes('ready')) return 'advance';
+    if (c.state === 'complete' || c.state === 'not_started') return 'advance';
+    if (c.state === 'failed' || c.state === 'retrying' || c.categories.includes('unavailable'))
+      return 'background';
+    if (c.elapsed_ms >= onboardingFixture.seed.max_wait_ms) return 'background';
+    return 'wait';
+  },
+  ready(c: ReadyCase): ReadyCase['expect'] {
+    const stop = { notice: 'none' as const, keep_watching: false };
+    if (!c.watched || c.notified || c.age_hours >= readyFixture.watch.expire_after_hours)
+      return stop;
+    if (c.state === 'queued' || c.state === 'running' || c.state === 'partial')
+      return { notice: 'none', keep_watching: true };
+    if (c.state !== 'complete') return stop;
+    return {
+      notice: c.app === 'background' ? 'notification' : c.app === 'foreground' ? 'toast' : 'none',
+      keep_watching: false,
+    };
+  },
+  validWake(payload: Json): boolean {
+    const ref = payload.ref;
+    return typeof ref === 'string' && new RegExp(readyFixture.push.reference_pattern).test(ref);
+  },
+};
+
+describe('native taste onboarding fixtures (amendment 2.2)', () => {
+  it('lists exactly the bridged owner routes, matching the server route table', () => {
+    const fixtureOps = Object.values(onboardingFixture.routes);
+    expect(new Set(onboardingFixture.auth.operations)).toEqual(NATIVE_OWNER_OPERATIONS);
+    expect(fixtureOps.map((r) => r.route).sort()).toEqual([...NATIVE_OWNER_OPERATIONS].sort());
+    for (const { route, operation } of fixtureOps) {
+      const contractRoute = schemas.ROUTES[operation as keyof typeof schemas.ROUTES];
+      expect(contractRoute, operation).toBeDefined();
+      expect(`${contractRoute.method} ${contractRoute.path}`, operation).toBe(route);
+      // Only owner/account routes may ever be bridged; never demo, public or agent routes.
+      expect(['owner', 'account'], operation).toContain(contractRoute.auth);
+    }
+    expect(onboardingFixture.auth.mutation_headers).toEqual([
+      contract.headers.idempotency_key,
+      contract.headers.expected_account,
+    ]);
+    // /v1 errors are flat; the native transports decode both shapes.
+    const { body } = toErrorBody(
+      new AppError('conflict', { message: 'Pick at least 3 to finish.' }),
+      randomUUID(),
+    );
+    expect(shapeOf(body)).toEqual(shapeOf(messages.v1_error_body!.body));
+    expect(onboardingFixture.auth.error_body).toBe('flat');
+    expect(onboardingFixture.auth.other_v1_routes_refuse_with).toBe('scope_denied');
+  });
+
+  it('every onboarding wire example names its route and parses with the route schema', () => {
+    const byRoute = new Map(
+      Object.values(schemas.ROUTES).map((r) => [
+        `${r.method} ${r.path}`,
+        r as schemas.RouteContract,
+      ]),
+    );
+    const onboardingMessages = Object.entries(messages).filter(([, m]) =>
+      / \/v1\/(onboarding|taste)\//.test(m.route),
+    );
+    expect(onboardingMessages.length).toBeGreaterThanOrEqual(15);
+    for (const [name, message] of onboardingMessages) {
+      const route = byRoute.get(message.route);
+      expect(route, name).toBeDefined();
+      const schema = message.direction === 'request' ? route!.body : route!.response;
+      expect((schema as z.ZodType).safeParse(message.body).success, name).toBe(true);
+    }
+  });
+
+  it('copy matches the design copy file exactly', () => {
+    const expected = Object.fromEntries(
+      Object.entries(designCopy).filter(([k]) => /^(onboarding|building|settings_taste)\./.test(k)),
+    );
+    expect(onboardingFixture.copy).toEqual(expected);
+    const ready = Object.fromEntries(
+      Object.entries(designCopy).filter(([k]) => k.startsWith('ready.')),
+    );
+    expect(readyFixture.copy).toEqual(ready);
+    for (const step of onboardingFixture.steps) {
+      expect(designCopy[step.title_key], step.id).toBeDefined();
+      expect(designCopy[step.primary_key], step.id).toBeDefined();
+    }
+    expect(onboardingFixture.steps.map((s) => s.n)).toEqual([1, 2, 3]);
+    expect(
+      designCopy['onboarding.step']!.replace('{n}', String(onboardingFixture.step_label_example.n)),
+    ).toBe(onboardingFixture.step_label_example.text);
+    for (const [category, key] of Object.entries(onboardingFixture.category_copy_keys))
+      expect(designCopy[key], category).toBeDefined();
+  });
+
+  it('limits and vocabularies agree with the server schemas', () => {
+    const l = onboardingFixture.limits;
+    expect(l.min_picks).toBe(schemas.ONBOARDING_MIN_PICKS);
+    expect(l.max_picks).toBe(schemas.ONBOARDING_MAX_PICKS);
+    expect(onboardingFixture.categories).toEqual(['wear', 'play', 'watch', 'eat']);
+    expect(Object.keys(schemas.TastePicksResponse.shape.picks.shape)).toEqual([
+      ...onboardingFixture.categories,
+      'other',
+    ]);
+    expect(onboardingFixture.exclusion_suggestions).toEqual([
+      ...schemas.FOOD_EXCLUSION_SUGGESTIONS,
+    ]);
+    const ex = schemas.FoodExclusions;
+    expect(ex.safeParse(onboardingFixture.exclusion_suggestions).success).toBe(true);
+    expect(ex.safeParse([...onboardingFixture.exclusion_suggestions, 'celery']).success).toBe(
+      false,
+    );
+    expect(ex.safeParse(['z'.repeat(l.exclusion_max_chars!)]).success).toBe(true);
+    expect(ex.safeParse(['z'.repeat(l.exclusion_max_chars! + 1)]).success).toBe(false);
+    const result = {
+      result_id: 'r'.repeat(16),
+      name: 'n',
+      type_label: 'Artist',
+      category: null,
+      picked: false,
+    };
+    const results = (n: number) =>
+      schemas.OnboardingSearchResponse.safeParse({ status: 'ok', results: Array(n).fill(result) })
+        .success;
+    expect(results(l.search_results_max!)).toBe(true);
+    expect(results(l.search_results_max! + 1)).toBe(false);
+  });
+
+  it('counter, search, exclusions, entry, complete and seed tables follow the reference rules', () => {
+    for (const row of onboardingFixture.counter)
+      expect(onboardingReference.counter(row.picks), `counter ${row.picks}`).toEqual({
+        text: row.text,
+        progress: row.progress,
+        can_complete: row.can_complete,
+      });
+    for (const c of onboardingFixture.search.cases) {
+      expect(onboardingReference.searchQuery(c.input), c.name).toBe(c.expect);
+      // The phone sends a query exactly when the server accepts it.
+      expect(schemas.OnboardingSearchQuery.safeParse({ q: c.input }).success, c.name).toBe(
+        c.expect !== null,
+      );
+    }
+    for (const c of onboardingFixture.exclusions.cases) {
+      const out = onboardingReference.addExclusion(c.current, c.input);
+      expect(out, c.name).toEqual(c.expect);
+      expect(
+        schemas.PutExclusionsRequest.safeParse({ food_exclusions: out.list }).success,
+        c.name,
+      ).toBe(true);
+    }
+    for (const c of onboardingFixture.exclusions.toggle_cases)
+      expect(onboardingReference.toggleExclusion(c.current, c.term), c.name).toEqual(c.expect);
+    for (const c of onboardingFixture.exclusions.display_examples)
+      expect(onboardingReference.label(c.term)).toBe(c.label);
+    for (const c of onboardingFixture.entry.cases) {
+      if (c.error && c.error !== 'transport') expect(ERROR_CODES, c.name).toHaveProperty(c.error);
+      expect(onboardingReference.entry(c), c.name).toBe(c.expect);
+    }
+    for (const c of onboardingFixture.complete.cases)
+      expect(onboardingReference.complete(c), c.name).toBe(c.expect);
+    for (const c of onboardingFixture.seed.cases) {
+      expect(schemas.SEED_STATES, c.name).toContain(c.state);
+      expect(c.categories).toHaveLength(4);
+      for (const s of c.categories) expect(schemas.SEED_CATEGORY_STATES, c.name).toContain(s);
+      expect(onboardingReference.seed(c), c.name).toBe(c.expect);
+    }
+    // The seed examples in messages.json decide as their names say.
+    const decide = (key: string) => {
+      const body = messages[key]!.body as { state: string; categories: { state: string }[] };
+      return onboardingReference.seed({
+        name: key,
+        state: body.state,
+        categories: body.categories.map((c) => c.state),
+        elapsed_ms: 0,
+        expect: 'wait',
+      });
+    };
+    expect(decide('onboarding_seed_partial_response')).toBe('advance');
+    expect(decide('onboarding_seed_retrying_response')).toBe('background');
+  });
+});
+
+describe('native ready notice fixtures (amendment 2.2, screen 17)', () => {
+  it('decision table follows the reference rule over the server analysis states', () => {
+    const states = schemas.AnalyzeMediaResponse.shape.state.options as readonly string[];
+    for (const c of readyFixture.decisions) {
+      expect(states, c.name).toContain(c.state);
+      expect(onboardingReference.ready(c), c.name).toEqual(c.expect);
+    }
+    expect(new Set(readyFixture.decisions.map((d) => d.state))).toEqual(new Set(states));
+    expect([
+      schemas.CAPTURE_V2_ROUTES.analyzeMedia,
+      schemas.CAPTURE_V2_ROUTES.mediaAnalysis,
+    ]).toEqual([readyFixture.watch.start_route, readyFixture.watch.poll_route]);
+    for (const w of readyFixture.push.invalid_wakes) {
+      expect(onboardingReference.validWake(w.apns_body), w.name).toBe(false);
+      expect(onboardingReference.validWake(w.fcm_data), w.name).toBe(false);
+    }
+    expect(onboardingReference.validWake(readyFixture.push.apns.body)).toBe(true);
+    expect(onboardingReference.validWake(readyFixture.push.fcm.data)).toBe(true);
+    expect(messages.push_token_ios_request!.body.token).toMatch(
+      new RegExp(readyFixture.push.register.apns_token_pattern),
+    );
+  });
+
+  it('the real APNs and FCM drivers send exactly the fixture wake shapes', async () => {
+    const reference = randomBytes(16).toString('base64url');
+    expect(reference).toMatch(new RegExp(readyFixture.push.reference_pattern));
+    const seen: { headers: Record<string, unknown>; body: string }[] = [];
+    const server = createH2Server();
+    server.on('stream', (stream, headers) => {
+      const chunks: Buffer[] = [];
+      stream.on('data', (c: Buffer) => chunks.push(c));
+      stream.on('end', () => {
+        seen.push({ headers: { ...headers }, body: Buffer.concat(chunks).toString() });
+        stream.respond({ ':status': 200 });
+        stream.end();
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+      const apns = new ApnsPushDriver({
+        teamId: 'TEAM123456',
+        keyId: 'KEY1234567',
+        privateKey: ec.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+        topic: 'com.cultureatlas.app',
+        origins: { production: origin, sandbox: origin },
+      });
+      const token = messages.push_token_ios_request!.body.token as string;
+      expect(
+        await apns.wake({ provider: 'apns', token, environment: 'production' }, reference),
+      ).toBe('sent');
+      apns.close();
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+    const sent = seen.at(-1)!;
+    for (const [k, v] of Object.entries(readyFixture.push.apns.headers))
+      expect(sent.headers[k], k).toBe(v);
+    expect(JSON.parse(sent.body)).toEqual({ ...readyFixture.push.apns.body, ref: reference });
+
+    const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    let fcmBody: { message: Json } | undefined;
+    const fcm = new FcmPushDriver({
+      projectId: 'culture-atlas-test',
+      clientEmail: 'push@culture-atlas-test.iam.gserviceaccount.com',
+      privateKey: keys.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+      fetch: (async (url: string | URL | Request, init?: RequestInit) => {
+        if (String(url).includes('oauth2'))
+          return new Response(JSON.stringify({ access_token: 'ya29.test', expires_in: 3600 }), {
+            status: 200,
+          });
+        fcmBody = JSON.parse(String(init?.body)) as { message: Json };
+        return new Response('{}', { status: 200 });
+      }) as typeof fetch,
+    });
+    const fcmToken = messages.push_token_android_request!.body.token as string;
+    expect(
+      await fcm.wake({ provider: 'fcm', token: fcmToken, environment: 'production' }, reference),
+    ).toBe('sent');
+    expect(fcmBody!.message.data).toEqual({ ...readyFixture.push.fcm.data, ref: reference });
+    expect(fcmBody!.message.android).toEqual(readyFixture.push.fcm.android);
+  });
+});
+
+describe('native owner bridge and push registration through the real handlers', () => {
+  const requestMessage: Record<string, string | undefined> = {
+    createOnboardingPick: 'onboarding_pick_catalog_request',
+    createTastePick: 'onboarding_pick_search_request',
+    putOnboardingExclusions: 'onboarding_exclusions_request',
+    completeOnboarding: 'onboarding_complete_request',
+  };
+  const responseMessage: Record<string, string> = {
+    getOnboardingCatalog: 'onboarding_catalog_response',
+    searchOnboarding: 'onboarding_search_response',
+    createOnboardingPick: 'onboarding_pick_response',
+    deleteOnboardingPick: 'onboarding_delete_pick_response',
+    putOnboardingExclusions: 'onboarding_exclusions_response',
+    completeOnboarding: 'onboarding_complete_response',
+    getOnboardingState: 'onboarding_state_response',
+    getOnboardingSeed: 'onboarding_seed_partial_response',
+    listTastePicks: 'taste_picks_response',
+    createTastePick: 'onboarding_pick_response',
+    deleteTastePick: 'onboarding_delete_pick_response',
+  };
+  const pickId = '6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20';
+  type Operation = keyof typeof schemas.ROUTES;
+
+  /**
+   * One /v1 call the way AtlasAPI / AtlasApi send it (bearer, Idempotency-Key
+   * and the expected account on mutations). The handler is a stand-in for the
+   * onboarding service: it records the principal the bridge produced and
+   * returns the fixture body, which apiRoute validates against the response
+   * schema (non-production).
+   */
+  async function callBridged(
+    phone: Phone,
+    operation: Operation,
+    opts: { expectedAccount?: string | null } = {},
+  ) {
+    const route = schemas.ROUTES[operation] as schemas.RouteContract;
+    const seen: { principal?: unknown } = {};
+    const handler = apiRoute(route, async ({ ctx }) => {
+      seen.principal = ctx.principal;
+      return messages[responseMessage[operation]!]!.body as never;
+    });
+    const mutation = route.method !== 'GET';
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${phone.access}`,
+      'x-forwarded-for': phone.ip,
+    };
+    if (mutation) headers['idempotency-key'] = randomUUID();
+    const expected = opts.expectedAccount === undefined ? phone.accountId : opts.expectedAccount;
+    if (mutation && expected) headers['x-atlas-expected-account'] = expected;
+    const bodyKey = requestMessage[operation];
+    if (bodyKey) headers['content-type'] = 'application/json';
+    const path =
+      route.path.replace('{id}', pickId) + (operation === 'searchOnboarding' ? '?q=nina' : '');
+    const response = await handler(
+      new NextRequest(`http://localhost:3399${path}`, {
+        method: route.method,
+        headers,
+        body: bodyKey ? JSON.stringify(messages[bodyKey]!.body) : undefined,
+      }),
+      { params: Promise.resolve(route.path.includes('{id}') ? { id: pickId } : {}) },
+    );
+    return { response, seen };
+  }
+
+  it('a live phone acts as its account owner on every onboarding and taste route, and nowhere else', async () => {
+    const phone = new Phone('ios');
+    await phone.enroll(await phone.signIn(`${randomUUID()}@example.test`));
+    for (const { operation } of Object.values(onboardingFixture.routes)) {
+      const { response, seen } = await callBridged(phone, operation as Operation);
+      expect(response.status, `${operation}: ${await response.clone().text()}`).toBe(
+        (schemas.ROUTES[operation as Operation] as schemas.RouteContract).status,
+      );
+      expect(seen.principal, operation).toEqual({
+        kind: 'account',
+        accountId: phone.accountId,
+        sessionId: null,
+        isDemoOwner: false,
+      });
+    }
+    // Every other /v1 route still refuses the installation token before any handler runs.
+    const other = Object.values(schemas.ROUTES).find(
+      (r) =>
+        r.auth === 'account' &&
+        r.method === 'GET' &&
+        !NATIVE_OWNER_OPERATIONS.has(`${r.method} ${r.path}`),
+    ) as schemas.RouteContract;
+    let called = false;
+    const id = randomUUID();
+    const refused = await apiRoute(other, async () => {
+      called = true;
+      return undefined as never;
+    })(
+      new NextRequest(`http://localhost:3399${other.path.replace('{id}', id)}`, {
+        headers: { authorization: `Bearer ${phone.access}`, 'x-forwarded-for': phone.ip },
+      }),
+      { params: Promise.resolve({ id }) },
+    );
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).code).toBe('scope_denied');
+    expect(called).toBe(false);
+  });
+
+  it('mutations must name the signed-in account, and an ended installation is refused', async () => {
+    const phone = new Phone('android');
+    await phone.enroll(await phone.signIn(`${randomUUID()}@example.test`));
+    const missing = await callBridged(phone, 'createOnboardingPick', { expectedAccount: null });
+    expect(missing.response.status).toBe(409);
+    expect((await missing.response.json()).code).toBe('account_mismatch');
+    expect(missing.seen.principal).toBeUndefined();
+    const other = await callBridged(phone, 'completeOnboarding', { expectedAccount: randomUUID() });
+    expect((await other.response.json()).code).toBe('account_mismatch');
+    expect(other.seen.principal).toBeUndefined();
+
+    await db.query(`UPDATE mobile_installations SET authority_ended_at=now() WHERE id=$1`, [
+      phone.installationId,
+    ]);
+    const ended = await callBridged(phone, 'getOnboardingState');
+    expect(ended.response.status).toBe(401);
+    expect((await ended.response.json()).code).toBe('token_revoked');
+    expect(ended.seen.principal).toBeUndefined();
+  });
+
+  it('registers the fixture push token and wakes the phone with only an opaque reference', async () => {
+    const phone = new Phone('ios');
+    await phone.enroll(await phone.signIn(`${randomUUID()}@example.test`));
+    const put = (body: Json) =>
+      devicePushTokenRoute(
+        new NextRequest(`http://localhost:3399/v2/device/push-token`, {
+          method: 'PUT',
+          headers: {
+            authorization: `Bearer ${phone.access}`,
+            'content-type': 'application/json',
+            'idempotency-key': randomUUID(),
+            'x-atlas-expected-account': phone.accountId,
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    const registered = await put(messages[readyFixture.push.register.examples.ios]!.body);
+    expect(registered.status, await registered.clone().text()).toBe(200);
+    expect(shapeOf(await registered.json())).toEqual(shapeOf(messages.push_token_response!.body));
+    const driver = new NoopPushDriver();
+    const outcome = await devicePush.wakeInstallation(
+      db,
+      { accountId: phone.accountId, installationId: phone.installationId },
+      { encryptionKey: Buffer.alloc(32, 9).toString('base64'), driver },
+    );
+    expect(outcome).toBe('not_configured');
+    expect(driver.references).toHaveLength(1);
+    expect(driver.references[0]!.provider).toBe(readyFixture.push.register.providers.ios);
+    expect(driver.references[0]!.reference).toMatch(
+      new RegExp(readyFixture.push.reference_pattern),
+    );
+    // An iPhone must register with APNs, never FCM (and Android the reverse).
+    const wrong = await put(messages[readyFixture.push.register.examples.android]!.body);
+    expect(wrong.status).toBe(400);
   });
 });

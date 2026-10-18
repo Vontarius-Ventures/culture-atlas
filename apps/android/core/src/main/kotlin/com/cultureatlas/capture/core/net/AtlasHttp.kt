@@ -1,6 +1,7 @@
 package com.cultureatlas.capture.core.net
 
 import com.cultureatlas.capture.core.contract.AtlasContract
+import com.cultureatlas.capture.core.contract.FlatServerError
 import com.cultureatlas.capture.core.contract.ServerErrorBody
 import com.cultureatlas.capture.core.policy.ErrorPolicy
 import kotlinx.coroutines.Dispatchers
@@ -20,7 +21,7 @@ sealed class AtlasClientException(message: String) : Exception(message) {
     /** The server's `{error:{code,message,retryable,request_id,retry_after_ms?}}`. */
     class Server(
         val status: Int,
-        val code: String,
+        override val code: String,
         val retryable: Boolean,
         val retryAfterSeconds: Double?,
     ) : AtlasClientException("$status $code")
@@ -32,7 +33,7 @@ sealed class AtlasClientException(message: String) : Exception(message) {
     class DraftLocked : AtlasClientException("draft_locked")
     class RefreshRequired : AtlasClientException("refresh_required")
 
-    val code: String? get() = (this as? Server)?.code
+    open val code: String? get() = null
 
     val policyAction: ErrorPolicy.Action
         get() = when (this) {
@@ -96,6 +97,12 @@ class AtlasHttp(
             if (!it.isSuccessful) {
                 val retryAfter = it.header("Retry-After")?.toDoubleOrNull()
                 val parsed = runCatching { AtlasContract.json.decodeFromString(ServerErrorBody.serializer(), text) }.getOrNull()
+                // /v1 routes (taste onboarding) answer with the flat error body.
+                val flat = if (parsed == null) {
+                    runCatching { AtlasContract.json.decodeFromString(FlatServerError.serializer(), text) }.getOrNull()
+                } else {
+                    null
+                }
                 throw if (parsed != null) {
                     AtlasClientException.Server(
                         it.code,
@@ -103,6 +110,8 @@ class AtlasHttp(
                         parsed.error.retryable,
                         retryAfter ?: parsed.error.retryAfterMs?.div(1000),
                     )
+                } else if (flat != null) {
+                    AtlasClientException.Server(it.code, flat.code, flat.retryable, retryAfter ?: flat.retryAfterMs?.div(1000))
                 } else {
                     AtlasClientException.Server(it.code, "http_${it.code}", it.code >= 500, retryAfter)
                 }

@@ -22,6 +22,8 @@ final class AppEnvironment {
   let receipts: ReceiptStore
   let wearables: WearablesAdapter
   let controller: CaptureController
+  let onboarding: OnboardingController
+  let notices: ReadyNoticeCenter
 
   private init() {
     let info = Bundle.main.infoDictionary ?? [:]
@@ -51,5 +53,10 @@ final class AppEnvironment {
     controller = CaptureController(
       api: api, accounts: accounts, sessions: sessions, identities: identities, drafts: drafts, uploads: uploads,
       transfer: transfer, receipts: receipts, wearables: wearables)
+    onboarding = OnboardingController(api: api)
+    notices = ReadyNoticeCenter(
+      api: api, sessions: sessions, directory: drafts.root.appendingPathComponent("ready", isDirectory: true))
+    // Stop wake-ups for this phone before its session ends.
+    controller.beforeSignOut = { [notices] in await notices.signingOut() }
   }
 }

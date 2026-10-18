@@ -3,5 +3,10 @@
 // Staging/production builds override this in CI; never a LAN relay address.
 ATLAS_API_HOST = app.cultureatlas.com
 
+// Ready notices (screen 17): silent APNs wake-ups. Development builds set
+// APS_ENVIRONMENT = development and ATLAS_PUSH_ENVIRONMENT = sandbox together.
+APS_ENVIRONMENT = production
+ATLAS_PUSH_ENVIRONMENT = production
+
 // Optional, untracked signing settings (DEVELOPMENT_TEAM etc.).
 #include? "Signing.xcconfig"

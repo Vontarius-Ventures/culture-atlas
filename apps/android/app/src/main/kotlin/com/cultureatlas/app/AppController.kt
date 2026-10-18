@@ -133,6 +133,8 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
             graph.drafts.update(draft.id, account) { it.copy(status = DraftRecord.Status.LOCKED) }
         }
         if (deleteDrafts) graph.drafts.deleteAll(account)
+        // While the session is still valid: stop ready-notice wake-ups for this phone.
+        graph.notices.signingOut()
         graph.accounts.signOut()
         _phase.value = Phase.SignedOut
         reloadDrafts()
@@ -143,6 +145,7 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
     fun onForeground(isForeground: Boolean) {
         foreground = isForeground
         if (signedInAccount == null) return
+        graph.notices.onForeground(isForeground)
         if (isForeground) {
             startHeartbeat()
         } else {

@@ -56,6 +56,12 @@ public struct HTTPTransport: Sendable {
           retryable: body.error.retryable,
           retryAfter: retryAfter ?? body.error.retryAfterMS.map { $0 / 1000 })
       }
+      // `/v1` routes (taste onboarding) answer with the flat error body.
+      if let flat = try? AtlasJSON.decoder().decode(FlatServerError.self, from: data) {
+        throw AtlasClientError.server(
+          status: http.statusCode, code: flat.code, message: flat.message, retryable: flat.retryable,
+          retryAfter: retryAfter ?? flat.retryAfterMS.map { $0 / 1000 })
+      }
       throw AtlasClientError.server(
         status: http.statusCode, code: "http_\(http.statusCode)", message: "", retryable: http.statusCode >= 500,
         retryAfter: retryAfter)

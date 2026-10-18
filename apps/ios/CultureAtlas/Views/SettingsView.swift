@@ -14,6 +14,10 @@ struct SettingsView: View {
         Text("Uploads use Wi-Fi unless you choose mobile data for an item.")
           .font(.footnote).foregroundStyle(AtlasTheme.muted)
       }
+      Section(OnboardingCopy.tasteTitle) {
+        // Screen 18: picks grouped by category, add more, exclusions.
+        NavigationLink(OnboardingCopy.tasteTitle) { TasteSettingsView() }
+      }
       Section("Account") {
         Button("Sign out or switch account", role: .destructive) { confirmSignOut = true }
       }
