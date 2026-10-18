@@ -274,6 +274,7 @@ export class QlooHttpProvider implements QlooProvider {
         'signal.location.query': req.signalLocationQuery,
         'filter.results.entities': req.filterResultsEntities,
         'filter.tags': req.filterTags,
+        'filter.tag.types': req.filterTagTypes,
         'bias.trends': req.biasTrends,
         'feature.explainability': req.explainability ? true : undefined,
         take: Math.min(req.take ?? 10, 50),

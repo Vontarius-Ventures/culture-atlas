@@ -149,10 +149,10 @@ describe('taste_seed job type', () => {
     expect(JOB_HANDLERS.taste_seed).toBeTypeOf('function');
   });
 
-  it('fails without retry until package B implements it, so nothing is ever pretended', async () => {
-    await expect(JOB_HANDLERS.taste_seed({} as JobContext<'taste_seed'>)).rejects.toMatchObject({
-      code: 'not_implemented',
-      retryable: false,
-    });
+  it('refuses, without retry, a seed that has no account to seed (nothing is ever pretended)', async () => {
+    // Behavioural coverage of the real handler (request caps, 429/empty/timeouts,
+    // no fabrication) is in apps/worker/src/taste-seed.test.ts.
+    const ctx = { job: { owner_account_id: null } } as unknown as JobContext<'taste_seed'>;
+    await expect(JOB_HANDLERS.taste_seed(ctx)).rejects.toMatchObject({ code: 'invalid_input', retryable: false });
   });
 });

@@ -14,7 +14,9 @@ import type { RecordedQuery } from './provider-calls';
 export type RecommendationParent =
   | { kind: 'plan'; planId: string; version: number }
   | { kind: 'discovery_job'; discoveryJobId: string }
-  | { kind: 'analysis'; analysisId: string };
+  | { kind: 'analysis'; analysisId: string }
+  /** Taste seed (amendment 2.2): onboarding picks -> account feed pool. */
+  | { kind: 'taste_seed'; runId: string };
 
 export function normalizeLabel(text: string): string {
   return text
@@ -113,6 +115,7 @@ function parentColumns(parent: RecommendationParent) {
     plan_id: parent.kind === 'plan' ? parent.planId : null,
     plan_version: parent.kind === 'plan' ? parent.version : null,
     discovery_job_id: parent.kind === 'discovery_job' ? parent.discoveryJobId : null,
+    taste_seed_run_id: parent.kind === 'taste_seed' ? parent.runId : null,
   };
 }
 
@@ -128,9 +131,9 @@ export async function insertProviderQueries(
     await db.query(
       `INSERT INTO provider_queries (id, analysis_id, plan_id, plan_version, discovery_job_id, provider, operation,
                                      sanitized_request, results, status, http_status, error_code, duration_ms,
-                                     is_replay, retrieved_at, cache_expiry, query_context, trace_id)
+                                     is_replay, retrieved_at, cache_expiry, query_context, trace_id, taste_seed_run_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12, $13, $14, $15,
-               $15::timestamptz + interval '1 day', $16::jsonb, $17)
+               $15::timestamptz + interval '1 day', $16::jsonb, $17, $18)
        ON CONFLICT (id) DO NOTHING`,
       [
         q.id,
@@ -150,6 +153,7 @@ export async function insertProviderQueries(
         q.retrieved_at,
         JSON.stringify(q.query_context ?? {}),
         traceId,
+        p.taste_seed_run_id,
       ],
     );
   }
@@ -181,8 +185,8 @@ export async function insertRecommendations(
     const { rows } = await db.query<{ id: string }>(
       `INSERT INTO recommendations (analysis_id, plan_id, plan_version, discovery_job_id, discovery_item_id, category,
                                     section, rank, title, external_ids, display_reason, origin, source_ids,
-                                    provider_query_ids, contributing_reference_ids, destination_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13::uuid[], $14::uuid[], $15::uuid[], $16)
+                                    provider_query_ids, contributing_reference_ids, destination_url, taste_seed_run_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13::uuid[], $14::uuid[], $15::uuid[], $16, $17)
        RETURNING id`,
       [
         p.analysis_id,
@@ -201,6 +205,7 @@ export async function insertRecommendations(
         [...r.provider_query_ids],
         [...(r.contributing_reference_ids ?? [])],
         r.destination_url ?? null,
+        p.taste_seed_run_id,
       ],
     );
     ids.push(rows[0]!.id);
