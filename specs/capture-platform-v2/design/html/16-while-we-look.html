@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>While we look · culture atlas mockup 16</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 16 · processing state of the capture result (and v2 media detail).
+     Default: processing with the "While we look" strip. ?state=results: first section landed,
+     strip collapsed into "More to explore". */
+  .result-head { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-12); align-items: start; margin: var(--space-4) 0 var(--space-12); }
+  .result-photo { margin: 0; }
+  .result-photo img { width: 100%; aspect-ratio: 4 / 5; max-height: 70vh; object-fit: cover; border-radius: var(--radius-image); background: var(--quiet); }
+  .result-intro { display: flex; flex-direction: column; gap: var(--space-4); padding-top: var(--space-4); min-width: 0; }
+  .status-line { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); }
+  .status-line .icon { width: 18px; height: 18px; }
+  .skeleton-line { height: 14px; border-radius: 999px; background: var(--quiet); }
+  .while { margin-top: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--line); }
+  .while__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-4); }
+  .while__title { font-size: 24px; line-height: 1.2; }
+  .strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6) var(--space-4); }
+  .strip .card__title { font-size: 18px; }
+  .more { display: flex; align-items: center; gap: var(--space-4); width: 100%; min-height: 64px; margin-top: var(--space-6); padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2); border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); text-align: left; cursor: pointer; }
+  .more:hover { border-color: var(--muted); }
+  .more__thumbs { display: flex; }
+  .more__thumbs img { width: 44px; height: 44px; border-radius: 10px; object-fit: cover; border: 2px solid var(--surface); }
+  .more__thumbs img + img { margin-left: -14px; }
+  .more__label { font-family: var(--font-display); font-size: 20px; }
+  .more__count { color: var(--muted); font-size: 15px; }
+  .more .icon { margin-left: auto; transition: transform var(--transition-fast) ease; }
+  .more[aria-expanded='true'] .icon { transform: rotate(180deg); }
+  .more + .strip { margin-top: var(--space-4); }
+  body[data-state='results'] .more { margin-top: 0; }
+  .references { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .references a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--space-4); border: 1px solid var(--line); border-radius: 999px; text-decoration: none; font-size: 15px; }
+  .grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px var(--space-4); }
+  .skeleton-card .card__media { background: var(--quiet); }
+  .skeleton-card .skeleton-line { margin-top: 12px; width: 70%; height: 16px; }
+  .filter-row { display: flex; gap: var(--space-2); margin: var(--space-3) 0; }
+  .discoveries .section-title { font-size: 32px; }
+
+  body:not([data-state='results']) .state-results { display: none; }
+  body[data-state='results'] .state-processing { display: none; }
+
+  @media (max-width: 1023px) {
+    .result-head { grid-template-columns: 1fr 1fr; gap: var(--space-8); }
+    .strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 767px) {
+    .result-head { grid-template-columns: 1fr; gap: var(--space-4); margin-bottom: var(--space-8); }
+    .result-photo img { aspect-ratio: 4 / 3; max-height: none; }
+    .result-intro { padding-top: 0; }
+    .while { margin-top: var(--space-2); padding-top: var(--space-4); }
+    .while__title { font-size: 20px; }
+    /* A horizontal strip under the photo; the page itself never scrolls sideways. */
+    .strip { display: flex; overflow-x: auto; gap: var(--space-3); margin-right: calc(-1 * var(--gutter)); padding-right: var(--gutter); scrollbar-width: none; }
+    .strip > li { flex: 0 0 148px; }
+    .strip .card__title { font-size: 16px; }
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4) var(--space-3); }
+    .discoveries .section-title { font-size: 24px; }
+    .more__label { font-size: 18px; }
+    .more__count { display: block; font-size: 14px; }
+    .more__dot { display: none; }
+    .more__thumbs img { width: 36px; height: 36px; }
+  }
+  @media (max-width: 359px) {
+    .strip > li { flex-basis: 132px; }
+    .more { gap: var(--space-3); }
+    .more__thumbs img:nth-child(n+3) { display: none; }
+    .more__count { display: none; }
+  }
+</style>
+</head>
+<body class="has-bottom-nav">
+<header class="header">
+  <div class="header__inner">
+    <a class="wordmark" href="#">culture atlas</a>
+    <nav class="header__nav" aria-label="Main"><ul>
+      <li><a class="header__link" href="#">Discover</a></li>
+      <li><a class="header__link" href="#">Library</a></li>
+      <li><a class="header__link" href="#">Collections</a></li>
+      <li><a class="header__link" href="#">Plans</a></li>
+    </ul></nav>
+    <div class="header__actions">
+      <a class="button button--primary" href="#"><svg class="icon"><use href="#i-plus"/></svg>Capture</a>
+      <a class="header__settings" href="#"><span class="header__settings-label">Settings</span><span class="header__settings-icon"><svg class="icon"><use href="#i-settings"/></svg><span class="visually-hidden">Settings</span></span></a>
+    </div>
+  </div>
+</header>
+
+<main class="main page">
+  <a class="back-link" href="#"><svg class="icon"><use href="#i-arrowLeft"/></svg>Discover</a>
+  <div class="result-head">
+    <figure class="result-photo"><img src="../../../../apps/web/public/samples/room.jpg" alt="Your photo: a paned window, a low table and a branch in a vase"></figure>
+    <div class="result-intro">
+      <div class="state-processing">
+        <h1 class="display display--medium">Finding your next favorites…</h1>
+        <p class="status-line" role="status" style="margin-top: var(--space-4)"><svg class="icon"><use href="#i-clock"/></svg>Looking at your photo. This takes a few seconds.</p>
+      </div>
+      <div class="state-results">
+        <h1 class="display display--medium">Quiet corners</h1>
+        <p class="lede" style="margin-top: var(--space-3)">Soft window light, a low table and a single branch: a calm room built from a few natural things.</p>
+        <ul class="references" aria-label="References" style="margin-top: var(--space-6)">
+          <li><a href="#">Japandi interiors</a></li>
+          <li><a href="#">Wabi-sabi</a></li>
+          <li><a href="#">Shoji screens</a></li>
+        </ul>
+      </div>
+
+      <section class="while" aria-labelledby="while-title">
+        <div class="while__head state-processing">
+          <h2 class="while__title" id="while-title">While we look</h2>
+          <span class="muted" style="font-size: 15px">From your feed</span>
+        </div>
+        <button type="button" class="more state-results" aria-expanded="false" aria-controls="while-strip">
+          <span class="more__thumbs" aria-hidden="true">
+            <img src="../../../../apps/web/public/samples/feed/sunday-listening.jpg" alt="">
+            <img src="../../../../apps/web/public/samples/feed/linen-days.jpg" alt="">
+            <img src="../../../../apps/web/public/samples/feed/late-night-cinema.jpg" alt="">
+            <img src="../../../../apps/web/public/samples/feed/sesame-noodles.jpg" alt="">
+          </span>
+          <span><span class="more__label">More to explore</span> <span class="more__count"><span class="more__dot">· </span>6 from your feed</span></span>
+          <svg class="icon"><use href="#i-chevronDown"/></svg>
+        </button>
+        <ul class="strip" id="while-strip" aria-label="From your feed">
+          <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/sunday-listening.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Sunday listening</a></p><p class="card__sub">Play</p></figure></li>
+          <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/linen-days.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Linen days</a></p><p class="card__sub">Wear</p></figure></li>
+          <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/late-night-cinema.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Late-night cinema</a></p><p class="card__sub">Watch</p></figure></li>
+          <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/sesame-noodles.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Sesame noodles</a></p><p class="card__sub">Eat</p></figure></li>
+          <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/sculptural-forms.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Sculptural forms</a></p><p class="card__sub">Wear</p></figure></li>
+          <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/night-wanderings.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Night wanderings</a></p><p class="card__sub">Play</p></figure></li>
+        </ul>
+      </section>
+    </div>
+  </div>
+
+  <section class="discoveries" aria-labelledby="discoveries-title">
+    <h2 class="section-title" id="discoveries-title">Discoveries</h2>
+    <div class="filter-row state-results" role="group" aria-label="Filter discoveries">
+      <button class="pill" aria-pressed="true">All</button><button class="pill" aria-pressed="false">Wear</button><button class="pill" aria-pressed="false">Eat</button>
+    </div>
+    <ul class="grid state-processing" aria-hidden="true" style="margin-top: var(--space-4)">
+      <li class="skeleton-card"><div class="card__media"></div><div class="skeleton-line"></div></li>
+      <li class="skeleton-card"><div class="card__media"></div><div class="skeleton-line"></div></li>
+      <li class="skeleton-card"><div class="card__media"></div><div class="skeleton-line"></div></li>
+      <li class="skeleton-card"><div class="card__media"></div><div class="skeleton-line"></div></li>
+    </ul>
+    <ul class="grid state-results" aria-label="Discoveries from your photo">
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/blossom-branch.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Blossom branch</a></p><p class="card__sub">Wear</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/tea-rituals.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Tea rituals</a></p><p class="card__sub">Eat</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/softer-silhouette.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Softer silhouette</a></p><p class="card__sub">Wear</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/cafe.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Café mornings</a></p><p class="card__sub">Eat</p></figure></li>
+    </ul>
+  </section>
+</main>
+
+<nav class="bottom-nav" aria-label="Main"><ul>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-home"/></svg>Discover</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-image"/></svg>Library</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-bookmark"/></svg>Collections</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-calendar"/></svg>Plans</a></li>
+</ul></nav>
+<script src="mockup.js"></script>
+<script>
+  // Results state: the strip starts collapsed under "More to explore".
+  if (document.body.dataset.state === 'results') document.getElementById('while-strip').hidden = true;
+</script>
+</body>
+</html>

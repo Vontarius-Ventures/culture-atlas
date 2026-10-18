@@ -48,6 +48,31 @@ export const COPY = {
   'ready.toast': 'Your photo is ready',
   'ready.open': 'Open',
   'settings_taste.title': 'Taste',
+  // Supporting copy introduced by the screen 14-18 HTML mockups ({n}/{label} are placeholders).
+  'onboarding.hint': 'Pick at least 3. You can change them later in Settings.',
+  'onboarding.next': 'Next',
+  'onboarding.step': 'Step {n} of 3',
+  'onboarding.search.add': 'Add',
+  'onboarding.search.added': 'Added',
+  'onboarding.exclusions.optional': 'Optional',
+  'onboarding.exclusions.note':
+    "We leave these out of food ideas and plans. They don't count as picks.",
+  'onboarding.exclusions.other': 'Something else',
+  'building.lede': 'Starting with what you picked.',
+  'building.category_ready': 'Ready',
+  'building.category_looking': 'Looking',
+  'building.go': 'Go to Discover',
+  'building.examples': 'Until then, Discover shows example results.',
+  'while_we_look.status': 'Looking at your photo. This takes a few seconds.',
+  'while_we_look.source': 'From your feed',
+  'ready.dismiss': 'Dismiss',
+  'ready.title_badge': '({n}) Your photo is ready · culture atlas',
+  'settings_taste.lede':
+    'What you pick shapes your feed. Remove anything that no longer fits, or add more.',
+  'settings_taste.add_more': 'Add more',
+  'settings_taste.done': 'Done',
+  'settings_taste.remove': 'Remove {label}',
+  'settings_taste.save': 'Save',
 } as const;
 
 /** SCREEN-CONTRACT "Visual review corrections" replace these raw mockup strings. */
