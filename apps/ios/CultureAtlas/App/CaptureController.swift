@@ -36,6 +36,8 @@ final class CaptureController: ObservableObject {
   private(set) var commands: RemoteCommandRunner!
   private var recordingCommandID: UUID?
   private var armTimer: Task<Void, Never>?
+  /// Runs while the session is still valid (clears the push token).
+  var beforeSignOut: (@MainActor () async -> Void)?
 
   init(
     api: AtlasAPI, accounts: AccountService, sessions: SessionStore, identities: InstallationIdentityStore,
@@ -136,6 +138,7 @@ final class CaptureController: ObservableObject {
     await commands.stop()
     await uploads.lockAll(owner: account)
     if choice == .delete { draftStore.deleteAll(owner: account) }
+    await beforeSignOut?()
     await accounts.signOut()
     await uploads.setSignedInAccount(nil)
     phase = .signedOut

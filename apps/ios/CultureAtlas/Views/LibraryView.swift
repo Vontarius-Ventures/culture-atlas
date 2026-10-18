@@ -39,6 +39,7 @@ struct LibraryView: View {
 
 struct DraftRow: View {
   @EnvironmentObject private var controller: CaptureController
+  @EnvironmentObject private var notices: ReadyNoticeCenter
   let draft: DraftRecord
 
   var body: some View {
@@ -94,6 +95,23 @@ struct DraftRow: View {
       }
     case .queued where !draft.allowCellular:
       Button("Upload using mobile data") { Task { await controller.keep(draft, allowCellular: true) } }
+    case .committed where draft.kind == .photo && draft.assetID != nil:
+      // The user starts exploring; screen 17 tells them when it is ready.
+      if let assetID = draft.assetID, notices.exploring.contains(assetID) {
+        Text("Looking at your photo. This takes a few seconds.")
+          .font(.footnote)
+          .foregroundStyle(AtlasTheme.muted)
+          .accessibilityAddTraits(.updatesFrequently)
+      } else if let assetID = draft.assetID {
+        Button("Explore this photo") {
+          Task {
+            let started = await notices.explore(assetID: assetID)
+            if !started {
+              controller.message = "Exploring isn't available right now. Your photo is safe in your library."
+            }
+          }
+        }
+      }
     case .failed, .rejected:
       HStack {
         if draft.status == .failed { Button("Retry") { Task { await controller.retry(draft) } } }

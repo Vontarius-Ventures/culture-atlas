@@ -3,6 +3,8 @@ import SwiftUI
 
 struct RootView: View {
   @EnvironmentObject private var controller: CaptureController
+  @EnvironmentObject private var onboarding: OnboardingController
+  @EnvironmentObject private var notices: ReadyNoticeCenter
 
   var body: some View {
     Group {
@@ -10,19 +12,33 @@ struct RootView: View {
       case .signedOut, .awaitingEmail:
         SignInView()
       case .signedIn:
-        TabView {
-          NavigationStack { LibraryView() }
-            .tabItem { Label("Library", systemImage: "photo.on.rectangle") }
-          NavigationStack { CaptureSourceView() }
-            .tabItem { Label("Capture", systemImage: "camera") }
-          NavigationStack { SettingsView() }
-            .tabItem { Label("Settings", systemImage: "gearshape") }
-        }
-        .safeAreaInset(edge: .top) {
-          if controller.armed != nil { RemoteArmBanner() }
+        switch onboarding.gate {
+        case .checking:
+          ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity).background(AtlasTheme.ivory.ignoresSafeArea())
+        case .onboarding:
+          // Screen 14: required after sign-up, no tab bar.
+          OnboardingFlowView()
+        case .building:
+          BuildingFeedView()
+        case .retry:
+          OnboardingRetryView()
+        case .done:
+          tabs
         }
       }
     }
+    .task(id: controller.phase) {
+      if controller.signedInAccount != nil {
+        await onboarding.evaluate()
+        notices.signedIn()
+      } else {
+        onboarding.reset()
+      }
+    }
+    .onChange(of: onboarding.sessionEnded) { _, ended in
+      if ended { Task { await controller.signOut(drafts: .keep) } }
+    }
+    .overlay(alignment: .bottom) { ReadyToast().padding(.bottom, 56) }
     .tint(AtlasTheme.olive)
     .alert(
       "culture atlas",
@@ -33,16 +49,53 @@ struct RootView: View {
       Text(controller.message ?? "")
     }
   }
+
+  private var tabs: some View {
+    TabView {
+      NavigationStack { LibraryView() }
+        .tabItem { Label("Library", systemImage: "photo.on.rectangle") }
+      NavigationStack { CaptureSourceView() }
+        .tabItem { Label("Capture", systemImage: "camera") }
+      NavigationStack { SettingsView() }
+        .tabItem { Label("Settings", systemImage: "gearshape") }
+    }
+    .safeAreaInset(edge: .top) {
+      if controller.armed != nil { RemoteArmBanner() }
+    }
+  }
+}
+
+/// The questionnaire is required, so a failed state check offers Retry, never a skip.
+struct OnboardingRetryView: View {
+  @EnvironmentObject private var onboarding: OnboardingController
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text(OnboardingCopy.imagesTitle).font(.system(.title, design: .serif))
+      Text("We couldn't reach culture atlas. Check your connection and try again.")
+        .foregroundStyle(AtlasTheme.muted)
+      Button {
+        Task { await onboarding.evaluate() }
+      } label: {
+        Text("Try again").frame(maxWidth: .infinity, minHeight: 48)
+      }
+      .buttonStyle(.borderedProminent)
+      Spacer()
+    }
+    .padding(16)
+    .background(AtlasTheme.ivory.ignoresSafeArea())
+  }
 }
 
 enum AtlasTheme {
   // specs/capture-platform-v2/design/tokens.css: --paper #f8f6f1, --ink #252823,
-  // --muted #606459, --olive #566347, --quiet #eeeae2.
+  // --muted #606459, --olive #566347, --quiet #eeeae2, --line #dcddd3.
   static let ivory = Color(red: 0xF8 / 255, green: 0xF6 / 255, blue: 0xF1 / 255)
   static let ink = Color(red: 0x25 / 255, green: 0x28 / 255, blue: 0x23 / 255)
   static let muted = Color(red: 0x60 / 255, green: 0x64 / 255, blue: 0x59 / 255)
   static let olive = Color(red: 0x56 / 255, green: 0x63 / 255, blue: 0x47 / 255)
   static let quiet = Color(red: 0xEE / 255, green: 0xEA / 255, blue: 0xE2 / 255)
+  static let line = Color(red: 0xDC / 255, green: 0xDD / 255, blue: 0xD3 / 255)
 }
 
 struct SignInView: View {

@@ -9,11 +9,73 @@ independent Android implementation, and the shared contract both follow.
 | Item | State |
 | --- | --- |
 | iOS source (`apps/ios`) | Written. **Never compiled or run**: this environment has no Xcode, Swift toolchain or XcodeGen. |
-| Android source (`apps/android`) | Written. **Never compiled or run**: no Android SDK, no Kotlin compiler, and no network access to Google/Maven repositories. Gradle 8.14.3 parses `settings.gradle.kts` and `gradle/libs.versions.toml`, then stops at plugin resolution. |
+| Android source (`apps/android`) | `:app` written but **never compiled or run**: no Android SDK and no access to Google's Maven repository (AGP, AndroidX, Firebase). The pure-JVM `:core` module **does compile and its JUnit tests pass** (28 tests, Kotlin 2.1.0) in a throwaway Gradle build that resolves Kotlin, kotlinx and OkHttp from Maven Central and points at `apps/android/core/src` (amendment 2.2 package E; see "Build and test"). That run found and fixed one pre-existing compile error (`AtlasClientException.code` needed `open`/`override`). The Android onboarding controller (`app/.../onboarding/OnboardingController.kt`, no Android APIs) compiles in the same build. |
 | Meta SDK binding, iOS | Uses only SDK calls that World Observer already compiles and ran on Ray-Ban Meta Gen 2 (`MWDATCore`/`MWDATCamera` 1.0.0). |
 | Meta SDK binding, Android | `app/src/experimental/.../MetaDatBinding.kt` is **unverified**: package, class and method names follow the toolkit's Android developer-preview documentation from memory. The version in `libs.versions.toml` (`metaWearables`) and the manifest meta-data names must be confirmed on the first experimental build. All other Android code talks to the `DatSdk` interface, so fixes stay in that one file. |
 | Shared contract | `fixtures/native-contract/*.json`, verified against the real server by `apps/web/lib/server/native-contract.test.ts` (runs in `pnpm test`). |
 | Physical-device qualification (DEV-01..03, MED-05 native rows) | Not started. See "What remains on physical devices". |
+
+## Taste onboarding and ready notices (amendment 2.2)
+
+Package E of [build plan v2.2](build-plan-v2.2.md) brings screens 14, 15, 17
+and 18 of [the amendment](../specs/onboarding-and-fast-analysis.md) to both
+apps. The decision tables are in `fixtures/native-contract/onboarding.json`
+and `ready-notice.json`; wire examples are the `onboarding_*`,
+`taste_picks_response`, `push_token_*`, `media_detail_response`,
+`analyze_photo_request` and `analysis_*` entries of `messages.json`.
+
+- **Where the questionnaire runs.** After sign-in the app reads
+  `onboarding_required` from `/v2/capabilities` and `GET /v1/onboarding/state`.
+  `state.required` shows screen 14 full-screen without the tab bar; a failed
+  check shows Retry (the questionnaire is required, so it is never skipped on a
+  transient error); a server that does not offer native onboarding
+  (`not_found`/`scope_denied`) never blocks the app.
+- **Native owner bridge (server, additive).** `/v1` refuses installation
+  tokens. `packages/domain/src/authz/native-owner.ts` lists the 11 onboarding
+  and taste operations (`NATIVE_OWNER_OPERATIONS`) on which `apiRoute`
+  (`apps/web/lib/server/http.ts`) converts a live installation session into
+  its account owner (`sessionId: null`). It rechecks that the installation is
+  neither revoked nor ended on every call and requires
+  `X-Atlas-Expected-Account` on mutations (`account_mismatch` otherwise); every
+  other `/v1` route still answers `scope_denied`. `/v1` errors are flat
+  (`{code,message,…}`); both HTTP clients decode the flat and the `/v2` shape.
+- **Screen 14 on a phone:** three steps with "Step n of 3", Back from step 2,
+  two-column image grid, Wear/Play/Watch/Eat pills with live Qloo search
+  (debounced 300 ms, 2–80 characters, results show name and type, "Added"
+  state), optional exclusions (12 suggestions plus "Something else", 40
+  characters, at most 12), a three-segment progress bar, a polite live
+  counter, and "Build my feed" disabled with its reason until 3 picks. Every
+  pick is saved as it is made (`POST /v1/onboarding/picks`), so leaving
+  mid-way keeps them. "Build my feed" saves changed exclusions, then
+  completes; `409 conflict` reloads the state.
+- **Screen 15:** collage of the picks, per-category Ready/Looking, polling
+  `GET /v1/onboarding/seed` at `poll_after_ms`; it leaves for the app as soon
+  as a category is ready (or the seed is complete or not started) and shows
+  "We'll keep building in the background." with Done when Qloo is
+  unavailable, the job retries or fails, or 20 s pass. The native apps have no
+  Discover feed; Done returns to the library.
+- **Screen 18 (Settings → Taste):** picks grouped by category with Remove
+  (below 3 is allowed), Add more with the same pickers through
+  `/v1/taste/picks`, and the exclusions editor with Save.
+- **Screen 17 (ready notice):** "Explore this photo" on a committed photo
+  starts `POST /v2/media/{id}/analysis` and watches that analysis (at most 20,
+  for 24 h, per account, ids only). Notification permission is asked at that
+  moment. The phone registers its APNs/FCM token with
+  `PUT /v2/device/push-token` after sign-in and clears it before sign-out.
+  A push is a silent wake carrying only `ref`; invalid payloads are ignored.
+  On a wake (and every 5 s while the app is open) the app polls each watched
+  analysis: `complete` posts a local notification "Your photo is ready" with
+  Open in the background, or the in-app toast with Open and Dismiss in the
+  foreground; `failed`/`cancelled` end silently. Open goes to the result page
+  of the web app (`result_url`), because the apps have no result view.
+- **Push configuration.** iOS: `UIBackgroundModes` gains
+  `remote-notification`, the entitlements carry `aps-environment`
+  (`APS_ENVIRONMENT`, with `ATLAS_PUSH_ENVIRONMENT` = `production`/`sandbox`
+  in `Config/Base.xcconfig`). Android: `firebase-messaging` (version pinned in
+  `libs.versions.toml`, not resolvable here), `POST_NOTIFICATIONS`, and
+  Firebase options from `-PatlasFcmProjectId/AppId/ApiKey/SenderId` (no
+  `google-services.json`); without them push stays off and only the in-app
+  toast works.
 
 ## What was ported from World Observer
 
@@ -135,6 +197,14 @@ Requirements: JDK 17+, Android SDK 35, network access to Google Maven,
 Maven Central and (experimental flavor) GitHub Packages for the Meta SDK
 (`GITHUB_ACTOR` / `GITHUB_TOKEN` with `read:packages`).
 
+Without the Android SDK, the `:core` sources and tests can still be compiled
+and run on any JVM with a minimal standalone Gradle build that applies
+`kotlin("jvm")` and `kotlin("plugin.serialization")` 2.1.0, adds
+`apps/android/core/src/{main,test}/kotlin` as source directories, depends on
+the versions in `libs.versions.toml` from Maven Central and sets the
+`atlas.fixtures` system property to `fixtures/native-contract`. That is how
+the 28 core tests were run for amendment 2.2.
+
 ```sh
 cd apps/android
 gradle wrapper --gradle-version 8.14.3     # once, creates gradlew and the wrapper jar
@@ -230,5 +300,15 @@ These are outside `apps/ios`, `apps/android` and `fixtures/native-contract`:
 5. **Glasses capabilities**: `/v2/capabilities` hard-codes every glasses gate
    off; server evaluation of build/channel/rollout/device gates is needed
    before any experimental build can capture.
-6. **Push** (APNs/FCM) is not implemented on either side; the apps poll only
-   while armed in the foreground.
+6. **Push wake-ups for remote commands** are not sent by the server yet; the
+   apps poll commands only while armed in the foreground.
+7. **Ready-notice wake-ups (amendment 2.2):** the apps register push tokens and
+   handle silent wakes, but nothing on the server calls
+   `devicePush.wakeInstallation` when an analysis completes. The analysis
+   pipeline (package C / the v2 worker) needs to record which installation
+   requested an analysis and wake that installation (only for analyses a
+   person started, never agent requests) when it reaches `complete`. Until
+   then notices appear only while the app is open (foreground polling).
+8. **Result view:** the apps open the web result page for "Open"; that page
+   needs a browser session, so a person who never signed in on the web sees
+   the sign-in page first.

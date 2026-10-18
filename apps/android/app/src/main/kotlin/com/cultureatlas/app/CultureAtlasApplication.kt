@@ -6,6 +6,9 @@ import com.cultureatlas.app.capture.GlassesFactory
 import com.cultureatlas.app.capture.PhoneCameraController
 import com.cultureatlas.app.data.FileDraftRepository
 import com.cultureatlas.app.data.FileReceiptRepository
+import com.cultureatlas.app.notify.AtlasMessagingService
+import com.cultureatlas.app.notify.ReadyNoticeCenter
+import com.cultureatlas.app.onboarding.OnboardingController
 import com.cultureatlas.app.security.KeystoreVault
 import com.cultureatlas.app.upload.OkHttpPartTransfer
 import com.cultureatlas.capture.core.identity.AccountClient
@@ -26,6 +29,8 @@ class CultureAtlasApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         graph = AppGraph(this)
+        // Ready-notice push (screen 17) when the build carries Firebase settings.
+        AtlasMessagingService.initialize(this)
     }
 }
 
@@ -54,6 +59,10 @@ class AppGraph(val app: Application) {
     )
 
     val controller: AppController by lazy { AppController(this) }
+    val onboarding: OnboardingController by lazy { OnboardingController(api, scope) }
+    val notices: ReadyNoticeCenter by lazy {
+        ReadyNoticeCenter(app, api, sessions, scope, java.io.File(app.filesDir, "ready"))
+    }
 
     private val draftsVersion = MutableStateFlow(0L)
     /** Bumped whenever a draft changes (UI reloads). */

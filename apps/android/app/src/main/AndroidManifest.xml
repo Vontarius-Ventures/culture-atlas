@@ -6,6 +6,8 @@
     <!-- Requested at the moment of use, never at launch. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Ready notices (screen 17): asked when the user first explores a photo. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
@@ -37,5 +39,14 @@
                     android:scheme="https" />
             </intent-filter>
         </activity>
+
+        <!-- Data-only FCM wake-ups carrying an opaque reference (ready notices). -->
+        <service
+            android:name=".notify.AtlasMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

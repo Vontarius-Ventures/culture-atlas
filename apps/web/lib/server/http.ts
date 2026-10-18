@@ -13,6 +13,7 @@ import {
   authorizeOperation,
   assertExpectedCaptureAccount,
   invalidInput,
+  nativeOwnerPrincipal,
   toErrorBody,
   withIdempotency,
   type DomainConfig,
@@ -159,6 +160,12 @@ export function apiRoute<C extends RouteContract>(
       const authorization = request.headers.get('authorization');
       let principal = await auth.resolvePrincipal(db, { sessionToken, authorization });
       const isMutation = contract.method !== 'GET';
+      // Native phones act as their account owner on the allowlisted taste
+      // onboarding routes only (authz/native-owner.ts); every other /v1 route
+      // still refuses an installation token.
+      if (principal?.kind === 'installation') {
+        principal = await nativeOwnerPrincipal(db, principal, contract, request.headers.get('x-atlas-expected-account'));
+      }
       if (contract.path.startsWith('/v2/') && principal?.kind === 'account') {
         assertExpectedCaptureAccount(principal, request.headers.get('x-atlas-expected-account'), isMutation);
       }

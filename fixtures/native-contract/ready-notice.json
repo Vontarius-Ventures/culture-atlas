@@ -1,0 +1,229 @@
+{
+  "fixture_version": 1,
+  "note": "Screen 17 on native: 'Your photo is ready' for analyses this phone's user started. Pushes are silent wake-ups carrying only an opaque reference (packages/providers/src/push/push.ts); the phone then asks the server about the analyses it is watching. The TS test drives the real APNs and FCM drivers and the reference decision table.",
+  "push": {
+    "reference_pattern": "^[A-Za-z0-9_-]{16,64}$",
+    "apns": {
+      "headers": {
+        "apns-push-type": "background",
+        "apns-priority": "5"
+      },
+      "body": {
+        "aps": {
+          "content-available": 1
+        },
+        "ref": "q8XrT0d3kWm1YbZ5cV7nPa"
+      }
+    },
+    "fcm": {
+      "android": {
+        "priority": "high",
+        "ttl": "30s"
+      },
+      "data": {
+        "ref": "q8XrT0d3kWm1YbZ5cV7nPa"
+      }
+    },
+    "on_wake": [
+      "check_watched_analyses",
+      "poll_commands_when_armed"
+    ],
+    "invalid_wakes": [
+      {
+        "name": "no_reference",
+        "apns_body": {
+          "aps": {
+            "content-available": 1
+          }
+        },
+        "fcm_data": {}
+      },
+      {
+        "name": "short_reference",
+        "apns_body": {
+          "aps": {
+            "content-available": 1
+          },
+          "ref": "abc"
+        },
+        "fcm_data": {
+          "ref": "abc"
+        }
+      },
+      {
+        "name": "not_base64url",
+        "apns_body": {
+          "aps": {
+            "content-available": 1
+          },
+          "ref": "has spaces and = signs!!"
+        },
+        "fcm_data": {
+          "ref": "has spaces and = signs!!"
+        }
+      }
+    ],
+    "register": {
+      "route": "PUT /v2/device/push-token",
+      "clear_route": "DELETE /v2/device/push-token",
+      "providers": {
+        "ios": "apns",
+        "android": "fcm"
+      },
+      "apns_token_pattern": "^[0-9a-fA-F]{64,200}$",
+      "requires_idempotency_key": true,
+      "clear_before_sign_out": true,
+      "examples": {
+        "ios": "push_token_ios_request",
+        "android": "push_token_android_request"
+      }
+    }
+  },
+  "watch": {
+    "start_route": "POST /v2/media/{id}/analysis",
+    "poll_route": "GET /v2/media/{id}/analysis/{analysisId}",
+    "max_watched": 20,
+    "expire_after_hours": 24,
+    "foreground_poll_seconds": 5
+  },
+  "copy": {
+    "ready.toast": "Your photo is ready",
+    "ready.open": "Open",
+    "ready.dismiss": "Dismiss",
+    "ready.title_badge": "({n}) Your photo is ready · culture atlas"
+  },
+  "decisions": [
+    {
+      "name": "complete_in_background",
+      "state": "complete",
+      "app": "background",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "notification",
+        "keep_watching": false
+      }
+    },
+    {
+      "name": "complete_in_foreground_elsewhere",
+      "state": "complete",
+      "app": "foreground",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "toast",
+        "keep_watching": false
+      }
+    },
+    {
+      "name": "complete_while_viewing_it",
+      "state": "complete",
+      "app": "viewing",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "none",
+        "keep_watching": false
+      }
+    },
+    {
+      "name": "still_queued",
+      "state": "queued",
+      "app": "background",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "none",
+        "keep_watching": true
+      }
+    },
+    {
+      "name": "running",
+      "state": "running",
+      "app": "foreground",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "none",
+        "keep_watching": true
+      }
+    },
+    {
+      "name": "partial_waits_for_complete",
+      "state": "partial",
+      "app": "background",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "none",
+        "keep_watching": true
+      }
+    },
+    {
+      "name": "failed_is_silent",
+      "state": "failed",
+      "app": "background",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "none",
+        "keep_watching": false
+      }
+    },
+    {
+      "name": "cancelled_is_silent",
+      "state": "cancelled",
+      "app": "background",
+      "watched": true,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "none",
+        "keep_watching": false
+      }
+    },
+    {
+      "name": "already_notified",
+      "state": "complete",
+      "app": "background",
+      "watched": true,
+      "notified": true,
+      "age_hours": 0.2,
+      "expect": {
+        "notice": "none",
+        "keep_watching": false
+      }
+    },
+    {
+      "name": "not_started_on_this_phone",
+      "state": "complete",
+      "app": "background",
+      "watched": false,
+      "notified": false,
+      "age_hours": 0.1,
+      "expect": {
+        "notice": "none",
+        "keep_watching": false
+      }
+    },
+    {
+      "name": "expired_watch",
+      "state": "complete",
+      "app": "background",
+      "watched": true,
+      "notified": false,
+      "age_hours": 24,
+      "expect": {
+        "notice": "none",
+        "keep_watching": false
+      }
+    }
+  ]
+}

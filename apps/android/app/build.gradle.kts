@@ -6,6 +6,10 @@ plugins {
 }
 
 val atlasApiHost: String = providers.gradleProperty("atlasApiHost").get()
+// Ready-notice push (FCM). Supplied by CI for release builds; empty keeps push
+// off (notices then appear only while the app is open). No google-services.json
+// is committed: Firebase is initialized from these values at runtime.
+fun pushProperty(name: String): String = providers.gradleProperty(name).orElse("").get()
 
 android {
     namespace = "com.cultureatlas.app"
@@ -18,6 +22,11 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         buildConfigField("String", "ATLAS_API_HOST", "\"$atlasApiHost\"")
+        buildConfigField("String", "ATLAS_PUSH_ENVIRONMENT", "\"${pushProperty("atlasPushEnvironment").ifEmpty { "production" }}\"")
+        buildConfigField("String", "FCM_PROJECT_ID", "\"${pushProperty("atlasFcmProjectId")}\"")
+        buildConfigField("String", "FCM_APP_ID", "\"${pushProperty("atlasFcmAppId")}\"")
+        buildConfigField("String", "FCM_API_KEY", "\"${pushProperty("atlasFcmApiKey")}\"")
+        buildConfigField("String", "FCM_SENDER_ID", "\"${pushProperty("atlasFcmSenderId")}\"")
     }
 
     // Two independent variants (PRODUCT-AND-ARCHITECTURE "Experimental release policy"):
@@ -84,6 +93,7 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.work.runtime)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.firebase.messaging)
 
     "experimentalImplementation"(libs.meta.wearables.core)
     "experimentalImplementation"(libs.meta.wearables.camera)

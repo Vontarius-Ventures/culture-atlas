@@ -153,6 +153,7 @@ export function resolveTasteScope(principal: Principal, collectionId?: string): 
  */
 export * from './operations';
 export * from './connection-access';
+export * from './native-owner';
 
 /** The sensor-bridge token may only create captures for its own sensor connection. */
 export function requireNotSensorBridge(principal: Principal): void {

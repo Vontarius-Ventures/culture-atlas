@@ -4,6 +4,8 @@
 <dict>
 	<key>AtlasAPIBaseURL</key>
 	<string>https://$(ATLAS_API_HOST)</string>
+	<key>AtlasPushEnvironment</key>
+	<string>$(ATLAS_PUSH_ENVIRONMENT)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -70,6 +72,7 @@
 	<array>
 		<string>bluetooth-central</string>
 		<string>external-accessory</string>
+		<string>remote-notification</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

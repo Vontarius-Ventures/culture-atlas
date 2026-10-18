@@ -12,6 +12,10 @@ lifecycle = "2.8.7"
 camerax = "1.4.1"
 work = "2.10.0"
 junitJupiter = "5.11.4"
+# Ready-notice push (FCM, data-only messages). Google's Maven repository is not
+# reachable from this repository's environment: confirm the artifact resolves
+# before the first build with push enabled.
+firebaseMessaging = "24.1.0"
 # Meta Wearables Device Access Toolkit for Android (developer preview).
 # Not resolvable from this repository's environment: confirm the exact
 # published version and artifact names before the first experimental build
@@ -39,6 +43,7 @@ androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", versi
 androidx-camera-video = { module = "androidx.camera:camera-video", version.ref = "camerax" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
+firebase-messaging = { module = "com.google.firebase:firebase-messaging", version.ref = "firebaseMessaging" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junitJupiter" }
 meta-wearables-core = { module = "com.meta.wearable:mwdat-core", version.ref = "metaWearables" }
 meta-wearables-camera = { module = "com.meta.wearable:mwdat-camera", version.ref = "metaWearables" }

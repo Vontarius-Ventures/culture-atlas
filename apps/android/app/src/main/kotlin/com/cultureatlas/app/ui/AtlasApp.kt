@@ -3,6 +3,7 @@ package com.cultureatlas.app.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,12 +22,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -36,6 +39,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.cultureatlas.app.AppController
 import com.cultureatlas.app.AppGraph
+import com.cultureatlas.app.notify.AtlasMessagingService
+import com.cultureatlas.app.onboarding.OnboardingController
+import com.cultureatlas.capture.core.notify.ReadyNoticeCopy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -48,6 +54,7 @@ object AtlasColors {
     val muted = Color(0xFF606459)
     val olive = Color(0xFF566347)
     val quiet = Color(0xFFEEEAE2)
+    val line = Color(0xFFDCDDD3)
 }
 
 enum class Tab { LIBRARY, CAPTURE, SETTINGS }
@@ -63,9 +70,56 @@ fun AtlasApp(graph: AppGraph, activity: ComponentActivity) {
             onBackground = AtlasColors.ink, onSurface = AtlasColors.ink,
         ),
     ) {
-        when (phase) {
-            is AppController.Phase.SignedIn -> SignedInShell(graph, activity)
-            else -> SignInScreen(controller)
+        val gate by graph.onboarding.gate.collectAsState()
+        val sessionEnded by graph.onboarding.sessionEnded.collectAsState()
+        LaunchedEffect(phase) {
+            if (phase is AppController.Phase.SignedIn) {
+                val flag = runCatching { graph.api.capabilities() }.getOrNull()?.flag("onboarding_required") ?: true
+                graph.onboarding.evaluate(flag)
+                AtlasMessagingService.registerCurrentToken(graph.app, graph.notices)
+            } else {
+                graph.onboarding.reset()
+            }
+        }
+        LaunchedEffect(sessionEnded) { if (sessionEnded) controller.signOut(deleteDrafts = false) }
+        Box(Modifier.fillMaxSize()) {
+            when (phase) {
+                is AppController.Phase.SignedIn -> when (gate) {
+                    OnboardingController.Gate.CHECKING -> Box(Modifier.fillMaxSize().background(AtlasColors.paper))
+                    // Screen 14: required after sign-up, no bottom navigation.
+                    OnboardingController.Gate.ONBOARDING -> OnboardingFlowScreen(graph.onboarding)
+                    OnboardingController.Gate.BUILDING -> BuildingFeedScreen(graph.onboarding)
+                    OnboardingController.Gate.RETRY -> {
+                        val scope = rememberCoroutineScope()
+                        OnboardingRetryScreen {
+                            scope.launch {
+                                val flag = runCatching { graph.api.capabilities() }.getOrNull()?.flag("onboarding_required") ?: true
+                                graph.onboarding.evaluate(flag)
+                            }
+                        }
+                    }
+                    OnboardingController.Gate.DONE -> SignedInShell(graph, activity)
+                }
+                else -> SignInScreen(controller)
+            }
+            val toast by graph.notices.toast.collectAsState()
+            toast?.let { t ->
+                Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 72.dp)) {
+                    ReadyToastBar(
+                        ReadyNoticeCopy.TITLE, ReadyNoticeCopy.OPEN, ReadyNoticeCopy.DISMISS,
+                        onOpen = { graph.notices.open(t.resultPath) },
+                        onDismiss = { graph.notices.dismissToast() },
+                    )
+                }
+            }
+        }
+        val onboardingMessage by graph.onboarding.message.collectAsState()
+        onboardingMessage?.let { text ->
+            AlertDialog(
+                onDismissRequest = { graph.onboarding.message.value = null },
+                confirmButton = { TextButton(onClick = { graph.onboarding.message.value = null }) { Text("OK") } },
+                text = { Text(text) },
+            )
         }
         message?.let { text ->
             AlertDialog(
@@ -99,10 +153,11 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
             when (subScreen) {
                 "camera" -> CameraScreen(graph, activity, onBack = { subScreen = null })
                 "glasses" -> GlassesScreen(graph, activity, onBack = { subScreen = null }, onUseCamera = { subScreen = "camera" })
+                "taste" -> TasteSettingsScreen(graph.onboarding, onBack = { subScreen = null })
                 else -> when (tab) {
-                    Tab.LIBRARY -> LibraryScreen(graph.controller)
+                    Tab.LIBRARY -> LibraryScreen(graph.controller, graph.notices)
                     Tab.CAPTURE -> CaptureSourceScreen(graph.controller, onCamera = { subScreen = "camera" }, onGlasses = { subScreen = "glasses" })
-                    Tab.SETTINGS -> SettingsScreen(graph.controller, onGlasses = { subScreen = "glasses" })
+                    Tab.SETTINGS -> SettingsScreen(graph.controller, onGlasses = { subScreen = "glasses" }, onTaste = { subScreen = "taste" })
                 }
             }
         }
