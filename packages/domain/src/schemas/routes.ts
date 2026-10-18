@@ -8,6 +8,7 @@ import { IdParams, Uuid } from './common';
 import * as D from './discoveries';
 import * as I from './items';
 import * as J from './jobs';
+import * as O from './onboarding';
 import * as P from './plans';
 import * as Pref from './preferences';
 import * as R from './references';
@@ -101,6 +102,25 @@ export const ROUTES = {
   createSensorConnection: { method: 'POST', path: '/v1/sensor-connections', auth: 'owner', scopes: [], body: S.CreateSensorConnectionRequest, response: S.CreateSensorConnectionResponse, status: 201, idempotent: false },
   deleteSensorConnection: { method: 'DELETE', path: '/v1/sensor-connections/{id}', auth: 'owner', scopes: [], params: IdParams, response: null, status: 204, idempotent: true },
   getTrace: { method: 'GET', path: '/v1/demo/traces/{job_id}', auth: 'demo', scopes: [], params: Tr.TraceParams, response: Tr.TraceResponse, status: 200, idempotent: false },
+
+  // Taste onboarding (spec amendment 2.2, schemas/onboarding.ts). The questionnaire
+  // is the account owner's own sign-up step: browser account sessions only, never
+  // agents or anonymous visitors. Picks are explicit saves (taste); exclusions are
+  // preferences. Feature flag onboarding_required gates whether it blocks the feed.
+  getOnboardingCatalog: { method: 'GET', path: '/v1/onboarding/catalog', auth: 'owner', scopes: [], response: O.OnboardingCatalogResponse, status: 200, idempotent: false, extension: true },
+  searchOnboarding: { method: 'GET', path: '/v1/onboarding/search', auth: 'owner', scopes: [], query: O.OnboardingSearchQuery, response: O.OnboardingSearchResponse, status: 200, idempotent: false, extension: true },
+  createOnboardingPick: { method: 'POST', path: '/v1/onboarding/picks', auth: 'owner', scopes: [], body: O.CreatePickRequest, response: O.CreatePickResponse, status: 201, idempotent: true, extension: true },
+  deleteOnboardingPick: { method: 'DELETE', path: '/v1/onboarding/picks/{id}', auth: 'owner', scopes: [], params: O.PickParams, response: O.DeletePickResponse, status: 200, idempotent: true, extension: true },
+  putOnboardingExclusions: { method: 'PUT', path: '/v1/onboarding/exclusions', auth: 'owner', scopes: [], body: O.PutExclusionsRequest, response: O.ExclusionsResponse, status: 200, idempotent: true, extension: true },
+  completeOnboarding: { method: 'POST', path: '/v1/onboarding/complete', auth: 'owner', scopes: [], body: O.CompleteOnboardingRequest, response: O.CompleteOnboardingResponse, status: 200, idempotent: true, extension: true },
+  getOnboardingState: { method: 'GET', path: '/v1/onboarding/state', auth: 'owner', scopes: [], response: O.OnboardingStateResponse, status: 200, idempotent: false, extension: true },
+  getOnboardingSeed: { method: 'GET', path: '/v1/onboarding/seed', auth: 'owner', scopes: [], response: O.TasteSeedStatus, status: 200, idempotent: false, extension: true },
+  // Settings -> Taste (screen 18). Reading picks is taste:read under the existing
+  // grant rules (selected-collection agents: whole-library access only); changing
+  // them stays with the owner. Removing below the minimum is allowed here.
+  listTastePicks: { method: 'GET', path: '/v1/taste/picks', auth: 'account', scopes: ['taste:read'], response: O.TastePicksResponse, status: 200, idempotent: false, extension: true },
+  createTastePick: { method: 'POST', path: '/v1/taste/picks', auth: 'owner', scopes: [], body: O.CreatePickRequest, response: O.CreatePickResponse, status: 201, idempotent: true, extension: true },
+  deleteTastePick: { method: 'DELETE', path: '/v1/taste/picks/{id}', auth: 'owner', scopes: [], params: O.PickParams, response: O.DeletePickResponse, status: 200, idempotent: true, extension: true },
 } as const satisfies Record<string, RouteContract>;
 
 export type RouteName = keyof typeof ROUTES;

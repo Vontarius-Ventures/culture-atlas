@@ -1,11 +1,12 @@
 # culture atlas capture platform design specification
 
-Version 2.1 · October 15, 2026 · Implementation specification, not an implementation-complete claim.
+Version 2.1 · October 15, 2026 · Implementation specification, not an implementation-complete claim. Amended by [2.2: taste onboarding and fast analysis](../onboarding-and-fast-analysis.md) (October 18, 2026).
 
 Build a cloud-hosted, multi-user culture atlas where each customer captures photos/videos with their own phone, browser or supported Meta glasses and uploads existing files. No World Observer runtime, founder device, local relay or customer server is required. Meta Glasses is included in the implementation and presented as **Experimental**. Concentrate is the initial model gateway, using the operator's existing credits after account/model qualification.
 
 ## Build order and authority
 
+0. [Spec amendment 2.2: taste onboarding and fast analysis](../onboarding-and-fast-analysis.md), built per [build plan v2.2](../../docs/build-plan-v2.2.md) with the measurements in [the analysis latency plan](../../docs/analysis-latency-plan.md). It wins over every document below where they conflict (sign-up taste questionnaire, taste seed job, two-stage photo reading with the `vision_photo_enrich` role and optional `reasoningEffort`, screens 14–18, `onboarding_*`/`taste_seed_enabled`/`fast_analysis_two_stage`/`while_we_look_enabled` flags).
 1. [Product and architecture](PRODUCT-AND-ARCHITECTURE.md)
 2. [Backend and device contracts](BACKEND-CONTRACTS.md)
 3. [Concentrate integration](CONCENTRATE.md)

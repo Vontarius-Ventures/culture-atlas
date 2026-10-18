@@ -48,6 +48,17 @@ export const JobPayloads = {
   }),
   sensor_poll: z.object({ sensor_connection_id: Uuid }),
   purge_deleted: z.object({ before: z.iso.datetime({ offset: true }).optional() }),
+  /**
+   * Seeds the account's feed pool from its onboarding picks: Qloo insights per
+   * category (at most 6 Qloo requests, at most 3 concurrent), then a new
+   * FeedSnapshot. Reads the picks current at run time; `taste_revision` is the
+   * revision that completed onboarding (dedupe and staleness checks).
+   */
+  taste_seed: z.object({
+    taste_revision: z.number().int().nonnegative(),
+    catalog_version: z.string().min(1).max(64).nullable(),
+    categories: z.array(Category).min(1).max(4).default(['wear', 'play', 'watch', 'eat']),
+  }),
 } as const satisfies Record<JobType, z.ZodType>;
 
 export type JobPayload<T extends JobType> = z.infer<(typeof JobPayloads)[T]>;

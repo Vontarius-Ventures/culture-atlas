@@ -73,6 +73,10 @@ export const DomainConfigSchema = z.object({
   AGENT_API_ENABLED: z.string().optional(),
   COLLECTION_SHARING_ENABLED: z.string().optional(),
   AGENT_REMOTE_CAPTURE_ENABLED: z.string().optional(),
+  /** Spec amendment 2.2 switches (default on): onboarding gate, taste seed job, "While we look". */
+  ONBOARDING_REQUIRED: z.string().optional(),
+  TASTE_SEED_ENABLED: z.string().optional(),
+  WHILE_WE_LOOK_ENABLED: z.string().optional(),
   FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()

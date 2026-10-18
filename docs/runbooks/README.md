@@ -33,6 +33,14 @@ an account) or for one account (`--account <uuid>`):
 | `agent_remote_capture_enabled` | New capture requests; queued commands are cancelled when the phone next claims; a delivered command fails its pre-execution check. Off by default anyway until `AGENT_REMOTE_CAPTURE_ENABLED=true`. |
 | `collection_sharing_enabled` | Viewing shared collections and media, redeeming links, accepting invitations, creating or broadening shares. Owners can still list, narrow and revoke. Shares, sessions and memberships are kept. |
 
+Amendment 2.2 adds four killable flags: `onboarding_required`, `taste_seed_enabled`,
+`fast_analysis_two_stage` and `while_we_look_enabled`. The kill list and flag
+evaluation accept them now; the services that honor them land with build plan
+v2.2 packages A–D, so until then a kill only changes the evaluated flag (and
+`GET /v2/capabilities`). Intended effects: new accounts reach the feed without
+the questionnaire; no new seed jobs (labeled examples fill the feed); photos
+use the single-call reading; the "While we look" strip is hidden.
+
 ```sh
 sudo atlas-ops pnpm ops:kill kill agent_api_enabled --reason "<why>"
 sudo atlas-ops pnpm ops:kill kill collection_sharing_enabled --account <uuid> --reason "<why>"

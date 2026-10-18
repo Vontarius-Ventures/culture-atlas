@@ -94,6 +94,13 @@ export function evaluateCaptureCapabilities(
       agent_api_enabled: policy.agentApiEnabled,
       collection_sharing_enabled: policy.sharingEnabled,
       agent_remote_capture_enabled: false,
+      // Amendment 2.2 spec defaults; the server overlays its authoritative
+      // evaluation (applyFeatureFlagsToCapabilities). Two-stage analysis
+      // depends on model readiness, so the base keeps it off.
+      onboarding_required: true,
+      taste_seed_enabled: true,
+      fast_analysis_two_stage: false,
+      while_we_look_enabled: true,
     },
     limits: {
       photo_max_bytes: limits.photoMaxBytes,

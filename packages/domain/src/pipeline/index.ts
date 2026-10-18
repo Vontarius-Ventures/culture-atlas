@@ -5,6 +5,7 @@ import { generatePlan } from './generate-plan';
 import { purgeDeleted } from './purge';
 import { replacePlanSection } from './replace-plan-section';
 import { sensorPoll } from './sensor-poll';
+import { tasteSeed } from './taste-seed';
 
 /** JobType -> handler. apps/worker dispatches through this map. */
 export const JOB_HANDLERS: JobHandlerMap = {
@@ -14,4 +15,5 @@ export const JOB_HANDLERS: JobHandlerMap = {
   replace_plan_section: replacePlanSection,
   sensor_poll: sensorPoll,
   purge_deleted: purgeDeleted,
+  taste_seed: tasteSeed,
 };

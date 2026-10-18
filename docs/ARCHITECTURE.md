@@ -176,6 +176,16 @@ Tests never touch the network; use the fakes in `@culture-atlas/providers/testin
 
 `media/image.ts` handles intake. `sniffImageType` is implemented; `normalizeImage` is a stub. The prebuilt `sharp@0.35.5` / libvips 8.18 in this repo decodes AVIF but not HEVC-based HEIC, so HEIC uploads must return `unsupported_image` with conversion guidance unless a HEIC decoder is added.
 
+### Amendment 2.2 shared contracts (taste onboarding and fast analysis)
+
+Phase 0 of [build plan v2.2](build-plan-v2.2.md) fixed these so packages A–E can work in parallel. Change them only additively and together with their tests.
+
+- **Onboarding DTOs:** `packages/domain/src/schemas/onboarding.ts` (catalog file and items with real Qloo refs, consumer catalog entries without Qloo ids, pick requests that accept only a catalog id or a server-issued search `result_id`, picks, onboarding state with `min_picks` 3, food exclusions with the plan-constraint limits, per-category seed status, Settings → Taste picks). Routes: `ROUTES.getOnboardingCatalog`, `searchOnboarding`, `createOnboardingPick`, `deleteOnboardingPick`, `putOnboardingExclusions`, `completeOnboarding`, `getOnboardingState`, `getOnboardingSeed` (all `/v1/onboarding/*`, browser account owner only) and `listTastePicks` (`taste:read`), `createTastePick`, `deleteTastePick` (`/v1/taste/picks`, owner). Route files under `apps/web/app/v1/onboarding/**` and `apps/web/app/v1/taste/picks/**` belong to package A.
+- **Taste seed job:** job type `taste_seed` (`enums.ts`), payload `JobPayloads.taste_seed` (`taste_revision`, `catalog_version`, `categories`), dedupe key `tasteSeedDedupeKey`, handler `pipeline/taste-seed.ts` (a non-retryable `not_implemented` stub until package B replaces it).
+- **Two-stage reading:** `VlmQuickRead`, `VlmQuickCandidate`, `VlmEnrichment` and the `toVlmAnalysis(quick, enrichment?)` signature (stub until package C) in `packages/providers/src/vlm/types.ts`; model role `vision_photo_enrich` (`ModelRole`, `MODEL_ROLE_VALUES`, ledger CHECKs, `parseModelProfiles` accepts up to 5 profiles, 10 qualification fixtures); optional `ModelProfile.reasoningEffort` (`none`/`minimal`/`low`/`medium`/`high`, part of `profileHash`; the transport must send it only when set).
+- **Flags:** `onboarding_required`, `taste_seed_enabled`, `while_we_look_enabled` (default on; env `ONBOARDING_REQUIRED`, `TASTE_SEED_ENABLED`, `WHILE_WE_LOOK_ENABLED`; service-enforced via `serviceFeatureState`/`requireServiceFeature`) and `fast_analysis_two_stage` (default off; on only when analysis is enabled and `analysisReadiness.enrichReady` reports a ready Concentrate `vision_photo_enrich` role). All four are killable.
+- **Copy:** exact strings under the `onboarding.*`, `building.*`, `while_we_look.*`, `ready.*` and `settings_taste.*` keys of `specs/capture-platform-v2/design/copy.json` (mirrored in `apps/web/components/v2/copy.ts`).
+
 ## Database
 
 `db/migrations/001_init.sql` implements every record in the spec's data model, plus `uploads`, `discovery_jobs` (the third parent for provider queries and recommendations), `agent_connection_collections` (grant rows, cascading on collection delete), `item_exclusions`, `taste_profiles`, `job_stages`, `idempotency_keys`, `sensor_imports` (dedupe ledger), `trace_events` and `usage_counters`. Notable constraints:
@@ -190,6 +200,7 @@ Migration rules:
 
 - Never edit an applied migration; the runner stores checksums and refuses. Add a new file instead.
 - To avoid numbering collisions between parallel streams, use the stream's range: providers `010-019`, capture/compiler `020-029`, library/plans `030-039`, agents/sensor `040-049`, web `050-059` (for example `031_collections_cover_index.sql`). Each migration must stand on its own after `001`.
+- Spec amendment 2.2 ([build plan v2.2](build-plan-v2.2.md)) reserves: phase 0 integration `100-109` (`100_onboarding_contracts.sql` widens the kill-switch flag list and the model-ledger role list), package A onboarding backend `110-119`, package B taste seed `120-129`, package C fast two-stage analysis `130-139`. Packages D (web UI) and E (native) add no migrations; ask the integrator for a number if one becomes necessary.
 - Pool connections run with `timezone=UTC`. `bigint` counts come back as JS numbers and `date` as `YYYY-MM-DD` strings.
 
 ## Testing

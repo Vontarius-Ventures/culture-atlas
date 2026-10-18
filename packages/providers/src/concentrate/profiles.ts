@@ -4,16 +4,38 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { ModelRole } from '../model-gateway/types';
 
+/** Every model role a profile can qualify (ModelRole). */
+export const MODEL_ROLE_VALUES = [
+  'vision_photo',
+  'vision_video_frame',
+  'research_text',
+  'composer',
+  /** Stage-2 background enrichment of a photo (spec amendment 2.2). */
+  'vision_photo_enrich',
+] as const satisfies readonly ModelRole[];
+
+/**
+ * Reasoning effort a profile was qualified with. Sent as `reasoning.effort`
+ * only when the profile sets it; never sent otherwise (FAST-03).
+ */
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export const ModelProfileSchema = z
   .object({
     gateway: z.literal('concentrate'),
-    role: z.enum(['vision_photo', 'vision_video_frame', 'research_text', 'composer']),
+    role: z.enum(MODEL_ROLE_VALUES),
     version: z.string().min(1),
     // Exact provider/model, never "auto", a bare model, or a marketing default.
     model: z.string().regex(/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9][a-zA-Z0-9._/-]*$/),
     provider: z.string().min(1),
     allowedFallbackProviders: z.array(z.string()).length(0),
     maxOutputTokens: z.number().int().positive().max(16_000),
+    /**
+     * Optional qualified reasoning effort. Part of the profile, so it is part
+     * of profileHash and a qualification artifact binds the exact effort.
+     */
+    reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
     maxInputTokens: z.number().int().positive(),
     maxInputBytes: z.number().int().positive().max(1_000_000),
     image: z
@@ -61,7 +83,7 @@ export type ModelProfile = z.infer<typeof ModelProfileSchema>;
 export type ModelProfiles = Partial<Record<ModelRole, ModelProfile>>;
 
 export function parseModelProfiles(value: unknown): ModelProfiles {
-  const profiles = z.array(ModelProfileSchema).max(4).parse(value);
+  const profiles = z.array(ModelProfileSchema).max(MODEL_ROLE_VALUES.length).parse(value);
   const result: ModelProfiles = {};
   for (const profile of profiles) {
     if (result[profile.role]) throw new Error('Duplicate model role');
@@ -112,7 +134,7 @@ export const QualificationArtifactSchema = z
     kind: z.literal('concentrate-qualification'),
     artifact_id: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/),
     created_at: z.iso.datetime(),
-    role: z.enum(['vision_photo', 'vision_video_frame', 'research_text', 'composer']),
+    role: z.enum(MODEL_ROLE_VALUES),
     model: z.string().min(1),
     provider: z.string().min(1),
     profile_hash: z.string().regex(/^[0-9a-f]{64}$/),
@@ -152,6 +174,8 @@ export const QUALIFICATION_MINIMUM_FIXTURES: Record<ModelRole, number> = {
   vision_video_frame: 3,
   research_text: 3,
   composer: 3,
+  // Amendment 2.2: both photo stages qualify on >=10 real, owned photos.
+  vision_photo_enrich: 10,
 };
 
 function findString(value: unknown, needle: string): boolean {

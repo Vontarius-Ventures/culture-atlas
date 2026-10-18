@@ -1,7 +1,13 @@
 import type { z } from 'zod';
 import type { CallOptions } from '../errors';
 
-export type ModelRole = 'vision_photo' | 'vision_video_frame' | 'research_text' | 'composer';
+export type ModelRole =
+  | 'vision_photo'
+  | 'vision_video_frame'
+  | 'research_text'
+  | 'composer'
+  /** Stage-2 background photo enrichment (spec amendment 2.2). */
+  | 'vision_photo_enrich';
 export interface ModelIdentity {
   accountId: string;
   jobId: string;

@@ -498,7 +498,11 @@
           "concentrate_analysis_enabled": false,
           "agent_api_enabled": false,
           "collection_sharing_enabled": false,
-          "agent_remote_capture_enabled": false
+          "agent_remote_capture_enabled": false,
+          "onboarding_required": true,
+          "taste_seed_enabled": true,
+          "fast_analysis_two_stage": false,
+          "while_we_look_enabled": true
         },
         "limits": {
           "photo_max_bytes": 15728640,

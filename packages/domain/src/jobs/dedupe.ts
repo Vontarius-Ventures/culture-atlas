@@ -50,3 +50,8 @@ export function planDedupeKey(input: { planId: string; version: number }): strin
 export function planReplacementDedupeKey(input: { planId: string; baseVersion: number; section: string; instruction?: string }): string {
   return `replace_plan_section:${digest([input.planId, input.baseVersion, input.section, input.instruction ?? null])}`;
 }
+
+/** One active seed per account and taste revision (a re-completion after new picks seeds again). */
+export function tasteSeedDedupeKey(input: { owner: Owner; tasteRevision: number }): string {
+  return `taste_seed:${digest([ownerKey(input.owner), input.tasteRevision])}`;
+}

@@ -67,10 +67,14 @@ export async function photoAnalysisReady(): Promise<boolean> {
 export async function photoAnalysisReadiness(): Promise<{
   budgetAvailable: boolean;
   providerReady: boolean;
+  enrichReady: boolean;
 }> {
   const availability = await roleAvailability('vision_photo');
+  // Stage-2 enrichment (fast_analysis_two_stage) never falls back to Elorian.
+  const enrich = await roleAvailability('vision_photo_enrich', getProviders().modelGateway, false);
   return {
     providerReady: availability !== 'unavailable',
     budgetAvailable: availability === 'available',
+    enrichReady: enrich === 'available',
   };
 }

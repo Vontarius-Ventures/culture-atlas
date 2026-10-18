@@ -26,6 +26,7 @@ export const MODEL_ROLES = [
   'vision_video_frame',
   'research_text',
   'composer',
+  'vision_photo_enrich',
 ] as const satisfies readonly ModelRole[];
 
 export interface ModelGatewayOptions {
@@ -130,7 +131,11 @@ export function createModelGateway(
     vision_video_frame: config.VLM_MODEL,
     research_text: config.RESEARCH_MODEL,
     composer: config.COMPOSER_MODEL,
-  };
+    // Stage-2 enrichment may pin a different route than stage 1 (e.g. a richer
+    // model); its profile is the only source of truth until a dedicated
+    // environment assertion exists.
+    vision_photo_enrich: undefined,
+  } satisfies Record<ModelRole, string | undefined>;
   const transport =
     options.transport ??
     createConcentrateTransport({

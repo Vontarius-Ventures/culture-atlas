@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeTestDb, getTestDb, insertAccount } from '../testing';
 import {
@@ -41,9 +41,11 @@ function inputs(over: Partial<FeatureFlagInputs> = {}): FeatureFlagInputs {
       privacyVerified: true,
       budgetAvailable: true,
       providerReady: true,
+      enrichReady: true,
     },
     agentApiConfigured: true,
     sharingConfigured: true,
+    onboarding: { requiredConfigured: true, seedConfigured: true, whileWeLookConfigured: true },
     optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: false },
     ...over,
   };
@@ -59,11 +61,15 @@ describe('feature flag contract', () => {
     for (const flag of Object.keys(spec.activation_rules)) expect(KILLABLE_FLAGS).toContain(flag);
   });
 
-  it('killable flags match the database CHECK constraint', async () => {
-    const sql = await readFile(
-      new URL('db/migrations/085_feature_kills_and_push.sql', root),
-      'utf8',
-    );
+  it('killable flags match the latest database CHECK constraint', async () => {
+    // The newest migration that (re)defines the feature_flag_kills flag list wins.
+    const dir = new URL('db/migrations/', root);
+    const files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
+    let sql = '';
+    for (const file of files) {
+      const text = await readFile(new URL(file, dir), 'utf8');
+      if (/feature_flag_kills/.test(text) && /flag IN \(/.test(text)) sql = text;
+    }
     const list = /flag IN \(([^)]*)\)/.exec(sql)![1]!;
     expect(
       list
@@ -151,6 +157,52 @@ describe('evaluateFeatureFlags', () => {
         paused.flags.meta_glasses_capture_enabled,
     ).toBe(false);
     expect(paused.flags.media_library).toBe(true);
+  });
+});
+
+describe('amendment 2.2 flags', () => {
+  it('default to the spec values and are evaluated server-side', () => {
+    expect(FEATURE_FLAG_DEFAULTS).toMatchObject({
+      onboarding_required: true,
+      taste_seed_enabled: true,
+      fast_analysis_two_stage: false,
+      while_we_look_enabled: true,
+    });
+    const on = evaluateFeatureFlags(inputs());
+    expect(on.flags.onboarding_required && on.flags.taste_seed_enabled).toBe(true);
+    expect(on.flags.while_we_look_enabled && on.flags.fast_analysis_two_stage).toBe(true);
+  });
+
+  it('two-stage analysis needs the analysis path and a ready enrichment profile', () => {
+    const noEnrich = evaluateFeatureFlags(
+      inputs({ analysis: { ...inputs().analysis, enrichReady: false } }),
+    );
+    expect(noEnrich.flags.fast_analysis_two_stage).toBe(false);
+    expect(noEnrich.reasons.fast_analysis_two_stage).toEqual(['model_unqualified']);
+    expect(noEnrich.flags.concentrate_analysis_enabled).toBe(true);
+    const noAnalysis = evaluateFeatureFlags(
+      inputs({ analysis: { ...inputs().analysis, privacyVerified: false } }),
+    );
+    expect(noAnalysis.flags.fast_analysis_two_stage).toBe(false);
+    expect(noAnalysis.reasons.fast_analysis_two_stage).toEqual(['analysis_unavailable']);
+    const killed = evaluateFeatureFlags(inputs({ killed: new Set(['fast_analysis_two_stage']) }));
+    expect(killed.flags.fast_analysis_two_stage).toBe(false);
+    expect(killed.flags.concentrate_analysis_enabled).toBe(true);
+  });
+
+  it('onboarding, seed and While-we-look turn off by env or kill, independently', () => {
+    const off = evaluateFeatureFlags(
+      inputs({
+        onboarding: { requiredConfigured: false, seedConfigured: true, whileWeLookConfigured: true },
+        killed: new Set(['while_we_look_enabled']),
+      }),
+    );
+    expect(off.flags.onboarding_required).toBe(false);
+    expect(off.reasons.onboarding_required).toEqual(['not_enabled']);
+    expect(off.flags.taste_seed_enabled).toBe(true);
+    expect(off.flags.while_we_look_enabled).toBe(false);
+    expect(off.reasons.while_we_look_enabled).toEqual(['temporarily_disabled']);
+    expect(off.killed).toEqual(['while_we_look_enabled']);
   });
 });
 
@@ -299,6 +351,19 @@ describe('resolveFeatureFlags (server state)', () => {
       (await flagsFor(b.accountId, ib, { FEATURE_KILL_SWITCHES: 'camera_video, bogus' }))
         .camera_video,
     ).toBe(false);
+    // Amendment 2.2: the onboarding gate can be killed per account (database CHECK allows it).
+    await setFeatureKill(db, {
+      flag: 'onboarding_required',
+      accountId: a.accountId,
+      reason: 'test',
+      actor: 'vitest',
+    });
+    expect((await flagsFor(a.accountId, ia)).onboarding_required).toBe(false);
+    expect((await flagsFor(b.accountId, ib)).onboarding_required).toBe(true);
+    expect((await flagsFor(b.accountId, ib, { ONBOARDING_REQUIRED: 'false' })).onboarding_required).toBe(
+      false,
+    );
+    await liftFeatureKill(db, { flag: 'onboarding_required', accountId: a.accountId });
     await liftFeatureKill(db, { flag: 'meta_glasses_capture_enabled', accountId: a.accountId });
     expect((await flagsFor(a.accountId, ia)).meta_glasses_capture_enabled).toBe(true);
     await expect(
@@ -307,22 +372,59 @@ describe('resolveFeatureFlags (server state)', () => {
   });
 });
 
+describe('fast_analysis_two_stage readiness', () => {
+  it('stays off unless the injected readiness reports a ready enrichment role', async () => {
+    const account = await insertAccount();
+    const env = {
+      CONCENTRATE_API_KEY: 'k',
+      CONCENTRATE_PROFILES_JSON: '[]',
+      MODEL_DAILY_SPEND_LIMIT_USD: '5',
+    };
+    const resolve = (analysisReadiness?: Parameters<typeof resolveFeatureFlags>[1]['analysisReadiness']) =>
+      resolveFeatureFlags(db, {
+        accountId: account.accountId,
+        installationId: null,
+        env,
+        now: new Date(),
+        videoDecoderQualified: false,
+        analysisReadiness,
+      });
+    const ready = { budgetAvailable: true, providerReady: true };
+    expect((await resolve(ready)).flags.concentrate_analysis_enabled).toBe(true);
+    expect((await resolve(ready)).flags.fast_analysis_two_stage).toBe(false);
+    expect((await resolve({ ...ready, enrichReady: true })).flags.fast_analysis_two_stage).toBe(true);
+    expect((await resolve()).flags.fast_analysis_two_stage).toBe(false);
+  });
+});
+
 describe('service-enforced flags', () => {
   it('evaluate exactly like the capabilities evaluation for every env and kill combination', () => {
     const values = [undefined, 'true', 'false'];
     const kills = [[], ['agent_api_enabled'], ['collection_sharing_enabled'], ['agent_remote_capture_enabled'],
-      ['agent_api_enabled', 'agent_remote_capture_enabled']];
+      ['agent_api_enabled', 'agent_remote_capture_enabled'], ['onboarding_required', 'while_we_look_enabled'],
+      ['taste_seed_enabled']];
+    const onboardingEnvs = values.flatMap((required) =>
+      values.flatMap((seed) => values.map((look) => ({ required, seed, look }))));
     for (const api of values)
       for (const sharing of values)
         for (const remote of values)
+          for (const o of onboardingEnvs)
           for (const killedList of kills) {
             const killed = new Set(killedList);
-            const env = { AGENT_API_ENABLED: api, COLLECTION_SHARING_ENABLED: sharing, AGENT_REMOTE_CAPTURE_ENABLED: remote };
+            const env = {
+              AGENT_API_ENABLED: api, COLLECTION_SHARING_ENABLED: sharing, AGENT_REMOTE_CAPTURE_ENABLED: remote,
+              ONBOARDING_REQUIRED: o.required, TASTE_SEED_ENABLED: o.seed, WHILE_WE_LOOK_ENABLED: o.look,
+            };
             const full = evaluateFeatureFlags(inputs({
               killed,
               agentApiConfigured: api !== 'false',
               sharingConfigured: sharing !== 'false',
               optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: remote === 'true' },
+              onboarding: {
+                requiredConfigured: o.required !== 'false',
+                seedConfigured: o.seed !== 'false',
+                whileWeLookConfigured: o.look !== 'false',
+              },
             }));
             for (const flag of SERVICE_FEATURES) {
               const service = evaluateServiceFeature(flag, { killed, env });

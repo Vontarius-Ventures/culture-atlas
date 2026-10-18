@@ -10,6 +10,7 @@ export * from './discoveries';
 export * from './items';
 export * from './collections';
 export * from './taste';
+export * from './onboarding';
 export * from './plans';
 export * from './agent-connections';
 export * from './agent-platform';

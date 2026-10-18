@@ -43,6 +43,9 @@ Parse `output` message/text items rather than assuming the first output item con
 | vision_video_frame | One timestamped frame per bounded call | Same VLM reading plus server-owned frame linkage | Up to 8 frames, partial result allowed |
 | research_text | Bounded authoritative excerpts, source IDs and extracted claims | Structured supported claims | No invented citations; URLs must come from actual research |
 | composer | Selected collection items, restrictions and grounded discoveries | Structured plan | Existing exclusions/taste contracts remain |
+| vision_photo_enrich (2.2) | The same photo at 768 px plus stage-1 title and candidate names as DATA | `VlmEnrichment`: observations, visible text, confirmations, up to 4 extra candidates, regions | Background stage 2 of the [two-stage reading](../onboarding-and-fast-analysis.md); never reorders or removes published cards; failures leave stage 1 intact |
+
+Amendment 2.2: under the two-stage reading, `vision_photo` returns the slim `VlmQuickRead` (512 px, 600 output tokens, 10 s). Profiles may set an optional `reasoningEffort` (`none`, `minimal`, `low`, `medium`, `high`); it is part of the profile hash, is sent as `reasoning.effort` only when the qualified profile sets it, and both photo roles qualify on at least 10 real, owned photos. Schemas: `packages/providers/src/vlm/types.ts`.
 
 Model IDs are selected from the current catalog and pinned after qualification; do not bake a marketing-page example into a default. A profile contains gateway, requested model/provider, allowed fallback providers, output-token cap, image max bytes/pixels/count, timeout, schema support, ZDR requirement, prompt/schema version, catalog snapshot timestamp and qualification artifact ID. Text roles may share a qualified model; vision must prove image support. Roles are independently unavailable when their profile is missing; media storage remains available.
 

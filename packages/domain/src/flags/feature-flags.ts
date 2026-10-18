@@ -33,10 +33,18 @@ export const FEATURE_FLAG_DEFAULTS = {
   agent_api_enabled: true,
   collection_sharing_enabled: true,
   agent_remote_capture_enabled: false,
+  // Spec amendment 2.2 (specs/onboarding-and-fast-analysis.md).
+  onboarding_required: true,
+  taste_seed_enabled: true,
+  fast_analysis_two_stage: false,
+  while_we_look_enabled: true,
 } as const;
 
 export type FeatureFlagName = Exclude<keyof typeof FEATURE_FLAG_DEFAULTS, 'meta_glasses_label'>;
-/** Must match the CHECK constraint in db/migrations/085_feature_kills_and_push.sql. */
+/**
+ * Must match the feature_flag_kills CHECK constraint (latest definition:
+ * db/migrations/100_onboarding_contracts.sql, originally 085).
+ */
 export const KILLABLE_FLAGS = [
   'camera_photo',
   'camera_video',
@@ -51,6 +59,10 @@ export const KILLABLE_FLAGS = [
   'agent_api_enabled',
   'collection_sharing_enabled',
   'agent_remote_capture_enabled',
+  'onboarding_required',
+  'taste_seed_enabled',
+  'fast_analysis_two_stage',
+  'while_we_look_enabled',
 ] as const satisfies readonly FeatureFlagName[];
 export type KillableFlag = (typeof KILLABLE_FLAGS)[number];
 export const isKillableFlag = (value: string): value is KillableFlag =>
@@ -80,9 +92,20 @@ export interface FeatureFlagInputs {
     privacyVerified: boolean;
     budgetAvailable: boolean;
     providerReady: boolean;
+    /** A qualified, ready vision_photo_enrich profile (stage-2 enrichment). */
+    enrichReady: boolean;
   };
   agentApiConfigured: boolean;
   sharingConfigured: boolean;
+  /** Amendment 2.2 operator switches (env, default on; "false"/"0" turns them off). */
+  onboarding: {
+    /** ONBOARDING_REQUIRED */
+    requiredConfigured: boolean;
+    /** TASTE_SEED_ENABLED */
+    seedConfigured: boolean;
+    /** WHILE_WE_LOOK_ENABLED */
+    whileWeLookConfigured: boolean;
+  };
   /** Explicit operator opt-ins for default-off flags without a written activation rule. */
   optIn: {
     automaticAnalysis: boolean;
@@ -165,6 +188,22 @@ export function evaluateFeatureFlags(i: FeatureFlagInputs): FeatureFlagEvaluatio
       [i.sharingConfigured, 'not_enabled'],
     ]),
     agent_remote_capture_enabled: false,
+    // Amendment 2.2. A kill (or env off) on onboarding_required lets new
+    // accounts reach the feed without picks; the questionnaire itself stays
+    // available in Settings -> Taste.
+    onboarding_required: gate('onboarding_required', [
+      [i.onboarding.requiredConfigured, 'not_enabled'],
+    ]),
+    taste_seed_enabled: gate('taste_seed_enabled', [[i.onboarding.seedConfigured, 'not_enabled']]),
+    // Two-stage reading needs the stage-1 analysis path AND a qualified, ready
+    // stage-2 (vision_photo_enrich) profile. Off: the single-call reading runs.
+    fast_analysis_two_stage: gate('fast_analysis_two_stage', [
+      [analysis, 'analysis_unavailable'],
+      [i.analysis.enrichReady, 'model_unqualified'],
+    ]),
+    while_we_look_enabled: gate('while_we_look_enabled', [
+      [i.onboarding.whileWeLookConfigured, 'not_enabled'],
+    ]),
   };
   // Remote capture is an agent API operation: a killed or unconfigured agent
   // API turns it off too (the phone then cancels queued commands on claim).
@@ -240,6 +279,8 @@ interface DeviceFlagState {
 export interface AnalysisReadiness {
   budgetAvailable: boolean;
   providerReady: boolean;
+  /** Stage-2 enrichment role is qualified and ready (absent: not ready). */
+  enrichReady?: boolean;
 }
 
 /**
@@ -346,9 +387,17 @@ export async function resolveFeatureFlags(
         (Number(env.MODEL_DAILY_SPEND_LIMIT_USD) > 0 || elorianFallback) &&
         analysisReadiness.budgetAvailable,
       providerReady: analysisReadiness.providerReady,
+      // Elorian is never used for analysis stages (amendment 2.2), so only a
+      // ready Concentrate enrichment profile counts here.
+      enrichReady: analysisReadiness.enrichReady === true,
     },
     agentApiConfigured: notOff(env.AGENT_API_ENABLED),
     sharingConfigured: notOff(env.COLLECTION_SHARING_ENABLED),
+    onboarding: {
+      requiredConfigured: notOff(env.ONBOARDING_REQUIRED),
+      seedConfigured: notOff(env.TASTE_SEED_ENABLED),
+      whileWeLookConfigured: notOff(env.WHILE_WE_LOOK_ENABLED),
+    },
     optIn: {
       automaticAnalysis: on(env.AUTOMATIC_ANALYSIS_ENABLED),
       nativeVideoModelInput: on(env.NATIVE_VIDEO_MODEL_INPUT_ENABLED),
@@ -362,11 +411,18 @@ export async function resolveFeatureFlags(
  * through GET /v2/capabilities): agent REST/MCP/media/events access, collection
  * sharing (owner broadening, redemption, viewing) and agent remote capture
  * (request, phone claim and the phone's pre-execution check).
+ * Amendment 2.2 adds the onboarding gate (whether the questionnaire blocks the
+ * personal feed), the taste seed job and the "While we look" strip.
+ * fast_analysis_two_stage depends on model readiness, so it is evaluated with
+ * resolveFeatureFlags (analysisReadiness.enrichReady), not here.
  */
 export const SERVICE_FEATURES = [
   'agent_api_enabled',
   'collection_sharing_enabled',
   'agent_remote_capture_enabled',
+  'onboarding_required',
+  'taste_seed_enabled',
+  'while_we_look_enabled',
 ] as const;
 export type ServiceFeature = (typeof SERVICE_FEATURES)[number];
 
@@ -374,6 +430,9 @@ export interface ServiceFeatureEnv {
   AGENT_API_ENABLED?: string;
   COLLECTION_SHARING_ENABLED?: string;
   AGENT_REMOTE_CAPTURE_ENABLED?: string;
+  ONBOARDING_REQUIRED?: string;
+  TASTE_SEED_ENABLED?: string;
+  WHILE_WE_LOOK_ENABLED?: string;
   FEATURE_KILL_SWITCHES?: string;
 }
 
@@ -392,6 +451,12 @@ export function evaluateServiceFeature(
     if (!notOff(env.AGENT_API_ENABLED)) reasons.push('not_enabled');
   } else if (flag === 'collection_sharing_enabled') {
     if (!notOff(env.COLLECTION_SHARING_ENABLED)) reasons.push('not_enabled');
+  } else if (flag === 'onboarding_required') {
+    if (!notOff(env.ONBOARDING_REQUIRED)) reasons.push('not_enabled');
+  } else if (flag === 'taste_seed_enabled') {
+    if (!notOff(env.TASTE_SEED_ENABLED)) reasons.push('not_enabled');
+  } else if (flag === 'while_we_look_enabled') {
+    if (!notOff(env.WHILE_WE_LOOK_ENABLED)) reasons.push('not_enabled');
   } else {
     if (!on(env.AGENT_REMOTE_CAPTURE_ENABLED)) reasons.push('not_enabled');
     if (!agentApi) reasons.push('agent_api_disabled');
@@ -430,6 +495,9 @@ const SERVICE_FEATURE_MESSAGES: Record<ServiceFeature, string> = {
   agent_api_enabled: 'Agent access is temporarily unavailable.',
   collection_sharing_enabled: 'Sharing is temporarily unavailable.',
   agent_remote_capture_enabled: 'Agent capture is not available.',
+  onboarding_required: 'The taste questionnaire is temporarily unavailable.',
+  taste_seed_enabled: 'Building your feed is temporarily unavailable.',
+  while_we_look_enabled: 'Suggestions are temporarily unavailable.',
 };
 
 /**

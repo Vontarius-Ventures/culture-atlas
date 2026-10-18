@@ -48,6 +48,8 @@ export const JOB_TYPES = [
   'replace_plan_section',
   'sensor_poll',
   'purge_deleted',
+  /** Seeds a new account's feed from its onboarding picks (spec amendment 2.2). */
+  'taste_seed',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;

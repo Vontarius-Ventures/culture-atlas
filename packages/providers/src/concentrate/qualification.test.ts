@@ -143,6 +143,12 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
       },
       research_text: { role: 'research_text', model: 'fixture/model-1', state: 'qualified' },
       composer: { role: 'composer', model: null, state: 'unavailable', reason: 'not_configured' },
+      vision_photo_enrich: {
+        role: 'vision_photo_enrich',
+        model: null,
+        state: 'unavailable',
+        reason: 'not_configured',
+      },
     });
     expect(transport).not.toHaveBeenCalled();
   });
