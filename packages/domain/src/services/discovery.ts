@@ -97,13 +97,23 @@ interface PoolRow {
 
 /**
  * Candidates connected to explicit saves: recommendations of (a) captures the
- * owner saved as inspirations or saved items from, and (b) related-discovery
- * jobs started from a saved item. Owner-scoped: another user's private
+ * owner saved as inspirations or saved items from, (b) related-discovery
+ * jobs started from a saved item, and (c) for accounts, the taste seed built
+ * from onboarding picks (amendment 2.2): per category, the latest seed run
+ * that published that category. Owner-scoped: another user's private
  * captures never enter a feed. Already-saved and hidden items are excluded.
  */
 export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedCandidate[]> {
   const own = (alias: string) => ownerPredicate(owner, alias, 1).sql;
   const params = ownerPredicate(owner, '', 1).params;
+  // Taste seeds are account data; anonymous sessions never have one.
+  const seedSql =
+    owner.kind === 'account'
+      ? `SELECT DISTINCT ON (tc.category) tc.run_id, tc.category
+           FROM taste_seed_categories tc JOIN taste_seed_runs tr ON tr.id = tc.run_id
+          WHERE tr.owner_account_id = $1 AND tc.state = 'ready'
+          ORDER BY tc.category, tc.ready_at DESC, tr.created_at DESC`
+      : `SELECT NULL::uuid AS run_id, NULL::text AS category WHERE false`;
   const { rows } = await db.query<PoolRow>(
     `WITH saved AS (SELECT si.discovery_item_id AS id FROM saved_items si WHERE ${own('si')}),
      ctx_analyses AS (
@@ -113,11 +123,13 @@ export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedC
                OR EXISTS (SELECT 1 FROM recommendations r0 WHERE r0.analysis_id = c.active_analysis_id
                                                              AND r0.discovery_item_id IN (SELECT id FROM saved)))),
      ctx_jobs AS (
-       SELECT dj.id FROM discovery_jobs dj WHERE ${own('dj')} AND dj.origin_item_id IN (SELECT id FROM saved))
+       SELECT dj.id FROM discovery_jobs dj WHERE ${own('dj')} AND dj.origin_item_id IN (SELECT id FROM saved)),
+     ctx_seed AS (${seedSql})
      SELECT r.discovery_item_id AS item_id, di.canonical_key, di.category, di.kind,
-            COALESCE(r.analysis_id, r.discovery_job_id)::text || ':' || COALESCE(r.category, '-') AS list_id, r.rank
+            COALESCE(r.analysis_id, r.discovery_job_id, r.taste_seed_run_id)::text || ':' || COALESCE(r.category, '-') AS list_id, r.rank
        FROM recommendations r JOIN discovery_items di ON di.id = r.discovery_item_id
-      WHERE (r.analysis_id IN (SELECT id FROM ctx_analyses) OR r.discovery_job_id IN (SELECT id FROM ctx_jobs))
+      WHERE (r.analysis_id IN (SELECT id FROM ctx_analyses) OR r.discovery_job_id IN (SELECT id FROM ctx_jobs)
+             OR (r.taste_seed_run_id, r.category) IN (SELECT run_id, category FROM ctx_seed))
         AND (di.is_sample OR ${own('di')})
         AND di.id NOT IN (SELECT id FROM saved)
       ORDER BY r.created_at DESC, r.rank
@@ -164,7 +176,7 @@ interface SnapshotRow {
 const FeedCursor = z.object({ f: z.uuid(), r: z.number().int().nonnegative(), p: z.number().int().nonnegative() });
 
 /** Build and store a new snapshot from the EXISTING pool (no provider calls, no jobs). */
-async function createSnapshot(ctx: ServiceContext, owner: Owner, revision: number, category: Category | null): Promise<SnapshotRow> {
+async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner, revision: number, category: Category | null): Promise<SnapshotRow> {
   const hidden = await hiddenKeys(ctx.db, owner);
   let pool: FeedCandidate[] = (await hasSaves(ctx.db, owner)) ? await buildSavedPool(ctx.db, owner) : [];
   pool = pool.filter((c) => !hidden.has(c.canonical_key));
@@ -183,13 +195,49 @@ async function createSnapshot(ctx: ServiceContext, owner: Owner, revision: numbe
   const ordered = interleaveFeed(filtered, hidden).map((c) => c.id);
   const cols = ownerColumns(owner);
   const { rows } = await ctx.db.query<SnapshotRow>(
+    // created_at is the wall-clock insert time, not the transaction start, so a
+    // rebuild that waited for a lock (taste seed publishing) still sorts after
+    // the snapshot it supersedes.
     `INSERT INTO feed_snapshots (owner_account_id, owner_session_id, taste_revision, category, ordered_item_ids,
-                                 is_example_feed, available_categories, expires_at)
-     VALUES ($1, $2, $3, $4, $5::uuid[], $6, $7::text[], $8)
+                                 is_example_feed, available_categories, expires_at, created_at)
+     VALUES ($1, $2, $3, $4, $5::uuid[], $6, $7::text[], $8, clock_timestamp())
      RETURNING id, taste_revision, category, ordered_item_ids, is_example_feed, available_categories, expires_at`,
     [cols.owner_account_id, cols.owner_session_id, revision, category, ordered, isExample, available, addHours(ctx.now(), FEED_SNAPSHOT_TTL_HOURS)],
   );
   return rows[0]!;
+}
+
+/**
+ * Rebuild the owner's FeedSnapshot from the current pool after new
+ * recommendations were published outside a page fetch (the taste seed job).
+ * Builds the unfiltered snapshot plus a fresh one for every category filter
+ * already viewed at this taste revision, so the next page fetch without a
+ * cursor reads the new pool. Existing snapshots stay valid for open cursors.
+ * Uses the usual feed rules (interleaving, dedupe, hidden suppression,
+ * labeled examples topping up a short pool). No provider calls, no jobs.
+ */
+export async function rebuildFeedSnapshots(
+  db: Queryable,
+  owner: Owner,
+  now: () => Date = () => new Date(),
+): Promise<{ feedId: string; revision: number; isExampleFeed: boolean; availableCategories: Category[]; itemCount: number }> {
+  const revision = await getTasteRevision(db, owner);
+  const own = ownerPredicate(owner, '', 1);
+  const { rows } = await db.query<{ category: Category }>(
+    `SELECT DISTINCT category FROM feed_snapshots
+      WHERE ${own.sql} AND taste_revision = $2 AND category IS NOT NULL AND expires_at > $3`,
+    [...own.params, revision, now()],
+  );
+  const ctx = { db, now };
+  const main = await createSnapshot(ctx, owner, revision, null);
+  for (const r of rows) await createSnapshot(ctx, owner, revision, r.category);
+  return {
+    feedId: main.id,
+    revision,
+    isExampleFeed: main.is_example_feed,
+    availableCategories: main.available_categories,
+    itemCount: main.ordered_item_ids.length,
+  };
 }
 
 async function findSnapshot(ctx: ServiceContext, owner: Owner, where: { id?: string; revision?: number; category?: Category | null }): Promise<SnapshotRow | null> {
@@ -216,14 +264,17 @@ async function recommendationContexts(db: Queryable, owner: Owner, itemIds: stri
   const out = new Map<string, CardRecommendationContext>();
   if (itemIds.length === 0) return out;
   const own = (alias: string) => ownerPredicate(owner, alias, 2).sql;
+  const seedOwner = owner.kind === 'account' ? 'ts.owner_account_id = $2' : 'false';
   const { rows } = await db.query<{ item_id: string; id: string; origin: RecommendationOrigin; display_reason: string | null }>(
     `SELECT DISTINCT ON (r.discovery_item_id) r.discovery_item_id AS item_id, r.id, r.origin, r.display_reason
        FROM recommendations r
        LEFT JOIN analyses a ON a.id = r.analysis_id
        LEFT JOIN captures c ON c.id = a.capture_id
        LEFT JOIN discovery_jobs dj ON dj.id = r.discovery_job_id
+       LEFT JOIN taste_seed_runs ts ON ts.id = r.taste_seed_run_id
       WHERE r.discovery_item_id = ANY($1::uuid[])
-        AND ((c.id IS NOT NULL AND ${own('c')} AND c.deleted_at IS NULL) OR (dj.id IS NOT NULL AND ${own('dj')}))
+        AND ((c.id IS NOT NULL AND ${own('c')} AND c.deleted_at IS NULL) OR (dj.id IS NOT NULL AND ${own('dj')})
+             OR (ts.id IS NOT NULL AND ${seedOwner}))
       ORDER BY r.discovery_item_id, r.created_at DESC`,
     [itemIds, ...ownerPredicate(owner, '', 2).params],
   );

@@ -79,11 +79,14 @@ async function loadItem(db: Queryable, id: string): Promise<ItemRow> {
  * originated from a granted collection item, or a plan derived entirely from
  * granted items. Anything else could carry private context from outside the
  * grant (e.g. "Connected to <brand> in your photo.").
+ * A taste-seed recommendation (amendment 2.2) derives from the whole taste
+ * (onboarding picks), so only full-library principals of the account see it.
  */
 async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: string, recommendationId?: string): Promise<RecRow | null> {
   const own = (alias: string) => ownerPredicate(owner, alias, 3).sql;
   const params: unknown[] = [itemId, recommendationId ?? null, ...ownerPredicate(owner, '', 3).params];
   const planOwner = owner.kind === 'account' ? `pl.owner_account_id = $3` : 'false';
+  const seedOwner = owner.kind === 'account' && !isGrantLimited(ctx.principal) ? `ts.owner_account_id = $3` : 'false';
   let captureGrant = '';
   let jobGrant = '';
   let planGrant = '';
@@ -106,10 +109,12 @@ async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: st
        LEFT JOIN captures c ON c.id = a.capture_id
        LEFT JOIN discovery_jobs dj ON dj.id = r.discovery_job_id
        LEFT JOIN plans pl ON pl.id = r.plan_id
+       LEFT JOIN taste_seed_runs ts ON ts.id = r.taste_seed_run_id
       WHERE r.discovery_item_id = $1 AND ($2::uuid IS NULL OR r.id = $2)
         AND ((c.id IS NOT NULL AND c.deleted_at IS NULL AND ${own('c')} ${captureGrant})
           OR (dj.id IS NOT NULL AND ${own('dj')} ${jobGrant})
-          OR (pl.id IS NOT NULL AND ${planOwner} ${planGrant}))
+          OR (pl.id IS NOT NULL AND ${planOwner} ${planGrant})
+          OR (ts.id IS NOT NULL AND ${seedOwner}))
       ORDER BY r.created_at DESC LIMIT 1`,
     params,
   );

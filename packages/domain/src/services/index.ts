@@ -26,3 +26,4 @@ export * as cards from './cards';
 export * as display from './display';
 export { createCaptureIdentityAdapter, createNativePrincipalResolver } from './capture-identity';
 export * as devicePush from './device-push';
+export * as tasteSeed from './taste-seed';

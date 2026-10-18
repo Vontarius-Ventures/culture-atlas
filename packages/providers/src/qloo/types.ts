@@ -112,6 +112,11 @@ export interface QlooInsightsRequest {
   /** filter.results.entities: restrict scored candidates. */
   filterResultsEntities?: string[];
   filterTags?: string[];
+  /**
+   * filter.tag.types: with filterType 'urn:tag', restrict returned tags to
+   * these tag-type URNs (e.g. 'urn:tag:cuisine:qloo').
+   */
+  filterTagTypes?: string[];
   biasTrends?: 'off' | 'low' | 'medium' | 'high';
   explainability?: boolean;
   /** Typical max 50. */

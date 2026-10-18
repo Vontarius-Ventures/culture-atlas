@@ -176,6 +176,7 @@ export async function getTrace(ctx: ServiceContext, input: { job_id: string }): 
   let planId: string | null = null;
   let planVersion: number | null = null;
   let discoveryJobId: string | null = null;
+  let tasteSeedRunId: string | null = null;
   let section: string | null = null;
 
   switch (job.type) {
@@ -199,6 +200,14 @@ export async function getTrace(ctx: ServiceContext, input: { job_id: string }): 
       planVersion = typeof payload.version === 'number' ? payload.version : null;
       section = job.type === 'replace_plan_section' ? ((payload.section as string) ?? null) : null;
       break;
+    case 'taste_seed': {
+      const { rows } = await db.query<{ id: string }>(
+        'SELECT id FROM taste_seed_runs WHERE job_id = $1 AND owner_account_id = $2',
+        [job.id, accountId],
+      );
+      tasteSeedRunId = rows[0]?.id ?? null;
+      break;
+    }
     default:
       break;
   }
@@ -284,7 +293,15 @@ export async function getTrace(ctx: ServiceContext, input: { job_id: string }): 
 
   // --- Provider queries and recommendations -----------------------------------
   const parent =
-    analysisId ? { col: 'analysis_id', id: analysisId } : discoveryJobId ? { col: 'discovery_job_id', id: discoveryJobId } : planId ? { col: 'plan_id', id: planId } : null;
+    analysisId
+      ? { col: 'analysis_id', id: analysisId }
+      : discoveryJobId
+        ? { col: 'discovery_job_id', id: discoveryJobId }
+        : planId
+          ? { col: 'plan_id', id: planId }
+          : tasteSeedRunId
+            ? { col: 'taste_seed_run_id', id: tasteSeedRunId }
+            : null;
   const versionFilter = parent?.col === 'plan_id' && planVersion !== null ? ' AND (plan_version IS NULL OR plan_version = $2)' : '';
   const parentParams = parent ? (versionFilter ? [parent.id, planVersion] : [parent.id]) : [];
 
