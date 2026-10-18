@@ -19,6 +19,8 @@ import type { JobOutcome } from '../jobs/types';
 import type { Owner } from '../principal';
 import type { Focus } from '../schemas/common';
 import { activateAnalysis, ensureAnalysisRow } from '../services/analyses';
+import { foodExclusionsFor } from '../services/onboarding';
+import { violatedExclusions } from '../composer/dietary';
 import { JobBudget } from './budget';
 import { composeDishIdeas } from './dishes';
 import { reciprocalRankFusion, selectDiverse, type RankedList } from './fusion';
@@ -1002,6 +1004,8 @@ export class CaptureCompiler {
       providerQueryId = out.providerQueryId;
     }
 
+    // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat ideas.
+    const foodExclusions = await foodExclusionsFor(ctx.db, this.owner);
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
       await tx.query(`DELETE FROM recommendations WHERE analysis_id = $1 AND category = 'eat'`, [this.analysisId]);
       let position = 0;
@@ -1009,6 +1013,7 @@ export class CaptureCompiler {
         if (position >= LIMITS.recommendationsPerCategory) break;
         const key = `food:${slugify(idea.name)}|${[...idea.referenceIds].sort().join(',')}`;
         if (excluded.has(key) || usedKeys.has(key)) continue;
+        if (violatedExclusions({ title: idea.name, cuisine: idea.cuisine, description: idea.reason }, foodExclusions).length) continue;
         const itemId = await upsertDiscoveryItem(tx, this.owner, {
           kind: 'food',
           category: 'eat',

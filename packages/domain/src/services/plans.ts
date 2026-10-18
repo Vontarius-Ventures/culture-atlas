@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { requireAccount, requireScopes } from '../authz';
+import { hasScope, requireAccount, requireScopes } from '../authz';
 import { inputHasAnchors } from '../composer/movie-night';
 import {
   InputContribution,
@@ -18,6 +18,7 @@ import { cancelJobsForResult, enqueueJob, planDedupeKey, planReplacementDedupeKe
 import { loadItemAnchors, type ItemAnchor } from '../library/anchors';
 import { grantedIds, isGrantLimited, loadAccessibleCollection, planWithinGrant } from '../library/access';
 import { tsKey } from '../library/sql';
+import { loadFoodExclusions } from './onboarding';
 import { consumeDailyQuota } from '../quotas';
 import type { Image, PageQuery } from '../schemas/common';
 import type {
@@ -201,8 +202,15 @@ export async function createPlan(ctx: ServiceContext, body: CreatePlanRequest): 
     }
     await consumeDailyQuota(db, { principal: p, metric: 'plans', config: ctx.config, now: ctx.now() });
 
+    // Amendment 2.2: the account's food exclusions are the default when the
+    // request states none. Agents only get them applied with preferences:read
+    // (plan constraints are readable with plans:read).
+    const defaultExclusions =
+      body.constraints?.dietary_exclusions === undefined && hasScope(ctx.principal, 'preferences:read')
+        ? await loadFoodExclusions(db, p.accountId)
+        : [];
     const constraints = {
-      dietary_exclusions: body.constraints?.dietary_exclusions ?? [],
+      dietary_exclusions: body.constraints?.dietary_exclusions ?? defaultExclusions,
       instruction: body.constraints?.instruction || null,
     };
     const snapshot: PlanSnapshot = {

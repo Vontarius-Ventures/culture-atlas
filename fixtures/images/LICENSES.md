@@ -29,6 +29,8 @@ The build environment could not reach Wikimedia Commons (`commons.wikimedia.org`
 | `samples/feed/softer-silhouette.jpg` | Sample feed | Unstructured blazer on a cane chair |
 | `samples/feed/blossom-branch.jpg` | Sample feed | Blossom branch against a soft background |
 
+The taste questionnaire (spec amendment 2.2) reuses twelve of these illustrations as its image picks (`fixtures/onboarding/catalog.json`, `image.license: "project-original"`). Each stands for real Qloo tags resolved by `scripts/build-onboarding-catalog.ts`; the illustration does not claim to depict them.
+
 Use the photos above as `display_metadata.image.url` (for example `/samples/feed/tea-rituals.jpg`) with `license: "project-original"` when seeding sample discovery items. Artists and films have no image, so the UI renders its text treatment. Never substitute a picture of a real performer or a film still without a license.
 
 ## Capture platform v2 illustrations (project-owned)

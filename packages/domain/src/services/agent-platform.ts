@@ -8,8 +8,9 @@ import { createAgentConnection, listAgentConnections } from './agent-connections
 import { generateAgentCredential } from './auth';
 
 const defaults = {
-  theme: 'system', language: 'en', default_capture_mode: 'photo', video_muted: true, exploration: 'balanced',
-} as const;
+  theme: 'system' as const, language: 'en' as const, default_capture_mode: 'photo' as const, video_muted: true,
+  exploration: 'balanced' as const, food: { exclusions: [] as string[] },
+};
 const meta = (ctx: ServiceContext) => ({ schema_version: '2.1' as const, request_id: ctx.requestId });
 
 export function preferenceVersion(ifMatch?: string | null): number {

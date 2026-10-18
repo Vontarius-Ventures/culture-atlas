@@ -9,6 +9,7 @@ import { claimSession } from './accounts';
 import { csrfTokenFor, hashToken, randomToken } from './auth';
 import { getIdentityMail } from './identity-mail';
 import { endAuthority } from './native-sessions';
+import { evaluateSignInTrigger, initForNewAccount } from './onboarding';
 import { normalizeEmail } from './passwords';
 
 export { DevIdentityOutbox, setIdentityMail, hasIdentityMail } from './identity-mail';
@@ -212,6 +213,7 @@ export async function completeEmail(ctx: ServiceContext, raw: Complete) {
     if (binding.rows[0] && accountId && binding.rows[0].account_id !== accountId)
       throw new AppError('unauthenticated');
     accountId ??= binding.rows[0]?.account_id ?? null;
+    const isNewAccount = !accountId;
     if (!accountId) {
       const legacy = await tx.query('SELECT 1 FROM account_credentials WHERE email=$1', [c.email]);
       if (legacy.rowCount) throw new AppError('unauthenticated');
@@ -254,6 +256,11 @@ export async function completeEmail(ctx: ServiceContext, raw: Complete) {
       c.claim_session && c.initiating_session_id
         ? await claimSession(tx, c.initiating_session_id, accountId, now)
         : { captures: 0, saved_items: 0 };
+    // Amendment 2.2 taste questionnaire: required for a new account; for an
+    // existing one, evaluated once at sign-in (fewer than 3 explicit saves).
+    // GET /v1/session reports it as onboarding_required.
+    if (isNewAccount) await initForNewAccount(ctx, tx, accountId, null);
+    else if (c.purpose !== 'verify') await evaluateSignInTrigger(ctx, tx, accountId);
     if (c.destination !== 'web') {
       const grant = `cne_${randomToken()}`;
       await tx.query(

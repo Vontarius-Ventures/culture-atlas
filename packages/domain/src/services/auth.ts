@@ -6,6 +6,7 @@ import { AppError } from '../errors';
 import { createAccountImpl } from './accounts';
 import type { Principal } from '../principal';
 import type { CreateAccountRequest, CreateAccountResponse, SessionResponse } from '../schemas/auth';
+import { isOnboardingRequired } from './onboarding';
 import type { ServiceContext } from '../context';
 import { addHours, iso } from '../util/time';
 import { resolveNativePrincipal } from './native-sessions';
@@ -167,6 +168,7 @@ export async function getSessionInfo(ctx: ServiceContext): Promise<SessionRespon
     return {
       principal: { kind: 'account', account_id: p.accountId, session_id: p.sessionId, expires_at: iso(rows[0]?.expires_at ?? null), is_demo_owner: p.isDemoOwner },
       csrf_token: csrfTokenFor(p.sessionId, ctx.config.SESSION_SECRET),
+      onboarding_required: await isOnboardingRequired(ctx, p.accountId),
     };
   }
   throw new AppError('scope_denied', { message: 'Session info is only available to browser sessions.' });

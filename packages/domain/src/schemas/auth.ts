@@ -12,6 +12,12 @@ export const SessionResponse = z.object({
   }),
   /** Double-submit CSRF token; send as `x-csrf-token` on cookie-authenticated mutations. */
   csrf_token: z.string(),
+  /**
+   * Amendment 2.2 (additive): true while this account must finish the taste
+   * questionnaire (/welcome/taste) before its personal feed. Absent for
+   * anonymous visitors, who never see it.
+   */
+  onboarding_required: z.boolean().optional(),
 });
 export type SessionResponse = z.infer<typeof SessionResponse>;
 
@@ -80,6 +86,8 @@ export const CreateAccountResponse = z.object({
   /** CSRF token for the NEW session (the session id rotates on account creation). */
   csrf_token: z.string().optional(),
   pending_save: PendingSaveResult.nullable().optional(),
+  /** Amendment 2.2 (additive): the taste questionnaire comes next (/welcome/taste). */
+  onboarding_required: z.boolean().optional(),
 });
 export type CreateAccountResponse = z.infer<typeof CreateAccountResponse>;
 

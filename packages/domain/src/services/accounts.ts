@@ -21,6 +21,7 @@ import { dummyPasswordHash, hashPassword, normalizeEmail, verifyPassword } from 
 import { recordPreference } from './preferences';
 import { bumpTasteRevision, rebuildTasteProfile } from './taste';
 import { endAuthority } from './native-sessions';
+import { evaluateSignInTrigger, initForNewAccount } from './onboarding';
 
 /**
  * Accounts, demo sign-in and anonymous-session claim.
@@ -236,12 +237,16 @@ export async function createAccountImpl(
     const session = await createAccountSession(tx, accountId, ctx);
     const principal: AccountPrincipal = { kind: 'account', accountId, sessionId: session.sessionId, isDemoOwner: rows[0]!.is_demo_owner };
     const pending = await performPendingSave(ctx, tx, principal, input.pending_save);
+    // Amendment 2.2: the taste questionnaire follows account creation; the
+    // intended save is kept and counts as one pick.
+    const onboardingRequired = await initForNewAccount(ctx, tx, accountId, pending);
     return {
       account_id: accountId,
       session_id: session.sessionId,
       claimed,
       csrf_token: csrfTokenFor(session.sessionId, ctx.config.SESSION_SECRET),
       pending_save: pending,
+      onboarding_required: onboardingRequired,
       sessionToken: session.sessionToken,
       expiresAt: session.expiresAt,
     };
@@ -301,10 +306,14 @@ export async function signIn(
       isDemoOwner: row.is_demo_owner,
     };
     const pending = await performPendingSave(ctx, tx, principal, input.pending_save);
+    // Amendment 2.2: an existing account with fewer than 3 explicit saves sees
+    // the questionnaire once (evaluated once per account, here).
+    const onboardingRequired = await evaluateSignInTrigger(ctx, tx, row.account_id);
     return {
       ...sessionResponse(ctx, { accountId: row.account_id, sessionId: session.sessionId, expiresAt: session.expiresAt, isDemoOwner: row.is_demo_owner }),
       claimed,
       pending_save: pending,
+      onboarding_required: onboardingRequired,
       sessionToken: session.sessionToken,
       expiresAt: session.expiresAt,
     };

@@ -1,0 +1,835 @@
+{
+  "kind": "onboarding-catalog",
+  "catalog_version": "2026-10-18.025c6486d0",
+  "retrieved_at": "2026-10-18T20:53:43.911Z",
+  "items": [
+    {
+      "id": "img-racing",
+      "kind": "image",
+      "category": "wear",
+      "label": "Vintage racing",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:style:qloo:vintage",
+          "name": "Vintage",
+          "subtype": "urn:tag:style:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:mod_revival",
+          "name": "Mod Revival",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "image": {
+        "url": "/samples/outfit.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Cream racing jacket with red and navy stripes on a wooden chair",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:02.735Z"
+    },
+    {
+      "id": "img-linen",
+      "kind": "image",
+      "category": "wear",
+      "label": "Linen days",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:style:qloo:minimalist",
+          "name": "Minimalist",
+          "subtype": "urn:tag:style:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:scandinavian",
+          "name": "Scandinavian",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/linen-days.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Linen shirt on a hanger with leaf shadows",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:33.065Z"
+    },
+    {
+      "id": "img-tailoring",
+      "kind": "image",
+      "category": "wear",
+      "label": "Soft tailoring",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:quiet_luxury",
+          "name": "Quiet Luxury",
+          "subtype": "urn:tag:decor:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:preppy",
+          "name": "Preppy",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/softer-silhouette.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Unstructured blazer on a cane chair",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:00.904Z"
+    },
+    {
+      "id": "img-corners",
+      "kind": "image",
+      "category": "wear",
+      "label": "Quiet corners",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:japandi",
+          "name": "Japandi",
+          "subtype": "urn:tag:decor:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:wabi_sabi",
+          "name": "Wabi Sabi",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/room.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Paned window with afternoon light, a low table and a branch in a vase",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:52:59.866Z"
+    },
+    {
+      "id": "img-forms",
+      "kind": "image",
+      "category": "wear",
+      "label": "Sculptural forms",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:mid_century_modern",
+          "name": "Mid Century Modern",
+          "subtype": "urn:tag:decor:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:style:qloo:minimalist",
+          "name": "Minimalist",
+          "subtype": "urn:tag:style:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/sculptural-forms.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Rounded cream chair beside a side table and a branch",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:06.725Z"
+    },
+    {
+      "id": "img-listening",
+      "kind": "image",
+      "category": "play",
+      "label": "Sunday listening",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:jazz",
+          "name": "Jazz",
+          "subtype": "urn:tag:genre:music"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:bossa_nova",
+          "name": "Bossa Nova",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/sunday-listening.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Record player, records and a lamp",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:01.568Z"
+    },
+    {
+      "id": "img-cinema",
+      "kind": "image",
+      "category": "watch",
+      "label": "Late-night cinema",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:media:film_noir",
+          "name": "Film-noir",
+          "subtype": "urn:tag:genre:media"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:subgenre:qloo:art_house",
+          "name": "Art House",
+          "subtype": "urn:tag:subgenre:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/late-night-cinema.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Cinema marquee lights and two silhouettes",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:43.911Z"
+    },
+    {
+      "id": "img-night",
+      "kind": "image",
+      "category": "watch",
+      "label": "Night wanderings",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:subgenre:qloo:neo_noir",
+          "name": "Neo-noir",
+          "subtype": "urn:tag:subgenre:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:ambient",
+          "name": "Ambient",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/night-wanderings.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Lamplit street after rain",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:33.417Z"
+    },
+    {
+      "id": "img-lanterns",
+      "kind": "image",
+      "category": "eat",
+      "label": "Lantern-lit alleys",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:izakaya",
+          "name": "Izakaya",
+          "subtype": "urn:tag:cuisine:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:ramen",
+          "name": "Ramen",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/rainy-alley.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Lantern-lit alley at night",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:34.360Z"
+    },
+    {
+      "id": "img-tea",
+      "kind": "image",
+      "category": "eat",
+      "label": "Tea rituals",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:tea_house",
+          "name": "Tea House",
+          "subtype": "urn:tag:cuisine:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:wabi_sabi",
+          "name": "Wabi Sabi",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/tea-rituals.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Cast-iron teapot, a cup and a blossom branch",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:34.662Z"
+    },
+    {
+      "id": "img-noodles",
+      "kind": "image",
+      "category": "eat",
+      "label": "Sesame noodles",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:sichuan",
+          "name": "Sichuan",
+          "subtype": "urn:tag:cuisine:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:ramen",
+          "name": "Ramen",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/sesame-noodles.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Bowl of noodles with chopsticks",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:05.624Z"
+    },
+    {
+      "id": "img-table",
+      "kind": "image",
+      "category": "eat",
+      "label": "Around the table",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:mezze",
+          "name": "Mezze",
+          "subtype": "urn:tag:cuisine:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:tapas",
+          "name": "Tapas",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/feed/around-the-table.jpg",
+        "width": 1000,
+        "height": 1250,
+        "alt": "Shared dishes on a wooden table, seen from above",
+        "credit": "culture atlas (original illustration)",
+        "license": "project-original"
+      },
+      "retrieved_at": "2026-10-18T20:53:32.114Z"
+    },
+    {
+      "id": "chip-wear-japandi",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Japandi",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:japandi",
+          "name": "Japandi",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:52:59.748Z"
+    },
+    {
+      "id": "chip-wear-wabi-sabi",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Wabi-sabi",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:wabi_sabi",
+          "name": "Wabi Sabi",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:52:59.866Z"
+    },
+    {
+      "id": "chip-wear-minimalist",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Minimalist",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:style:qloo:minimalist",
+          "name": "Minimalist",
+          "subtype": "urn:tag:style:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:00.040Z"
+    },
+    {
+      "id": "chip-wear-vintage",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Vintage",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:style:qloo:vintage",
+          "name": "Vintage",
+          "subtype": "urn:tag:style:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:00.327Z"
+    },
+    {
+      "id": "chip-wear-bohemian",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Bohemian",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:bohemian",
+          "name": "Bohemian",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:00.506Z"
+    },
+    {
+      "id": "chip-wear-preppy",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Preppy",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:preppy",
+          "name": "Preppy",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:00.879Z"
+    },
+    {
+      "id": "chip-wear-quiet-luxury",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Quiet luxury",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:quiet_luxury",
+          "name": "Quiet Luxury",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:00.904Z"
+    },
+    {
+      "id": "chip-wear-art-deco",
+      "kind": "chip",
+      "category": "wear",
+      "label": "Art deco",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:art_deco",
+          "name": "Art Deco",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:01.161Z"
+    },
+    {
+      "id": "chip-play-jazz",
+      "kind": "chip",
+      "category": "play",
+      "label": "Jazz",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:jazz",
+          "name": "Jazz",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:01.510Z"
+    },
+    {
+      "id": "chip-play-bossa-nova",
+      "kind": "chip",
+      "category": "play",
+      "label": "Bossa nova",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:bossa_nova",
+          "name": "Bossa Nova",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:01.568Z"
+    },
+    {
+      "id": "chip-play-ambient",
+      "kind": "chip",
+      "category": "play",
+      "label": "Ambient",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:ambient",
+          "name": "Ambient",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:02.009Z"
+    },
+    {
+      "id": "chip-play-indie-folk",
+      "kind": "chip",
+      "category": "play",
+      "label": "Indie folk",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:indie_folk",
+          "name": "Indie - Folk",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:02.110Z"
+    },
+    {
+      "id": "chip-play-classical",
+      "kind": "chip",
+      "category": "play",
+      "label": "Classical",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:classical",
+          "name": "Classical",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:43.747Z"
+    },
+    {
+      "id": "chip-play-city-pop",
+      "kind": "chip",
+      "category": "play",
+      "label": "City pop",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:city_pop",
+          "name": "City Pop",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:02.623Z"
+    },
+    {
+      "id": "chip-play-mod-revival",
+      "kind": "chip",
+      "category": "play",
+      "label": "Mod revival",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:mod_revival",
+          "name": "Mod Revival",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:02.735Z"
+    },
+    {
+      "id": "chip-play-lo-fi",
+      "kind": "chip",
+      "category": "play",
+      "label": "Lo-fi",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:lo_fi",
+          "name": "Lo - Fi",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:32.050Z"
+    },
+    {
+      "id": "chip-watch-film-noir",
+      "kind": "chip",
+      "category": "watch",
+      "label": "Film noir",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:media:film_noir",
+          "name": "Film-noir",
+          "subtype": "urn:tag:genre:media"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:03.235Z"
+    },
+    {
+      "id": "chip-watch-slow-cinema",
+      "kind": "chip",
+      "category": "watch",
+      "label": "Slow cinema",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:subgenre:qloo:slow_cinema",
+          "name": "Slow Cinema",
+          "subtype": "urn:tag:subgenre:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:03.383Z"
+    },
+    {
+      "id": "chip-watch-french-new-wave",
+      "kind": "chip",
+      "category": "watch",
+      "label": "French New Wave",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:subgenre:qloo:french_new_wave",
+          "name": "French New Wave",
+          "subtype": "urn:tag:subgenre:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:03.545Z"
+    },
+    {
+      "id": "chip-watch-coming-of-age",
+      "kind": "chip",
+      "category": "watch",
+      "label": "Coming-of-age",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:media:coming_age",
+          "name": "Coming of age",
+          "subtype": "urn:tag:genre:media"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:03.872Z"
+    },
+    {
+      "id": "chip-watch-documentary",
+      "kind": "chip",
+      "category": "watch",
+      "label": "Documentary",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:media:documentary",
+          "name": "Documentary",
+          "subtype": "urn:tag:genre:media"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:03.980Z"
+    },
+    {
+      "id": "chip-watch-heist",
+      "kind": "chip",
+      "category": "watch",
+      "label": "Heist",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:subgenre:qloo:heist",
+          "name": "Heist",
+          "subtype": "urn:tag:subgenre:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:04.321Z"
+    },
+    {
+      "id": "chip-watch-romantic-comedy",
+      "kind": "chip",
+      "category": "watch",
+      "label": "Romantic comedy",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:subgenre:qloo:romantic_comedy",
+          "name": "Romantic Comedy",
+          "subtype": "urn:tag:subgenre:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:04.453Z"
+    },
+    {
+      "id": "chip-watch-animation",
+      "kind": "chip",
+      "category": "watch",
+      "label": "Animation",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:media:animation",
+          "name": "Animation",
+          "subtype": "urn:tag:genre:media"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:04.608Z"
+    },
+    {
+      "id": "chip-eat-sichuan-cuisine",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Sichuan cuisine",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:sichuan",
+          "name": "Sichuan",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:04.899Z"
+    },
+    {
+      "id": "chip-eat-natural-wine",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Natural wine",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:natural_wine",
+          "name": "Natural Wine",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:05.032Z"
+    },
+    {
+      "id": "chip-eat-dim-sum",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Dim sum",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:dim_sum",
+          "name": "Dim Sum",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:05.420Z"
+    },
+    {
+      "id": "chip-eat-mezze",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Mezze",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:mezze",
+          "name": "Mezze",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:05.517Z"
+    },
+    {
+      "id": "chip-eat-ramen",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Ramen",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:ramen",
+          "name": "Ramen",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:05.624Z"
+    },
+    {
+      "id": "chip-eat-bakeries",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Bakeries",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:bakery",
+          "name": "Bakery",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:05.987Z"
+    },
+    {
+      "id": "chip-eat-neapolitan-pizza",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Neapolitan pizza",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:neapolitan_pizza",
+          "name": "Neapolitan Pizza",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:06.126Z"
+    },
+    {
+      "id": "chip-eat-tapas",
+      "kind": "chip",
+      "category": "eat",
+      "label": "Tapas",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:cuisine:qloo:tapas",
+          "name": "Tapas",
+          "subtype": "urn:tag:cuisine:qloo"
+        }
+      ],
+      "retrieved_at": "2026-10-18T20:53:32.114Z"
+    }
+  ]
+}
