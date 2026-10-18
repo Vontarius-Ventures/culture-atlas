@@ -7,6 +7,7 @@ import { recordRouteChange } from '@/lib/client/store';
 import { Icon } from './Icon';
 import { V2Icon, type V2IconName } from './v2/V2Icon';
 import { UploadStatusBar } from './v2/UploadStatusBar';
+import { useOnboardingGate } from './onboarding/OnboardingGate';
 
 type Section = 'discover' | 'library' | 'collections' | 'plans' | null;
 
@@ -28,8 +29,10 @@ export function sectionFor(pathname: string): Section {
  *    and no bottom bar").
  *  - default: header, footer and (mobile) bottom navigation with Capture above it.
  */
-export function chromeFor(pathname: string): 'immersive' | 'flow' | 'default' {
+export function chromeFor(pathname: string): 'immersive' | 'welcome' | 'flow' | 'default' {
   if (/^\/capture\/camera(\/|$)/.test(pathname)) return 'immersive';
+  // Amendment 2.2 screens 14-15: a plain header the page owns, no navigation.
+  if (/^\/welcome(\/|$)/.test(pathname)) return 'welcome';
   if (
     pathname === '/capture' ||
     /^\/capture\/glasses(\/|$)/.test(pathname) ||
@@ -78,6 +81,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     recordRouteChange();
   }, [pathname]);
+  // Amendment 2.2: an account that still owes the taste questionnaire goes there first.
+  const gated = useOnboardingGate(pathname);
   // Shared-collection viewers get no private navigation, owner menus or capture actions.
   if (/^\/shared(\/|$)/.test(pathname)) {
     return (
@@ -86,6 +91,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       </main>
     );
   }
+
+  if (chrome === 'welcome')
+    return <div className="shell shell--welcome">{children}</div>;
 
   if (chrome === 'immersive')
     return (
@@ -143,8 +151,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
-      <main id="main" className="main" tabIndex={-1}>
-        {children}
+      <main id="main" className="main" tabIndex={-1} aria-busy={gated || undefined}>
+        {gated ? null : children}
       </main>
       <footer className="footer">
         <div className="footer__inner">

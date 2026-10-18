@@ -12,8 +12,10 @@ import {
   type RefObject,
 } from 'react';
 import { ApiError } from '@/lib/client/api';
+import { setViewingResult, watchAnalysis } from '@/lib/client/ready';
 import { useSession } from '@/lib/client/session';
 import { Icon } from '../Icon';
+import { WhileWeLook } from '../onboarding/WhileWeLook';
 import { useToast } from '../Toast';
 import { COPY } from './copy';
 import {
@@ -63,6 +65,13 @@ export function MediaDetailView({ id }: { id: string }) {
   const momentsRef = useRef<HTMLUListElement>(null);
   const detailsId = useId();
   const moreId = useId();
+
+  // Screen 17: this page is "viewing" its own exploration; leaving it lets the
+  // ready notice announce the result.
+  useEffect(() => {
+    setViewingResult(`media:${id}`);
+    return () => setViewingResult(null);
+  }, [id]);
 
   const fetchItem = useCallback(async () => {
     try {
@@ -224,6 +233,16 @@ export function MediaDetailView({ id }: { id: string }) {
         expected_generation: item.generation,
       });
       setAnalysis(res);
+      watchAnalysis({
+        key: `media:${id}`,
+        url: `/library/media/${id}`,
+        thumbnail: item.links.poster ?? (m.kind === 'photo' ? item.links.original : null),
+        poll: async () => {
+          const next = exploreState(await mediaApi.analysis(id, res.analysis_id), { kind: m.kind });
+          if (next.kind === 'result') return { state: 'ready', url: next.url };
+          return next.kind === 'working' || next.kind === 'waiting' ? 'active' : 'gone';
+        },
+      });
     } catch (err) {
       setExploring(false);
       setAnalysisError(
@@ -367,6 +386,7 @@ export function MediaDetailView({ id }: { id: string }) {
               </p>
             )}
             {analysisError && <V2Notice tone="error">{analysisError}</V2Notice>}
+            {exploring && <WhileWeLook collapsed={false} from="discover" />}
             {item.links.analysis && !exploring && (
               <Link href={item.links.analysis} className="text-button">
                 See what we found earlier

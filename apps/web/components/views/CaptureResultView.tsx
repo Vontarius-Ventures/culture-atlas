@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import type { Category } from '@culture-atlas/domain';
 import type { CaptureResponse, Focus, ReferenceSummary } from '@culture-atlas/domain/schemas';
 import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
@@ -11,12 +11,16 @@ import { CATEGORY_LABELS, CATEGORY_ORDER } from '@/lib/client/format';
 import { isTerminal, useJob } from '@/lib/client/jobs';
 import { UI_LIMITS } from '@/lib/client/limits';
 import { cardToTarget, useSave } from '@/lib/client/save';
+import { setViewingResult, watchAnalysis } from '@/lib/client/ready';
 import { applyOverrides, getCapturePreview, useItemOverrides } from '@/lib/client/store';
 import { CardGrid, DiscoveryCard, SkeletonGrid } from '../DiscoveryCard';
 import { FilterRow } from '../FilterRow';
 import { Icon } from '../Icon';
 import { useToast } from '../Toast';
-import { BackLink, Disclosure, LoadingText, MoreMenu, Notice, PageError } from '../ui';
+import { BackLink, Disclosure, MoreMenu, Notice, PageError } from '../ui';
+import { ClockIcon } from '../onboarding/parts';
+import { WhileWeLook } from '../onboarding/WhileWeLook';
+import { COPY } from '../v2/copy';
 
 const DISCOVERY_SECTIONS = ['wear', 'play', 'watch', 'eat'] as const;
 const NO_SUBJECT_WARNING = /blur|no_subject|no_useful|unclear|low_quality/i;
@@ -121,6 +125,39 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
   });
 
   const state = deriveCaptureState(capture, job, Boolean(jobError));
+  const processingNow = state.phase === 'processing' || !capture;
+
+  // Screen 16: the "While we look" strip appears only for a reading that was
+  // running while this page was open, and collapses (never disappears) when
+  // the first result section lands, so the results below do not jump.
+  const [sawProcessing, setSawProcessing] = useState(false);
+  useEffect(() => {
+    if (capture && state.phase === 'processing' && !sawProcessing)
+      void Promise.resolve().then(() => setSawProcessing(true));
+  }, [capture, state.phase, sawProcessing]);
+
+  // Screen 17: remember an analysis this person started, so leaving the page
+  // still brings a "Your photo is ready" notice when it finishes.
+  const watchKey = `capture:${captureId}`;
+  useEffect(() => {
+    setViewingResult(watchKey);
+    return () => setViewingResult(null);
+  }, [watchKey]);
+  const watchJob = state.jobActive && capture && !capture.is_example ? (jobId ?? capture.job_id) : null;
+  const thumb = capture?.image?.url ?? preview ?? null;
+  useEffect(() => {
+    if (!watchJob) return;
+    watchAnalysis({
+      key: watchKey,
+      url: `/captures/${captureId}`,
+      thumbnail: thumb,
+      poll: async () => {
+        const j = await api.request('getJob', { params: { id: watchJob } });
+        if (!isTerminal(j)) return 'active';
+        return j.state === 'complete' || j.state === 'partial' ? 'ready' : 'gone';
+      },
+    });
+  }, [watchJob, watchKey, captureId, thumb]);
 
   const correct = async (body: {
     focus?: Focus;
@@ -252,9 +289,10 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
           {processing || !capture ? (
             <>
               <h1 className="display display--medium">Finding your next favorites…</h1>
-              <LoadingText>
-                <span className="visually-hidden">Finding your next favorites…</span>
-              </LoadingText>
+              <p className="status-line" role="status">
+                <ClockIcon />
+                {COPY['while_we_look.status']}
+              </p>
             </>
           ) : state.phase === 'failed' ? (
             <>
@@ -293,6 +331,9 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
               Updating your discoveries…
             </p>
           )}
+          {sawProcessing && (
+            <WhileWeLook collapsed={!processingNow} from="discover" />
+          )}
         </div>
       </div>
 
@@ -321,7 +362,7 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
             ))}
           </CardGrid>
         )}
-        {(processing || state.stillLoading) && <SkeletonGrid count={processing ? 6 : 2} />}
+        {(processing || state.stillLoading) && <SkeletonGrid count={processing ? 4 : 2} />}
         {!showAll && !category && filtered.length > UI_LIMITS.initialRenderedRecommendations && (
           <div className="load-more">
             <button
