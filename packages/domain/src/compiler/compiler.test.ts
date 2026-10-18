@@ -112,4 +112,17 @@ describe('JobBudget', () => {
     expect(vlm.take('vlm', 'retry')).toBe(true);
     expect(vlm.take('vlm', 'retry')).toBe(false); // two retries per stage
   });
+
+  it('reserves both photo-reading calls together and never more than the per-analysis limit', () => {
+    const two = new JobBudget({ qlooRequests: 12, researchRefs: 5, retriesPerStage: 2, visionCalls: 2 });
+    expect(two.reserveVisionCalls(3)).toBe(false);
+    expect(two.visionCallsReserved()).toBe(0);
+    expect(two.reserveVisionCalls(2)).toBe(true);
+    expect(two.reserveVisionCalls(1)).toBe(false);
+    expect(two.visionCallsReserved()).toBe(2);
+    const one = new JobBudget({ qlooRequests: 12, researchRefs: 5, retriesPerStage: 2, visionCalls: 1 });
+    expect(one.reserveVisionCalls(2)).toBe(false);
+    expect(one.reserveVisionCalls(1)).toBe(true);
+    expect(one.reserveVisionCalls(0)).toBe(false);
+  });
 });

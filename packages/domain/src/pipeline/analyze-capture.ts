@@ -7,10 +7,13 @@ import { JobCancelledError, type JobHandler } from '../jobs/handler';
  * Cultural compilation pipeline (build spec steps 3-8). See
  * compiler/analyze.ts for the stages:
  *  observe   VLM structured observations/candidates/regions/uncertainty
- *  resolve   up to 8 candidates via Qloo /search + /v2/tags; keep unmatched
- *            observations; select <= 5 anchors (cultural_references + capture_references)
+ *            (stage-1 quick read when the profile is two-stage, amendment 2.2)
+ *  resolve   up to 5 candidates via Qloo /search + /v2/tags (<= 3 in flight); keep
+ *            unmatched observations; select <= 5 anchors (cultural_references + capture_references)
  *  recommend Qloo /v2/insights per supported category with real IDs
  *            (<= 12 Qloo requests per job), provider_queries rows
+ *  enrich    stage-2 enrichment (fast_analysis_two_stage): rationales, evidence,
+ *            advisory vetoes and extra references; appends only, never reorders
  *  compose   <= 3 per category, <= 12 total; hidden items/exclusions filtered;
  *            rank fusion across sources (no raw-score averaging); recommendations
  *            with origin + provider_query_ids; discovery_items deduped by canonical_key

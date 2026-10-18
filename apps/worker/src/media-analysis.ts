@@ -21,7 +21,9 @@ import {
 import {
   FallbackVlm,
   ProviderError,
+  QUICK_READ_MAX_CANDIDATES,
   boundJpegForProfile,
+  readingForProfile,
   identityFromCaptureLease,
   type ModelGateway,
   type MultipartStorage,
@@ -267,11 +269,13 @@ export class MediaAnalysisWorker {
     const result = (
       frames: Array<{ frame_id: string | null; timestamp_ms: number | null; state: string }>,
       candidates: unknown[] = [],
+      reading?: 'quick',
     ) => ({
       mode: work.mode,
       note: kind === 'video' ? VIDEO_ANALYSIS_NOTE : null,
       frames,
       candidates,
+      ...(reading ? { reading } : {}),
     });
     const fail = async (code: string, frames: Parameters<typeof result>[0] = []) => {
       await run.publishVision(lease, { state: 'failed', errorCode: code, result: result(frames) });
@@ -316,6 +320,11 @@ export class MediaAnalysisWorker {
             objectKey: f.objectKey,
           }));
     if (!inputs.length) return fail('media_not_ready');
+    // Amendment 2.2: stage 1 (the quick read, <= 5 candidates at 512 px) runs per
+    // frame here; the single stage-2 enrichment runs in the compile job on the
+    // best frame (the aggregate's display frame), so publishing never waits on it.
+    const quickRunner = runner && readingForProfile(runner.profile) === 'quick' ? runner : undefined;
+    const frameCandidates = quickRunner ? QUICK_READ_MAX_CANDIDATES : 8;
     let checkpoints = await run.checkpoints(lease);
     let stop: string | null = null;
     for (const input of inputs) {
@@ -333,7 +342,7 @@ export class MediaAnalysisWorker {
           {
             image: { bytes: image.bytes, mediaType: 'image/jpeg' },
             focus: work.focus ? { label: String(work.focus).slice(0, 120) } : undefined,
-            maxCandidates: 8,
+            maxCandidates: frameCandidates,
           },
           {
             signal,
@@ -477,6 +486,10 @@ export class MediaAnalysisWorker {
       return fail(stop ?? codes[0] ?? 'analysis_failed', frames);
     }
     const aggregate = aggregateFrameReadings(readings, { maxCandidates: 8 });
+    // Only a reading made entirely of the qualified quick read (not a fallback
+    // model's answer) is eligible for stage 2 in the compile job.
+    const quickReading =
+      !!quickRunner && readings.every((r) => r.model === quickRunner.profile.model) ? ('quick' as const) : undefined;
     const display = inputs.find((i) => i.frameKey === aggregate.displayFrameKey)!;
     const captureId = randomUUID();
     const displayBytes = await readBounded(this.opts.storage, display.objectKey);
@@ -497,7 +510,7 @@ export class MediaAnalysisWorker {
           width: meta.width ?? 1,
           height: meta.height ?? 1,
         },
-        result: result(frames, aggregate.citations),
+        result: result(frames, aggregate.citations, quickReading),
         compile: {
           compilerVersion: config.COMPILER_VERSION,
           maxAttempts: config.JOB_MAX_ATTEMPTS,

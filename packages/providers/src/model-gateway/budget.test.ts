@@ -100,3 +100,49 @@ describe('AI-02 budget accounting, no inference', () => {
     await expect(ledger.reconcile(id, Number.NaN)).rejects.toThrow('Invalid actual cost');
   });
 });
+
+describe('two-stage reservation pre-check (amendment 2.2)', () => {
+  const quick = { ...profile, role: 'vision_photo' as const, reservationMicros: 100 };
+  const enrich = { ...profile, role: 'vision_photo_enrich' as const, reservationMicros: 200 };
+  it('is true only when both stages fit together, and reserves nothing', async () => {
+    const store = new MemorySpendStore();
+    const ledger = new ModelSpendLedger(store, {
+      ...limits,
+      accountDailyMicros: 300,
+      dailyMicros: 1000,
+      maxUnknownMicros: 1000,
+    });
+    await expect(ledger.canReserveAll(identity, [quick, enrich])).resolves.toBe(true);
+    expect((await store.read()).attempts).toHaveLength(0);
+    await ledger.reserve(identity, quick);
+    // 100 already reserved by this account: the pair (300 more) no longer fits under 300.
+    await expect(ledger.canReserveAll(identity, [quick, enrich])).resolves.toBe(false);
+    await expect(ledger.canReserveAll(identity, [enrich])).resolves.toBe(true);
+    await expect(ledger.canReserveAll(identity, [])).resolves.toBe(false);
+  });
+  it('counts both stages of one job as one analysis; false while paused or a role circuit is open', async () => {
+    const store = new MemorySpendStore();
+    const ledger = new ModelSpendLedger(store, {
+      ...limits,
+      accountDailyAnalyses: 1,
+      dailyMicros: 10_000,
+      accountDailyMicros: 10_000,
+      maxUnknownMicros: 10_000,
+    });
+    await ledger.reserve(identity, quick);
+    await expect(ledger.canReserveAll(identity, [enrich])).resolves.toBe(true);
+    await expect(
+      ledger.canReserveAll({ ...identity, jobId: 'job-2' }, [quick, enrich]),
+    ).resolves.toBe(false);
+    const id = await ledger.reserve({ ...identity, attemptKey: 'enrich' }, enrich);
+    await ledger.finish(id, 'auth', undefined, {
+      circuit: { role: 'vision_photo_enrich', reason: 'auth' },
+    });
+    await expect(ledger.canReserveAll(identity, [quick, enrich])).resolves.toBe(false);
+    await expect(ledger.canReserveAll(identity, [quick])).resolves.toBe(true);
+    await store.transaction((s) => {
+      s.pause = { reason: 'credits', until: null };
+    });
+    await expect(ledger.canReserveAll(identity, [quick])).resolves.toBe(false);
+  });
+});

@@ -27,10 +27,78 @@ export const profile: ModelProfile = {
   pricingSnapshotVersion: 'test-price1',
   reservationMicros: 100,
 };
+/** Legacy single-call reading: the profile names the full schema explicitly. */
 export const visionProfile: ModelProfile = {
   ...profile,
   role: 'vision_photo',
+  schemaVersion: 'atlas_observations_v2',
   image: { maxBytes: 10_000, maxPixels: 10_000, maxDimension: 100, maxCount: 1 },
+};
+/** Two-stage reading, stage 1 (amendment 2.2): quick read, effort none. */
+export const quickProfile: ModelProfile = {
+  ...profile,
+  role: 'vision_photo',
+  promptVersion: 'vlm-quick-v1',
+  schemaVersion: 'atlas_quick_read_v1',
+  reasoningEffort: 'none',
+  maxOutputTokens: 600,
+  image: { maxBytes: 60_000, maxPixels: 262_144, maxDimension: 512, maxCount: 1 },
+};
+/** Two-stage reading, stage 2: enrichment at 768 px, effort none. */
+export const enrichProfile: ModelProfile = {
+  ...profile,
+  role: 'vision_photo_enrich',
+  promptVersion: 'vlm-enrich-v1',
+  schemaVersion: 'atlas_enrichment_v1',
+  reasoningEffort: 'none',
+  maxOutputTokens: 1200,
+  timeoutMs: 20_000,
+  image: { maxBytes: 120_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
+};
+export const validQuickRead = {
+  title: 'Sesame noodle supper',
+  interpretation: 'A bowl of noodles that resembles a Sichuan street-food supper.',
+  candidates: [
+    {
+      name: 'Dan dan noodles',
+      type: 'cuisine',
+      relation: 'resembles',
+      certainty: 0.8,
+      categories: ['eat'],
+      tag_query: 'Sichuan cuisine',
+    },
+    {
+      name: 'Sichuan chili oil',
+      type: 'object',
+      relation: 'resembles',
+      certainty: 0.6,
+      categories: ['eat'],
+      tag_query: null,
+    },
+  ],
+  quality: { usable: true, issue: null },
+};
+export const validEnrichment = {
+  observations: [{ text: 'Red chili oil pooled under the noodles', kind: 'food' }],
+  visible_text: ['OPEN'],
+  confirmed: [
+    { name: 'dan dan noodles', rationale: 'Minced topping and chili oil', keep: true },
+    { name: 'Sichuan chili oil', rationale: 'Oil looks more like sesame paste', keep: false },
+  ],
+  additional_candidates: [
+    {
+      name: 'Liangpi',
+      type: 'cuisine',
+      relation: 'resembles',
+      certainty: 0.4,
+      categories: ['eat'],
+      tag_query: null,
+      rationale: 'Wide cold noodles at the side',
+    },
+  ],
+  regions: [{ label: 'Dan dan noodles', box: { x: 0.1, y: 0.2, w: 0.6, h: 0.5 } }],
+  uncertainty: { overall: 'medium', notes: ['Noodle type is partly hidden'] },
+  competing_subjects: [],
 };
 export const identity = {
   accountId: 'account-1',

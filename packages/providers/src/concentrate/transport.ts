@@ -101,6 +101,8 @@ export function buildResponsesRequest(request: GatewayRequest): Record<string, u
     model: request.model,
     stream: false,
     max_output_tokens: request.maxOutputTokens,
+    // FAST-03: only a qualified profile's explicit effort is ever sent.
+    ...(request.reasoningEffort ? { reasoning: { effort: request.reasoningEffort } } : {}),
     instructions: request.system,
     input: [
       {

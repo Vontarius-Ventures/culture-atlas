@@ -28,6 +28,7 @@ Authority: `specs/capture-platform-v2/CONCENTRATE.md`.
 | v2 media analysis loop (claims, bounded JPEGs, dispatch, classification) | `apps/worker/src/media-analysis.ts`, started by `apps/worker/src/main.ts` |
 | Request gate + `concentrate_analysis_enabled` | `apps/web/lib/server/model-readiness.ts`, wired in `apps/web/lib/server/capture-v2.ts` |
 | Operator qualification | `scripts/qualify-concentrate.ts` (`pnpm qualify:concentrate`) |
+| Two-stage reading: quick read, enrichment, deterministic merge, compiler `enrich` stage | `packages/providers/src/vlm/{types,prompt}.ts`, `concentrate/providers.ts`, `packages/domain/src/compiler/analyze.ts` |
 
 ## Structured output: the strict transform
 
@@ -148,7 +149,11 @@ role is unavailable; during a credit or rate pause it accepts and queues.
    transaction, creates a capture linked to the asset, and queues the existing
    cultural compiler with `media_analysis_id`, which uses the stored reading
    instead of a second VLM call (Qloo resolution, research and recommendations
-   proceed as for v1). `GET /v2/media/{id}/analysis/{analysis_id}` adds
+   proceed as for v1). With a quick-read profile each frame gets stage 1
+   (≤ 5 candidates) and the result carries `reading: "quick"`; the capture's
+   display image is the best frame, and the compile job runs the one stage-2
+   enrichment on it (see `docs/pipeline.md`, "Two-stage photo reading").
+   `GET /v2/media/{id}/analysis/{analysis_id}` adds
    `waiting_reason`, `error_code` and `result` (`note: “We explore selected
    moments, not every frame.”`, per-frame states, cited candidates).
 6. 402 / 429 return the work to the queue **without** consuming an attempt;
@@ -159,6 +164,41 @@ v1 jobs (captures, plans, related discovery) get a fresh verified identity per
 model call (`v1:<job type>:a<attempt>:<operation>:<n>`). Session-only
 (anonymous) jobs get none, so the budgeted gateway refuses them: anonymous AI is
 unavailable under Concentrate.
+
+## Two-stage photo reading (amendment 2.2)
+
+| Role | Reading (`schemaVersion`) | Prompt (`promptVersion`) | Image | Output cap | Timeout | Code |
+| --- | --- | --- | --- | --- | --- | --- |
+| `vision_photo`, `vision_video_frame` | `atlas_quick_read_v1` (`VlmQuickRead`, ≤ 5 candidates) | `vlm-quick-v1` | ≤ 512 px | 600 | 10 s | `ConcentrateVlm` quick mode, `toVlmAnalysis()` |
+| `vision_photo_enrich` | `atlas_enrichment_v1` (`VlmEnrichment`) | `vlm-enrich-v1` | ≤ 768 px | 1200 | 20 s | `ConcentrateVlmEnricher`, `mergeEnrichment()` |
+| (legacy) `vision_photo` | `atlas_observations_v2` (full `VlmAnalysis`) | `vlm-full-v2` | profile bounds | profile | profile | `ConcentrateVlm` full mode |
+
+- The profile's `schemaVersion` selects the reading (`readingForProfile`), so the profile hash, and with it the qualification artifact, binds the exact reading. Every vision profile not pinned to `atlas_observations_v2` uses the quick read.
+- `reasoningEffort` (`none` | `minimal` | `low` | `medium` | `high`) is optional and part of the profile hash. The transport sends `reasoning: {effort}` only when the qualified profile sets it; otherwise no reasoning field is sent at all (FAST-03).
+- Both prompts keep the security rules (image text and `user_data` are DATA; no tools). The quick prompt adds "Read the subject as if it were a photo; never name the rendering medium or drawing style." and "Skip generic objects unless named as a specific type, style or tradition." Stage 2 receives the stage-1 title and candidate names inside the `user_data` block.
+- The stage-2 role is wired only from a qualified Concentrate profile (`gateway.vlmEnrich`, `registry.vlmEnrich`); there is no Elorian or rollback fallback for it, and a fallback model's stage-1 answer (no quick read) never gets a stage 2.
+- Ledger: each call reserves its own `inference_attempts` row; both stages of one job share the job id and count as one daily analysis. `ModelSpendLedger.canReserveAll` is the read-only pre-check the compiler uses before stage 1 so that stage 2 is planned only when both worst cases fit.
+- The default route measured in [the latency plan](analysis-latency-plan.md) is `anthropic/claude-haiku-5-5` with effort `none` for both stages. **Not qualified here:** it needs the operator's ≥ 10 real owned photos and the ZDR/logging confirmation (build plan phase 4).
+
+Example profile pair (values from the latency plan; ids, artifact names and privacy dates are placeholders the operator fills in after qualification):
+
+```json
+[
+  { "gateway": "concentrate", "role": "vision_photo", "version": "quick-1",
+    "model": "anthropic/claude-haiku-5-5", "provider": "anthropic", "allowedFallbackProviders": [],
+    "maxOutputTokens": 600, "reasoningEffort": "none", "maxInputTokens": 60000, "maxInputBytes": 60000,
+    "image": { "maxBytes": 120000, "maxPixels": 262144, "maxDimension": 512, "maxCount": 1 },
+    "timeoutMs": 10000, "structuredOutput": true, "requireZdr": true, "providerZdrEligible": true,
+    "contentLoggingEnabled": false, "privacyVerifiedAt": "<operator>",
+    "promptVersion": "vlm-quick-v1", "schemaVersion": "atlas_quick_read_v1",
+    "catalogSnapshotAt": "<snapshot fetched_at>", "qualificationArtifactId": "<artifact id>",
+    "pricingSnapshotVersion": "<pricing>", "reservationMicros": "<worst case>" },
+  { "role": "vision_photo_enrich", "version": "enrich-1", "maxOutputTokens": 1200, "reasoningEffort": "none",
+    "image": { "maxBytes": 250000, "maxPixels": 589824, "maxDimension": 768, "maxCount": 1 },
+    "timeoutMs": 20000, "promptVersion": "vlm-enrich-v1", "schemaVersion": "atlas_enrichment_v1",
+    "...": "other fields as above" }
+]
+```
 
 ## Profiles
 
@@ -185,7 +225,18 @@ pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
   --fixtures /secure/owned-fixtures/photos --out-dir /secure/concentrate-qualification \
   --max-requests 12 --spend-cap-usd 2
 # 3. Same command plus --confirm-paid-requests sends real, billed requests.
+# Two-stage reading: qualify the quick read first, then stage 2. Stage 2 needs the
+# vision_photo profile in the same file and sends a real quick read per photo as
+# its input (two requests per photo, both under --max-requests and the spend cap).
+pnpm qualify:concentrate --profile-file profiles.json --role vision_photo_enrich \
+  --fixtures /secure/owned-fixtures/photos --out-dir /secure/concentrate-qualification \
+  --max-requests 24 --spend-cap-usd 2
 ```
+
+The artifact notes record the reading (prompt and schema versions) and the
+reasoning effort the run sent; for `vision_photo_enrich` they also name the
+stage-1 profile whose readings were the input (its requests count in
+`requests_sent`; latency and usage are the enrichment call's own).
 
 Fixture layout: photos as image files (≥ 10, owned and varied); videos as one
 directory per video containing `<timestamp_ms>.jpg` frames (≥ 3 videos, ≤ 8

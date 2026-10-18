@@ -7,9 +7,17 @@ import {
   type QlooResponse,
   type QlooTag,
   type RequestBudget,
+  ENRICHMENT_VETO_CERTAINTY_FACTOR,
+  MERGED_CANDIDATES_MAX,
   VlmAnalysis,
   type VlmCandidate,
+  type VlmEnrichment,
+  candidateNameKey,
+  mergeEnrichment,
+  validateVision,
+  vetoedCandidateKeys,
 } from '@culture-atlas/providers';
+import { activeKills } from '../flags/feature-flags';
 import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionStatus, type SectionStatus } from '../enums';
 import { AppError } from '../errors';
 import { EXAMPLE_REPLAY_MODEL, examplePickItems, exampleReplay, type ExampleReplay } from '../feed/examples';
@@ -41,9 +49,12 @@ import { humanList, nameSimilarity, normalizeName, slugify } from './text';
 /**
  * Cultural compilation pipeline for one capture (build spec steps 3-8):
  *   observe    VLM structured observations / candidates / regions / uncertainty
- *   resolve    up to 8 candidates via Qloo /search or /v2/tags; unmatched
- *              observations are preserved; at most 5 anchors
+ *   resolve    up to 5 candidates via Qloo /search or /v2/tags (<= 3 in flight);
+ *              unmatched observations are preserved; at most 5 anchors
  *   recommend  Qloo /v2/insights per supported category with real returned ids
+ *   enrich     stage 2 of the two-stage reading (amendment 2.2): merged
+ *              deterministically, vetoes advisory, additions appended; never
+ *              reorders or removes published cards (FAST-02)
  *   compose    rank fusion + diversity, <= 3 per category, <= 12 total, hidden
  *              items filtered, DiscoveryItem + Recommendation with evidence
  *   research   <= 5 reference pages with sourced claims (public library)
@@ -57,6 +68,8 @@ export const QLOO_CATEGORIES = ['wear', 'play', 'watch'] as const satisfies read
 const MATCH_THRESHOLD_ENTITY = 0.75;
 const MATCH_THRESHOLD_TAG = 0.6;
 const PROVIDER_CACHE_TTL_SECONDS = 24 * 3600;
+/** Stage-2 enrichment deadline (amendment 2.2), further capped by the job's soft deadline. */
+const ENRICH_TIMEOUT_MS = 20_000;
 
 export const WARNINGS = {
   unclear: { code: 'unclear_photo', message: 'Try a clearer photo, or tell us what caught your eye.' },
@@ -83,11 +96,44 @@ export interface ResolvedRef {
 interface ObserveOutput {
   analysis: VlmAnalysis;
   model: string;
+  /** Stage 1 was a Concentrate quick read (two-stage reading); only then may stage 2 run. */
+  quickRead?: boolean;
 }
+
+/** Stage-2 model output, cached by runStage so a retried attempt never dispatches it twice. */
+interface EnrichOutput {
+  enrichment: VlmEnrichment | null;
+  model: string | null;
+  errorCode: string | null;
+}
+
+interface EnrichSummary {
+  status: 'complete' | 'skipped' | 'failed';
+  reason?: string | null;
+  model?: string | null;
+  confirmed?: number;
+  vetoed?: number;
+  additions?: number;
+  resolvedAdditions?: number;
+  appended?: Record<string, number>;
+}
+
+const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 interface ResolveOutput {
   refs: ResolvedRef[];
   qloo: 'ok' | 'unavailable' | 'errors' | 'budget';
+}
+
+/** Shared Qloo state while resolving one batch of candidates (budget exhaustion stops later lookups). */
+interface QlooResolveState {
+  usable: boolean;
+  state: ResolveOutput['qloo'];
+}
+
+interface ResolveWork {
+  candidate: VlmCandidate;
+  userSelected: boolean;
 }
 
 interface CategoryCandidate {
@@ -153,7 +199,8 @@ export class CaptureCompiler {
   private readonly traceId: string | null;
   /** Reviewed replay for an example photo when the VLM is unavailable (feed/examples.ts). */
   private example: ExampleReplay | null = null;
-
+  /** Two-stage plan, decided before stage 1 (both calls reserved together). */
+  private twoStage: { enabled: boolean; reason: string | null } = { enabled: false, reason: 'not_planned' };
   constructor(private readonly ctx: JobContext<'analyze_capture'>) {
     this.softDeadlineAt = this.startedAt + Math.floor(ctx.budget.deadlineMs * 0.75);
     this.traceId = ctx.job.trace_id;
@@ -226,7 +273,12 @@ export class CaptureCompiler {
     });
     this.analysisId = row.id;
     this.budget = new JobBudget(
-      { qlooRequests: ctx.budget.qlooRequests, researchRefs: ctx.budget.researchRefs, retriesPerStage: ctx.budget.providerRetries },
+      {
+        qlooRequests: ctx.budget.qlooRequests,
+        researchRefs: ctx.budget.researchRefs,
+        retriesPerStage: ctx.budget.providerRetries,
+        visionCalls: LIMITS.visionCallsPerAnalysis,
+      },
       { qloo: await attemptsSpent(ctx.db, row.id, 'qloo') },
     );
     await ctx.db.query(
@@ -240,6 +292,8 @@ export class CaptureCompiler {
     const correction = ctx.payload.correction as Correction | undefined;
     const { rejectedNames, confirmed } = await this.loadCorrection(correction);
     const rejectedIds = new Set(correction?.reject_reference_ids ?? []);
+    // Two-stage reading (amendment 2.2): decide up front and reserve both calls.
+    this.twoStage = await this.planTwoStage(!!ctx.payload.media_analysis_id);
     const observed = await ctx.runStage<ObserveOutput>('observe', () => this.observe(rejectedNames, confirmed));
     await this.publishObserve(observed.analysis);
     await this.traceStage('observe', t0, { model: observed.model, candidates: observed.analysis.candidates.length, usable: observed.analysis.quality.usable });
@@ -278,6 +332,12 @@ export class CaptureCompiler {
     if (resolved.qloo === 'unavailable' || [...this.sections.entries()].some(([k, v]) => (QLOO_CATEGORIES as readonly string[]).includes(k) && (v === 'unavailable' || v === 'failed'))) {
       this.warnings.set(WARNINGS.delayed.code, WARNINGS.delayed);
     }
+
+    // ---- enrich (stage 2, background; never reorders or removes cards) ----
+    t0 = Date.now();
+    await ctx.setStage('enriching');
+    const enriched = await this.enrichStage(observed, resolved, { rejectedNames, rejectedIds }, order, excluded, usedKeys);
+    await this.traceStage('enrich', t0, { ...enriched });
 
     // ---- research ----------------------------------------------------------
     await ctx.setStage('researching');
@@ -408,7 +468,7 @@ export class CaptureCompiler {
       // Drop candidates the user already rejected even if the model repeats them.
       const rejected = new Set(rejectedNames.map(normalizeName));
       res.analysis.candidates = res.analysis.candidates.filter((c) => !rejected.has(normalizeName(c.name)));
-      return { analysis: res.analysis, model: res.model };
+      return { analysis: res.analysis, model: res.model, quickRead: !!res.quick };
     } catch (err) {
       const e = errorSummary(err);
       await recordProviderQuery(ctx.db, {
@@ -432,8 +492,8 @@ export class CaptureCompiler {
    * (owner, capture link and media liveness re-checked here). No second model call.
    */
   private async observeFromMedia(mediaAnalysisId: string, rejectedNames: string[]): Promise<ObserveOutput> {
-    const { rows } = await this.ctx.db.query<{ observation: unknown; observation_model: string | null }>(
-      `SELECT a.observation, a.observation_model FROM media_analysis_requests a
+    const { rows } = await this.ctx.db.query<{ observation: unknown; observation_model: string | null; reading: string | null }>(
+      `SELECT a.observation, a.observation_model, a.result->>'reading' AS reading FROM media_analysis_requests a
          JOIN media_assets m ON m.account_id = a.account_id AND m.id = a.asset_id AND m.deleted_at IS NULL
         WHERE a.id = $1 AND a.capture_id = $2 AND a.account_id = $3 AND a.observation IS NOT NULL`,
       [mediaAnalysisId, this.capture.id, this.capture.owner_account_id],
@@ -464,7 +524,8 @@ export class CaptureCompiler {
       queryContext: { stage: 'observe', source: 'media_analysis' },
       traceId: this.traceId,
     });
-    return { analysis, model };
+    // The v2 worker marks readings built from Concentrate quick reads; only those get stage 2.
+    return { analysis, model, quickRead: row.reading === 'quick' };
   }
 
   /**
@@ -597,7 +658,7 @@ export class CaptureCompiler {
     const caps = ctx.providers.qloo.capability();
     const qlooUsable = isUsable(caps.search) || isUsable(caps.tags);
     const rejected = new Set(rejectedNames.map(normalizeName));
-    let qlooState: ResolveOutput['qloo'] = qlooUsable ? 'ok' : 'unavailable';
+    const q: QlooResolveState = { usable: qlooUsable, state: qlooUsable ? 'ok' : 'unavailable' };
 
     const candidates = [...analysis.candidates]
       .filter((c) => !rejected.has(normalizeName(c.name)))
@@ -643,113 +704,8 @@ export class CaptureCompiler {
       });
     }
 
-    const resolveOne = async ({ candidate, userSelected }: { candidate: VlmCandidate; userSelected: boolean }): Promise<ResolvedRef> => {
-      const type = toRefType(candidate.type);
-      const base = {
-        candidateName: candidate.name,
-        type,
-        relation: userSelected ? ('user_selected' as const) : candidate.relation,
-        certainty: candidate.certainty,
-        suggestedCategories: this.categoriesFor(candidate),
-        regionIds: candidate.region_ids,
-        boxes: boxesFor(candidate.region_ids, analysis),
-      };
-      let match: { kind: 'entity'; entity: QlooEntity } | { kind: 'tag'; tag: QlooTag } | null = null;
-      let ambiguous = false;
-      let providerQueryId: string | null = null;
-      let isReplay = false;
-      if (qlooUsable && qlooState !== 'budget') {
-        const useTags = TAG_RESOLVED_TYPES.has(type);
-        const counter = attemptCounter();
-        const started = Date.now();
-        const query = useTags ? (candidate.tag_queries[0] ?? candidate.name) : candidate.name;
-        let attempts: number;
-        try {
-          let res: QlooResponse<QlooEntity[]> | QlooResponse<QlooTag[]>;
-          if (useTags) {
-            const call = await this.qlooCall('resolve', (o) => ctx.providers.qloo.lookupTags({ query, take: 5 }, { ...o, onAttempt: counter.observer }));
-            attempts = call.attempts;
-            const r = call.value;
-            const m = bestMatch(query, r.data, (t) => t.name, MATCH_THRESHOLD_TAG);
-            const alt = m.item ? m : bestMatch(candidate.name, r.data, (t) => t.name, MATCH_THRESHOLD_TAG);
-            if (alt.item) match = { kind: 'tag', tag: alt.item };
-            ambiguous = alt.ambiguous;
-            res = r;
-          } else {
-            const call = await this.qlooCall('resolve', (o) => ctx.providers.qloo.searchEntities({ query, types: searchTypesFor(type), take: 5 }, { ...o, onAttempt: counter.observer }));
-            attempts = call.attempts;
-            const r = call.value;
-            const m = bestMatch(query, r.data, (e) => e.name, MATCH_THRESHOLD_ENTITY);
-            if (m.item) match = { kind: 'entity', entity: m.item };
-            ambiguous = m.ambiguous;
-            res = r;
-          }
-          isReplay = res.is_replay;
-          providerQueryId = await recordProviderQuery(ctx.db, {
-            parent: { analysisId: this.analysisId },
-            provider: 'qloo',
-            operation: useTags ? 'tags' : 'search',
-            request: res.request,
-            results: (res.data as (QlooEntity | QlooTag)[]).map((x, i) =>
-              'entity_id' in x ? { rank: i + 1, entity_id: x.entity_id, name: x.name, types: x.types } : { rank: i + 1, tag_id: x.id, name: x.name, type: x.type },
-            ),
-            status: res.data.length ? 'ok' : 'empty',
-            httpStatus: res.status,
-            durationMs: res.duration_ms,
-            isReplay: res.is_replay,
-            queryContext: { stage: 'resolve', candidate_id: candidate.id, candidate_name: candidate.name, matched: match !== null, attempts },
-            traceId: this.traceId,
-            cacheTtlSeconds: PROVIDER_CACHE_TTL_SECONDS,
-          });
-        } catch (err) {
-          const e = errorSummary(err);
-          if (isProviderError(err) && err.kind === 'budget_exhausted') qlooState = 'budget';
-          else if (isProviderError(err) && (err.kind === 'unavailable' || err.kind === 'auth')) qlooState = qlooState === 'ok' ? 'unavailable' : qlooState;
-          else if (qlooState === 'ok') qlooState = 'errors';
-          attempts = (err as { attempts?: number }).attempts ?? counter.count();
-          if (e.code !== 'budget_exhausted' || attempts > 0) {
-            await recordProviderQuery(ctx.db, {
-              parent: { analysisId: this.analysisId },
-              provider: 'qloo',
-              operation: TAG_RESOLVED_TYPES.has(type) ? 'tags' : 'search',
-              request: { query },
-              status: 'error',
-              errorCode: e.code,
-              httpStatus: e.status,
-              durationMs: Date.now() - started,
-              queryContext: { stage: 'resolve', candidate_id: candidate.id, attempts },
-              traceId: this.traceId,
-            });
-          }
-        }
-      }
 
-      if (match?.kind === 'entity') {
-        const e = match.entity;
-        const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo:${e.entity_id}`, name: e.name, type, externalIds: { qloo: e.entity_id, qloo_types: e.types } });
-        return { ...base, referenceId, name: e.name, resolution: ambiguous ? 'ambiguous' : userSelected ? 'user_confirmed' : 'resolved', qloo: { entityId: e.entity_id, types: e.types }, providerQueryId, isReplay, isAnchor: false };
-      }
-      if (match?.kind === 'tag') {
-        const t = match.tag;
-        const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo_tag:${t.id}`, name: t.name, type, externalIds: { qloo_tag: t.id, qloo_tag_type: t.type } });
-        return { ...base, referenceId, name: t.name, resolution: ambiguous ? 'ambiguous' : userSelected ? 'user_confirmed' : 'resolved', qloo: { tagId: t.id }, providerQueryId, isReplay, isAnchor: false };
-      }
-      // Unmatched: keep the descriptive observation as a qualified reference.
-      const referenceId = await upsertReference(ctx.db, { canonicalKey: `${type}:${slugify(candidate.name)}`, name: candidate.name, type, externalIds: {} });
-      return { ...base, referenceId, name: candidate.name, resolution: userSelected ? 'user_confirmed' : 'unmatched', qloo: null, providerQueryId, isReplay: false, isAnchor: false };
-    };
-
-    // Small concurrency keeps latency low; the budget is shared and synchronous.
-    let next = 0;
-    const results: ResolvedRef[] = new Array(work.length);
-    await Promise.all(
-      Array.from({ length: Math.min(3, work.length) }, async () => {
-        while (next < work.length) {
-          const i = next++;
-          results[i] = await resolveOne(work[i]!);
-        }
-      }),
-    );
+    const results = await this.resolveCandidates(work, analysis, q);
     for (const r of results) {
       if (refs.some((x) => x.referenceId === r.referenceId)) continue;
       // A candidate that resolves to a reference the user rejected stays rejected.
@@ -769,7 +725,123 @@ export class CaptureCompiler {
       )
       .slice(0, LIMITS.anchorsMax);
     for (const a of anchorable) a.isAnchor = true;
-    return { refs, qloo: qlooState };
+    return { refs, qloo: q.state };
+  }
+
+  /**
+   * Resolves candidates through Qloo (/search or /v2/tags) with at most
+   * LIMITS.qlooResolveConcurrency requests in flight; the job budget is shared
+   * and synchronous, so concurrent calls never overshoot it.
+   */
+  private async resolveCandidates(work: readonly ResolveWork[], analysis: VlmAnalysis, q: QlooResolveState): Promise<ResolvedRef[]> {
+    let next = 0;
+    const results: ResolvedRef[] = new Array(work.length);
+    await Promise.all(
+      Array.from({ length: Math.min(LIMITS.qlooResolveConcurrency, work.length) }, async () => {
+        while (next < work.length) {
+          const i = next++;
+          results[i] = await this.resolveCandidate(work[i]!, analysis, q);
+        }
+      }),
+    );
+    return results;
+  }
+
+  private async resolveCandidate({ candidate, userSelected }: ResolveWork, analysis: VlmAnalysis, q: QlooResolveState): Promise<ResolvedRef> {
+    const { ctx } = this;
+    const type = toRefType(candidate.type);
+    const base = {
+      candidateName: candidate.name,
+      type,
+      relation: userSelected ? ('user_selected' as const) : candidate.relation,
+      certainty: candidate.certainty,
+      suggestedCategories: this.categoriesFor(candidate),
+      regionIds: candidate.region_ids,
+      boxes: boxesFor(candidate.region_ids, analysis),
+    };
+    let match: { kind: 'entity'; entity: QlooEntity } | { kind: 'tag'; tag: QlooTag } | null = null;
+    let ambiguous = false;
+    let providerQueryId: string | null = null;
+    let isReplay = false;
+    if (q.usable && q.state !== 'budget') {
+      const useTags = TAG_RESOLVED_TYPES.has(type);
+      const counter = attemptCounter();
+      const started = Date.now();
+      const query = useTags ? (candidate.tag_queries[0] ?? candidate.name) : candidate.name;
+      let attempts: number;
+      try {
+        let res: QlooResponse<QlooEntity[]> | QlooResponse<QlooTag[]>;
+        if (useTags) {
+          const call = await this.qlooCall('resolve', (o) => ctx.providers.qloo.lookupTags({ query, take: 5 }, { ...o, onAttempt: counter.observer }));
+          attempts = call.attempts;
+          const r = call.value;
+          const m = bestMatch(query, r.data, (t) => t.name, MATCH_THRESHOLD_TAG);
+          const alt = m.item ? m : bestMatch(candidate.name, r.data, (t) => t.name, MATCH_THRESHOLD_TAG);
+          if (alt.item) match = { kind: 'tag', tag: alt.item };
+          ambiguous = alt.ambiguous;
+          res = r;
+        } else {
+          const call = await this.qlooCall('resolve', (o) => ctx.providers.qloo.searchEntities({ query, types: searchTypesFor(type), take: 5 }, { ...o, onAttempt: counter.observer }));
+          attempts = call.attempts;
+          const r = call.value;
+          const m = bestMatch(query, r.data, (e) => e.name, MATCH_THRESHOLD_ENTITY);
+          if (m.item) match = { kind: 'entity', entity: m.item };
+          ambiguous = m.ambiguous;
+          res = r;
+        }
+        isReplay = res.is_replay;
+        providerQueryId = await recordProviderQuery(ctx.db, {
+          parent: { analysisId: this.analysisId },
+          provider: 'qloo',
+          operation: useTags ? 'tags' : 'search',
+          request: res.request,
+          results: (res.data as (QlooEntity | QlooTag)[]).map((x, i) =>
+            'entity_id' in x ? { rank: i + 1, entity_id: x.entity_id, name: x.name, types: x.types } : { rank: i + 1, tag_id: x.id, name: x.name, type: x.type },
+          ),
+          status: res.data.length ? 'ok' : 'empty',
+          httpStatus: res.status,
+          durationMs: res.duration_ms,
+          isReplay: res.is_replay,
+          queryContext: { stage: 'resolve', candidate_id: candidate.id, candidate_name: candidate.name, matched: match !== null, attempts },
+          traceId: this.traceId,
+          cacheTtlSeconds: PROVIDER_CACHE_TTL_SECONDS,
+        });
+      } catch (err) {
+        const e = errorSummary(err);
+        if (isProviderError(err) && err.kind === 'budget_exhausted') q.state = 'budget';
+        else if (isProviderError(err) && (err.kind === 'unavailable' || err.kind === 'auth')) q.state = q.state === 'ok' ? 'unavailable' : q.state;
+        else if (q.state === 'ok') q.state = 'errors';
+        attempts = (err as { attempts?: number }).attempts ?? counter.count();
+        if (e.code !== 'budget_exhausted' || attempts > 0) {
+          await recordProviderQuery(ctx.db, {
+            parent: { analysisId: this.analysisId },
+            provider: 'qloo',
+            operation: TAG_RESOLVED_TYPES.has(type) ? 'tags' : 'search',
+            request: { query },
+            status: 'error',
+            errorCode: e.code,
+            httpStatus: e.status,
+            durationMs: Date.now() - started,
+            queryContext: { stage: 'resolve', candidate_id: candidate.id, attempts },
+            traceId: this.traceId,
+          });
+        }
+      }
+    }
+
+    if (match?.kind === 'entity') {
+      const e = match.entity;
+      const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo:${e.entity_id}`, name: e.name, type, externalIds: { qloo: e.entity_id, qloo_types: e.types } });
+      return { ...base, referenceId, name: e.name, resolution: ambiguous ? 'ambiguous' : userSelected ? 'user_confirmed' : 'resolved', qloo: { entityId: e.entity_id, types: e.types }, providerQueryId, isReplay, isAnchor: false };
+    }
+    if (match?.kind === 'tag') {
+      const t = match.tag;
+      const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo_tag:${t.id}`, name: t.name, type, externalIds: { qloo_tag: t.id, qloo_tag_type: t.type } });
+      return { ...base, referenceId, name: t.name, resolution: ambiguous ? 'ambiguous' : userSelected ? 'user_confirmed' : 'resolved', qloo: { tagId: t.id }, providerQueryId, isReplay, isAnchor: false };
+    }
+    // Unmatched: keep the descriptive observation as a qualified reference.
+    const referenceId = await upsertReference(ctx.db, { canonicalKey: `${type}:${slugify(candidate.name)}`, name: candidate.name, type, externalIds: {} });
+    return { ...base, referenceId, name: candidate.name, resolution: userSelected ? 'user_confirmed' : 'unmatched', qloo: null, providerQueryId, isReplay: false, isAnchor: false };
   }
 
   private async publishReferences(out: ResolveOutput): Promise<void> {
@@ -788,6 +860,265 @@ export class CaptureCompiler {
       await setAnalysisSection(tx, this.analysisId, 'references', status);
     });
     this.sections.set('references', status);
+  }
+
+  // ---- two-stage reading (amendment 2.2) -----------------------------------
+
+  /** Operator kills apply between stages too: fast_analysis_two_stage or analysis as a whole. */
+  private async twoStageKilled(): Promise<boolean> {
+    const killed = await activeKills(this.ctx.db, this.ctx.job.owner_account_id ?? NIL_UUID, this.ctx.config);
+    return killed.has('fast_analysis_two_stage') || killed.has('concentrate_analysis_enabled');
+  }
+
+  /**
+   * fast_analysis_two_stage for this job: a usable stage-2 enricher (a
+   * qualified Concentrate vision_photo_enrich role; never Elorian), not
+   * killed, and room for both calls. Both calls are reserved together: in the
+   * job budget, and (for the real gateway) checked against the spend ledger
+   * before stage 1 is dispatched, so stage 2 is not planned when only stage 1
+   * would fit. When off, the reading is the single stage-1 call.
+   */
+  private async planTwoStage(fromMedia: boolean): Promise<{ enabled: boolean; reason: string | null }> {
+    const { ctx } = this;
+    // A v2 media reading already spent stage 1 in the media worker; this job only adds stage 2.
+    const stage1Calls = fromMedia ? 0 : 1;
+    const off = (reason: string) => {
+      if (stage1Calls) this.budget.reserveVisionCalls(stage1Calls);
+      return { enabled: false, reason };
+    };
+    if (this.example) return off('example');
+    if (!isUsable(ctx.providers.vlmEnrich.capability())) return off('enrich_unavailable');
+    if (await this.twoStageKilled()) return off('killed');
+    const gateway = ctx.providers.modelGateway;
+    const enrichRunner = gateway?.runners.vision_photo_enrich;
+    if (enrichRunner && gateway?.ledger) {
+      const accountId = ctx.job.owner_account_id;
+      if (!accountId) return off('no_account');
+      const stage1 = fromMedia ? undefined : gateway.runners.vision_photo?.profile;
+      const profiles = [...(stage1 ? [stage1] : []), enrichRunner.profile];
+      if (!(await gateway.ledger.canReserveAll({ accountId, jobId: ctx.job.id }, profiles))) return off('budget');
+    }
+    if (!this.budget.reserveVisionCalls(stage1Calls + 1)) return off('budget');
+    return { enabled: true, reason: null };
+  }
+
+  private async enrichStage(
+    observed: ObserveOutput,
+    resolved: ResolveOutput,
+    rejected: { rejectedNames: string[]; rejectedIds: ReadonlySet<string> },
+    order: readonly Category[],
+    excluded: Set<string>,
+    usedKeys: Set<string>,
+  ): Promise<EnrichSummary> {
+    const { ctx } = this;
+    if (!this.twoStage.enabled) return { status: 'skipped', reason: this.twoStage.reason };
+    if (!observed.quickRead) return { status: 'skipped', reason: 'single_stage_reading' };
+    if (this.pastSoftDeadline()) return { status: 'skipped', reason: 'deadline' };
+    if (await this.twoStageKilled()) return { status: 'skipped', reason: 'killed' };
+    const out = await ctx.runStage<EnrichOutput>('enrich', () => this.enrich(observed.analysis));
+    // A failed or timed-out enrichment leaves every stage-1 result as published.
+    if (!out.enrichment) return { status: 'failed', reason: out.errorCode, model: out.model };
+    return this.publishEnrichment(observed.analysis, out, resolved, rejected, order, excluded, usedKeys);
+  }
+
+  /** One stage-2 call on the analysis image (for v2 media: the best frame the worker chose). */
+  private async enrich(analysis: VlmAnalysis): Promise<EnrichOutput> {
+    const { ctx } = this;
+    const object = this.capture.private_object_key ? await ctx.providers.storage.get(this.capture.private_object_key) : null;
+    if (!object) return { enrichment: null, model: null, errorCode: 'image_missing' };
+    const counter = attemptCounter();
+    const started = Date.now();
+    const stage1 = { title: analysis.title, candidates: analysis.candidates.map((c) => c.name) };
+    const request = { model_capability: ctx.providers.vlmEnrich.id, focus: (ctx.payload.focus as Focus).kind, stage1_candidates: stage1.candidates.length };
+    try {
+      const res = await ctx.providers.vlmEnrich.enrichImage(
+        { image: { bytes: object.body, mediaType: 'image/jpeg' }, stage1, focus: await this.focusForVlm() },
+        {
+          ...this.callOptions('enrich'),
+          timeoutMs: Math.max(1, Math.min(ENRICH_TIMEOUT_MS, this.softDeadlineAt - Date.now())),
+          onAttempt: counter.observer,
+        },
+      );
+      const e = res.enrichment;
+      await recordProviderQuery(ctx.db, {
+        parent: { analysisId: this.analysisId },
+        provider: 'vlm',
+        operation: 'enrich_image',
+        request,
+        results: {
+          model: res.model,
+          observations: e.observations.length,
+          visible_text: e.visible_text.length,
+          confirmed: e.confirmed.map((c) => ({ name: c.name, keep: c.keep })),
+          additional: e.additional_candidates.map((c) => ({ name: c.name, type: c.type, relation: c.relation, certainty: c.certainty })),
+          regions: e.regions.length,
+          uncertainty: e.uncertainty.overall,
+        },
+        status: 'ok',
+        durationMs: Date.now() - started,
+        queryContext: { stage: 'enrich', attempts: counter.count() },
+        traceId: this.traceId,
+      });
+      return { enrichment: e, model: res.model, errorCode: null };
+    } catch (err) {
+      if (ctx.signal.aborted || (isProviderError(err) && err.kind === 'aborted')) throw err;
+      const e = errorSummary(err);
+      await recordProviderQuery(ctx.db, {
+        parent: { analysisId: this.analysisId },
+        provider: 'vlm',
+        operation: 'enrich_image',
+        request,
+        status: 'error',
+        errorCode: e.code,
+        httpStatus: e.status,
+        durationMs: Date.now() - started,
+        queryContext: { stage: 'enrich', attempts: counter.count() },
+        traceId: this.traceId,
+      });
+      return { enrichment: null, model: null, errorCode: e.code };
+    }
+  }
+
+  /**
+   * Publishes a stage-2 enrichment (FAST-02). Strictly additive:
+   *  - the inspector reading gains observations, regions, visible text and
+   *    rationales (title and interpretation stay);
+   *  - a veto (keep=false) only lowers the reference's certainty and moves it
+   *    out of "Explore the references"; its cards and anchor role stay;
+   *  - additional candidates resolve through Qloo into the slots left under
+   *    the 5-candidate cap and are appended to the references;
+   *  - they fill Qloo categories that have fewer than 3 cards, after the
+   *    published cards; nothing is reordered or removed.
+   */
+  private async publishEnrichment(
+    base: VlmAnalysis,
+    out: EnrichOutput,
+    resolved: ResolveOutput,
+    rejected: { rejectedNames: string[]; rejectedIds: ReadonlySet<string> },
+    order: readonly Category[],
+    excluded: Set<string>,
+    usedKeys: Set<string>,
+  ): Promise<EnrichSummary> {
+    const { ctx } = this;
+    const enrichment = out.enrichment!;
+    let merged: VlmAnalysis;
+    try {
+      merged = mergeEnrichment(base, enrichment);
+      validateVision(merged, MERGED_CANDIDATES_MAX);
+    } catch {
+      return { status: 'failed', reason: 'invalid_enrichment', model: out.model };
+    }
+    const rejectedKeys = new Set(rejected.rejectedNames.map(normalizeName));
+    const vetoed = vetoedCandidateKeys(base, enrichment);
+    const additions = merged.candidates.slice(base.candidates.length).filter((c) => !rejectedKeys.has(normalizeName(c.name)));
+
+    // Qloo resolution stays capped at LIMITS.vlmCandidatesToResolve candidates per analysis.
+    const stage1Resolved = Math.min(
+      LIMITS.vlmCandidatesToResolve,
+      base.candidates.filter((c) => !rejectedKeys.has(normalizeName(c.name))).length,
+    );
+    const toResolve = additions.slice(0, Math.max(0, LIMITS.vlmCandidatesToResolve - stage1Resolved));
+    const caps = ctx.providers.qloo.capability();
+    const qlooUsable = isUsable(caps.search) || isUsable(caps.tags);
+    const q: QlooResolveState = { usable: qlooUsable && !this.pastSoftDeadline(), state: qlooUsable ? 'ok' : 'unavailable' };
+    const fresh = toResolve.length
+      ? await this.resolveCandidates(
+          toResolve.map((candidate) => ({ candidate, userSelected: false })),
+          merged,
+          q,
+        )
+      : [];
+    const newRefs: ResolvedRef[] = [];
+    for (const r of fresh) {
+      if (resolved.refs.some((x) => x.referenceId === r.referenceId) || newRefs.some((x) => x.referenceId === r.referenceId)) continue;
+      if (rejected.rejectedIds.has(r.referenceId)) r.resolution = 'rejected';
+      newRefs.push(r);
+    }
+    const vetoedRefs = resolved.refs.filter((r) => r.relation !== 'user_selected' && vetoed.has(candidateNameKey(r.candidateName)));
+    const evidence = resolved.refs
+      .map((r) => {
+        const c = merged.candidates.find((m) => candidateNameKey(m.name) === candidateNameKey(r.candidateName));
+        return c && c.region_ids.length && r.regionIds.length === 0 ? { ref: r, regionIds: c.region_ids, boxes: boxesFor(c.region_ids, merged) } : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x);
+
+    const focus = this.ctx.payload.focus as Focus;
+    const observations = [
+      ...merged.observations,
+      ...merged.visible_text.map((t, i) => ({ id: `text${i + 1}`, kind: 'visible_text', text: t.text, region_ids: t.region_id ? [t.region_id] : [] })),
+    ];
+    const candidates = merged.candidates.map((c) => ({ ...c, boxes: boxesFor(c.region_ids, merged) }));
+    const question =
+      focus.kind === 'whole' && merged.competing_subjects.length >= 2
+        ? {
+            prompt: 'What caught your eye?',
+            choices: merged.competing_subjects.slice(0, LIMITS.clarifyingChoicesMax).map((s) => ({ id: s.id, label: s.label })),
+            whole_photo_choice_id: 'whole',
+          }
+        : null;
+    await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
+      // Title and interpretation are never rewritten; a question is only added, never replaced.
+      await tx.query(
+        `UPDATE analyses SET observations = $2::jsonb, candidates = $3::jsonb,
+                clarifying_question = COALESCE(clarifying_question, $4::jsonb)
+          WHERE id = $1`,
+        [this.analysisId, JSON.stringify(observations), JSON.stringify(candidates), question ? JSON.stringify(question) : null],
+      );
+      for (const r of vetoedRefs) {
+        r.certainty = Math.round(r.certainty * ENRICHMENT_VETO_CERTAINTY_FACTOR * 1000) / 1000;
+        await tx.query(
+          `UPDATE capture_references SET certainty = LEAST(certainty, $4), advisory_veto = true
+            WHERE analysis_id = $1 AND reference_id = $2 AND relation = $3`,
+          [this.analysisId, r.referenceId, r.relation, r.certainty],
+        );
+      }
+      for (const { ref, regionIds, boxes } of evidence) {
+        ref.regionIds = regionIds;
+        ref.boxes = boxes;
+        await tx.query(
+          `UPDATE capture_references SET evidence_region = $4::jsonb WHERE analysis_id = $1 AND reference_id = $2 AND relation = $3`,
+          [this.analysisId, ref.referenceId, ref.relation, JSON.stringify({ region_ids: regionIds, boxes })],
+        );
+      }
+      for (const r of newRefs) {
+        await tx.query(
+          `INSERT INTO capture_references (analysis_id, reference_id, relation, evidence_region, certainty, resolution_status, is_anchor)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, false)
+           ON CONFLICT (analysis_id, reference_id, relation) DO NOTHING`,
+          [this.analysisId, r.referenceId, r.relation, JSON.stringify({ region_ids: r.regionIds, boxes: r.boxes }), Math.min(1, Math.max(0, r.certainty)), r.resolution],
+        );
+      }
+    });
+    resolved.refs.push(...newRefs);
+
+    // Fill thin Qloo categories from the new references only, after published cards.
+    const appended: Record<string, number> = {};
+    const signals = newRefs.filter((r) => r.qloo && (r.resolution === 'resolved' || r.resolution === 'user_confirmed'));
+    if (signals.length) {
+      const { rows } = await ctx.db.query<{ category: Category; n: number }>(
+        'SELECT category, COUNT(*)::int AS n FROM recommendations WHERE analysis_id = $1 AND category IS NOT NULL GROUP BY category',
+        [this.analysisId],
+      );
+      const counts = new Map(rows.map((r) => [r.category, r.n]));
+      const insightsUsable = isUsable(caps.insights);
+      for (const category of order.filter((c): c is (typeof QLOO_CATEGORIES)[number] => (QLOO_CATEGORIES as readonly string[]).includes(c))) {
+        const existing = counts.get(category) ?? 0;
+        const categorySignals = signals.filter((r) => r.suggestedCategories.includes(category));
+        if (existing >= LIMITS.recommendationsPerCategory || categorySignals.length === 0 || this.pastSoftDeadline()) continue;
+        const rec = await ctx.runStage<RecommendOutput>(`enrich:recommend:${category}`, () => this.recommend(category, categorySignals, insightsUsable));
+        const added = await this.composeCategory(rec, resolved.refs, order, excluded, usedKeys, { signals: categorySignals, existing });
+        if (added) appended[category] = added;
+      }
+    }
+    return {
+      status: 'complete',
+      model: out.model,
+      confirmed: enrichment.confirmed.filter((c) => c.keep).length,
+      vetoed: vetoedRefs.length,
+      additions: additions.length,
+      resolvedAdditions: newRefs.filter((r) => r.qloo).length,
+      appended,
+    };
   }
 
   /** Category priority from anchor suggestions (strongest first); Eat last only when unsuggested. */
@@ -863,10 +1194,23 @@ export class CaptureCompiler {
     return position * CATEGORIES.length + Math.max(0, order.indexOf(category));
   }
 
-  private async composeCategory(rec: RecommendOutput, refs: readonly ResolvedRef[], order: readonly Category[], excluded: Set<string>, usedKeys: Set<string>): Promise<void> {
+  /**
+   * Publishes one category. Default: replaces this analysis's cards for the
+   * category. `append` (stage-2 enrichment): only adds cards after the ones
+   * already published, signalled by the given new references, up to the
+   * per-category cap; existing cards keep their rows, ranks and order.
+   */
+  private async composeCategory(
+    rec: RecommendOutput,
+    refs: readonly ResolvedRef[],
+    order: readonly Category[],
+    excluded: Set<string>,
+    usedKeys: Set<string>,
+    append?: { signals: readonly ResolvedRef[]; existing: number },
+  ): Promise<number> {
     const { ctx } = this;
     const category = rec.category;
-    const anchors = refs.filter((r) => r.isAnchor);
+    const anchors = append ? append.signals.filter((r) => r.qloo) : refs.filter((r) => r.isAnchor);
     const refByEntity = new Map(anchors.filter((a) => a.qloo?.entityId).map((a) => [a.qloo!.entityId!, a]));
     const kind = CATEGORY_ITEM_KIND[category];
 
@@ -884,18 +1228,31 @@ export class CaptureCompiler {
     ];
     if (category === 'wear') {
       // Style directions the photo resembles, resolved to real Qloo tags.
-      const styles = refs.filter((r) => r.type === 'style' && r.qloo?.tagId && r.resolution === 'resolved' && r.providerQueryId);
+      const styles = (append ? append.signals : refs).filter((r) => r.type === 'style' && r.qloo?.tagId && r.resolution === 'resolved' && r.providerQueryId);
       lists.push({ source: 'qloo:tags:style', items: styles.map((r) => ({ key: `qloo_tag:${r.qloo!.tagId}`, originRefs: [r.referenceId], payload: { source: 'style' as const, ref: r } })) });
     }
     const fused = reciprocalRankFusion(lists, { exclude: new Set([...excluded, ...usedKeys]) });
-    const picked = selectDiverse(fused, LIMITS.recommendationsPerCategory);
+    const slots = LIMITS.recommendationsPerCategory - (append?.existing ?? 0);
+    const picked = slots > 0 ? selectDiverse(fused, slots) : [];
+    if (append && picked.length === 0) return 0;
     // Complete when the provider answered (even with nothing usable); partial
     // when only supplementary results exist; otherwise the provider status.
-    const status: SectionStatus = rec.status === 'complete' ? 'complete' : picked.length > 0 ? 'partial' : rec.status;
+    // Appending never downgrades: a complete section stays complete, and a
+    // skipped one becomes complete only when the provider answered.
+    const previous = this.sections.get(category) ?? 'skipped';
+    const status: SectionStatus = append
+      ? previous === 'complete' || (previous === 'skipped' && rec.status === 'complete')
+        ? 'complete'
+        : 'partial'
+      : rec.status === 'complete'
+        ? 'complete'
+        : picked.length > 0
+          ? 'partial'
+          : rec.status;
 
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
-      await tx.query('DELETE FROM recommendations WHERE analysis_id = $1 AND category = $2', [this.analysisId, category]);
-      let position = 0;
+      if (!append) await tx.query('DELETE FROM recommendations WHERE analysis_id = $1 AND category = $2', [this.analysisId, category]);
+      let position = append?.existing ?? 0;
       for (const p of picked) {
         const contributors = p.originRefs.map((id) => refs.find((r) => r.referenceId === id)).filter((r): r is ResolvedRef => !!r);
         if (p.payload.source === 'insights') {
@@ -951,6 +1308,7 @@ export class CaptureCompiler {
       await setAnalysisSection(tx, this.analysisId, category, status);
     });
     this.sections.set(category, status);
+    return picked.length;
   }
 
   private async composeEat(refs: readonly ResolvedRef[], order: readonly Category[], excluded: Set<string>, usedKeys: Set<string>): Promise<SectionStatus> {

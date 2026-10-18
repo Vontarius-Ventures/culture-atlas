@@ -21,6 +21,79 @@
         "usage": { "input_tokens": 41, "output_tokens": 5, "total_tokens": 46 }
       }
     },
+    "valid_quick_read_json": {
+      "status": 200,
+      "headers": { "x-request-id": "req_quick" },
+      "body": {
+        "id": "resp_quick",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          { "type": "reasoning", "id": "rs_q", "summary": [], "content": [] },
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"title\":\"Sesame noodle supper\",\"interpretation\":\"A bowl of noodles that resembles a Sichuan street-food supper.\",\"candidates\":[{\"name\":\"Dan dan noodles\",\"type\":\"cuisine\",\"relation\":\"resembles\",\"certainty\":0.8,\"categories\":[\"eat\"],\"tag_query\":\"Sichuan cuisine\"},{\"name\":\"Sichuan chili oil\",\"type\":\"object\",\"relation\":\"resembles\",\"certainty\":0.6,\"categories\":[\"eat\"],\"tag_query\":null}],\"quality\":{\"usable\":true,\"issue\":null}}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 1649, "output_tokens": 329 }
+      }
+    },
+    "valid_enrichment_json": {
+      "status": 200,
+      "headers": { "x-request-id": "req_enrich" },
+      "body": {
+        "id": "resp_enrich",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"observations\":[{\"text\":\"Red chili oil pooled under the noodles\",\"kind\":\"food\"}],\"visible_text\":[\"OPEN\"],\"confirmed\":[{\"name\":\"dan dan noodles\",\"rationale\":\"Minced topping and chili oil\",\"keep\":true},{\"name\":\"Sichuan chili oil\",\"rationale\":\"Oil looks more like sesame paste\",\"keep\":false}],\"additional_candidates\":[{\"name\":\"Liangpi\",\"type\":\"cuisine\",\"relation\":\"resembles\",\"certainty\":0.4,\"categories\":[\"eat\"],\"tag_query\":null,\"rationale\":\"Wide cold noodles at the side\"}],\"regions\":[{\"label\":\"Dan dan noodles\",\"box\":{\"x\":0.1,\"y\":0.2,\"w\":0.6,\"h\":0.5}}],\"uncertainty\":{\"overall\":\"medium\",\"notes\":[\"Noodle type is partly hidden\"]},\"competing_subjects\":[]}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 2554, "output_tokens": 790 }
+      }
+    },
+    "quick_read_too_many_candidates": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_quick_bad",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"title\":\"Too many\",\"interpretation\":\"Six candidates where five is the cap.\",\"candidates\":[{\"name\":\"a\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"b\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"c\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"d\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"e\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"f\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null}],\"quality\":{\"usable\":true,\"issue\":null}}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 1600, "output_tokens": 300 }
+      }
+    },
     "valid_image_json": {
       "status": 200,
       "headers": {},

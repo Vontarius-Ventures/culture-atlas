@@ -3,7 +3,14 @@ import type { CallOptions } from '../errors';
 import type { ProviderRegistry } from '../registry';
 import type { ResearchProvider } from '../research/types';
 import type { StructuredRequest, StructuredResult, TextModelProvider } from '../text/types';
-import type { VlmAnalyzeInput, VlmProvider, VlmResult } from '../vlm/types';
+import type {
+  VlmAnalyzeInput,
+  VlmEnricher,
+  VlmEnrichInput,
+  VlmEnrichResult,
+  VlmProvider,
+  VlmResult,
+} from '../vlm/types';
 import type { ModelIdentity } from './types';
 
 /**
@@ -51,6 +58,22 @@ class BoundVlm implements VlmProvider {
   }
 }
 
+class BoundVlmEnricher implements VlmEnricher {
+  constructor(
+    private readonly inner: VlmEnricher,
+    private readonly next: NextIdentity,
+  ) {}
+  get id() {
+    return this.inner.id;
+  }
+  capability() {
+    return this.inner.capability();
+  }
+  enrichImage(input: VlmEnrichInput, options?: CallOptions): Promise<VlmEnrichResult> {
+    return this.inner.enrichImage(input, withIdentity(options, this.next, 'vlm_enrich'));
+  }
+}
+
 class BoundText implements TextModelProvider {
   constructor(
     private readonly inner: TextModelProvider,
@@ -93,6 +116,7 @@ export function bindModelIdentity(
     ...registry,
     config: registry.config,
     vlm: new BoundVlm(registry.vlm, next),
+    vlmEnrich: new BoundVlmEnricher(registry.vlmEnrich, next),
     text: new BoundText(registry.text, next),
     composer: new BoundText(registry.composer, next),
     research,
