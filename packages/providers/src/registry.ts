@@ -10,12 +10,18 @@ import type { ResearchProvider } from './research/types';
 import { createObjectStorage } from './storage';
 import type { ObjectStorage } from './storage/types';
 import type { TextModelProvider } from './text/types';
-import type { VlmProvider } from './vlm/types';
+import { UnavailableVlmEnricher } from './unavailable';
+import type { VlmEnricher, VlmProvider } from './vlm/types';
 
 /** Every provider the domain uses, selected from environment configuration. */
 export interface ProviderRegistry {
   readonly config: ProviderConfig;
   readonly vlm: VlmProvider;
+  /**
+   * Stage-2 photo enrichment (vision_photo_enrich, amendment 2.2). Only the
+   * Concentrate gateway serves it; there is no Elorian or rollback fallback.
+   */
+  readonly vlmEnrich: VlmEnricher;
   /** Claim extraction / research model (RESEARCH_MODEL). */
   readonly text: TextModelProvider;
   /** Plan composer model (COMPOSER_MODEL, defaults to RESEARCH_MODEL). */
@@ -52,6 +58,8 @@ export function createProviderRegistry(
   // MODEL_FALLBACK=elorian (explicit operator choice): Elorian backs up the primary models.
   const fallback = withModelFallback(config, { vlm: baseVlm, text: baseText, composer: baseComposer });
   const vlm = overrides.vlm ?? fallback.vlm;
+  const vlmEnrich =
+    overrides.vlmEnrich ?? modelGateway?.vlmEnrich ?? new UnavailableVlmEnricher('not_configured');
   const text = overrides.text ?? fallback.text;
   const composer = overrides.composer ?? fallback.composer;
   const fallbackVlm = elorianEnabled(config) ? createElorianVlm(config) : undefined;
@@ -62,6 +70,7 @@ export function createProviderRegistry(
   return {
     config,
     vlm,
+    vlmEnrich,
     text,
     composer,
     research,

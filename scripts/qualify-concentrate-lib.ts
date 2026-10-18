@@ -5,6 +5,7 @@ import {
   CatalogSnapshotSchema,
   ConcentrateTextModel,
   ConcentrateVlm,
+  ConcentrateVlmEnricher,
   MemorySpendStore,
   ModelSpendLedger,
   ProviderError,
@@ -16,6 +17,7 @@ import {
   createConcentrateTransport,
   fetchCatalogSnapshot,
   profileHash,
+  readingForProfile,
   type CatalogSnapshot,
   type ModelProfile,
   type QualificationArtifact,
@@ -123,7 +125,8 @@ export async function discoverFixtures(
   const entries = (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  if (role === 'vision_photo')
+  // Both photo stages (quick read and enrichment) qualify on the same owned photos.
+  if (role === 'vision_photo' || role === 'vision_photo_enrich')
     return entries
       .filter((e) => e.isFile() && /\.(jpe?g|png|webp)$/i.test(e.name))
       .map((e) => ({ name: e.name, kind: 'image', files: [{ path: path.join(dir, e.name) }] }));
@@ -176,6 +179,13 @@ function percentile(values: number[], p: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]!;
 }
 
+/** Safe artifact note naming the reasoning effort the run sent (FAST-03). */
+export function effortNote(profile: ModelProfile): string {
+  return profile.reasoningEffort
+    ? `Reasoning effort: ${profile.reasoningEffort} (sent as reasoning.effort on every request).`
+    : 'Reasoning effort: not set (no reasoning field sent).';
+}
+
 export async function qualifyProfile(
   opts: QualifyOptions & {
     profile: ModelProfile;
@@ -183,6 +193,13 @@ export async function qualifyProfile(
     maxRequests: number;
     spendCapMicros: number;
     confirmPaidRequests: boolean;
+    /**
+     * vision_photo_enrich only: the stage-1 (quick read) vision_photo profile
+     * whose real reading is the enrichment's input, exactly as in production.
+     * Its requests count against the same request cap and spend cap; the
+     * artifact qualifies only the enrichment profile.
+     */
+    stage1Profile?: ModelProfile;
   },
 ): Promise<QualificationRun> {
   const log = opts.log ?? (() => undefined);
@@ -194,21 +211,37 @@ export async function qualifyProfile(
     throw new Error(
       'Profile is not catalog-compatible: pin a model/provider from the snapshot and set catalogSnapshotAt to its fetched_at.',
     );
+  const enrich = profile.role === 'vision_photo_enrich';
+  const stage1 = enrich ? opts.stage1Profile : undefined;
+  if (enrich) {
+    if (!stage1 || stage1.role !== 'vision_photo' || readingForProfile(stage1) !== 'quick')
+      throw new Error(
+        'Qualifying vision_photo_enrich needs the stage-1 vision_photo quick-read profile (same profile file).',
+      );
+    if (!catalogCompatible(stage1, snapshot))
+      throw new Error('The stage-1 profile is not catalog-compatible with this snapshot.');
+  } else if (opts.stage1Profile) {
+    throw new Error('A stage-1 profile only applies when qualifying vision_photo_enrich.');
+  }
   const fixtures = await discoverFixtures(opts.fixturesDir, profile.role);
   const minimum = QUALIFICATION_MINIMUM_FIXTURES[profile.role];
   if (fixtures.length < minimum)
     throw new Error(
       `Need at least ${minimum} fixtures for ${profile.role}; found ${fixtures.length}.`,
     );
-  const plannedRequests = fixtures.reduce((n, f) => n + f.files.length, 0);
+  // Enrichment: one stage-1 quick read plus one enrichment per photo.
+  const perFile = stage1 ? 2 : 1;
+  const perFileMicros = profile.reservationMicros + (stage1?.reservationMicros ?? 0);
+  const files = fixtures.reduce((n, f) => n + f.files.length, 0);
+  const plannedRequests = files * perFile;
   if (plannedRequests > opts.maxRequests)
     throw new Error(
       `Fixtures need ${plannedRequests} requests; --max-requests is ${opts.maxRequests}.`,
     );
-  if (plannedRequests * profile.reservationMicros > opts.spendCapMicros)
+  if (files * perFileMicros > opts.spendCapMicros)
     throw new Error('Worst-case reservation for these fixtures exceeds the spend cap.');
   log(
-    `plan: ${fixtures.length} fixtures, ${plannedRequests} requests, worst case ${plannedRequests * profile.reservationMicros} micro-USD`,
+    `plan: ${fixtures.length} fixtures, ${plannedRequests} requests, worst case ${files * perFileMicros} micro-USD; reading ${readingForProfile(profile)}; ${effortNote(profile)}`,
   );
   if (!opts.confirmPaidRequests) return { dryRun: true, plannedRequests };
 
@@ -239,6 +272,15 @@ export async function qualifyProfile(
       },
     },
   );
+  // Enrichment input comes from a real stage-1 quick read, never a made-up one.
+  const stage1Runner = stage1
+    ? new StructuredResponseRunner(
+        stage1,
+        createConcentrateTransport({ apiKey: opts.apiKey, fetch: countedFetch }),
+        ledger,
+        { allowTestStore: true },
+      )
+    : undefined;
   const outcomes: Record<string, number> = {};
   const latencies: number[] = [];
   let inputTokens = 0;
@@ -263,7 +305,8 @@ export async function qualifyProfile(
         stoppedBy = 'request_cap';
         break;
       }
-      const started = Date.now();
+      let started = Date.now();
+      let inStage1 = false;
       try {
         sent++;
         let usage: { inputTokens?: number; outputTokens?: number } | undefined;
@@ -276,6 +319,29 @@ export async function qualifyProfile(
               prompt: spec.prompt,
               schemaName: spec.schema,
               schema: spec.schema === 'reference_notes' ? RawExtraction : PlanProse,
+            },
+            { maxRetries: 0, modelIdentity: identity },
+          );
+          usage = res.usage;
+        } else if (stage1Runner) {
+          // Stage 1 at its own bounds, then stage 2 on the same photo at the enrichment bounds.
+          const { bytes } = await boundJpegForProfile(await readFile(file.path), profile.image);
+          inStage1 = true;
+          sent++;
+          const quick = await new ConcentrateVlm(stage1Runner).analyzeImage(
+            { image: { bytes, mediaType: 'image/jpeg' } },
+            { maxRetries: 0, modelIdentity: { ...identity, attemptKey: `${identity.attemptKey}:stage1` } },
+          );
+          inStage1 = false;
+          // Latency and usage in the artifact are the enrichment call's own.
+          started = Date.now();
+          const res = await new ConcentrateVlmEnricher(runner).enrichImage(
+            {
+              image: { bytes, mediaType: 'image/jpeg' },
+              stage1: {
+                title: quick.analysis.title,
+                candidates: quick.analysis.candidates.map((c) => c.name),
+              },
             },
             { maxRetries: 0, modelIdentity: identity },
           );
@@ -298,7 +364,8 @@ export async function qualifyProfile(
         fixtureOk = false;
         unknownUsage++;
         const kind = error instanceof ProviderError ? error.kind : 'local_error';
-        count(error instanceof ProviderError && error.status ? `http_${error.status}` : kind);
+        const outcome = error instanceof ProviderError && error.status ? `http_${error.status}` : kind;
+        count(inStage1 ? `stage1_${outcome}` : outcome);
         if (error instanceof Error && /Request cap reached/.test(error.message)) {
           stoppedBy = 'request_cap';
           break outer;
@@ -343,6 +410,13 @@ export async function qualifyProfile(
     notes: [
       'Offline-safe aggregate only: no media, prompts, outputs or credentials are stored.',
       'Billing is not reconciled here; usage tokens are not dollar charges.',
+      `Reading: ${readingForProfile(profile)} (prompt ${profile.promptVersion}, schema ${profile.schemaVersion}).`,
+      effortNote(profile),
+      ...(stage1
+        ? [
+            `Stage-1 input from ${stage1.model} quick read (profile ${profileHash(stage1).slice(0, 12)}); its requests are counted in requests_sent, its latency and usage are not.`,
+          ]
+        : []),
       ...(stoppedBy ? [`Stopped early: ${stoppedBy}.`] : []),
     ],
   });

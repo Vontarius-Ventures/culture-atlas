@@ -223,6 +223,7 @@ export class StructuredResponseRunner {
               schemaName: request.schemaName,
               jsonSchema,
               maxOutputTokens,
+              ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
             },
             { signal: sig.signal },
           ),

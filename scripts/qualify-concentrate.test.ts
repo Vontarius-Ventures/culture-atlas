@@ -231,6 +231,114 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     expect(qualificationState(profile, outDir)).toBe('catalog-compatible');
   });
 
+  it('two-stage: qualifies the quick read with its reasoning effort, then enrichment on real stage-1 readings', async () => {
+    const quick: ModelProfile = {
+      ...profile,
+      promptVersion: 'vlm-quick-v1',
+      schemaVersion: 'atlas_quick_read_v1',
+      reasoningEffort: 'none',
+      maxOutputTokens: 600,
+      qualificationArtifactId: 'vision-photo-quick-2026-10-18',
+    };
+    const enrich: ModelProfile = {
+      ...profile,
+      role: 'vision_photo_enrich',
+      promptVersion: 'vlm-enrich-v1',
+      schemaVersion: 'atlas_enrichment_v1',
+      reasoningEffort: 'none',
+      maxOutputTokens: 1200,
+      timeoutMs: 20_000,
+      image: { maxBytes: 150_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
+      qualificationArtifactId: 'vision-photo-enrich-2026-10-18',
+    };
+    const quickRead = {
+      title: 'Round table',
+      interpretation: 'A table that resembles mid-century design.',
+      candidates: [{ name: 'Mid-century modern', type: 'style', relation: 'resembles', certainty: 0.7, categories: ['wear'], tag_query: 'mid-century modern' }],
+      quality: { usable: true, issue: null },
+    };
+    const enrichment = {
+      observations: [{ text: 'Round table', kind: 'object' }],
+      visible_text: [],
+      confirmed: [{ name: 'Mid-century modern', rationale: 'Tapered legs', keep: true }],
+      additional_candidates: [],
+      regions: [],
+      uncertainty: { overall: 'low', notes: [] },
+      competing_subjects: [],
+    };
+    const bodies: Array<Record<string, unknown> & { text: { format: { name: string } } }> = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      bodies.push(body);
+      const text = JSON.stringify(body.text.format.name === 'atlas_enrichment_v1' ? enrichment : quickRead);
+      return new Response(
+        JSON.stringify({
+          id: 'resp',
+          model: 'fixture/vision-1',
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text }] }],
+          usage: { input_tokens: 1600, output_tokens: 300 },
+        }),
+      );
+    });
+    const outDir = await preparedOutDir();
+    const fixturesDir = await photos(10);
+    const common = { apiKey: KEY, outDir, fixturesDir, spendCapMicros: 2_000_000, fetch: fetchImpl as unknown as typeof fetch };
+
+    const q = await qualifyProfile({ ...common, profile: quick, maxRequests: 10, confirmPaidRequests: true });
+    expect(q.artifact).toMatchObject({ result: 'pass', role: 'vision_photo', requests_sent: 10 });
+    expect(q.artifact!.notes).toEqual(
+      expect.arrayContaining([
+        'Reading: quick (prompt vlm-quick-v1, schema atlas_quick_read_v1).',
+        'Reasoning effort: none (sent as reasoning.effort on every request).',
+      ]),
+    );
+    expect(bodies.every((b) => b.text.format.name === 'atlas_quick_read_v1')).toBe(true);
+    expect(bodies.every((b) => JSON.stringify(b.reasoning) === '{"effort":"none"}')).toBe(true);
+    expect(qualificationState(quick, outDir)).toBe('qualified');
+    // The same profile without the effort is a different, unqualified profile.
+    const { reasoningEffort: _e, ...noEffort } = quick;
+    expect(qualificationState(noEffort, outDir)).toBe('catalog-compatible');
+
+    // Stage 2 needs the stage-1 profile and plans two requests per photo.
+    await expect(
+      qualifyProfile({ ...common, profile: enrich, maxRequests: 40, confirmPaidRequests: false }),
+    ).rejects.toThrow('stage-1');
+    await expect(
+      qualifyProfile({ ...common, profile: enrich, stage1Profile: { ...profile }, maxRequests: 40, confirmPaidRequests: false }),
+    ).rejects.toThrow('stage-1');
+    await expect(
+      qualifyProfile({ ...common, profile: quick, stage1Profile: quick, maxRequests: 40, confirmPaidRequests: false }),
+    ).rejects.toThrow('only applies');
+    await expect(
+      qualifyProfile({ ...common, profile: enrich, stage1Profile: quick, maxRequests: 40, confirmPaidRequests: false }),
+    ).resolves.toEqual({ dryRun: true, plannedRequests: 20 });
+    await expect(
+      qualifyProfile({ ...common, profile: enrich, stage1Profile: quick, maxRequests: 25, spendCapMicros: 300_000, confirmPaidRequests: true }),
+    ).rejects.toThrow('spend cap');
+
+    bodies.length = 0;
+    const e = await qualifyProfile({ ...common, profile: enrich, stage1Profile: quick, maxRequests: 30, confirmPaidRequests: true });
+    expect(bodies.map((b) => b.text.format.name)).toEqual(
+      Array.from({ length: 10 }, () => ['atlas_quick_read_v1', 'atlas_enrichment_v1']).flat(),
+    );
+    // The enrichment request carries the real stage-1 reading as DATA.
+    expect(JSON.stringify(bodies[1]!.input)).toContain('Mid-century modern');
+    expect(e.artifact).toMatchObject({
+      result: 'pass',
+      role: 'vision_photo_enrich',
+      profile_hash: profileHash(enrich),
+      requests_sent: 20,
+      fixtures: { total: 10, passed: 10, failed: 0 },
+      usage: { input_tokens: 16_000, output_tokens: 3000 },
+    });
+    expect(e.artifact!.notes.some((n) => n.startsWith('Stage-1 input from fixture/vision-1 quick read'))).toBe(true);
+    expect(qualificationState(enrich, outDir)).toBe('qualified');
+    const artifact = await readFile(path.join(outDir, `${enrich.qualificationArtifactId}.json`), 'utf8');
+    expect(artifact).not.toContain('Tapered legs');
+    expect(artifact).not.toContain(KEY);
+  });
+
   it('stops at the first 402 (no retry, no further spend) and records a failing artifact', async () => {
     const outDir = await preparedOutDir();
     const fetchImpl = responses(402);

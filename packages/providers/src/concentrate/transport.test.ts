@@ -59,6 +59,13 @@ describe('Concentrate Responses transport, offline', () => {
       actualProvider: null,
     });
   });
+  it('sends reasoning.effort only when the request carries a qualified effort (FAST-03)', () => {
+    expect(buildResponsesRequest(gatewayRequest)).not.toHaveProperty('reasoning');
+    for (const effort of ['none', 'minimal', 'low', 'medium', 'high'] as const)
+      expect(buildResponsesRequest({ ...gatewayRequest, reasoningEffort: effort })).toMatchObject({
+        reasoning: { effort },
+      });
+  });
   it('builds bounded JPEG data URI content, never a private URL or native video', () => {
     const body = buildResponsesRequest({
       ...gatewayRequest,

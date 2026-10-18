@@ -7,8 +7,8 @@ import {
   type ReadinessDetail,
 } from '../model-gateway/runner';
 import type { ModelIdentity, ModelRole, StructuredTransport } from '../model-gateway/types';
-import { UnavailableTextModel, UnavailableVlm } from '../unavailable';
-import type { VlmProvider } from '../vlm/types';
+import { UnavailableTextModel, UnavailableVlm, UnavailableVlmEnricher } from '../unavailable';
+import type { VlmEnricher, VlmProvider } from '../vlm/types';
 import type { TextModelProvider } from '../text/types';
 import {
   loadModelProfiles,
@@ -18,7 +18,7 @@ import {
   type ModelProfiles,
   type QualificationState,
 } from './profiles';
-import { ConcentrateTextModel, ConcentrateVlm } from './providers';
+import { ConcentrateTextModel, ConcentrateVlm, ConcentrateVlmEnricher } from './providers';
 import { createConcentrateTransport } from './transport';
 
 export const MODEL_ROLES = [
@@ -51,6 +51,8 @@ export interface RoleReadiness extends ReadinessDetail {
 
 export interface ModelGateway {
   vlm: VlmProvider;
+  /** Stage-2 enrichment (vision_photo_enrich); unavailable unless that role is qualified. */
+  vlmEnrich: VlmEnricher;
   videoFrames: VlmProvider;
   text: TextModelProvider;
   composer: TextModelProvider;
@@ -102,6 +104,7 @@ export function createModelGateway(
     ) as Record<ModelRole, RoleReadiness>;
   const unavailable = (): ModelGateway => ({
     vlm: new UnavailableVlm('not_configured'),
+    vlmEnrich: new UnavailableVlmEnricher('not_configured'),
     videoFrames: new UnavailableVlm('not_configured'),
     text: new UnavailableTextModel('not_configured'),
     composer: new UnavailableTextModel('not_configured'),
@@ -160,6 +163,9 @@ export function createModelGateway(
     vlm: runners.vision_photo
       ? new ConcentrateVlm(runners.vision_photo)
       : new UnavailableVlm('not_configured'),
+    vlmEnrich: runners.vision_photo_enrich
+      ? new ConcentrateVlmEnricher(runners.vision_photo_enrich)
+      : new UnavailableVlmEnricher('not_configured'),
     videoFrames: runners.vision_video_frame
       ? new ConcentrateVlm(runners.vision_video_frame)
       : new UnavailableVlm('not_configured'),

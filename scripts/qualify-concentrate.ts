@@ -13,6 +13,13 @@
  *
  *   # 3. The same command plus --confirm-paid-requests sends real, billed requests.
  *
+ *   # Two-stage photo reading (amendment 2.2): qualify the stage-1 quick read
+ *   # (vision_photo, schemaVersion atlas_quick_read_v1) and then stage 2
+ *   # (--role vision_photo_enrich). Stage 2 runs a real stage-1 quick read per
+ *   # photo as its input, so it needs both profiles in the file and twice the
+ *   # requests. A profile's reasoningEffort is sent as reasoning.effort and is
+ *   # bound into the artifact through the profile hash; without it nothing is sent.
+ *
  * Key: CONCENTRATE_API_KEY_FILE (preferred; must be chmod 600) or CONCENTRATE_API_KEY.
  * The key is never printed or written. The artifact holds aggregates only; copy
  * the out dir to the worker as CONCENTRATE_QUALIFICATION_DIR to mark the role qualified.
@@ -58,9 +65,17 @@ if (!profileFile || !role || !fixturesDir) {
   console.error('--profile-file, --role and --fixtures are required (or use --catalog).');
   process.exit(2);
 }
-const profile = loadModelProfiles(profileFile)[role as 'vision_photo'];
+const profiles = loadModelProfiles(profileFile);
+const profile = profiles[role as 'vision_photo'];
 if (!profile) {
   console.error(`No ${role} profile in ${profileFile}.`);
+  process.exit(2);
+}
+// Stage 2 (amendment 2.2) is qualified on real stage-1 readings: the same profile
+// file must hold the vision_photo quick-read profile, whose requests count too.
+const stage1Profile = role === 'vision_photo_enrich' ? profiles.vision_photo : undefined;
+if (role === 'vision_photo_enrich' && !stage1Profile) {
+  console.error(`Qualifying vision_photo_enrich needs the vision_photo profile in ${profileFile}.`);
   process.exit(2);
 }
 const maxRequests = Number(arg('max-requests') ?? 0);
@@ -77,6 +92,7 @@ const run = await qualifyProfile({
   maxRequests,
   spendCapMicros: Math.floor(spendCapUsd * 1_000_000),
   confirmPaidRequests: flag('confirm-paid-requests'),
+  stage1Profile,
   log,
 });
 if (run.dryRun) {

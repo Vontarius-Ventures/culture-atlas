@@ -748,3 +748,170 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
     ).resolves.toMatchObject({ state: 'queued' });
   });
 });
+
+/**
+ * Amendment 2.2: stage 1 (quick read) per photo/frame in the media worker, then
+ * exactly one stage-2 enrichment on the best frame in the compile job, through
+ * the REAL transport, runner and Postgres ledger (fake fetch, synthetic ids).
+ */
+describe('v2 two-stage reading (quick read per frame, one enrichment)', { timeout: 60_000 }, () => {
+  const quickProfile: ModelProfile = {
+    ...base,
+    role: 'vision_photo',
+    promptVersion: 'vlm-quick-v1',
+    schemaVersion: 'atlas_quick_read_v1',
+    reasoningEffort: 'none',
+    maxOutputTokens: 600,
+    timeoutMs: 10_000,
+    image: { maxBytes: 80_000, maxPixels: 262_144, maxDimension: 512, maxCount: 1 },
+  };
+  const frameProfile: ModelProfile = { ...quickProfile, role: 'vision_video_frame' };
+  const enrichProfile: ModelProfile = {
+    ...base,
+    role: 'vision_photo_enrich',
+    promptVersion: 'vlm-enrich-v1',
+    schemaVersion: 'atlas_enrichment_v1',
+    reasoningEffort: 'none',
+    maxOutputTokens: 1200,
+    timeoutMs: 20_000,
+    image: { maxBytes: 200_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
+  };
+  const quickFor = (names: string[]) => ({
+    title: 'Teak and tapered legs',
+    interpretation: 'A room that resembles mid-century design.',
+    candidates: names.map((name, i) => ({
+      name,
+      type: 'style',
+      relation: 'resembles',
+      certainty: 0.8 - i * 0.1,
+      categories: ['wear'],
+      tag_query: name.toLowerCase(),
+    })),
+    quality: { usable: true, issue: null },
+  });
+  const enrichment = {
+    observations: [{ text: 'Teak sideboard with tapered legs', kind: 'object' }],
+    visible_text: [],
+    confirmed: [{ name: 'Mid-century modern', rationale: 'Tapered legs and teak', keep: true }],
+    additional_candidates: [],
+    regions: [{ label: 'Mid-century modern', box: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 } }],
+    uncertainty: { overall: 'low', notes: [] },
+    competing_subjects: [],
+  };
+
+  function twoStageGateway(quickByColor: (color: Color) => string[]) {
+    const requests: Array<{ schema: string; color: Color; width: number; height: number; body: Record<string, unknown> }> = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      const info = await inspect(init);
+      const schema = body.text.format.name as string;
+      requests.push({ schema, color: info.color, width: info.width, height: info.height, body });
+      return envelope(
+        JSON.stringify(schema === 'atlas_enrichment_v1' ? enrichment : quickFor(quickByColor(info.color))),
+      );
+    });
+    const gateway = createModelGateway(loadProviderConfig({ CONCENTRATE_API_KEY: 'synthetic-test-key' }), {
+      ledger: new ModelSpendLedger(new PostgresSpendStore(db), limits),
+      profiles: { vision_photo: quickProfile, vision_video_frame: frameProfile, vision_photo_enrich: enrichProfile },
+      transport: createConcentrateTransport({ apiKey: 'synthetic-test-key', fetch: fetchImpl as unknown as typeof fetch }),
+      qualification: () => 'qualified',
+    });
+    return { gateway, fetchImpl, requests };
+  }
+
+  async function compile(gateway: ModelGateway, captureId: string) {
+    const job = (await db.query(`SELECT id FROM jobs WHERE result_id=$1`, [captureId])).rows[0]!;
+    // The compile job sees the same gateway: its enrichment role and its ledger.
+    // Capture storage holds the display image (the best frame) the worker published.
+    const providers = { ...testProviders({ vlmEnrich: gateway.vlmEnrich, storage: display }), modelGateway: gateway };
+    await new Worker({ db, providers, config, handlers: JOB_HANDLERS, jobIds: [job.id], log: () => undefined }).drain();
+    return job.id as string;
+  }
+
+  it('photo: one quick read at <= 512 px with effort none, then one enrichment at <= 768 px merged additively', async () => {
+    const { accountId } = await insertAccount(db);
+    const assetId = await photoAsset(accountId, 'red');
+    const { gateway, requests } = twoStageGateway(() => ['Mid-century modern', 'Danish modern']);
+    const req = await request(accountId, assetId, { mode: 'photo' });
+    await worker(gateway, accountId).drain();
+
+    expect(requests.map((r) => r.schema)).toEqual(['atlas_quick_read_v1']);
+    expect(requests[0]!.body.reasoning).toEqual({ effort: 'none' });
+    expect(requests[0]!.body.max_output_tokens).toBe(600);
+    expect(Math.max(requests[0]!.width, requests[0]!.height)).toBeLessThanOrEqual(512);
+    expect(JSON.stringify(requests[0]!.body.input)).toContain('\\"max_candidates\\":5');
+    const row = await analysisRow(req.analysis_id);
+    expect(row).toMatchObject({ state: 'complete' });
+    expect(row.result).toMatchObject({ reading: 'quick', candidates: [{ name: 'Mid-century modern' }, { name: 'Danish modern' }] });
+    expect(row.observation.candidates.map((c: { id: string }) => c.id)).toEqual(['c1', 'c2']);
+
+    const compileJobId = await compile(gateway, row.capture_id);
+    const trace = (await db.query(`SELECT data FROM trace_events WHERE job_id=$1 AND name='enrich'`, [compileJobId])).rows[0]!;
+    expect(trace.data).toMatchObject({ status: 'complete', model: 'fixture/model-1' });
+    expect(requests.map((r) => r.schema)).toEqual(['atlas_quick_read_v1', 'atlas_enrichment_v1']);
+    const enrich = requests[1]!;
+    expect(enrich.color).toBe('red');
+    expect(Math.max(enrich.width, enrich.height)).toBe(768);
+    expect(enrich.body.reasoning).toEqual({ effort: 'none' });
+    const data = JSON.parse((enrich.body.input as Array<{ content: Array<{ text: string }> }>)[0]!.content[0]!.text.split('\n')[2]!);
+    expect(data.first_reading).toEqual({ title: 'Teak and tapered legs', candidates: ['Mid-century modern', 'Danish modern'] });
+
+    const attempts = (
+      await db.query(`SELECT role, job_id, account_id FROM inference_attempts WHERE account_id=$1 ORDER BY started_at`, [accountId])
+    ).rows;
+    expect(attempts).toEqual([
+      { role: 'vision_photo', job_id: req.job_id, account_id: accountId },
+      { role: 'vision_photo_enrich', job_id: compileJobId, account_id: accountId },
+    ]);
+    const analysis = (
+      await db.query(`SELECT a.title, a.observations, a.candidates FROM analyses a JOIN captures c ON c.active_analysis_id = a.id WHERE c.id=$1`, [row.capture_id])
+    ).rows[0]!;
+    expect(analysis.title).toBe('Teak and tapered legs');
+    expect(analysis.observations.map((o: { text: string }) => o.text)).toEqual(['Teak sideboard with tapered legs']);
+    expect(analysis.candidates[0]).toMatchObject({ name: 'Mid-century modern', rationale: 'Tapered legs and teak', region_ids: ['r1'] });
+  });
+
+  it('video: a quick read per frame and exactly one enrichment, on the best frame', async () => {
+    const { accountId } = await insertAccount(db);
+    const { id } = await videoAsset(accountId, ['red', 'green', 'blue']);
+    // Green shows every candidate the other frames show: it becomes the display (best) frame.
+    const { gateway, requests } = twoStageGateway((color) =>
+      color === 'green' ? ['Mid-century modern', 'Danish modern', 'Bauhaus'] : color === 'red' ? ['Bauhaus'] : ['Danish modern'],
+    );
+    const req = await request(accountId, id, { mode: 'sampled_video' });
+    await worker(gateway, accountId).drain();
+    expect(requests.map((r) => r.schema)).toEqual(['atlas_quick_read_v1', 'atlas_quick_read_v1', 'atlas_quick_read_v1']);
+    const row = await analysisRow(req.analysis_id);
+    expect(row.result).toMatchObject({ reading: 'quick' });
+    await compile(gateway, row.capture_id);
+    const enrich = requests.filter((r) => r.schema === 'atlas_enrichment_v1');
+    expect(enrich).toHaveLength(1);
+    expect(enrich[0]!.color).toBe('green');
+  });
+
+  it('a single full reading (legacy profile) is not marked quick, so the compile job makes no enrichment call', async () => {
+    const { accountId } = await insertAccount(db);
+    const assetId = await photoAsset(accountId, 'blue');
+    const requests: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      requests.push(body.text.format.name);
+      expect(body).not.toHaveProperty('reasoning');
+      return envelope(JSON.stringify(reading([{ name: 'Mid-century modern' }])));
+    });
+    const gateway = createModelGateway(loadProviderConfig({ CONCENTRATE_API_KEY: 'synthetic-test-key' }), {
+      ledger: new ModelSpendLedger(new PostgresSpendStore(db), limits),
+      profiles: { vision_photo: { ...base, role: 'vision_photo' }, vision_photo_enrich: enrichProfile },
+      transport: createConcentrateTransport({ apiKey: 'synthetic-test-key', fetch: fetchImpl as unknown as typeof fetch }),
+      qualification: () => 'qualified',
+    });
+    const req = await request(accountId, assetId, { mode: 'photo' });
+    await worker(gateway, accountId).drain();
+    const row = await analysisRow(req.analysis_id);
+    expect(row.result.reading).toBeUndefined();
+    const compileJobId = await compile(gateway, row.capture_id);
+    expect(requests).toEqual(['atlas_observations_v2']);
+    const trace = (await db.query(`SELECT data FROM trace_events WHERE job_id=$1 AND name='enrich'`, [compileJobId])).rows[0]!;
+    expect(trace.data).toMatchObject({ status: 'skipped', reason: 'single_stage_reading' });
+  });
+});

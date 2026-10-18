@@ -14,7 +14,16 @@ import type {
 } from '../qloo/types';
 import type { ResearchExtraction, ResearchProvider, ResearchSourceDoc } from '../research/types';
 import type { StructuredRequest, StructuredResult, TextModelProvider } from '../text/types';
-import { VlmAnalysis, type VlmAnalyzeInput, type VlmProvider, type VlmResult } from '../vlm/types';
+import {
+  VlmAnalysis,
+  VlmEnrichment,
+  type VlmAnalyzeInput,
+  type VlmEnricher,
+  type VlmEnrichInput,
+  type VlmEnrichResult,
+  type VlmProvider,
+  type VlmResult,
+} from '../vlm/types';
 
 /**
  * Deterministic fakes for unit/integration tests. They never pretend to be live:
@@ -36,6 +45,22 @@ export class FakeVlm implements VlmProvider {
     const out = this.respond(input);
     if (out instanceof Error) throw out;
     return { analysis: VlmAnalysis.parse(out), model: 'fake-vlm', durationMs: 1 };
+  }
+}
+
+/** Deterministic stage-2 enrichment fake (schema-validated like the real adapter). */
+export class FakeVlmEnricher implements VlmEnricher {
+  readonly id = 'vlm-enrich:fake';
+  readonly calls: VlmEnrichInput[] = [];
+  constructor(private readonly respond: (input: VlmEnrichInput) => VlmEnrichment | Error) {}
+  capability(): CapabilityEntry {
+    return AVAILABLE;
+  }
+  async enrichImage(input: VlmEnrichInput): Promise<VlmEnrichResult> {
+    this.calls.push(input);
+    const out = this.respond(input);
+    if (out instanceof Error) throw out;
+    return { enrichment: VlmEnrichment.parse(out), model: 'fake-vlm-enrich', durationMs: 1 };
   }
 }
 

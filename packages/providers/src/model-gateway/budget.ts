@@ -124,6 +124,63 @@ export class ModelSpendLedger {
   async circuit(role: ModelRole): Promise<RoleCircuit | null> {
     return (await this.control()).circuits[role] ?? null;
   }
+  /** Spend/allowance check for `micros` more reserved by this job (pause and circuits excluded). */
+  private fits(
+    s: SpendState,
+    day: string,
+    identity: Pick<ModelIdentity, 'accountId' | 'jobId'>,
+    micros: number,
+  ): boolean {
+    const outstanding = s.attempts.filter((a) => a.state !== 'settled');
+    const counted = s.attempts.filter((a) => a.day === day || a.state !== 'settled');
+    const charge = (a: InferenceAttempt) =>
+      a.state === 'settled' ? a.costMicros! : a.reservedMicros;
+    const sum = (attempts: InferenceAttempt[]) =>
+      attempts.reduce((total, a) => total + charge(a), 0);
+    const owned = counted.filter((a) => a.identity.accountId === identity.accountId);
+    const analyses = new Set(
+      s.attempts
+        .filter((a) => a.day === day && a.identity.accountId === identity.accountId)
+        .map((a) => a.identity.jobId),
+    );
+    return !(
+      sum(counted) + micros > this.limits.dailyMicros ||
+      sum(owned) + micros > this.limits.accountDailyMicros ||
+      sum(outstanding) + micros > this.limits.maxUnknownMicros ||
+      (!analyses.has(identity.jobId) && analyses.size >= this.limits.accountDailyAnalyses)
+    );
+  }
+
+  /**
+   * Read-only pre-check for a two-stage photo reading (amendment 2.2): true
+   * when this job could reserve every listed profile's worst case together
+   * right now (no pause, no open circuit, inside the daily, account, unknown
+   * and per-account analysis limits). It reserves nothing; each call still
+   * reserves its own attempt, so a later refusal is still possible and must
+   * leave stage 1 intact.
+   */
+  async canReserveAll(
+    identity: Pick<ModelIdentity, 'accountId' | 'jobId'>,
+    profiles: readonly ModelProfile[],
+  ): Promise<boolean> {
+    if (!identity.accountId || !identity.jobId || !profiles.length) return false;
+    const day = utcDay(this.now());
+    return this.store.transaction(
+      (s) => {
+        const now = this.now();
+        if (s.pause && (s.pause.until === null || s.pause.until > now)) return false;
+        if (profiles.some((p) => s.circuits?.[p.role])) return false;
+        return this.fits(
+          s,
+          day,
+          identity,
+          profiles.reduce((n, p) => n + p.reservationMicros, 0),
+        );
+      },
+      { day },
+    );
+  }
+
   async reserve(identity: ModelIdentity, profile: ModelProfile): Promise<string> {
     if (
       !identity.accountId ||
@@ -168,24 +225,7 @@ export class ModelSpendLedger {
             'Attempt already reserved; reconcile rather than dispatch twice',
           );
         }
-        const outstanding = s.attempts.filter((a) => a.state !== 'settled');
-        const counted = s.attempts.filter((a) => a.day === day || a.state !== 'settled');
-        const charge = (a: InferenceAttempt) =>
-          a.state === 'settled' ? a.costMicros! : a.reservedMicros;
-        const sum = (attempts: InferenceAttempt[]) =>
-          attempts.reduce((total, a) => total + charge(a), 0);
-        const owned = counted.filter((a) => a.identity.accountId === identity.accountId);
-        const analyses = new Set(
-          s.attempts
-            .filter((a) => a.day === day && a.identity.accountId === identity.accountId)
-            .map((a) => a.identity.jobId),
-        );
-        if (
-          sum(counted) + profile.reservationMicros > this.limits.dailyMicros ||
-          sum(owned) + profile.reservationMicros > this.limits.accountDailyMicros ||
-          sum(outstanding) + profile.reservationMicros > this.limits.maxUnknownMicros ||
-          (!analyses.has(identity.jobId) && analyses.size >= this.limits.accountDailyAnalyses)
-        ) {
+        if (!this.fits(s, day, identity, profile.reservationMicros)) {
           throw new ProviderError(
             'model-gateway',
             'budget_exhausted',

@@ -4,7 +4,7 @@ import type { QlooCapabilities, QlooProvider } from './qloo/types';
 import type { ResearchProvider } from './research/types';
 import type { ObjectStorage } from './storage/types';
 import type { TextModelProvider } from './text/types';
-import type { VlmProvider } from './vlm/types';
+import type { VlmEnricher, VlmProvider } from './vlm/types';
 
 /**
  * Placeholder implementations used when a provider is not configured or its
@@ -23,6 +23,18 @@ export class UnavailableVlm implements VlmProvider {
     return unavailable(this.reason);
   }
   async analyzeImage(): Promise<never> {
+    return fail('vlm', this.reason);
+  }
+}
+
+/** Stage-2 enrichment without a qualified vision_photo_enrich profile (never a fallback model). */
+export class UnavailableVlmEnricher implements VlmEnricher {
+  readonly id = 'vlm-enrich:unavailable';
+  constructor(private readonly reason: CapabilityReason = 'not_configured') {}
+  capability(): CapabilityEntry {
+    return unavailable(this.reason);
+  }
+  async enrichImage(): Promise<never> {
     return fail('vlm', this.reason);
   }
 }

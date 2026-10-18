@@ -4,8 +4,98 @@ import type { CapabilityEntry } from '../capabilities';
 import { ProviderError, type CallOptions } from '../errors';
 import type { StructuredResponseRunner } from '../model-gateway/runner';
 import type { StructuredRequest, StructuredResult, TextModelProvider } from '../text/types';
-import { VLM_SYSTEM_PROMPT, buildVlmUserText } from '../vlm/prompt';
-import { VlmAnalysis, type VlmAnalyzeInput, type VlmProvider, type VlmResult } from '../vlm/types';
+import {
+  ENRICH_MAX_DIMENSION,
+  QUICK_READ_MAX_CANDIDATES,
+  QUICK_READ_MAX_DIMENSION,
+  VLM_ENRICH_SYSTEM_PROMPT,
+  VLM_QUICK_SYSTEM_PROMPT,
+  VLM_READING_VERSIONS,
+  VLM_SYSTEM_PROMPT,
+  buildVlmEnrichUserText,
+  buildVlmQuickUserText,
+  buildVlmUserText,
+} from '../vlm/prompt';
+import {
+  VlmAnalysis,
+  VlmEnrichment,
+  VlmQuickRead,
+  candidateNameKey,
+  toVlmAnalysis,
+  type VlmAnalyzeInput,
+  type VlmEnricher,
+  type VlmEnrichInput,
+  type VlmEnrichResult,
+  type VlmProvider,
+  type VlmResult,
+} from '../vlm/types';
+import { boundJpegForProfile } from './image';
+import type { ModelProfile } from './profiles';
+
+export type VlmReading = 'full' | 'quick' | 'enrich';
+
+/**
+ * Which reading a profile was qualified for. Its schemaVersion names it (and
+ * is part of profileHash): the stage-2 role always enriches; a vision profile
+ * pinned to the legacy full schema keeps the single full reading; every other
+ * vision profile uses the two-stage quick read (amendment 2.2).
+ */
+export function readingForProfile(profile: Pick<ModelProfile, 'role' | 'schemaVersion'>): VlmReading {
+  if (profile.role === 'vision_photo_enrich') return 'enrich';
+  return profile.schemaVersion === VLM_READING_VERSIONS.full.schema ? 'full' : 'quick';
+}
+
+/** Largest derivative accepted for re-bounding to a stage's qualified size. */
+const MAX_STAGE_INPUT_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Bounds a normalized JPEG to the profile's qualified image limits, further
+ * capped at the stage's measured size (512 px stage 1, 768 px stage 2).
+ * A derivative that already fits is sent unchanged.
+ */
+async function stageImage(
+  input: VlmAnalyzeInput['image'],
+  limits: ModelProfile['image'],
+  stageMaxDimension: number,
+): Promise<{ bytes: Uint8Array; width: number; height: number }> {
+  if (input.mediaType !== 'image/jpeg' || input.bytes.length > MAX_STAGE_INPUT_BYTES)
+    throw new ProviderError(
+      'concentrate',
+      'bad_request',
+      'Vision requires a bounded normalized JPEG derivative',
+    );
+  const bounds = { ...limits, maxDimension: Math.min(limits.maxDimension, stageMaxDimension) };
+  let metadata: Metadata;
+  try {
+    metadata = await sharp(input.bytes, { limitInputPixels: 100_000_000 }).metadata();
+  } catch {
+    throw new ProviderError('concentrate', 'bad_request', 'Invalid normalized image');
+  }
+  if (
+    metadata.format !== 'jpeg' ||
+    !metadata.width ||
+    !metadata.height ||
+    (metadata.pages ?? 1) > 1
+  )
+    throw new ProviderError('concentrate', 'bad_request', 'Invalid normalized JPEG');
+  const swapped = (metadata.orientation ?? 1) >= 5;
+  if (
+    !swapped &&
+    input.bytes.length <= bounds.maxBytes &&
+    metadata.width * metadata.height <= bounds.maxPixels &&
+    Math.max(metadata.width, metadata.height) <= bounds.maxDimension
+  )
+    return { bytes: input.bytes, width: metadata.width, height: metadata.height };
+  return boundJpegForProfile(input.bytes, bounds);
+}
+
+/** Stage-1 output checks beyond the schema: requested count, names, ids after merge. */
+function validateQuickRead(quick: VlmQuickRead, maxCandidates: number): void {
+  const names = quick.candidates.map((c) => candidateNameKey(c.name));
+  if (names.some((n) => !n) || new Set(names).size !== names.length)
+    throw new Error('Empty or duplicate candidate names');
+  validateVision(toVlmAnalysis(quick), maxCandidates);
+}
 
 /** Additional reference/geometry checks run before output is eligible for publication. */
 export function validateVision(analysis: VlmAnalysis, maxCandidates: number): void {
@@ -37,13 +127,23 @@ export function validateVision(analysis: VlmAnalysis, maxCandidates: number): vo
 
 export class ConcentrateVlm implements VlmProvider {
   readonly id: string;
-  constructor(readonly runner: StructuredResponseRunner) {
+  /** 'quick' (stage 1 of the two-stage reading) or the legacy single 'full' reading. */
+  readonly reading: 'full' | 'quick';
+  constructor(
+    readonly runner: StructuredResponseRunner,
+    options: { reading?: 'full' | 'quick' } = {},
+  ) {
     this.id = `vlm:concentrate:${runner.profile.model}`;
+    const fromProfile = readingForProfile(runner.profile);
+    if (fromProfile === 'enrich')
+      throw new Error('The enrichment role is served by ConcentrateVlmEnricher');
+    this.reading = options.reading ?? fromProfile;
   }
   capability(): CapabilityEntry {
     return this.runner.capability();
   }
   async analyzeImage(input: VlmAnalyzeInput, options?: CallOptions): Promise<VlmResult> {
+    if (this.reading === 'quick') return this.quickRead(input, options);
     if (
       input.image.mediaType !== 'image/jpeg' ||
       input.image.bytes.length > this.runner.profile.image.maxBytes
@@ -92,6 +192,92 @@ export class ConcentrateVlm implements VlmProvider {
     );
     return {
       analysis: result.data,
+      model: result.model,
+      durationMs: result.durationMs,
+      usage: result.usage,
+    };
+  }
+
+  /**
+   * Stage 1 (amendment 2.2): the slim VlmQuickRead at <= 512 px with at most
+   * five candidates, merged into the VlmAnalysis shape the compiler expects.
+   */
+  private async quickRead(input: VlmAnalyzeInput, options?: CallOptions): Promise<VlmResult> {
+    const image = await stageImage(input.image, this.runner.profile.image, QUICK_READ_MAX_DIMENSION);
+    const max = Math.min(
+      Math.max(input.maxCandidates ?? QUICK_READ_MAX_CANDIDATES, 1),
+      QUICK_READ_MAX_CANDIDATES,
+    );
+    const result = await this.runner.run(
+      {
+        system: VLM_QUICK_SYSTEM_PROMPT,
+        content: [
+          { type: 'text', text: buildVlmQuickUserText({ ...input, maxCandidates: max }) },
+          {
+            type: 'image',
+            mediaType: 'image/jpeg',
+            base64: Buffer.from(image.bytes).toString('base64'),
+            width: image.width,
+            height: image.height,
+          },
+        ],
+        schema: VlmQuickRead,
+        schemaName: VLM_READING_VERSIONS.quick.schema,
+        validate: (quick) => validateQuickRead(quick, max),
+      },
+      options,
+    );
+    return {
+      analysis: toVlmAnalysis(result.data),
+      quick: result.data,
+      model: result.model,
+      durationMs: result.durationMs,
+      usage: result.usage,
+    };
+  }
+}
+
+/**
+ * Stage 2 (role vision_photo_enrich): observations, visible text, short
+ * rationales, advisory keep/veto per stage-1 candidate, up to four more
+ * candidates and regions, read from the same photo at <= 768 px.
+ */
+export class ConcentrateVlmEnricher implements VlmEnricher {
+  readonly id: string;
+  constructor(readonly runner: StructuredResponseRunner) {
+    if (readingForProfile(runner.profile) !== 'enrich')
+      throw new Error('ConcentrateVlmEnricher requires the vision_photo_enrich role');
+    this.id = `vlm-enrich:concentrate:${runner.profile.model}`;
+  }
+  capability(): CapabilityEntry {
+    return this.runner.capability();
+  }
+  async enrichImage(input: VlmEnrichInput, options?: CallOptions): Promise<VlmEnrichResult> {
+    const image = await stageImage(input.image, this.runner.profile.image, ENRICH_MAX_DIMENSION);
+    const result = await this.runner.run(
+      {
+        system: VLM_ENRICH_SYSTEM_PROMPT,
+        content: [
+          { type: 'text', text: buildVlmEnrichUserText(input) },
+          {
+            type: 'image',
+            mediaType: 'image/jpeg',
+            base64: Buffer.from(image.bytes).toString('base64'),
+            width: image.width,
+            height: image.height,
+          },
+        ],
+        schema: VlmEnrichment,
+        schemaName: VLM_READING_VERSIONS.enrich.schema,
+        validate: (enrichment) => {
+          const names = enrichment.additional_candidates.map((c) => candidateNameKey(c.name));
+          if (names.some((n) => !n)) throw new Error('Empty candidate name');
+        },
+      },
+      options,
+    );
+    return {
+      enrichment: result.data,
       model: result.model,
       durationMs: result.durationMs,
       usage: result.usage,

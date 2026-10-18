@@ -163,7 +163,12 @@ export const LIMITS = {
   recommendationsPerAnalysis: 12,
   initialRenderedRecommendations: 6,
   relatedCachedMax: 6,
-  vlmCandidatesToResolve: 8,
+  /** Amendment 2.2: Qloo resolution is capped at 5 candidates per analysis (stage 1 reads 3-5). */
+  vlmCandidatesToResolve: 5,
+  /** Concurrent Qloo resolve requests per analysis (the hackathon key throttles bursts). */
+  qlooResolveConcurrency: 3,
+  /** Model calls one photo reading may take: stage-1 quick read + stage-2 enrichment. */
+  visionCallsPerAnalysis: 2,
   anchorsMax: 5,
   researchedReferencesMax: 5,
   qlooRequestsPerJob: 12,

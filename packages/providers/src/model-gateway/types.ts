@@ -39,6 +39,11 @@ export interface GatewayRequest {
   schemaName: string;
   jsonSchema: Record<string, unknown>;
   maxOutputTokens: number;
+  /**
+   * The qualified profile's reasoning effort. Present only when the profile
+   * sets one; the transport then sends `reasoning.effort`, otherwise nothing.
+   */
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
 }
 export interface GatewayResponse {
   /** Responses object id, when returned. */
