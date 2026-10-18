@@ -131,13 +131,15 @@ async function writeEvent(
 
 /**
  * Create the SavedItem for an accessible item if missing. Returns whether it
- * was created. Shared by POST /v1/preferences and collection adds.
+ * was created. Shared by POST /v1/preferences, collection adds and taste
+ * onboarding picks (source `onboarding`, services/onboarding.ts).
  */
 export async function saveItem(
   ctx: ServiceContext,
   db: Queryable,
   item: TargetItem,
   body: PreferenceRequest,
+  options: { source?: 'onboarding' } = {},
 ): Promise<{ saved: SavedItemDto; created: boolean }> {
   const owner = ownerOf(ctx.principal);
   const cols = ownerColumns(owner);
@@ -156,7 +158,13 @@ export async function saveItem(
     // An explicit save lifts an earlier hide of the same item.
     const own = ownerPredicate(owner, '', 2);
     await db.query(`DELETE FROM item_exclusions WHERE canonical_key = $1 AND ${own.sql}`, [item.canonical_key, ...own.params]);
-    await writeEvent(ctx, db, 'save', body, { canonical_key: item.canonical_key, kind: item.kind, endorsed_focus: focus });
+    await writeEvent(ctx, db, 'save', body, {
+      canonical_key: item.canonical_key,
+      kind: item.kind,
+      endorsed_focus: focus,
+      // Taste onboarding picks (amendment 2.2) are ordinary explicit saves, marked by source.
+      ...(options.source ? { source: options.source } : {}),
+    });
     await bumpTasteRevision(db, owner);
     await rebuildTasteProfile(db, owner);
   }

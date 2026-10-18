@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { LibraryAccess, Scope } from '../enums';
 import { Timestamp, Uuid } from './common';
 import { SafeCaptureDeviceSetup } from './capture-v2';
+import { FoodExclusions } from './onboarding';
 
 export const OrdinaryPreferences = z.strictObject({
   theme: z.enum(['system', 'light', 'dark']).optional(),
@@ -9,6 +10,13 @@ export const OrdinaryPreferences = z.strictObject({
   default_capture_mode: z.enum(['photo', 'video']).optional(),
   video_muted: z.boolean().optional(),
   exploration: z.enum(['familiar', 'balanced', 'adventurous']).optional(),
+  /**
+   * Amendment 2.2: food exclusions chosen at onboarding or in Settings -> Taste.
+   * A preference (read with preferences:read, changed with preferences:write),
+   * never taste; they default movie-night plans and filter Eat suggestions.
+   * A patch replaces the whole list.
+   */
+  food: z.strictObject({ exclusions: FoodExclusions }).optional(),
 });
 export const PatchOrdinaryPreferences = OrdinaryPreferences.refine((v) => Object.keys(v).length > 0, 'Choose a preference.');
 export const PreferencesResponse = z.object({

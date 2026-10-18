@@ -12,6 +12,7 @@ import type { DiscoveriesQuery, DiscoveriesResponse } from '../schemas/discoveri
 import { decodeCursor, encodeCursor } from '../util/cursor';
 import { addHours } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
+import { excludedFoodItemIds, foodExclusionsFor } from './onboarding';
 import { getTasteRevision } from './taste';
 
 /**
@@ -177,6 +178,12 @@ async function createSnapshot(ctx: ServiceContext, owner: Owner, revision: numbe
     const inPool = new Set(pool.map((p) => p.canonical_key));
     const samples = (await sampleItemIds(ctx.db)).filter((s) => !inPool.has(s.canonical_key) && !hidden.has(s.canonical_key) && !saved.has(s.id));
     pool = [...pool, ...samples.slice(0, FEED_TOP_UP_MIN - pool.length)];
+  }
+  // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat suggestions.
+  const exclusions = await foodExclusionsFor(ctx.db, owner);
+  if (exclusions.length) {
+    const drop = await excludedFoodItemIds(ctx.db, pool.filter((p) => p.kind === 'food').map((p) => p.id), exclusions);
+    if (drop.size) pool = pool.filter((p) => !drop.has(p.id));
   }
   const available = CATEGORIES.filter((c) => pool.some((p) => p.category === c));
   const filtered = category ? pool.filter((p) => p.category === category) : pool;

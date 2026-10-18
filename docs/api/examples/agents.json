@@ -16,7 +16,8 @@
       "language": "en",
       "default_capture_mode": "photo",
       "video_muted": true,
-      "exploration": "balanced"
+      "exploration": "balanced",
+      "food": { "exclusions": [] }
     },
     "analysis_consent": { "automatic_analysis": false, "requires_explicit_request": true }
   },

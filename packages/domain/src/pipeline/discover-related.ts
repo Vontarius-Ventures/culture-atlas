@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { isProviderError, isUsable, type QlooEntityType } from '@culture-atlas/providers';
 import { suggestDishes } from '../composer/creative';
-import { stripSafetyClaims } from '../composer/dietary';
+import { stripSafetyClaims, violatedExclusions } from '../composer/dietary';
+import { foodExclusionsFor } from '../services/onboarding';
 import { reciprocalRankFusion, type RankedList } from '../composer/fusion';
 import type { PlanSnapshot } from '../composer/plan-types';
 import { BudgetExhaustedError, QlooSession, withProviderRetries } from '../composer/provider-calls';
@@ -233,7 +234,12 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           return { picks: [] as Pick[], failed: true };
         }
       });
-      const fresh = out.picks.filter((p) => !hidden.has(p.key));
+      // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat ideas.
+      // They stay server-side (never sent to the model as identity data).
+      const foodExclusions = await foodExclusionsFor(ctx.db, owner);
+      const fresh = out.picks.filter(
+        (p) => !hidden.has(p.key) && !violatedExclusions({ title: p.title, description: p.description }, foodExclusions).length,
+      );
       picks.push(...fresh);
       statuses.eat = out.failed ? 'failed' : fresh.length ? 'complete' : 'partial';
     }

@@ -9,6 +9,7 @@ export * as discovery from './discovery';
 export * as items from './items';
 export * as preferences from './preferences';
 export * as taste from './taste';
+export * as onboarding from './onboarding';
 export * as collections from './collections';
 export * as plans from './plans';
 export * as agentConnections from './agent-connections';
