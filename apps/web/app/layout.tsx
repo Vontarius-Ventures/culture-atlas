@@ -4,6 +4,8 @@ import { Providers } from '@/components/Providers';
 import './globals.css';
 // Capture platform v2 surfaces; loaded after the v1 base so its overrides win.
 import '@/components/v2/v2.css';
+// Spec amendment 2.2 screens 14-18 (taste onboarding, While we look, ready notice).
+import '@/components/onboarding/onboarding.css';
 
 export const metadata: Metadata = {
   title: { default: 'culture atlas', template: '%s · culture atlas' },

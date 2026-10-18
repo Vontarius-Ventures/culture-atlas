@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useId, useState } from 'react';
 import type { Scope } from '@culture-atlas/domain';
 import type {
@@ -172,6 +173,7 @@ export function SettingsView() {
       ) : isAccount ? (
         <>
           <AccountSection />
+          <TasteEntry />
           <DevicesEntry />
           <AgentConnections />
           <SensorConnections />
@@ -189,6 +191,24 @@ export function SettingsView() {
         </>
       ) : null}
     </div>
+  );
+}
+
+/** Settings → Taste (spec amendment 2.2, screen 18). */
+function TasteEntry() {
+  return (
+    <section className="settings__section" aria-labelledby="taste-heading">
+      <h2 id="taste-heading" className="section-title section-title--display">
+        Taste
+      </h2>
+      <p className="muted">What you picked when you joined, and foods to leave out.</p>
+      <p style={{ marginTop: 12 }}>
+        <Link href="/settings/taste" className="button button--outline">
+          Edit your taste
+          <Icon name="chevronRight" size={18} />
+        </Link>
+      </p>
+    </section>
   );
 }
 

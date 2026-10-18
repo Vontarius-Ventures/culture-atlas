@@ -20,6 +20,8 @@ export interface DiscoveryCardProps {
   priority?: boolean;
   /** Title overlay styles are never used; titles always sit beneath the image. */
   headingLevel?: 'h2' | 'h3';
+  /** Optional quiet line under the title (e.g. the category in the "While we look" strip). */
+  meta?: string;
 }
 
 /** Attractive text treatment when no licensed image is available. */
@@ -48,6 +50,7 @@ export function DiscoveryCard({
   aspect = 'square',
   priority,
   headingLevel = 'h3',
+  meta,
 }: DiscoveryCardProps) {
   const Heading = headingLevel;
   const selected = selection?.selected ?? false;
@@ -76,6 +79,7 @@ export function DiscoveryCard({
         </Heading>
         {menu && <div className="card__menu">{menu}</div>}
       </div>
+      {meta && <p className="card__sub">{meta}</p>}
       {card.is_example && <p className="card__example">Example result</p>}
       {onSave && (
         <button
