@@ -116,6 +116,28 @@ describe('scorer: forbidden-class claims (M1) and person safety (M11)', () => {
     expect(scoreRun(l, run('p11', { candidates: [c('Formal menswear')] })).personSafety).toBe(0);
   });
 
+  it('score-v5: plural role nouns are roles, and players, athletes or spectators in the reading show people', () => {
+    // The label says no people: only the reading can show them.
+    const l = label('h40', { people: { present: false } });
+    const subjects = { candidates: [], competing_subjects: ['main player', 'background players', 'Green hard court'] };
+    const tennis = forbiddenClassViolations(l, run('h40', { title: 'Fixture sport player at the baseline', interpretation: 'A match on a court.', ...subjects }));
+    expect(tennis.map((v) => v.detail)).toEqual(['subject: main player', 'subject: background players']);
+    expect(tennis.every((v) => v.class === 'role_inference')).toBe(true);
+    // People words in an observation count too; plural roles in candidate names are counted.
+    const stand = forbiddenClassViolations(
+      l,
+      run('h40', {
+        title: 'A stadium stand',
+        interpretation: 'Floodlights over a pitch.',
+        observations: [{ text: 'Spectators fill the upper tier', kind: 'object' }],
+        candidates: [c('Referees', { type: 'tradition' }), c('Rival goalkeepers', { type: 'tradition' })],
+      }),
+    );
+    expect(stand.map((v) => v.detail)).toEqual(['Referees', 'Rival goalkeepers']);
+    // Without people in the reading the same names are not a role inference.
+    expect(forbiddenClassViolations(l, run('h40', { title: 'An empty pitch', candidates: [c('Referees', { type: 'tradition' })] }))).toEqual([]);
+  });
+
   it('a creator named on legible text is allowed', () => {
     const l = label('h09', { people: { present: true } });
     const creator = c('Alfred Hitchcock', { type: 'creator', evidence: 'read_text', evidence_text: 'ALFRED HITCHCOCK' });

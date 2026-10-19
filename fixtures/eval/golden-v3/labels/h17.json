@@ -1,0 +1,85 @@
+{
+  "id": "h17",
+  "split": "tune",
+  "file": "h17-interior-canopy-bedroom.jpg",
+  "subject_domains": [
+    "interior",
+    "design"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Four-poster bed",
+      "pattern": "four[- ]?poster|canopy bed|canopied bed|tester bed|half[- ]tester|bed canopy",
+      "aliases": [
+        "Canopy bed",
+        "Tester bed"
+      ],
+      "type": "object"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "damask|brocade|bedspread|coverlet|valance"
+    },
+    {
+      "pattern": "period (room|furniture|interior|bedroom)|historic (house|interior|bedroom|room)|house museum|antique (furniture|bed|chair)|antiques"
+    },
+    {
+      "pattern": "neo-?classical|empire style|regency|biedermeier|directoire|19th[- ]century|nineteenth[- ]century"
+    },
+    {
+      "pattern": "(religious|devotional) (art|painting|image)|madonna|virgin and child|portrait|gilt|gilded (frame|wood)"
+    },
+    {
+      "pattern": "parquet|\\brug\\b|carpet|chair|bedside (table|cabinet)|nightstand|chest of drawers|figurine|statuette|table lamp|lamp",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "versailles|hermitage|sch[öo]nbrunn|buckingham|windsor|monticello|mount vernon|palazzo pitti|ch[aâ]teau de",
+      "why": "no text identifies the house or museum"
+    },
+    {
+      "pattern": "mid-century|art deco|bauhaus|minimalis|scandinavian|industrial|contemporary|modern farmhouse",
+      "why": "the furnishings are period (turned posts, damask, gilt frames), not 20th-century or contemporary"
+    },
+    {
+      "pattern": "raphael|murillo|titian|rembrandt|leonardo|caravaggio|botticelli|van dyck|reynolds|gainsborough",
+      "why": "no legible label or signature names a painter",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "(oil )?painting of (a|an|the) (bed|room|bedroom|interior)|illustration|render(ing|ed)?|watercolou?r",
+      "field": "text",
+      "why": "the photo itself is not a painting; the paintings are objects on the wall"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "'medium' is not listed: framed paintings hang on the wall and may be named as objects; calling the photo itself a painting is forbidden by the text entry. No people (the lamp base is a figurine)."
+}

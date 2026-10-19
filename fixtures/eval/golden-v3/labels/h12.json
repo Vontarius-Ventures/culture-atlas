@@ -1,0 +1,74 @@
+{
+  "id": "h12",
+  "split": "tune",
+  "file": "h12-qwen25_ocr1.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Yerba mate",
+      "pattern": "\\bmat[eé]\\b|yerba",
+      "aliases": [
+        "Mate tea"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Coca-Cola",
+      "aliases": [
+        "The Coca-Cola Company",
+        "Coca Cola"
+      ],
+      "type": "brand",
+      "requires_text": "Coca-Cola"
+    },
+    {
+      "name": "태양의 마테차",
+      "pattern": "마테차",
+      "type": "brand",
+      "requires_text": "마테차"
+    },
+    {
+      "pattern": "korean (beverage|drink|bottled)|bottled (tea|drink)"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "latin (american )?(cuisine|music|dance)|salsa|samba|reggaeton",
+      "why": "text echo of the 'LATIN BIORHYTHM' slogan"
+    },
+    {
+      "pattern": "(argentin|brazil|urugua|paragua)\\w* cuisine",
+      "why": "no origin evidence; the label is Korean"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [
+    "Coca-Cola",
+    "LATIN BIORHYTHM MATE"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

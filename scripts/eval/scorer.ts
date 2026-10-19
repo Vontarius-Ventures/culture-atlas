@@ -18,7 +18,7 @@ import {
  * brand evidence from the final visible text itself. A guard bug therefore
  * shows up as a failing metric instead of being trusted by the yardstick.
  */
-export const SCORER_VERSION = 'score-v4';
+export const SCORER_VERSION = 'score-v5';
 
 export interface CandidateView {
   name: string;
@@ -107,8 +107,15 @@ function mediumInName(c: Pick<CandidateView, 'name' | 'domain'>): boolean {
 }
 const PERSON_DESCRIPTOR_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
+/**
+ * score-v5 (requalification round 2): singular and plural role nouns ("background
+ * players", "referees"); score-v4 matched "player" but not "players".
+ */
 const ROLE_RE =
-  /\b(coach\w*|player|athlete|referee|umpire|manager|politician|president|minister|celebrity|actor|actress|singer|ceo|batsman|batter|bowler|footballer|cricketer|captain)\b/i;
+  /\b(coach\w*|players?|athletes?|referees?|umpires?|managers?|politicians?|presidents?|ministers?|celebrit(?:y|ies)|actors?|actress(?:es)?|singers?|ceos?|batsm[ae]n|batters?|bowlers?|footballers?|cricketers?|captains?|goalkeepers?|goalies?|quarterbacks?|jockeys?|wrestlers?|gymnasts?|golfers?)\b/i;
+/** score-v5: words that say a reading shows people, singular or plural (players, athletes, spectators, crowds ...). */
+const PEOPLE_WORDS_RE =
+  /\b(man|men|woman|women|persons?|people|crowds?|players?|athletes?|spectators?|onlookers?|audiences?|pedestrians?|passers-?by|bystanders?|shoppers?|diners?|tourists?|visitors?|commuters?|runners?|cyclists?|skaters?|surfers?|swimmers?|dancers?|musicians?|performers?|workers?|vendors?|children|child|kids|boys?|girls?|teenagers?|students?|someone|somebody|teammates?|opponents?)\b/i;
 const DESCRIPTION_RE =
   /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration/i;
 const CUISINE_NAME_RE = /\b(cuisine|food|fare|dishes)$/i;
@@ -253,7 +260,9 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
   const people =
     label.people.present ||
     f.observations.some((o) => o.kind === 'person_style') ||
-    /\b(man|men|woman|women|person|people|crowd|players?)\b/i.test(`${f.title} ${f.interpretation}`);
+    PEOPLE_WORDS_RE.test(`${f.title} ${f.interpretation}`) ||
+    // score-v5: people words in an observation show people too.
+    f.observations.some((o) => PEOPLE_WORDS_RE.test(o.text));
   for (const c of f.candidates) {
     if (classes.has('brand_without_text') && scorerBrandLike(label, c) && !brandCorroborated(c, vt))
       out.push({ class: 'brand_without_text', detail: c.name });

@@ -52,7 +52,7 @@ import {
  * published is never removed (FAST-02): a stage-2 "unsupported" on it stays
  * an advisory veto.
  */
-export const GUARDRAIL_VERSION = 'guard-v5';
+export const GUARDRAIL_VERSION = 'guard-v6';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -149,9 +149,17 @@ export const PERSON_OBS_RE =
  * lithograph, etching, woodcut and art/canvas prints. "Poster" is not one:
  * a poster is a physical subject people photograph (the film poster in the
  * held-out set), and its title is checked by the text rules instead.
+ *
+ * guard-v6 (requalification round 2): every inflection of a medium word, not
+ * only the noun. The blind run kept "… sports car photographed at dusk"
+ * because only "photograph(s)" matched; now "photographed", "photography",
+ * "photographic", "rendered", "renderings", "sketched", "watercolours",
+ * "painterly", "gouache", "linocut", "hand-drawn" and the plurals match too
+ * (at least everything the scorer counts as a medium word). "Painted" on a
+ * craft, a building, a garment or a vehicle stays decoration (DECORATION_RE).
  */
 export const MEDIUM_RE =
-  /\b(still[- ]?life|nature morte|paintings?|painted|illustrat\w*|drawings?|sketch(es)?|render(ing)?|watercolou?r|oil on canvas|vector|cartoons?|clip ?art|photographs?|digital art|artworks?|engravings?|lithograph\w*|etchings?|woodcuts?|woodblock prints?|(?:art|canvas|fine[- ]art|giclee|giclée) prints?)\b/i;
+  /\b(still[- ]?lifes?|nature mortes?|paintings?|painted|painterly|illustrat\w*|drawings?|hand[- ]drawn|sketch\w*|render(?:s|ed|ings?)?|watercolou?r(?:s|ed)?|gouache|oil on canvas|vectors?|cartoon\w*|clip ?art|photograph\w*|digital art|artworks?|engravings?|lithograph\w*|etchings?|woodcuts?|linocuts?|woodblock prints?|(?:art|canvas|fine[- ]art|giclee|giclée) prints?)\b/i;
 /**
  * Medium words in a candidate name or tag query: the headline words plus a
  * bare "print" or "canvas" ("Vanitas print"), which a headline may use for a
@@ -172,9 +180,34 @@ const DECORATION_RE = /\b(?:(?:hand[- ]?)?painted|(?:hand[- ]?|block[- ]?)?print
 export function hasMediumWord(text: string, domain?: string | null): boolean {
   return CANDIDATE_MEDIUM_RE.test(domain && DECORATIVE_DOMAINS.has(domain) ? text.replace(DECORATION_RE, ' ') : text);
 }
-export const ROLE_RE =
-  /\b(coach\w*|player|athlete|referee|manager|politician|president|minister|celebrity|actor|actress|singer|ceo)\b/i;
-export const PEOPLE_RE = /\b(man|men|woman|women|person|people|crowd)\b/i;
+/**
+ * "Player" names a person except in a playback device ("record player", "DVD
+ * players") or a "player piano"; the device forms are neither a role nor
+ * people in the photo.
+ */
+const PLAYER = String.raw`(?<!\b(?:record|cd|dvd|blu-?ray|mp3|media|cassette|tape|vinyl|disc|minidisc)[- ])players?\b(?![- ]pianos?\b)`;
+/**
+ * Roles inferred for people in the photo (G-PERSON-ROLE, G-SUBJECT).
+ * guard-v6: singular and plural ("background players", "referees"), and the
+ * scorer's sports roles; only applied when the reading shows people.
+ */
+export const ROLE_RE = new RegExp(
+  String.raw`\b(?:coach\w*|${PLAYER}|athletes?|referees?|umpires?|managers?|politicians?|presidents?|ministers?|celebrit(?:y|ies)|actors?|actress(?:es)?|singers?|ceos?|batsm[ae]n|batters?|bowlers?|footballers?|cricketers?|captains?|goalkeepers?|goalies?|quarterbacks?|jockeys?|wrestlers?|gymnasts?|golfers?)\b`,
+  'i',
+);
+/**
+ * Words that say the reading shows people (singular or plural). guard-v6: the
+ * blind run's "Tennis player on outdoor court" did not count as people, so the
+ * competing subjects "main player" / "background players" passed G-SUBJECT.
+ * Players, athletes, crowds, spectators and other words for people in a scene
+ * count now; a role noun in the reading (ROLE_RE) counts too (readingFacts).
+ * Ambiguous words that usually name things ("fans", "couple of", "kid
+ * leather", "family-style") are left out.
+ */
+export const PEOPLE_RE = new RegExp(
+  String.raw`\b(?:man|men|woman|women|person|persons|people|crowds?|${PLAYER}|athletes?|spectators?|onlookers?|audiences?|pedestrians?|passers-?by|bystanders?|shoppers?|diners?|tourists?|visitors?|commuters?|runners?|cyclists?|skaters?|surfers?|swimmers?|dancers?|musicians?|performers?|workers?|vendors?|children|child|kids|boys?|girls?|teenagers?|students?|someone|somebody|teammates?|opponents?)\b`,
+  'i',
+);
 /**
  * "Eames-style lounge chair", "Shaker-inspired cabinet", "Eames style chair".
  * Narrower than the plan's /^(\S+)[- ](style|inspired)\b/: a bare style name
@@ -557,9 +590,11 @@ export function sanitizeObservations(obs: VlmAnalysis['observations']): { kept: 
 }
 
 const MEDIUM_PHRASE_RE = new RegExp(
-  `(\\b(?:a|an|the)\\s+)?${MEDIUM_RE.source}(?:\\s+(?:of|with|in)\\b(?:\\s+(a|an|the)\\b)?)?`,
+  `(\\b(?:a|an|the)\\s+)?${MEDIUM_RE.source}(\\s+(?:of|with|in)\\b(?:\\s+(a|an|the)\\b)?)?`,
   'gi',
 );
+/** A medium word used as a participle ("photographed at dusk", "rendered in blue"): only the word goes. */
+const PARTICIPLE_RE = /ed$/i;
 /** Dangling words left at either end after a medium phrase is removed (articles only at the end). */
 const LEADING_CONNECTORS = /^(?:and|or|of|with|in|&|-|–|,|:|;)$/i;
 const TRAILING_CONNECTORS = /^(?:and|or|of|with|in|a|an|the|&|-|–|,|:|;)$/i;
@@ -571,7 +606,11 @@ function stripMedium(text: string): string {
   const words = text
     .replace(MEDIUM_PHRASE_RE, (...m: unknown[]) => {
       const lead = m[1] as string | undefined;
-      const trailing = m[2 + groups] as string | undefined;
+      const word = m[2] as string;
+      const phrase = m[2 + groups] as string | undefined;
+      const trailing = m[3 + groups] as string | undefined;
+      // guard-v6: "a car photographed in a studio" keeps "a car in a studio".
+      if (PARTICIPLE_RE.test(word)) return ` ${lead ?? ''}${phrase ?? ''} `;
       return lead && trailing ? ` ${trailing} ` : ' ';
     })
     .replace(/\s+([,.;:!?])/g, '$1')
@@ -642,9 +681,12 @@ function readingFacts(
   return {
     title: a.title,
     interpretation: a.interpretation,
+    // guard-v6: a role noun in the headline ("Referee signals a foul") and people words in
+    // the observations ("Additional players in the background") count as people too.
     mentionsPeople:
       PEOPLE_RE.test(head) ||
-      a.observations.some((o) => o.kind === 'person_style') ||
+      ROLE_RE.test(head) ||
+      a.observations.some((o) => o.kind === 'person_style' || PEOPLE_RE.test(o.text)) ||
       a.candidates.some((c) => c.domain === 'people'),
     foodText,
     candidates: a.candidates,

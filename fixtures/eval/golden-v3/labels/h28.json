@@ -1,0 +1,86 @@
+{
+  "id": "h28",
+  "split": "tune",
+  "file": "h28-clothing-logos-tennis.jpg",
+  "subject_domains": [
+    "sport",
+    "fashion",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Tennis",
+      "pattern": "\\btennis\\b"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "racket|racquet|hard court|doubles|forehand|backhand|ready position"
+    },
+    {
+      "pattern": "(athletic|sports) (skirt|wear|apparel)|sportswear|skort|athletic skirt|polo shirt|white (top|t-shirt)"
+    },
+    {
+      "pattern": "school bus|chain[- ]link fence|bleachers|parking lot|outdoor courts?",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "tennis player|\\bplayers?\\b|athlete|\\bteam\\b|varsity|high school|college|ncaa|student",
+      "why": "role, age or affiliation inference about the people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "nike|swoosh",
+      "why": "the skirt shows only a swoosh logo; no brand word is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "wilson|\\bhead\\b|babolat|prince|yonex|dunlop",
+      "why": "the W stencil on the strings is a logo, not legible text",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "wimbledon|us open|roland|french open|australian open|\\bwta\\b|\\batp\\b|\\bitf\\b",
+      "why": "no text names an event or tour",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "\\b(hair|braids?|ponytail|young|teen\\w*|girls?|age|tanned|legs|body|build)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Players on outdoor hard courts; the nearest wears a skirt with a swoosh logo and holds a racket with a W stencil. Both marks are logos without words, so no brand may be published. People: no descriptions, roles or affiliations."
+}

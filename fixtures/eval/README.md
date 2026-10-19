@@ -17,6 +17,8 @@ fixtures/eval/
     FREEZE.md        the freeze procedure for the blind split
     freeze.json      sha256 of every held-out label and manifest entry (checked by labels.test.ts),
                      plus the blind_run record that consumes the split (scripts/eval/freeze.ts)
+  golden-v3/         round 2: every golden-v2 photo as tune (h14-h29 included), h26 label fixed;
+                     no held-out split yet (a fresh blind h30+ split is added before any photo role qualifies)
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -72,6 +74,16 @@ fixtures/eval/
   `replay-v1` and earlier artifacts.
   The photo on h27 shows a real person; its upstream path holds no name, and no
   name is written in this repository.
+- **golden-v3: round-2 tune labels.** After the failed blind run
+  (docs/quality-plan.md §16–17) `h14`–`h29` join the tune split in a new set:
+  golden-v3 holds the same 44 photos and labels as golden-v2, every one with
+  `split: "tune"`, except that h26's expected "Classic roadster" pattern is
+  anchored to the body type (the unanchored "roadster" counted "MG MGA roadster",
+  a make read off the shape, as label-good); h26's `history` records the change.
+  golden-v2 and its frozen files are not edited. golden-v3 has no held-out split
+  and no `freeze.json` yet, and the photo roles still require golden-v2, so no
+  photo role qualifies until a fresh blind split (`h30`+) is labelled, frozen
+  and bound as `FREEZE.md` describes.
 - **Version bumps and the binding.** Editing a label, the manifest,
   `thresholds.json`, a scorer, a text fixture or prompt builder, or any guard
   rule changes `EVAL_BINDING` (`pnpm eval:binding`; the test suite fails until
@@ -85,7 +97,7 @@ fixtures/eval/
   change in its `history` (date, change, reason, and the decision that
   allowed it). p14 is the first: its must-read text and expected reference
   were changed to what is legible at 768 px (docs/requalification-plan.md
-  decision 1).
+  decision 1). h26 in golden-v3 is the second (its roadster pattern, round 2).
 - **thr-v2** (docs/requalification-plan.md decisions 3 and 4). `two_stage_only`
   lists the metrics gated only on a two-stage scorecard (M5, M9): a split
   scored on stage 1 alone reports them but is gated on M15 ≥ 0.60 for
@@ -136,7 +148,7 @@ fixtures/eval/
 
 ## Metrics and gates
 
-`scripts/eval/scorer.ts` (`score-v4`) computes M1–M16 per split; M17 ("scorer
+`scripts/eval/scorer.ts` (`score-v5`; v5 counts plural role nouns and players, athletes or spectators in the reading as people) computes M1–M16 per split; M17 ("scorer
 teeth") requires that the same recordings without guardrails fail M1. The
 replay gates apply to the tune split of `replay-v1` in CI; the live gates apply
 to every split of a live run, with stricter M3/M5 on the tune split
@@ -146,7 +158,7 @@ stage-1-only runs) is reported as not applicable. M12 above its gate fails
 with "labels stale": too many published candidates match no label entry, so
 the labels need review before the numbers mean anything.
 
-score-v4 also reports, without gates: `text_only` (references published only
+score-v4 and later also report, without gates: `text_only` (references published only
 as text-only, decision 2) and the verifier measures `verifier_checked`,
 `forbidden_published`, `forbidden_uncontested` and `M5_uncontested` (the
 verifier can only contest a claim, never remove it; how Tune uses them is in

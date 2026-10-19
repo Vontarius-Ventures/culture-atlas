@@ -1,0 +1,76 @@
+{
+  "id": "p05",
+  "split": "tune",
+  "file": "05-craft-ceramics-display.jpg",
+  "subject_domains": [
+    "craft",
+    "art"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Islamic ceramics",
+      "pattern": "islamic (ceramic|pottery|art)"
+    },
+    {
+      "name": "Persian ceramics",
+      "pattern": "(persian|iranian) (ceramic|pottery)"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "nishapur|samanid|slip[- ]painted"
+    },
+    {
+      "pattern": "sultanabad|soltanabad|seljuk"
+    },
+    {
+      "pattern": "museum (display )?case|display case",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "iznik",
+      "why": "Ottoman 16th c.; the labels name Nishapur, Soltanabad and Gorgan"
+    },
+    {
+      "pattern": "kashan",
+      "why": "no lustre evidence; the labels say otherwise"
+    },
+    {
+      "pattern": "lustre|luster",
+      "why": "no metallic lustre; slip-painted wares"
+    },
+    {
+      "pattern": "still[- ]?life|photograph|illustration",
+      "why": "medium word on a real photo"
+    },
+    {
+      "pattern": "illegible|label cards|script",
+      "why": "a description is not a transcription",
+      "field": "visible_text"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "'medium' is not a listed class: 'slip-painted' is a ware, not a medium; medium words are forbidden by pattern instead."
+}

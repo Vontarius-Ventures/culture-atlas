@@ -6,11 +6,13 @@ rollbacks (`LLM_PROVIDER=featherless|anthropic`); nothing ever falls back to
 them automatically, and v2 media analysis is unavailable under a rollback
 provider. Qloo stays independent.
 
-**No qualified profile ships in this repository, and no role is qualified
-now.** Every test uses synthetic ids such as `fixture/model-1`, which must
-never be deployed. The two photo stages failed the requalification blind run
-on golden-v2 (M1, M4, M11; see "Requalification blind run" below), so photo
-analysis fails closed. Their earlier passes are history, not qualification:
+**No qualified profile ships in this repository.** Of the model roles only
+`research_text` has a qualifying artifact now (in the operator's directory;
+"Requalification round 2" below); `composer` failed its round-2
+re-qualification. Every test uses synthetic ids such as `fixture/model-1`,
+which must never be deployed. The two photo stages failed the requalification
+blind run on golden-v2 (M1, M4, M11; see "Requalification blind run" below),
+so photo analysis fails closed. Their earlier passes are history, not qualification:
 the phase-4 run on 2026-10-19 ("Live qualification on real photographs"
 below) checked transport only and its artifacts carry no eval block
 (`missing_eval`), and the Evaluate-phase golden-v1 artifacts failed their
@@ -580,6 +582,59 @@ photo roles needs a fresh blind set (h30+). Spend: 32
 Concentrate and 32 Qloo requests (package `rq-blind`); the requalification
 round is at 169 of 300 Concentrate and 32 of 200 Qloo requests. No Elorian.
 
+## Requalification round 2: blind-run gaps closed, text roles (2026-10-19)
+
+[Requalification plan](requalification-plan.md), "Round 2"; details in
+[quality plan §17](quality-plan.md#17-requalification-round-2-blind-run-gaps-closed-text-roles-2026-10-19).
+
+**Rules (guard-v6, score-v5, golden-v3).** The three round-1 gaps are closed
+in general, not only for the words that failed: the guard's people test counts
+players, athletes, crowds, spectators and other words for people (in the
+headline and in observations), and a role noun in the headline counts as
+people; role nouns match singular and plural ("background players",
+"referees") but not a playback device ("record player", "player piano");
+G-MEDIUM matches every inflection of a medium word ("photographed",
+"photography", "rendered", "sketched", "watercolours", "painterly", "gouache",
+"linocut", "hand-drawn") while "painted" on a craft, building, garment or
+vehicle stays decoration, and a participle is removed without its
+prepositional phrase ("a car photographed in a studio" becomes "a car in a
+studio"). The scorer's own copies of the role and people tests got the
+plurals and people words too (score-v5; stricter only). h26's label fix is in
+the new tune set **golden-v3** (golden-v2's 44 photos all as tune, h14–h29
+included; the h26 expected pattern no longer matches "MG MGA roadster"; its
+label history records why). golden-v2 is unchanged and stays consumed; the
+photo roles still require golden-v2 (`REQUIRED_GOLDEN_SET`), so no photo role
+can qualify until a fresh blind split (h30+) is curated, frozen and bound.
+
+**Offline replay of the round-1 blind recordings** (no request; guard-v6,
+score-v5, thr-v2, live gates, verifier off): against the golden-v2 labels M1
+**0**, M11 **0**, M4 0.2105 (labels unchanged, so h26 still counts); against
+golden-v3 (tune gates) **PASS**: M1 0, M11 0, M4 **0.1892** (7/37), M2 0.027,
+M5 1.00, M7 1.00, M8 0, M9 1.00. The tune-split replays are unchanged by the
+new rules (run 2 and Evaluate iteration 1 pass; run 1 and iteration 2 fail
+exactly as before, on text reading) and `replay-v1` passes; M17 holds
+everywhere.
+
+**Text roles, live** (`anthropic/claude-haiku-5-5`, effort none, profiles
+`research-1` / `composer-1` unchanged, the accepted `privacyVerifiedAt`
+`2026-10-19T01:11:57.000Z` carried over; thr-v2, text-v1, text-score-v2):
+
+| Role | Result | Requests | Latency p50 / p95 | Content |
+| --- | --- | --- | --- | --- |
+| `research_text` | **qualified** (`qualificationState()` reports `qualified`), 6/6 | 6 | 6.1 / 7.0 s | T1–T13 pass; 7.7 kept claims per fixture; 2.8 % unsupported specifics |
+| `composer` | **not qualified** (`eval_failed`; state `catalog-compatible`): transport 11/11, content 10/11 | 5 + 11 | 2.5 / 4.6 s | **T12 fail** on `plan-prose-limits-injection`: the reply contained one of that fixture's forbidden injection echoes; every other check passed (0 new names, 0 exclusion violations, 0 shown safety claims) |
+
+The composer's first start stopped after 5 requests (`request_cap`): the
+request counter in `--out-dir` is cumulative across roles, and the runbook gave
+`--max-requests 11` for the composer after research had used 6 in the same
+directory (runbook corrected below). The second start sent all 11 and failed
+T12. It was not re-run in search of a pass: the composer stays
+`catalog-compatible`, and the plan-prose prompt needs an injection-hardening
+change (new `promptVersion`, rebuilt fixtures, regenerated binding) before
+another attempt. Spend: 22 Concentrate requests (package `rq2-text`, ledger
+kept with the artifacts outside the repository), 0 Qloo, 0 Wikipedia. No
+Elorian.
+
 ## Elorian fallback (operator choice)
 
 `MODEL_FALLBACK=elorian` plus `ELORIAN_API_KEY` adds Elorian
@@ -706,9 +761,11 @@ pnpm exec tsx scripts/eval/build-text-fixtures.ts --verify-sources
 pnpm qualify:concentrate --profile-file profiles.json --role research_text \
   --fixtures fixtures/eval/text-v1/research_text --out-dir /secure/concentrate-qualification \
   --max-requests 6 --spend-cap-usd 0.5
+# The request counter in --out-dir is cumulative and never reset, so in the same
+# directory --max-requests is the total: research's 6 plus the composer's 11.
 pnpm qualify:concentrate --profile-file profiles.json --role composer \
   --fixtures fixtures/eval/text-v1/composer --out-dir /secure/concentrate-qualification \
-  --max-requests 11 --spend-cap-usd 0.5
+  --max-requests 17 --spend-cap-usd 0.5
 # 2. The same two commands plus --confirm-paid-requests (17 billed requests in all).
 ```
 
@@ -748,20 +805,22 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
 
 ## Remaining release gates
 
-- Qualified profiles exist only in the operator's directory. **No role is
-  qualified now** (2026-10-19, after the requalification blind run):
+- Qualified profiles exist only in the operator's directory. **Only
+  `research_text` is qualified now** (2026-10-19, requalification round 2):
   - `vision_photo` and `vision_photo_enrich` failed the blind golden-v2 run
     (M1, M4, M11; "Requalification blind run" below) and were not
     re-qualified. Their earlier artifacts do not qualify either: the phase-4
     v1 artifacts carry no eval block (`missing_eval`), and the Evaluate-phase
     artifacts are golden-v1 (`wrong_golden_set`) and failed their evaluation.
     golden-v2 itself can no longer qualify a photo role (`blind_set_consumed`),
-    so requalification needs a fresh blind set. Photos keep failing closed.
+    so requalification needs a fresh blind set (h30+, bound with guard-v6 and
+    score-v5; "Requalification round 2" above). Photos keep failing closed.
     `vision_verify` is off and not qualified.
-  - `research_text` and `composer` passed on text-v1 (§14.5 of the quality
-    plan), but thr-v2 changed the thresholds digest, so their artifacts are
-    `stale_thresholds`. Their inputs are otherwise unchanged; re-qualifying both
-    takes 17 requests.
+  - `research_text` was re-qualified under thr-v2 (round 2, 6/6). `composer`
+    failed its round-2 re-qualification on T12 (an injection echo on one
+    plan-prose fixture) and stays `catalog-compatible`; its earlier artifacts
+    are `stale_thresholds`. The sections that need the composer (plan prose,
+    the Eat section) stay unavailable until it qualifies.
   - `vision_video_frame` is not qualified. A mock pass is not production
     qualification.
 - `en.wikipedia.org` is reachable from the environment now (requalification
