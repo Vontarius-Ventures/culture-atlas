@@ -1,0 +1,72 @@
+{
+  "quick": {
+    "title": "Groceries in a car boot",
+    "interpretation": "Paper grocery bags sit in the open boot of an SUV.",
+    "candidates": [
+      {
+        "name": "Nissan X-Trail",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.7,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Paper grocery bags",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.9,
+        "categories": [
+          "eat"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Four brown paper bags",
+        "kind": "object"
+      }
+    ],
+    "visible_text": [],
+    "confirmed": [
+      {
+        "name": "Nissan X-Trail",
+        "rationale": "No badge is visible",
+        "keep": false
+      },
+      {
+        "name": "Paper grocery bags",
+        "rationale": "Brown paper bags",
+        "keep": true
+      }
+    ],
+    "additional_candidates": [
+      {
+        "name": "Kraft paper",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.6,
+        "categories": [],
+        "tag_query": null,
+        "rationale": "Brown kraft paper bags"
+      }
+    ],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2300,
+  "enrich_ms": 4400
+}

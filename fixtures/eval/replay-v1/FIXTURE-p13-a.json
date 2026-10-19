@@ -1,0 +1,92 @@
+{
+  "quick": {
+    "title": "Ball dropping through a hoop",
+    "interpretation": "A basketball falls through an outdoor hoop in autumn.",
+    "candidates": [
+      {
+        "name": "Basketball",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.95,
+        "categories": [
+          "play"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Spalding",
+        "type": "brand",
+        "relation": "resembles",
+        "certainty": 0.35,
+        "categories": [
+          "wear",
+          "play"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Streetball",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.6,
+        "categories": [
+          "play"
+        ],
+        "tag_query": "streetball"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Orange ball passing through a white rope net",
+        "kind": "object"
+      }
+    ],
+    "visible_text": [
+      "NBA"
+    ],
+    "confirmed": [
+      {
+        "name": "Basketball",
+        "rationale": "Ball in the net",
+        "keep": true
+      },
+      {
+        "name": "Spalding",
+        "rationale": "The maker patch is not legible",
+        "keep": false
+      },
+      {
+        "name": "Streetball",
+        "rationale": "Outdoor hoop with a rope net",
+        "keep": true
+      }
+    ],
+    "additional_candidates": [
+      {
+        "name": "NBA",
+        "type": "brand",
+        "relation": "depicted",
+        "certainty": 0.8,
+        "categories": [
+          "play"
+        ],
+        "tag_query": null,
+        "rationale": "NBA printed on the ball"
+      }
+    ],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2100,
+  "enrich_ms": 4300
+}

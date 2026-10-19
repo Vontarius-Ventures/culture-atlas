@@ -1,0 +1,74 @@
+{
+  "id": "h05",
+  "split": "holdout",
+  "file": "h05-qwen25_food.jpeg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Chinese home cooking",
+      "pattern": "chinese (home|cuisine|food|comfort)|jiachang",
+      "aliases": [
+        "Chinese cuisine",
+        "Chinese home-style cooking"
+      ]
+    },
+    {
+      "name": "Tomato and egg stir-fry",
+      "pattern": "tomato.{0,15}egg|egg.{0,15}tomato",
+      "aliases": [
+        "Fanqie chao dan"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "sichuan|szechuan|mapo|mao ?xue ?wang|blood tofu"
+    },
+    {
+      "pattern": "cabbage"
+    },
+    {
+      "pattern": "(pork )?rib soup|potato.{0,10}soup|soup"
+    },
+    {
+      "pattern": "(steamed |white )?rice",
+      "generic": true
+    },
+    {
+      "pattern": "orange",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "japanese|korean|thai|vietnamese|indian|italian|mexican",
+      "why": "the dishes are Chinese home cooking"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "quick": {
+    "title": "Museum case of bowls",
+    "interpretation": "Glazed bowls in a case resemble Islamic ceramics.",
+    "candidates": [
+      {
+        "name": "Islamic ceramics",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.7,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": "islamic ceramics"
+      },
+      {
+        "name": "Iznik pottery",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.3,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": "iznik"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Slip-painted bowls with dark script",
+        "kind": "object"
+      }
+    ],
+    "visible_text": [
+      "Bilingual label cards in Persian script"
+    ],
+    "confirmed": [
+      {
+        "name": "Islamic ceramics",
+        "rationale": "Slip-painted wares",
+        "keep": true
+      },
+      {
+        "name": "Iznik pottery",
+        "rationale": "The wares are earlier and not Ottoman",
+        "keep": false
+      }
+    ],
+    "additional_candidates": [
+      {
+        "name": "Kashan lustreware",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.45,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": "lustreware",
+        "rationale": "Some bowls have a sheen"
+      }
+    ],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2500,
+  "enrich_ms": 6000
+}

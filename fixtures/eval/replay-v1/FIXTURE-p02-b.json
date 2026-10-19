@@ -1,0 +1,23 @@
+{
+  "quick": {
+    "title": "Grocery run",
+    "interpretation": "Bags of groceries in an SUV boot suggest a suburban shopping trip.",
+    "candidates": [
+      {
+        "name": "Suburban grocery shopping",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "categories": [
+          "eat"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "quick_ms": 2000
+}

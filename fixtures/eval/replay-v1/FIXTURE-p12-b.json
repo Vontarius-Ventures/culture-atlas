@@ -1,0 +1,44 @@
+{
+  "quick": {
+    "title": "London street",
+    "interpretation": "A red bus on a London street.",
+    "candidates": [
+      {
+        "name": "London",
+        "type": "place",
+        "relation": "resembles",
+        "certainty": 0.7,
+        "categories": [],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [],
+    "visible_text": [
+      "Stockwell",
+      "88",
+      "LM51 ABC"
+    ],
+    "confirmed": [
+      {
+        "name": "London",
+        "rationale": "Red route signs",
+        "keep": true
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2100,
+  "enrich_ms": 4800
+}

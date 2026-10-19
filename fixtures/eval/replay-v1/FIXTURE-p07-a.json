@@ -1,0 +1,67 @@
+{
+  "quick": {
+    "title": "No-litter sign",
+    "interpretation": "A municipal sign asks people not to litter.",
+    "candidates": [
+      {
+        "name": "Minato City",
+        "type": "place",
+        "relation": "depicted",
+        "certainty": 0.9,
+        "domain": "place",
+        "evidence": "read_text",
+        "evidence_text": "港区 MINATO CITY",
+        "tag_query": null
+      },
+      {
+        "name": "Japanese public signage",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.6,
+        "domain": "signage",
+        "evidence": "context",
+        "evidence_text": null,
+        "tag_query": "japanese signage"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Ward emblem beside the text",
+        "kind": "text"
+      }
+    ],
+    "visible_text": [
+      "ポイ捨て禁止!",
+      "NO LITTER",
+      "港区 MINATO CITY"
+    ],
+    "illegible_text_present": false,
+    "confirmed": [
+      {
+        "name": "Minato City",
+        "rationale": "The sign names the ward",
+        "verdict": "supported"
+      },
+      {
+        "name": "Japanese public signage",
+        "rationale": "Bilingual notice",
+        "verdict": "supported"
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 1900,
+  "enrich_ms": 4000
+}

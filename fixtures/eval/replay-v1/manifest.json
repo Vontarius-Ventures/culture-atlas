@@ -1,0 +1,207 @@
+{
+  "version": "replay-v1",
+  "golden_set": "golden-v1",
+  "guardrail_version": "guard-v1",
+  "scorer_version": "score-v1",
+  "thresholds_sha256": "ebd1e277050b4b7dc49a5ae91979c17a0eafaf47f691bada1d654bdaaaeea236",
+  "recordings": [
+    {
+      "id": "FIXTURE-p13-a",
+      "photo": "p13",
+      "file": "FIXTURE-p13-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E1",
+        "E2",
+        "E4",
+        "E13"
+      ]
+    },
+    {
+      "id": "FIXTURE-p13-b",
+      "photo": "p13",
+      "file": "FIXTURE-p13-b.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E14"
+      ]
+    },
+    {
+      "id": "FIXTURE-p14-a",
+      "photo": "p14",
+      "file": "FIXTURE-p14-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E1",
+        "E4"
+      ]
+    },
+    {
+      "id": "FIXTURE-p15-a",
+      "photo": "p15",
+      "file": "FIXTURE-p15-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E1",
+        "E8",
+        "E10"
+      ]
+    },
+    {
+      "id": "FIXTURE-p01-a",
+      "photo": "p01",
+      "file": "FIXTURE-p01-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E4",
+        "E6"
+      ]
+    },
+    {
+      "id": "FIXTURE-p02-a",
+      "photo": "p02",
+      "file": "FIXTURE-p02-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E1",
+        "E2",
+        "E4"
+      ]
+    },
+    {
+      "id": "FIXTURE-p03-a",
+      "photo": "p03",
+      "file": "FIXTURE-p03-a.json",
+      "gate": true,
+      "shape": "v2",
+      "covers": [
+        "E2",
+        "E3"
+      ]
+    },
+    {
+      "id": "FIXTURE-p04-a",
+      "photo": "p04",
+      "file": "FIXTURE-p04-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E3",
+        "E4",
+        "E8"
+      ]
+    },
+    {
+      "id": "FIXTURE-p05-a",
+      "photo": "p05",
+      "file": "FIXTURE-p05-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E3",
+        "E8"
+      ]
+    },
+    {
+      "id": "FIXTURE-p06-a",
+      "photo": "p06",
+      "file": "FIXTURE-p06-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E2",
+        "E3"
+      ]
+    },
+    {
+      "id": "FIXTURE-p07-a",
+      "photo": "p07",
+      "file": "FIXTURE-p07-a.json",
+      "gate": true,
+      "shape": "v2",
+      "covers": [
+        "E2"
+      ]
+    },
+    {
+      "id": "FIXTURE-p08-a",
+      "photo": "p08",
+      "file": "FIXTURE-p08-a.json",
+      "gate": true,
+      "shape": "v2",
+      "covers": [
+        "E3",
+        "E5"
+      ]
+    },
+    {
+      "id": "FIXTURE-p09-a",
+      "photo": "p09",
+      "file": "FIXTURE-p09-a.json",
+      "gate": true,
+      "shape": "v2",
+      "covers": [
+        "E3"
+      ]
+    },
+    {
+      "id": "FIXTURE-p10-a",
+      "photo": "p10",
+      "file": "FIXTURE-p10-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E1",
+        "E5",
+        "E9"
+      ]
+    },
+    {
+      "id": "FIXTURE-p11-a",
+      "photo": "p11",
+      "file": "FIXTURE-p11-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E9"
+      ]
+    },
+    {
+      "id": "FIXTURE-p12-a",
+      "photo": "p12",
+      "file": "FIXTURE-p12-a.json",
+      "gate": true,
+      "shape": "v1",
+      "covers": [
+        "E3",
+        "E4"
+      ]
+    },
+    {
+      "id": "FIXTURE-p02-b",
+      "photo": "p02",
+      "file": "FIXTURE-p02-b.json",
+      "gate": false,
+      "shape": "v1",
+      "covers": [
+        "E5"
+      ]
+    },
+    {
+      "id": "FIXTURE-p12-b",
+      "photo": "p12",
+      "file": "FIXTURE-p12-b.json",
+      "gate": false,
+      "shape": "v1",
+      "covers": [
+        "E8"
+      ]
+    }
+  ]
+}

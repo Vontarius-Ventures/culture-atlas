@@ -23,6 +23,13 @@ import {
   type QualificationArtifact,
 } from '../packages/providers/src/index';
 import { parseTextFixture } from './eval/text-schemas';
+import { REQUIRED_GOLDEN_SET, type EvalBlock } from '../packages/providers/src/concentrate/profiles';
+import { evaluatePhotoRecordings, textGoldenDigest, verifiedGoldenPhotos, type TextScorer } from './eval/golden-photos';
+import { loadGoldenSet, loadThresholds, type GoldenSet } from './eval/labels';
+import type { ReadingPipeline, Recording } from './eval/pipeline';
+
+/** Pass thresholds of the evaluation (docs/quality-plan.md §7.2). */
+export const DEFAULT_THRESHOLDS = path.resolve(import.meta.dirname, '../fixtures/eval/thresholds.json');
 
 /**
  * Deliberate operator qualification of ONE Concentrate role profile
@@ -141,11 +148,19 @@ export async function discoverFixtures(
     }
     return videos;
   }
-  // `<id>.expect.json` siblings hold the content checks (scripts/eval/text-scorer.ts), not prompts.
+  // Text fixtures are <name>.json prompts; <name>.expect.json holds their content checks (scripts/eval/text-scorer.ts).
   return entries
     .filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.endsWith('.expect.json'))
     .map((e) => ({ name: e.name, kind: 'text', files: [{ path: path.join(dir, e.name) }] }));
 }
+
+/** The content-check file next to a text fixture: foo.json -> foo.expect.json. */
+export function expectFileFor(fixturePath: string): string {
+  return fixturePath.replace(/\.json$/, '.expect.json');
+}
+
+const PHOTO_ROLES: readonly ModelProfile['role'][] = ['vision_photo', 'vision_photo_enrich'];
+const TEXT_ROLES: readonly ModelProfile['role'][] = ['research_text', 'composer'];
 
 export interface QualificationRun {
   dryRun: boolean;
@@ -170,7 +185,21 @@ export function effortNote(profile: ModelProfile): string {
 export async function qualifyProfile(
   opts: QualifyOptions & {
     profile: ModelProfile;
-    fixturesDir: string;
+    /** vision_video_frame and text roles: the fixture directory. Photo roles use `golden` instead. */
+    fixturesDir?: string;
+    /**
+     * Photo roles (required): the golden set (fixtures/eval/golden-v1) and the
+     * directory holding its photos outside git. Every photo of both splits is
+     * hash-checked before any request; outputs are scored in memory against
+     * the live gates and never written.
+     */
+    golden?: { dir: string; photosDir: string };
+    /** Photo roles (required): the guarded reading pipeline the outputs are scored through. */
+    pipeline?: ReadingPipeline;
+    /** Text roles (required): P4's content checks, scoreTextFixture. */
+    textScorer?: TextScorer;
+    /** Defaults to fixtures/eval/thresholds.json. */
+    thresholdsFile?: string;
     maxRequests: number;
     spendCapMicros: number;
     confirmPaidRequests: boolean;
@@ -204,8 +233,48 @@ export async function qualifyProfile(
   } else if (opts.stage1Profile) {
     throw new Error('A stage-1 profile only applies when qualifying vision_photo_enrich.');
   }
-  const fixtures = await discoverFixtures(opts.fixturesDir, profile.role);
-  const minimum = QUALIFICATION_MINIMUM_FIXTURES[profile.role];
+  const photoRole = PHOTO_ROLES.includes(profile.role);
+  const textRole = TEXT_ROLES.includes(profile.role);
+  const { thresholds, sha256: thresholdsSha256 } = await loadThresholds(opts.thresholdsFile ?? DEFAULT_THRESHOLDS);
+  let golden: GoldenSet | undefined;
+  let fixtures: Fixture[];
+  const photoIds = new Map<string, string>();
+  const expectations = new Map<string, unknown>();
+  if (photoRole) {
+    // Photo roles qualify only on the hash-pinned golden set, scored through the guarded pipeline.
+    if (!opts.golden)
+      throw new Error('Photo roles qualify on the golden set: pass --golden <dir> and --photos <dir>.');
+    if (opts.fixturesDir) throw new Error('Photo roles take --golden and --photos, not --fixtures.');
+    if (!opts.pipeline || opts.pipeline.guardrailVersion === null)
+      throw new Error('Photo roles need the guarded reading pipeline (vlm/guardrails.ts); refusing to qualify without it.');
+    if (profile.role === 'vision_photo' && readingForProfile(profile) !== 'quick')
+      throw new Error('The golden evaluation scores the two-stage reading; vision_photo must be a quick-read profile.');
+    golden = await loadGoldenSet(opts.golden.dir);
+    if (golden.manifest.version !== REQUIRED_GOLDEN_SET[profile.role])
+      throw new Error(`${profile.role} must qualify on ${REQUIRED_GOLDEN_SET[profile.role]}; got ${golden.manifest.version}.`);
+    const verified = await verifiedGoldenPhotos(golden, opts.golden.photosDir);
+    fixtures = verified.map((v) => ({ name: v.photo.file, kind: 'image', files: [{ path: v.path }] }));
+    for (const v of verified) photoIds.set(v.path, v.photo.id);
+  } else {
+    if (!opts.fixturesDir) throw new Error(`--fixtures is required for ${profile.role}.`);
+    fixtures = await discoverFixtures(opts.fixturesDir, profile.role);
+  }
+  if (textRole) {
+    if (!opts.textScorer)
+      throw new Error('Text roles need the content checks (scripts/eval/text-scorer.ts); refusing to qualify without them.');
+    for (const f of fixtures) {
+      const file = expectFileFor(f.files[0]!.path);
+      try {
+        expectations.set(f.name, JSON.parse(await readFile(file, 'utf8')));
+      } catch {
+        throw new Error(`Text fixture ${f.name} has no readable ${path.basename(file)}.`);
+      }
+    }
+  }
+  const minimum = Math.max(
+    QUALIFICATION_MINIMUM_FIXTURES[profile.role],
+    textRole ? (thresholds.text.t10_fixtures_min ?? 0) : 0,
+  );
   if (fixtures.length < minimum)
     throw new Error(
       `Need at least ${minimum} fixtures for ${profile.role}; found ${fixtures.length}.`,
@@ -276,6 +345,9 @@ export async function qualifyProfile(
   let failed = 0;
   let sent = 0;
   let stoppedBy: string | undefined;
+  // Outputs kept in memory for scoring only; never written anywhere.
+  const recordings: Recording[] = [];
+  const textVerdicts: Array<{ pass: boolean; metrics: Record<string, number> }> = [];
   const count = (key: string) => (outcomes[key] = (outcomes[key] ?? 0) + 1);
   outer: for (const fixture of fixtures) {
     let fixtureOk = true;
@@ -311,6 +383,9 @@ export async function qualifyProfile(
             { maxRetries: 0, modelIdentity: identity },
           );
           usage = res.usage;
+          // Content checks run in memory; only their aggregate reaches the artifact.
+          const verdict = opts.textScorer!(spec.schema, expectations.get(fixture.name), res.data);
+          textVerdicts.push({ pass: verdict.pass, metrics: verdict.metrics });
         } else if (stage1Runner) {
           // Stage 1 at its own bounds, then stage 2 on the same photo at the enrichment bounds.
           const { bytes } = await boundJpegForProfile(await readFile(file.path), profile.image);
@@ -320,6 +395,7 @@ export async function qualifyProfile(
             { image: { bytes, mediaType: 'image/jpeg' } },
             { maxRetries: 0, modelIdentity: { ...identity, attemptKey: `${identity.attemptKey}:stage1` } },
           );
+          const quickMs = Date.now() - started;
           inStage1 = false;
           // Latency and usage in the artifact are the enrichment call's own.
           started = Date.now();
@@ -334,6 +410,16 @@ export async function qualifyProfile(
             { maxRetries: 0, modelIdentity: identity },
           );
           usage = res.usage;
+          const photoId = photoIds.get(file.path);
+          if (photoId)
+            recordings.push({
+              photoId,
+              runId: 'qualification',
+              quick: quick.quick,
+              enrichment: res.enrichment,
+              quickMs,
+              enrichMs: Date.now() - started,
+            });
         } else {
           const { bytes } = await boundJpegForProfile(await readFile(file.path), profile.image);
           const res = await new ConcentrateVlm(runner).analyzeImage(
@@ -341,6 +427,9 @@ export async function qualifyProfile(
             { maxRetries: 0, modelIdentity: identity },
           );
           usage = res.usage;
+          const photoId = photoIds.get(file.path);
+          if (photoId)
+            recordings.push({ photoId, runId: 'qualification', quick: res.quick, quickMs: Date.now() - started });
         }
         latencies.push(Date.now() - started);
         if (usage?.inputTokens !== undefined && usage.outputTokens !== undefined) {
@@ -376,6 +465,43 @@ export async function qualifyProfile(
     if (stoppedBy) break;
   }
   const total = fixtures.length;
+  let evalBlock: EvalBlock | undefined;
+  if (golden && opts.pipeline) {
+    evalBlock = evaluatePhotoRecordings({
+      golden,
+      thresholds,
+      thresholdsSha256,
+      pipeline: opts.pipeline,
+      recordings,
+      failedCalls: total - recordings.length,
+    }).block;
+  } else if (textRole && opts.fixturesDir) {
+    const metrics: Record<string, number> = {
+      fixtures_total: total,
+      fixtures_scored: textVerdicts.length,
+      fixtures_content_passed: textVerdicts.filter((v) => v.pass).length,
+    };
+    // Worst value per content metric across fixtures would need P4's direction; report means only.
+    const keys = new Set(textVerdicts.flatMap((v) => Object.keys(v.metrics)));
+    for (const k of keys) {
+      const values = textVerdicts.map((v) => v.metrics[k]).filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
+      if (values.length && /^[A-Za-z0-9_]{1,35}$/.test(k)) metrics[`mean_${k}`] = values.reduce((a, b) => a + b, 0) / values.length;
+    }
+    evalBlock = {
+      golden_set: path.basename(path.resolve(opts.fixturesDir)),
+      golden_sha256: await textGoldenDigest(opts.fixturesDir),
+      thresholds_sha256: thresholdsSha256,
+      guardrail_version: null,
+      grounding_version: null,
+      scorer_version: opts.textScorer?.version ?? 'scoreTextFixture',
+      metrics,
+      pass:
+        textVerdicts.length === total &&
+        total >= (thresholds.text.t10_fixtures_min ?? 0) &&
+        textVerdicts.every((v) => v.pass),
+    };
+  }
+  const transportPass = !stoppedBy && failed === 0 && passed >= minimum && passed === total;
   const artifact = QualificationArtifactSchema.parse({
     kind: 'concentrate-qualification',
     artifact_id: profile.qualificationArtifactId,
@@ -385,7 +511,9 @@ export async function qualifyProfile(
     provider: profile.provider,
     profile_hash: profileHash(profile),
     catalog_snapshot_at: snapshot.fetched_at,
-    result: !stoppedBy && failed === 0 && passed >= minimum && passed === total ? 'pass' : 'fail',
+    // Roles with a golden set pass only when the transport run and the evaluation both pass.
+    result: transportPass && (!evalBlock || evalBlock.pass) && (!(photoRole || textRole) || !!evalBlock) ? 'pass' : 'fail',
+    ...(evalBlock ? { eval: evalBlock } : {}),
     requests_sent: sent,
     spend_cap_micros: opts.spendCapMicros,
     fixtures: { total, passed, failed: total - passed, outcomes },
@@ -406,6 +534,11 @@ export async function qualifyProfile(
           ]
         : []),
       ...(stoppedBy ? [`Stopped early: ${stoppedBy}.`] : []),
+      ...(evalBlock
+        ? [
+            `Evaluation ${evalBlock.golden_set} (${evalBlock.golden_sha256.slice(0, 12)}): ${evalBlock.pass ? 'pass' : 'fail'}; scorer ${evalBlock.scorer_version}, guardrails ${evalBlock.guardrail_version ?? 'n/a'}, thresholds ${evalBlock.thresholds_sha256.slice(0, 12)}. Outputs were scored in memory and not stored.`,
+          ]
+        : []),
     ],
   });
   await writeFile(
