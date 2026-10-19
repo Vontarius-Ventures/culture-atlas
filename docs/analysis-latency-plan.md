@@ -218,6 +218,51 @@ journey above:
   the cuisine type, so nothing was fabricated, but they are poor Eat cards.
   Consider sending only food picks as the Eat signal.
 
+## Evaluate phase: reading v2 with guardrails (2026-10-19)
+
+The quality plan's Evaluate phase measured reading v2 (evidence fields,
+server-assigned categories, guard-v2, ground-v2) on 28 public test photos: the
+15 phase-4 photos (tune) and 13 held-out photos. Quality results, before and
+after, are in [quality plan §13](quality-plan.md#13-results-evaluate-phase-2026-10-19);
+this section keeps the latency, end-to-end and seed numbers.
+
+| Measure | Target | Phase 4 (v1) | Evaluate (v2): eval run 1 / eval run 2 / qualification run |
+| --- | --- | --- | --- |
+| Stage-1 quick read, model time | p50 ≤ 3 s, p95 ≤ 6 s | p50 2.27 s, p95 4.63 s (30) | p50 1.9–2.2 s, p95 2.6–4.4 s per split (28 reads per run); qualification artifact p50 2.0 s, p95 3.2 s |
+| Stage-1 output tokens | cap 600 | mean 262 | 6,874 output tokens over 28 reads (mean 246) |
+| Enrichment, model time | p95 ≤ 12 s | p50 4.6 s, p95 9.3 s | p95 5.0–6.6 s per split; qualification artifact p50 4.0 s, p95 6.2 s |
+| Incomplete enrichments | 0 at the 1600 cap | 1 hit the 1200 cap | 0 of 84 |
+| Invalid replies | 0 | 0 | 3 of 28 enrichments in run 1 (cap overflow); 0 of the 140 calls after the tolerant parse |
+| Text roles | qualified | not qualified | `research_text` p50 6.1 s / p95 9.0 s; `composer` p50 2.2 s / p95 4.3 s |
+
+**End to end, local real stack (2026-10-19).** One journey (`next dev`, job
+worker, media worker; live Qloo through a counting pass-through; the evaluated
+Concentrate profiles): sign up, picks "Sunday listening", "Slow cinema",
+"Ramen", Build my feed, then upload the Paris signs photo.
+
+| Step | Phase 4 | Evaluate |
+| --- | --- | --- |
+| Build my feed → first seeded category ready | 4.9 s | 2.6 s (Eat first) |
+| → redirect to the personal Discover | 6.5 s | 4.2 s |
+| → seed complete | 14.4 s | 11.4 s; 4 Qloo insights calls, 1.7–8.9 s each, peak 3 in flight, no 429 |
+| Discover pressed → capture page | 1.1 s | 1.0 s |
+| → first useful section | 8.0 s | **none: the analysis failed closed** ("We can't look at this photo yet", job `provider_unavailable`, 0 inference attempts) |
+
+The capture did not complete because neither photo role passed its
+qualification on the golden set (the tune split misses M5 and M9; quality
+plan §13.6), so the gateway dispatches no photo model; the gate held. Even
+with qualified photo roles, a capture here would end `partial`: the research
+step needs Wikipedia, which this sandbox's egress policy blocks. The
+end-to-end `complete` state and its timings therefore still need one run where
+both photo roles are qualified and `en.wikipedia.org` is reachable.
+
+**Taste seed, live Qloo.** With a food pick, Eat now returns only food: dim
+sum picks gave 8/8 dim-sum styles and the journey's ramen pick 6/6 ramen
+styles, with 0 echo cards (phase 4: "Bossa Nova", "Jazz Age Fare", "Vintage
+Fashion"). Without a food pick, Eat made no call and stayed `empty`. Wear was
+8/8 fashion brands in all three runs (phase 4: 2/10). First category ready in
+1.7–2.6 s; at most 4 requests and 3 in flight.
+
 ## Recommended reading format
 
 ### Stage 1: `VlmQuickRead` (interactive)
@@ -310,7 +355,7 @@ Totals: steps 1–5 about 5–6 d; steps 6–7 about 2–3 d; step 8 about 2–3
 ## Risks and what still needs verifying
 
 - **Real photos:** checked on 2026-10-19 (above). Logos and text are read well at 512/768 px, and output and latency did not grow. Brands guessed from shape and the enrichment output cap are the open items.
-- **ZDR and content logging:** confirm the key's settings apply to `anthropic/claude-haiku-5-5` and `vertex/gemini-2.5-flash-lite`. This is still an open gate: the phase-4 qualification set `privacyVerifiedAt` for the run only, and the dashboard confirmation is pending ([concentrate.md](concentrate.md)).
+- **ZDR and content logging:** confirm the key's settings apply to `anthropic/claude-haiku-5-5` and `vertex/gemini-2.5-flash-lite`. The owner accepted the phase-4 `privacyVerifiedAt` exception, and the Evaluate-phase profiles carry that value unchanged; the dashboard confirmation is still a deploy gate ([concentrate.md](concentrate.md)).
 - **Reasoning effort:** confirm each chosen route honours `none` (reasoning tokens were 0–2 here, and 0 on all 45 phase-4 calls on Haiku 5.5) and fails loudly if a route drops support.
 - **Qloo burst throttling** is now the biggest risk to the 10 s target. Confirm the production key's limits.
 - **Stage-2 vetoes** can contradict stage 1. Keep them advisory and log agreement rates.
@@ -326,5 +371,7 @@ Totals: steps 1–5 about 5–6 d; steps 6–7 about 2–3 d; step 8 about 2–3
 | Qloo | 74 GET | n/a | n/a |
 | Concentrate, phase 4 (2026-10-19) | 47 inference (cap 60) + 1 catalog listing | 100,536 in / 21,385 out | about $0.021 at the listed standard rate ($0.10 / $0.50 per M); about $0.10 at most at the long-context rate. Spend cap $1; not reconciled |
 | Qloo, phase 4 | 29 GET: 19 seed (cap 30) + 10 photo | n/a | n/a |
+| Concentrate, Evaluate phase (2026-10-19) | 219 inference (team cap 400; team total 289) | qualification runs: 189,823 in / 37,044 out; the two `eval:live` runs are of the same size | about $0.04 at the listed standard rate for the qualification runs; spend caps $0.5–$1 per run; not reconciled |
+| Qloo, Evaluate phase | 118 GET: 107 grounding, 11 seed (team total 195 of 300) | n/a | n/a |
 
 The 2026-10-17 per-call estimates above (for example $0.0017 for a quick read) match the catalog's long-context rate ($0.50 / $2.50 per M). The 2026-10-19 snapshot lists $0.10 / $0.50 per M for prompts under 100k tokens, which puts a quick read at about $0.0003 and an enrichment at about $0.0007. Billing evidence will decide.

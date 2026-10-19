@@ -18,7 +18,7 @@ import {
  * brand evidence from the final visible text itself. A guard bug therefore
  * shows up as a failing metric instead of being trusted by the yardstick.
  */
-export const SCORER_VERSION = 'score-v1';
+export const SCORER_VERSION = 'score-v2';
 
 export interface CandidateView {
   name: string;
@@ -54,6 +54,15 @@ export interface QlooAcceptRecord {
   accepted: boolean;
   entityType?: string | null;
   tagFamily?: string | null;
+  /** What the lookup sent and what grounding accepted, for hand-labelling precision (never scored blind). */
+  plan?: 'none' | 'tags' | 'search';
+  query?: string;
+  rule?: string;
+  reason?: string;
+  matchedName?: string | null;
+  matchedId?: string | null;
+  /** The first results Qloo returned (name and type only), to judge recall by hand. */
+  top?: { name: string; type: string }[];
 }
 
 /** One reading of one photo, as the user would have seen it. */
@@ -75,6 +84,16 @@ export interface ScoredRun {
 // Independent copies of the plan's patterns (§4.2), broadened where a scorer can afford to be strict.
 const MEDIUM_RE =
   /\b(still[- ]?life|painting|painted|illustrat\w*|drawing|sketch|render(ing)?|watercolou?r|oil on canvas|vector|cartoon|clip ?art|photograph\w*|digital art)\b/i;
+/**
+ * score-v2: "painted" on a craft, furniture, building, garment or vehicle is
+ * its decoration, not a medium (a label may expect "Hand-painted furniture");
+ * score-v1 counted such an expected name as a medium violation.
+ */
+const DECORATIVE = new Set(['craft', 'design', 'interior', 'architecture', 'fashion', 'vehicle']);
+const DECORATION_RE = /\b(?:hand[- ]?)?painted\b/gi;
+function mediumInName(c: CandidateView): boolean {
+  return MEDIUM_RE.test(c.domain && DECORATIVE.has(c.domain) ? c.name.replace(DECORATION_RE, ' ') : c.name);
+}
 const PERSON_DESCRIPTOR_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
 const ROLE_RE =
@@ -166,7 +185,7 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
       out.push({ class: 'brand_without_text', detail: c.name });
     if (
       classes.has('medium') &&
-      MEDIUM_RE.test(c.name) &&
+      mediumInName(c) &&
       !((c.type === 'work' || c.type === 'creator') && c.evidence === 'read_text' && hasNameFromText(c, vt))
     )
       out.push({ class: 'medium', detail: c.name });

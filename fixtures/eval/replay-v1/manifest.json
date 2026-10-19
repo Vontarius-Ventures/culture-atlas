@@ -1,8 +1,8 @@
 {
   "version": "replay-v1",
   "golden_set": "golden-v1",
-  "guardrail_version": "guard-v1",
-  "scorer_version": "score-v1",
+  "guardrail_version": "guard-v2",
+  "scorer_version": "score-v2",
   "thresholds_sha256": "ebd1e277050b4b7dc49a5ae91979c17a0eafaf47f691bada1d654bdaaaeea236",
   "recordings": [
     {

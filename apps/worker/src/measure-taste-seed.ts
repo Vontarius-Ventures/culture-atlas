@@ -112,6 +112,8 @@ try {
           card_count: c.card_count,
           settled_ms: readyAt[c.category] ?? null,
           sample: recs.rows.filter((r) => r.category === c.category).slice(0, 3).map((r) => `${r.title} (${r.origin})`),
+          // Every card title, to judge the category's quality by hand (food share, echoes, type).
+          titles: recs.rows.filter((r) => r.category === c.category).map((r) => r.title),
         })),
       },
       null,

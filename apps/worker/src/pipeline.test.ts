@@ -49,7 +49,7 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
       [job_id],
     );
     expect(guardTrace).toHaveLength(1);
-    expect(guardTrace[0]!.data.version).toBe('guard-v1');
+    expect(guardTrace[0]!.data.version).toBe('guard-v2');
     expect(guardTrace[0]!.data.decisions.find((d) => d.name === 'Fixture Denim Co')).toMatchObject({ action: 'drop', rules: ['G-BRAND'], note: 'no_stage_2' });
     // References: resemblances are qualified.
     const racing = view.references.find((r) => r.name === 'Vintage Racing')!;

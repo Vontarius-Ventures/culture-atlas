@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import { CATALOG_SNAPSHOT_FILE, type ModelProfile } from '../../packages/providers/src/index';
 import { fetchGoldenPhotos, verifiedGoldenPhotos } from './golden-photos';
 import { loadGoldenSet, loadThresholds } from './labels';
+import * as grounding from '../../packages/domain/src/compiler/grounding';
 import { runLiveEval } from './live';
 import { unguardedPipeline } from './pipeline';
 import { loadReplayFixtures } from './replay';
@@ -198,6 +199,60 @@ describe('eval:live (offline rails)', () => {
     const replay = await loadReplayFixtures(path.join(out, 'recordings'));
     expect(replay.recordings.map((r) => r.photoId).sort()).toEqual(['h01', 'p01', 'p02']);
     expect(replay.recordings.every((r) => r.enrichment !== undefined)).toBe(true);
+  });
+
+  it('with --qloo, records what grounding sent and accepted per candidate in grounding.json, and logs each Qloo call', async () => {
+    const { g, golden, thresholds } = await setup(['p01']);
+    const out = await outDir();
+    const ledgerFile = path.join(out, 'ledger.jsonl');
+    const qlooFetch = vi.fn(async (url: string) => {
+      expect(new URL(url).pathname).toBe('/v2/tags');
+      return new Response(
+        JSON.stringify({
+          success: true,
+          results: { tags: [{ id: 'urn:tag:style:qloo:fixture_mcm', name: 'Mid-century modern', type: 'urn:tag:style:qloo' }] },
+        }),
+      );
+    });
+    const result = await runLiveEval({
+      golden,
+      photosDir: g.photosDir,
+      split: 'all',
+      profiles: { vision_photo: quickProfile, vision_photo_enrich: enrichProfile },
+      roles: ['vision_photo', 'vision_photo_enrich'],
+      outDir: out,
+      repoRoot: root,
+      maxRequests: 2,
+      spendCapMicros: 500_000,
+      confirmPaidRequests: true,
+      apiKey: KEY,
+      pipeline: versionedTestPipeline,
+      thresholds,
+      fetch: readings() as unknown as typeof fetch,
+      ledgerFile,
+      sleep: async () => undefined,
+      qloo: { apiKey: 'synthetic-qloo-key', baseUrl: 'https://qloo.invalid', maxRequests: 2, spacingMs: 700, grounding, fetch: qlooFetch as unknown as typeof fetch },
+    });
+    expect(result.qlooSent).toBe(1);
+    const records = JSON.parse(await readFile(path.join(out, 'grounding.json'), 'utf8'));
+    expect(records).toEqual([
+      {
+        photo: 'p01',
+        records: [
+          expect.objectContaining({
+            candidate: 'Mid-century modern',
+            accepted: true,
+            plan: 'tags',
+            tagFamily: 'style',
+            matchedName: 'Mid-century modern',
+            matchedId: 'urn:tag:style:qloo:fixture_mcm',
+          }),
+        ],
+      },
+    ]);
+    const ledger = (await readFile(ledgerFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+    expect(ledger.filter((l) => l.provider === 'qloo')).toEqual([expect.objectContaining({ endpoint: '/v2/tags', status: 200 })]);
+    expect(await readFile(path.join(out, 'grounding.json'), 'utf8')).not.toContain('synthetic-qloo-key');
   });
 
   it('stops at the first 429 without retrying and counts the failure against M13', async () => {

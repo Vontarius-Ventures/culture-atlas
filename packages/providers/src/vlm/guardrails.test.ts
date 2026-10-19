@@ -8,7 +8,9 @@ import {
   domainOf,
   guardEnrichment,
   guardQuickRead,
+  hasMediumWord,
   isBrandLike,
+  looksLikePlate,
   sanitizeObservations,
   sanitizeVisibleText,
   stage2Request,
@@ -88,7 +90,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v1');
+    expect(GUARDRAIL_VERSION).toBe('guard-v2');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -192,6 +194,25 @@ describe('G-MEDIUM', () => {
     // Not dropped by G-MEDIUM; a work with a capital word is brand-like, so it waits for stage 2.
     expect(names(g.held)).toEqual(['Fixture Harbour Painting']);
     expect(decisionFor(g.decisions, 'Fixture Harbour Painting')!.rules).not.toContain('G-MEDIUM');
+  });
+});
+
+describe('G-MEDIUM: "painted" as decoration (guard-v2)', () => {
+  it('keeps "painted" on crafts, furniture, buildings, garments and vehicles, still drops it elsewhere', () => {
+    const a = reading([
+      { name: 'Hand-painted wooden stools', type: 'tradition', domain: 'craft', tag_queries: ['painted wooden folk furniture'], certainty: 0.6 },
+      { name: 'Folk painted furniture', type: 'style', domain: 'design', tag_queries: ['folk painted furniture'], certainty: 0.6 },
+      { name: 'Painted fixture scene', type: 'style', domain: 'art', tag_queries: ['painted scene'], certainty: 0.6 },
+      { name: 'Fixture still life', type: 'style', domain: 'craft', tag_queries: ['still life'], certainty: 0.6 },
+    ]);
+    const g = guardQuickRead(a, { twoStage: true });
+    expect(names(g.analysis.candidates)).toEqual(['Hand-painted wooden stools', 'Folk painted furniture']);
+    expect(decisionFor(g.decisions, 'Painted fixture scene')).toMatchObject({ action: 'drop', rules: ['G-MEDIUM'] });
+    // Only "painted" is decoration: every other medium word still applies in a decorative domain.
+    expect(decisionFor(g.decisions, 'Fixture still life')).toMatchObject({ action: 'drop', rules: ['G-MEDIUM'] });
+    expect(hasMediumWord('Painted tiles', 'architecture')).toBe(false);
+    expect(hasMediumWord('Painted tiles', null)).toBe(true);
+    expect(hasMediumWord('Painted tile drawing', 'craft')).toBe(true);
   });
 });
 
@@ -307,6 +328,50 @@ describe('G-CUISINE-FOOD', () => {
       { twoStage: true },
     );
     expect(names(g.analysis.candidates)).toContain('Hakata cuisine');
+  });
+});
+
+describe('G-VTEXT plates (guard-v2)', () => {
+  it('drops a plate-shaped transcription on a reading that shows a vehicle, and only there', () => {
+    expect(['RK 492 AU', 'AB12 CDE', 'B-XY 1234', 'KA01AB1234'].every(looksLikePlate)).toBe(true);
+    expect(['CAAD8', 'NBA', 'M-15', 'EMT MADRID', 'M1 Sol-Sevilla', '88', 'HO HUNG KEE', 'PLAY! EAT! DRINK MATE!'].some(looksLikePlate)).toBe(false);
+    expect(sanitizeVisibleText(['CITROËN', 'RK 492 AU'], { vehicle: true })).toEqual({ kept: ['CITROËN'], dropped: ['RK 492 AU'] });
+    expect(sanitizeVisibleText(['CITROËN', 'RK 492 AU'])).toEqual({ kept: ['CITROËN', 'RK 492 AU'], dropped: [] });
+  });
+
+  it('applies at stage 2 when a candidate, the title or an observation shows a vehicle', () => {
+    const g = guardQuickRead(reading([{ name: 'Fixture van', type: 'object', domain: 'vehicle', certainty: 0.8 }], { title: 'Green van parked roadside' }), { twoStage: true });
+    const s2 = stage2(g, enrichment({ visible_text: ['FIXTURO', 'RK 492 AU'], observations: [{ text: 'A van parked by a kerb', kind: 'object' }] }));
+    expect(s2.analysis.visible_text.map((t) => t.text)).toEqual(['FIXTURO']);
+    const sign = guardQuickRead(reading([{ name: 'Fixture road sign', type: 'style', certainty: 0.8 }], { title: 'A street sign' }), { twoStage: true });
+    expect(stage2(sign, enrichment({ visible_text: ['A1 2BC'] })).analysis.visible_text.map((t) => t.text)).toEqual(['A1 2BC']);
+  });
+});
+
+describe('G-DEPICTED on a named place or work seen on context only (guard-v2)', () => {
+  it('holds it at stage 1 and drops it as a stage-2 addition; a style is only downgraded', () => {
+    const g = guardQuickRead(
+      reading([
+        { name: 'Fixture Road', type: 'place', relation: 'depicted', evidence: 'context', certainty: 0.6, domain: 'place' },
+        { name: 'Fixture neon style', type: 'style', relation: 'depicted', evidence: 'context', certainty: 0.7, tag_queries: ['neon'] },
+      ]),
+      { twoStage: true },
+    );
+    expect(names(g.held)).toEqual(['Fixture Road']);
+    expect(decisionFor(g.decisions, 'Fixture Road')).toMatchObject({ action: 'hold', rules: ['G-DEPICTED'] });
+    expect(g.analysis.candidates.map((c) => [c.name, c.relation])).toEqual([['Fixture neon style', 'resembles']]);
+    const s2 = stage2(
+      g,
+      enrichment({
+        additional_candidates: [
+          { name: 'Fixture Avenue', type: 'place', relation: 'depicted', certainty: 0.5, domain: 'place', evidence: 'context', evidence_text: null, tag_query: null, rationale: 'r' },
+          { name: 'Fixture Café', type: 'place', relation: 'depicted', certainty: 0.8, domain: 'signage', evidence: 'read_text', evidence_text: 'Fixture Café', tag_query: null, rationale: 'r' },
+        ],
+      }),
+    );
+    expect(decisionFor(s2.decisions, 'Fixture Avenue')).toMatchObject({ action: 'drop', note: 'held_at_stage_2' });
+    expect(decisionFor(s2.decisions, 'Fixture Road')).toMatchObject({ action: 'drop' });
+    expect(names(s2.analysis.candidates)).toEqual(['Fixture neon style', 'Fixture Café']);
   });
 });
 

@@ -66,5 +66,5 @@ export async function syntheticGolden(ids: readonly string[], prefix = 'ca-golde
 export const versionedTestPipeline: ReadingPipeline = {
   ...unguardedPipeline,
   name: 'guarded',
-  guardrailVersion: 'guard-v1',
+  guardrailVersion: 'guard-v2',
 };

@@ -171,6 +171,34 @@ describe('text-v1 through the qualification harness (fake gateway)', () => {
     expect(bodies.every((b) => b.text.format.name === 'reference_notes' && b.max_output_tokens === 4000)).toBe(true);
   });
 
+  it('logs every request to the call ledger without its body, reply or key', async () => {
+    const outDir = await preparedOutDir();
+    const { fetchImpl } = gateway();
+    const ledgerFile = path.join(outDir, 'ledger.jsonl');
+    await qualifyProfile({
+      apiKey: KEY,
+      outDir,
+      profile: research,
+      fixturesDir: path.join(TEXT_V1_DIR, 'research_text'),
+      textScorer: runtimeTextScorer,
+      maxRequests: 6,
+      spendCapMicros: 1_000_000,
+      confirmPaidRequests: true,
+      fetch: fetchImpl as unknown as typeof fetch,
+      ledgerFile,
+      ledgerPackage: 'evaluate',
+    });
+    const raw = await readFile(ledgerFile, 'utf8');
+    const lines = raw.trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines).toHaveLength(6);
+    for (const l of lines) {
+      expect(Object.keys(l).sort()).toEqual(['endpoint', 'ms', 'package', 'provider', 'status', 'ts']);
+      expect(l).toMatchObject({ package: 'evaluate', provider: 'concentrate', status: 200 });
+    }
+    expect(raw).not.toContain(KEY);
+    expect(raw).not.toContain('FIXTURE claim');
+  });
+
   it('refuses another role’s fixtures before sending anything, even on a dry run', async () => {
     const outDir = await preparedOutDir();
     const { fetchImpl } = gateway();

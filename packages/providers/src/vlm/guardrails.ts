@@ -30,7 +30,7 @@ import {
 } from './types';
 
 /**
- * Deterministic reading guardrails (docs/quality-plan.md §4, guard-v1).
+ * Deterministic reading guardrails (docs/quality-plan.md §4, guard-v2).
  *
  * The model proposes; this module decides what may reach Qloo or the screen.
  * It is pure (no I/O, no clock, no randomness): the same reading always gets
@@ -46,7 +46,7 @@ import {
  * published is never removed (FAST-02): a stage-2 "unsupported" on it stays
  * an advisory veto.
  */
-export const GUARDRAIL_VERSION = 'guard-v1';
+export const GUARDRAIL_VERSION = 'guard-v2';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -126,6 +126,18 @@ export const PERSON_OBS_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|grimac\w*|mouth|lips|teeth|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
 export const MEDIUM_RE =
   /\b(still[- ]?life|paintings?|painted|illustrat\w*|drawings?|sketch(es)?|render(ing)?|watercolou?r|oil on canvas|vector|cartoons?|clip ?art|photographs?|digital art)\b/i;
+/**
+ * "Painted" names the medium of a picture, but on a craft, a piece of
+ * furniture, a building, a garment or a vehicle it names the decoration
+ * ("hand-painted wooden stools", "painted tiles"). In those domains G-MEDIUM
+ * ignores it; every other medium word still applies.
+ */
+export const DECORATIVE_DOMAINS: ReadonlySet<string> = new Set(['craft', 'design', 'interior', 'architecture', 'fashion', 'vehicle']);
+const DECORATION_RE = /\b(?:hand[- ]?)?painted\b/gi;
+/** G-MEDIUM test for a candidate name or tag query in its domain. */
+export function hasMediumWord(text: string, domain?: string | null): boolean {
+  return MEDIUM_RE.test(domain && DECORATIVE_DOMAINS.has(domain) ? text.replace(DECORATION_RE, ' ') : text);
+}
 export const ROLE_RE =
   /\b(coach\w*|player|athlete|referee|manager|politician|president|minister|celebrity|actor|actress|singer|ceo)\b/i;
 export const PEOPLE_RE = /\b(man|men|woman|women|person|people|crowd)\b/i;
@@ -251,13 +263,37 @@ export function isBrandLike(c: Pick<VlmCandidate, 'name' | 'type'> & { evidence?
 // ---- visible text, observations, title (G-VTEXT, G-PERSON-OBS, G-MEDIUM) ----
 
 /** G-VTEXT: visible_text holds verbatim transcriptions only; descriptions of text are dropped. */
-export function sanitizeVisibleText(texts: readonly string[]): { kept: string[]; dropped: string[] } {
+/**
+ * G-VTEXT (plates, guard-v2): a transcription shaped like a registration
+ * plate: only capitals and digits in at most three groups, 4 to 10 characters,
+ * at least two letters and two digits ("RK 492 AU", "AB12 CDE"). Applied only
+ * when the reading shows a vehicle, so codes on signs or products stay.
+ */
+export const PLATE_RE = /^(?=(?:[^0-9]*[0-9]){2})(?=(?:[^A-Z]*[A-Z]){2})[A-Z0-9]{1,10}(?:[ .·-][A-Z0-9]{1,8}){0,2}$/;
+export const VEHICLE_RE =
+  /\b(cars?|vans?|trucks?|lorr(?:y|ies)|bus(?:es)?|taxis?|cabs?|motorbikes?|motorcycles?|scooters?|vehicles?|suvs?|sedans?|hatchbacks?|pickups?|parked|driving)\b/i;
+export function looksLikePlate(text: string): boolean {
+  const t = text.trim();
+  const len = t.replace(/[ .·-]/g, '').length;
+  return len >= 4 && len <= 10 && PLATE_RE.test(t);
+}
+/** The reading shows a vehicle: a vehicle-domain candidate or a vehicle word in its title, sentence or observations. */
+export function readingShowsVehicle(a: Pick<VlmAnalysis, 'title' | 'interpretation' | 'observations' | 'candidates'>): boolean {
+  return (
+    a.candidates.some((c) => domainOf(c) === 'vehicle') ||
+    VEHICLE_RE.test(`${a.title} ${a.interpretation}`) ||
+    a.observations.some((o) => VEHICLE_RE.test(o.text))
+  );
+}
+
+export function sanitizeVisibleText(texts: readonly string[], ctx: { vehicle?: boolean } = {}): { kept: string[]; dropped: string[] } {
   const kept: string[] = [];
   const dropped: string[] = [];
   for (const text of texts) {
     const words = text.trim().split(/\s+/).filter(Boolean).length;
     const longPlain = words > 12 && !/["'“”‘’«»\d]/.test(text);
-    (VTEXT_RE.test(text) || longPlain ? dropped : kept).push(text);
+    const plate = ctx.vehicle === true && looksLikePlate(text);
+    (VTEXT_RE.test(text) || longPlain || plate ? dropped : kept).push(text);
   }
   return { kept, dropped };
 }
@@ -381,7 +417,7 @@ function evaluate(
 
   // G-MEDIUM: medium words in the name or tag query, unless a labelled artwork.
   const labelledArt = (c.type === 'work' || c.type === 'creator') && c.evidence === 'read_text';
-  if (!labelledArt && (MEDIUM_RE.test(c.name) || c.tag_queries.some((t) => MEDIUM_RE.test(t)))) return drop('G-MEDIUM');
+  if (!labelledArt && (hasMediumWord(c.name, c.domain) || c.tag_queries.some((t) => hasMediumWord(t, c.domain)))) return drop('G-MEDIUM');
   // G-PERSON-ROLE: roles inferred for people in the photo.
   if (ROLE_RE.test(c.name) && facts.mentionsPeople) return drop('G-PERSON-ROLE');
   // G-IDENTITY: no creator or person unless their name is read in the photo.
@@ -421,6 +457,12 @@ function evaluate(
   // G-DEPICTED: "depicted" needs real evidence.
   if (c.relation === 'depicted' && (c.certainty < DEPICTED_MIN || !DEPICTED_EVIDENCE.has(c.evidence!))) {
     rules.push('G-DEPICTED');
+    // guard-v2: a named place or work claimed as seen on nothing but context
+    // contradicts the evidence rule; it waits for stage 2 (an addition, which
+    // nothing can confirm any more, is dropped below).
+    // Only when the model itself said "context" (reading v2): an inferred
+    // evidence on a legacy reading is not the model's own contradiction.
+    if ((c.type === 'place' || c.type === 'work') && input.evidence === 'context') hold = true;
     c = { ...c, relation: 'resembles' };
   }
   // G-GENERIC: every content token is generic -> an observation, not a reference.
@@ -524,7 +566,7 @@ function sanitizeHeadline(a: VlmAnalysis, publishable: readonly VlmCandidate[]):
  * without it, claims that would be held are dropped.
  */
 export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stage1Guard {
-  const texts = sanitizeVisibleText(a.visible_text.map((t) => t.text));
+  const texts = sanitizeVisibleText(a.visible_text.map((t) => t.text), { vehicle: readingShowsVehicle(a) });
   const keptText = new Set(texts.kept);
   const obs = sanitizeObservations(a.observations);
   const base: VlmAnalysis = {
@@ -647,7 +689,7 @@ export function guardEnrichment(input: {
   merge: VlmMergeContext;
 }): Stage2Guard {
   const { published, merged, merge } = input;
-  const texts = sanitizeVisibleText(merged.visible_text.map((t) => t.text));
+  const texts = sanitizeVisibleText(merged.visible_text.map((t) => t.text), { vehicle: readingShowsVehicle(merged) });
   const keptText = new Set(texts.kept);
   const stage2Texts = merge.stage2Text.filter((t) => keptText.has(t));
   const obs = sanitizeObservations(merged.observations);

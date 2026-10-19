@@ -143,6 +143,32 @@ export const VlmFullReading = z.object(analysisShape(z.object(VlmCandidateFields
  * always sent the exact versioned schema.
  */
 
+/** Documented limits of reading v2 (prompt and stored reading). */
+export const V2_LIMITS = {
+  titleChars: 60,
+  interpretationChars: 160,
+  nameChars: 80,
+  evidenceTextChars: 60,
+  candidates: 5,
+  observations: 5,
+  visibleText: 8,
+  additionalCandidates: 4,
+  uncertaintyNotes: 3,
+  competingSubjects: 3,
+} as const;
+const V2_TOLERATED_NAME_CHARS = 200;
+const V2_TOLERATED_TEXT_CHARS = 200;
+/** What a v2 reply may contain before normalization (about twice the limits). */
+export const V2_TOLERATED = {
+  candidates: 10,
+  observations: 12,
+  visibleText: 32,
+  additionalCandidates: 8,
+  uncertaintyNotes: 8,
+  competingSubjects: 8,
+  regions: 8,
+} as const;
+
 const VlmQuality = z.object({
   usable: z.boolean(),
   issue: z.enum(['blurred', 'no_subject', 'too_dark', 'unsupported_content']).nullable(),
@@ -169,15 +195,19 @@ export type VlmQuickCandidateV1 = z.infer<typeof VlmQuickCandidateV1>;
  * read_text/logo; tag_query for style/tradition/cuisine.
  */
 export const VlmQuickCandidate = z.object({
-  /** Specific, searchable name, max 80 chars. */
-  name: z.string().max(80),
+  /**
+   * Specific, searchable name; the prompt asks for at most 80 chars. The
+   * schema tolerates up to V2_TOLERATED.nameChars and normalizeQuickRead drops
+   * a longer-than-80 name instead of failing the reading.
+   */
+  name: z.string().max(V2_TOLERATED_NAME_CHARS),
   type: z.enum(VLM_REFERENCE_TYPES),
   relation: z.enum(['depicted', 'resembles']),
   certainty: z.number().min(0).max(1),
   domain: z.enum(VLM_DOMAINS),
   evidence: z.enum(VLM_EVIDENCE),
-  /** Verbatim text or logo wording, max 60 chars; null unless evidence is read_text or logo. */
-  evidence_text: z.string().max(60).nullable(),
+  /** Verbatim text or logo wording; null unless evidence is read_text or logo. Kept to 60 chars by normalization. */
+  evidence_text: z.string().max(V2_TOLERATED_TEXT_CHARS).nullable(),
   /** Taxonomy phrase for style/tradition/cuisine (Qloo /v2/tags), else null. */
   tag_query: z.string().nullable(),
 });
@@ -195,7 +225,21 @@ const quickReadShape = <C extends z.ZodType>(candidate: C) => ({
 
 /** Stage 1, interactive: 512 px, maxOutputTokens 600, 10 s timeout, effort none. */
 export const VlmQuickReadV1 = z.object(quickReadShape(VlmQuickCandidateV1));
-export const VlmQuickReadV2 = z.object(quickReadShape(VlmQuickCandidate));
+/**
+ * Reading v2 is parsed tolerantly: the strict wire schema cannot carry array
+ * or length caps (they are stripped before dispatch), so the model can exceed
+ * a prompt limit. A cap overflow must not fail the reading (a failed stage 2
+ * drops every held claim), so the schema accepts up to V2_TOLERATED and
+ * normalizeQuickRead / normalizeEnrichment cut the reading back to the
+ * documented limits deterministically (first items win, as the prompt orders
+ * them strongest first).
+ */
+export const VlmQuickReadV2 = z.object({
+  title: z.string().max(V2_TOLERATED_TEXT_CHARS),
+  interpretation: z.string().max(V2_TOLERATED_TEXT_CHARS * 2),
+  candidates: z.array(VlmQuickCandidate).max(V2_TOLERATED.candidates),
+  quality: VlmQuality,
+});
 export type VlmQuickReadV1 = z.infer<typeof VlmQuickReadV1>;
 export type VlmQuickReadV2 = z.infer<typeof VlmQuickReadV2>;
 /** Either reading version (recorded v1 outputs keep parsing). Never sent to a model as a schema. */
@@ -233,6 +277,14 @@ export const VlmEnrichmentV1 = z.object({
 /** Stage 2, reading v2 (§3.2): verdicts, verbatim text only plus an illegible-text flag; 1600 output tokens. */
 export const VlmEnrichmentV2 = z.object({
   ...enrichmentShape,
+  // Tolerated sizes (see VlmQuickReadV2); normalizeEnrichment cuts them back to V2_LIMITS.
+  observations: z.array(z.object({ text: z.string(), kind: VlmObservation.shape.kind })).max(V2_TOLERATED.observations),
+  visible_text: z.array(z.string()).max(V2_TOLERATED.visibleText),
+  uncertainty: z.object({
+    overall: z.enum(['low', 'medium', 'high']),
+    notes: z.array(z.string()).max(V2_TOLERATED.uncertaintyNotes),
+  }),
+  competing_subjects: z.array(z.string()).max(V2_TOLERATED.competingSubjects),
   /** Text is present in the photo but cannot be read (never described inside visible_text). */
   illegible_text_present: z.boolean(),
   /** Per first-reading candidate. For a published card the verdict is advisory; for a held claim it is binding. */
@@ -244,7 +296,7 @@ export const VlmEnrichmentV2 = z.object({
       verdict: z.enum(VLM_VERDICTS),
     }),
   ),
-  additional_candidates: z.array(VlmQuickCandidate.extend({ rationale: z.string() })).max(4),
+  additional_candidates: z.array(VlmQuickCandidate.extend({ rationale: z.string() })).max(V2_TOLERATED.additionalCandidates),
   /**
    * Evidence boxes: the prompt asks for up to four and the merge keeps the
    * first four valid ones (ENRICHMENT_REGIONS_MAX). The schema tolerates up to
@@ -252,7 +304,7 @@ export const VlmEnrichmentV2 = z.object({
    * smoke and a cap overflow on boxes must not fail the whole stage 2 (which
    * would drop every held claim).
    */
-  regions: z.array(z.object({ label: z.string(), box: VlmRegion.shape.box })).max(8),
+  regions: z.array(z.object({ label: z.string(), box: VlmRegion.shape.box })).max(V2_TOLERATED.regions),
 });
 export type VlmEnrichmentV1 = z.infer<typeof VlmEnrichmentV1>;
 export type VlmEnrichmentV2 = z.infer<typeof VlmEnrichmentV2>;
@@ -263,6 +315,70 @@ type Confirmation = VlmEnrichment['confirmed'][number];
 
 export function isEnrichmentV2(e: VlmEnrichment): e is VlmEnrichmentV2 {
   return 'illegible_text_present' in e;
+}
+
+/** Cuts text to `max` characters at a word boundary when one is near (no ellipsis). */
+export function clipText(text: string, max: number): string {
+  const t = text.trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return (space >= max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:–—-]+$/u, '');
+}
+
+function isV2Candidate(c: VlmQuickCandidateV1 | VlmQuickCandidate): c is VlmQuickCandidate {
+  return 'domain' in c;
+}
+
+/** Drops empty, over-long and duplicate names (first wins), clips evidence text, keeps the first `max`. */
+function normalizeCandidates<C extends VlmQuickCandidate>(candidates: readonly C[], max: number, taken: Set<string> = new Set()): C[] {
+  const out: C[] = [];
+  for (const c of candidates) {
+    const key = candidateNameKey(c.name);
+    if (!key || c.name.trim().length > V2_LIMITS.nameChars || taken.has(key)) continue;
+    taken.add(key);
+    out.push({ ...c, name: c.name.trim(), evidence_text: c.evidence_text === null ? null : clipText(c.evidence_text, V2_LIMITS.evidenceTextChars) });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Deterministic cut-back of a reading-v2 quick read to the documented limits
+ * (V2_LIMITS): duplicate, empty or over-long candidate names are dropped, the
+ * first `maxCandidates` kept; title, interpretation and evidence text are
+ * clipped. A v1 reading is returned unchanged (its schema enforces the caps).
+ * Idempotent.
+ */
+export function normalizeQuickRead<Q extends VlmQuickRead>(quick: Q, maxCandidates: number = V2_LIMITS.candidates): Q {
+  const candidates = quick.candidates as (VlmQuickCandidateV1 | VlmQuickCandidate)[];
+  const v2: VlmQuickCandidate[] = candidates.filter(isV2Candidate);
+  if (v2.length !== candidates.length) return quick;
+  return {
+    ...quick,
+    title: clipText(quick.title, V2_LIMITS.titleChars),
+    interpretation: clipText(quick.interpretation, V2_LIMITS.interpretationChars),
+    candidates: normalizeCandidates(v2, Math.min(maxCandidates, V2_LIMITS.candidates)),
+  };
+}
+
+/**
+ * Deterministic cut-back of a reading-v2 enrichment to V2_LIMITS: the first
+ * five observations, eight non-empty distinct transcriptions, four distinct
+ * additional candidates (clipped evidence text), three notes and three
+ * competing subjects. A v1 enrichment is returned unchanged. Idempotent.
+ */
+export function normalizeEnrichment<E extends VlmEnrichment>(e: E): E {
+  if (!isEnrichmentV2(e)) return e;
+  const texts = [...new Set(e.visible_text.map((t) => t.trim()).filter(Boolean))];
+  return {
+    ...e,
+    observations: e.observations.filter((o) => o.text.trim()).slice(0, V2_LIMITS.observations),
+    visible_text: texts.slice(0, V2_LIMITS.visibleText),
+    additional_candidates: normalizeCandidates(e.additional_candidates, V2_LIMITS.additionalCandidates),
+    uncertainty: { ...e.uncertainty, notes: e.uncertainty.notes.slice(0, V2_LIMITS.uncertaintyNotes) },
+    competing_subjects: e.competing_subjects.slice(0, V2_LIMITS.competingSubjects),
+  };
 }
 
 /**
@@ -286,14 +402,20 @@ export const MERGED_CANDIDATES_MAX = 9;
 /** Evidence regions one enrichment may add (the first valid ones). */
 export const ENRICHMENT_REGIONS_MAX = 4;
 
-/** Name key used to match enrichment confirmations to stage-1 candidates (case, accents, punctuation). */
+/**
+ * Name key used to match enrichment confirmations to stage-1 candidates
+ * (case, accents, punctuation). Letters and digits of every script are kept:
+ * a name written only in CJK, Cyrillic or Arabic script ("愚园路") has its own
+ * key instead of an empty one (an empty key failed the whole reading as an
+ * "empty name" and made such names collide).
+ */
 export function candidateNameKey(name: string): string {
   return name
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
     .replace(/&/g, ' and ')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
@@ -406,7 +528,7 @@ export function mergeEnrichmentContext(
 ): { analysis: VlmAnalysis; merge: VlmMergeContext } {
   const out = VlmAnalysis.parse(structuredClone(base));
   const kept = held.map((c) => VlmCandidate.parse(structuredClone(c)));
-  const e = VlmEnrichment.parse(enrichment);
+  const e = normalizeEnrichment(VlmEnrichment.parse(enrichment));
   const v2 = isEnrichmentV2(e);
   const nextId = (prefix: string, used: readonly { id: string }[]) => {
     const taken = new Set(used.map((x) => x.id));
@@ -519,7 +641,7 @@ export function mergeEnrichment(base: VlmAnalysis, enrichment: VlmEnrichment): V
  * Guardrails are not applied here; the compiler applies them (guardrails.ts).
  */
 export function toVlmAnalysis(quick: VlmQuickRead, enrichment?: VlmEnrichment): VlmAnalysis {
-  const q = VlmQuickRead.parse(quick);
+  const q = normalizeQuickRead(VlmQuickRead.parse(quick));
   const candidates = q.candidates as (VlmQuickCandidateV1 | VlmQuickCandidate)[];
   const base = VlmAnalysis.parse({
     title: q.title,

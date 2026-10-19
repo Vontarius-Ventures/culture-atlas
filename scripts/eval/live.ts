@@ -22,12 +22,17 @@ import {
   type QlooEntity,
   type QlooTag,
   type VlmAnalysis,
+  VlmEnrichmentV1,
+  VlmEnrichmentV2,
+  VlmQuickReadV1,
+  VlmQuickReadV2,
 } from '../../packages/providers/src/index';
+import { structuredOutputContract } from '../../packages/providers/src/model-gateway/schema';
 import { RequestCounter } from '../qualify-concentrate-lib';
 import { verifiedGoldenPhotos } from './golden-photos';
 import type { GoldenSet, Thresholds } from './labels';
 import type { ReadingPipeline, Recording } from './pipeline';
-import { scoreRuns, type CallRecord, type QlooAcceptRecord, type Scorecard, type ScoredRun } from './scorer';
+import { SCORER_VERSION, scoreRuns, type CallRecord, type QlooAcceptRecord, type Scorecard, type ScoredRun } from './scorer';
 
 /**
  * Budgeted live evaluation (docs/quality-plan.md §7.4), the same safety rails
@@ -123,6 +128,35 @@ function tagFamily(type: string): string | null {
   return parts[0] === 'urn' && parts[1] === 'tag' ? (parts[2] ?? null) : null;
 }
 
+/**
+ * Why a completed reply failed validation: the zod issue paths and messages of
+ * the decoded output against the reading schema (for --out-dir only).
+ */
+export function diagnoseInvalidOutput(
+  body: string,
+  stage: CallRecord['stage'],
+  v1: boolean,
+): { issues: { path: string; message: string }[]; output: unknown } {
+  const schema = stage === 'quick' ? (v1 ? VlmQuickReadV1 : VlmQuickReadV2) : v1 ? VlmEnrichmentV1 : VlmEnrichmentV2;
+  try {
+    const envelope = JSON.parse(body) as { output?: { type?: string; content?: { type?: string; text?: string }[] }[] };
+    const text = (envelope.output ?? [])
+      .filter((o) => o.type === 'message')
+      .flatMap((o) => o.content ?? [])
+      .filter((c) => c.type === 'output_text')
+      .map((c) => c.text ?? '')
+      .join('');
+    const output = structuredOutputContract(schema).decode(JSON.parse(text));
+    const parsed = schema.safeParse(output);
+    return {
+      issues: parsed.success ? [] : parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      output,
+    };
+  } catch (error) {
+    return { issues: [{ path: '', message: `undecodable: ${(error as Error).message}` }], output: null };
+  }
+}
+
 export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult> {
   const log = opts.log ?? (() => undefined);
   const now = opts.now ?? (() => new Date());
@@ -166,12 +200,17 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   };
   const counter = new RequestCounter(path.join(opts.outDir, CONCENTRATE_COUNTER), opts.maxRequests);
   const baseFetch = opts.fetch ?? fetch;
+  // The last response body (requests are sequential), kept in memory only so an
+  // output that fails validation can be diagnosed in --out-dir (never in git).
+  let lastBody: string | null = null;
   const countedFetch: typeof fetch = async (input, init) => {
     await counter.reserve();
     const started = Date.now();
+    lastBody = null;
     try {
       const res = await baseFetch(input, init);
       await ledger({ provider: 'concentrate', endpoint: endpointOf(input), status: res.status, ms: Date.now() - started });
+      if (res.ok) lastBody = await res.clone().text().catch(() => null);
       return res;
     } catch (error) {
       await ledger({ provider: 'concentrate', endpoint: endpointOf(input), status: 'network_error', ms: Date.now() - started });
@@ -200,9 +239,14 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   const recordings: Recording[] = [];
   const failed: { photoId: string; call: CallRecord }[] = [];
   let stoppedBy: string | undefined;
+  const failures: Record<string, unknown>[] = [];
   const fail = (photoId: string, stage: CallRecord['stage'], error: unknown, ms: number) => {
     const incomplete = error instanceof Error && /incomplete|max_output_tokens/i.test(error.message);
     failed.push({ photoId, call: { stage, ms, valid: false, incomplete } });
+    if (error instanceof ProviderError && error.kind === 'invalid_response' && lastBody) {
+      const profile = stage === 'quick' ? stage1 : enrichProfile!;
+      failures.push({ photoId, stage, ...diagnoseInvalidOutput(lastBody, stage, profile.schemaVersion.endsWith('_v1')) });
+    }
     if (error instanceof Error && /Request cap reached/.test(error.message)) stoppedBy = 'request_cap';
     else if (error instanceof ProviderError && STOP_STATUSES.includes(error.status ?? 0)) stoppedBy = `http_${error.status}`;
     else if (error instanceof ProviderError && error.kind === 'unavailable') stoppedBy = 'role_disabled';
@@ -248,6 +292,8 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     recordings.push(rec);
   }
 
+  if (failures.length)
+    await writeFile(path.join(opts.outDir, 'invalid-outputs.json'), JSON.stringify(failures, null, 2), { mode: 0o600 });
   // Raw outputs go to --out-dir in the replay format, so eval:replay can re-score them offline.
   await writeFile(
     path.join(opts.outDir, 'recordings', 'manifest.json'),
@@ -256,7 +302,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
         version: 'replay-v1',
         golden_set: opts.golden.manifest.version,
         guardrail_version: opts.pipeline.guardrailVersion,
-        scorer_version: 'score-v1',
+        scorer_version: SCORER_VERSION,
         thresholds_sha256: '0'.repeat(64),
         recordings: recordings.map((r) => ({
           id: r.runId,
@@ -310,7 +356,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
       for (const c of finals.get(run.photoId) ?? []) {
         const plan = q.grounding.planLookup(c);
         if (plan.kind === 'none') {
-          records.push({ candidate: c.name, accepted: false });
+          records.push({ candidate: c.name, accepted: false, plan: 'none', reason: plan.reason });
           continue;
         }
         if ((await qCounter.used()) >= q.maxRequests) {
@@ -330,13 +376,20 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
             accepted: !!m,
             entityType: m && 'entity_id' in m ? (m.types[0] ?? null) : null,
             tagFamily: m && 'type' in m && !('entity_id' in m) ? tagFamily(m.type) : null,
+            plan: plan.kind,
+            query: plan.query,
+            rule: verdict.rule,
+            reason: verdict.reason,
+            matchedName: m?.name ?? null,
+            matchedId: m ? ('entity_id' in m ? m.entity_id : m.id) : null,
+            top: res.data.slice(0, 5).map((x) => ({ name: x.name, type: 'entity_id' in x ? x.types.join(',') : x.type })),
           });
         } catch (error) {
           if (error instanceof ProviderError && STOP_STATUSES.includes(error.status ?? 0)) {
             stoppedBy = `qloo_http_${error.status}`;
             break outer;
           }
-          records.push({ candidate: c.name, accepted: false });
+          records.push({ candidate: c.name, accepted: false, plan: plan.kind, query: plan.query, reason: 'request_failed' });
         }
         await sleep(q.spacingMs);
       }
@@ -345,6 +398,17 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   }
 
   const scorecard = scoreRuns(opts.golden.labels, runs, opts.thresholds, 'live', failed);
+  // Grounding decisions per photo (candidate, query, accepted Qloo name and rule) for hand-labelled precision.
+  if (opts.qloo)
+    await writeFile(
+      path.join(opts.outDir, 'grounding.json'),
+      JSON.stringify(
+        runs.map((r) => ({ photo: r.photoId, records: r.qloo ?? [] })),
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
   await writeFile(
     path.join(opts.outDir, 'scorecard.json'),
     JSON.stringify({ ...scorecard, stopped_by: stoppedBy ?? null, guardrail_version: opts.pipeline.guardrailVersion }, null, 2),

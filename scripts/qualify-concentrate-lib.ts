@@ -1,4 +1,4 @@
-import { readFile, readdir, rename, stat, writeFile, mkdir } from 'node:fs/promises';
+import { appendFile, readFile, readdir, rename, stat, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   CATALOG_SNAPSHOT_FILE,
@@ -243,6 +243,13 @@ export async function qualifyProfile(
      * artifact qualifies only the enrichment profile.
      */
     stage1Profile?: ModelProfile;
+    /**
+     * Optional call ledger (JSON lines, outside git): every inference request
+     * is appended as { ts, package, provider, endpoint, status, ms }, never
+     * with its body, key or reply.
+     */
+    ledgerFile?: string;
+    ledgerPackage?: string;
   },
 ): Promise<QualificationRun> {
   const log = opts.log ?? (() => undefined);
@@ -339,16 +346,35 @@ export async function qualifyProfile(
     if (fixture.kind === 'text')
       parseTextFixture(JSON.parse(await readFile(fixture.files[0]!.path, 'utf8')), profile.role);
   log(
-    `plan: ${fixtures.length} fixtures, ${plannedRequests} requests, worst case ${files * perFileMicros} micro-USD; reading ${readingForProfile(profile)}; ${effortNote(profile)}`,
+    `plan: ${fixtures.length} fixtures, ${plannedRequests} requests, worst case ${files * perFileMicros} micro-USD; ${profile.role.startsWith('vision') ? `reading ${readingForProfile(profile)}; ` : ''}${effortNote(profile)}`,
   );
   if (!opts.confirmPaidRequests) return { dryRun: true, plannedRequests };
 
   const counter = new RequestCounter(path.join(opts.outDir, COUNTER_FILE), opts.maxRequests);
   const baseFetch = opts.fetch ?? fetch;
   // Every HTTP request reserves the persistent counter first, so a crash never undercounts.
+  const ledgerLine = async (input: Parameters<typeof fetch>[0], status: number | string, started: number) => {
+    if (!opts.ledgerFile) return;
+    let endpoint = 'unknown';
+    try {
+      endpoint = new URL(input instanceof Request ? input.url : String(input)).pathname;
+    } catch {
+      /* keep 'unknown' */
+    }
+    const line = { ts: (opts.now ?? (() => new Date()))().toISOString(), package: opts.ledgerPackage ?? 'qualify', provider: 'concentrate', endpoint, status, ms: Date.now() - started };
+    await appendFile(opts.ledgerFile, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+  };
   const countedFetch: typeof fetch = async (input, init) => {
     await counter.reserve();
-    return baseFetch(input, init);
+    const started = Date.now();
+    try {
+      const res = await baseFetch(input, init);
+      await ledgerLine(input, res.status, started);
+      return res;
+    } catch (error) {
+      await ledgerLine(input, 'network_error', started);
+      throw error;
+    }
   };
   const ledger = new ModelSpendLedger(new MemorySpendStore(), {
     dailyMicros: opts.spendCapMicros,

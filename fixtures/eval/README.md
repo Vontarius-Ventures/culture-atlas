@@ -90,7 +90,7 @@ fixtures/eval/
 
 ## Metrics and gates
 
-`scripts/eval/scorer.ts` (`score-v1`) computes M1–M16 per split; M17 ("scorer
+`scripts/eval/scorer.ts` (`score-v2`) computes M1–M16 per split; M17 ("scorer
 teeth") requires that the same recordings without guardrails fail M1. The
 replay gates apply to the tune split of `replay-v1` in CI; the live gates apply
 to every split of a live run, with stricter M3/M5 on the tune split

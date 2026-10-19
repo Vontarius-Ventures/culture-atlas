@@ -1,4 +1,4 @@
-import { brandHeadToken, type QlooEntity, type QlooEntityType, type QlooTag } from '@culture-atlas/providers';
+import { brandHeadToken, hasMediumWord, type QlooEntity, type QlooEntityType, type QlooTag } from '@culture-atlas/providers';
 import { canonicalTokens, nameTokens, sameTokens, strictSubset } from './text';
 
 export { canonicalTokens } from './text';
@@ -13,7 +13,7 @@ export { canonicalTokens } from './text';
  * doubt becomes a reference under the candidate's own name, never a
  * look-alike's name. No I/O; every decision carries a rule id and a reason.
  */
-export const GROUNDING_VERSION = 'ground-v1';
+export const GROUNDING_VERSION = 'ground-v2';
 
 export type GroundingRule = 'Q-TYPE' | 'Q-TAGTYPES' | 'Q-NAME' | 'Q-SUBSET' | 'Q-PLACE' | 'Q-EVIDENCE' | 'Q-DOUBT';
 
@@ -95,8 +95,12 @@ export const CORPORATE_SUFFIXES: ReadonlySet<string> = new Set([
   'bicycles', 'bikes', 'group', 'inc', 'co', 'company', 'corp', 'corporation', 'motors', 'motor', 'ltd', 'sa', 'ag', 'gmbh', 'international',
 ]);
 
-/** Medium words (§4.2 G-MEDIUM): never a reference on a real photo. Checked again here as defence in depth. */
-const MEDIUM = /\b(still[- ]?life|painting|painted|illustrat\w*|drawing|sketch|render(ing)?|watercolou?r|oil on canvas|vector|cartoon|clip ?art|photograph|digital art)\b/i;
+/**
+ * Medium words (§4.2 G-MEDIUM): never a reference on a real photo. Checked
+ * again here as defence in depth, with the guardrails' own test (so "painted"
+ * on a craft or building is decoration there and here alike).
+ */
+const mediumWord = (text: string, domain?: string | null) => hasMediumWord(text, domain);
 
 /** Generic words that never head a brand name ("Nba basketball" heads with "nba", not "basketball"). */
 const HEAD_SKIP: ReadonlySet<string> = new Set(['the', 'a', 'an', 'of', 'and', 'brand', 'logo', 'official']);
@@ -160,7 +164,7 @@ export function planLookup(c: GuardedCandidate): LookupPlan {
   const name = c.name.trim();
   if (!name) return { kind: 'none', reason: 'empty_name' };
   const textEvidence = c.evidence === 'read_text';
-  if (!user && (MEDIUM.test(name) || MEDIUM.test(tagQueryOf(c))) && !((c.type === 'work' || c.type === 'creator') && textEvidence)) {
+  if (!user && (mediumWord(name, c.domain) || mediumWord(tagQueryOf(c), c.domain)) && !((c.type === 'work' || c.type === 'creator') && textEvidence)) {
     return { kind: 'none', reason: 'medium_word' };
   }
   const strong = user || c.relation === 'depicted' || c.certainty >= 0.5;
@@ -249,6 +253,19 @@ function acceptTag(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'tags'
   return { match: best, rule: 'Q-NAME', reason: 'exact_tag' };
 }
 
+/** The entity type a film or music work/creator should be, when the plan allows it. */
+function domainEntityType(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'search' }>): QlooEntityType | null {
+  const media = mediaDomain(c);
+  if (!media) return null;
+  const wanted: QlooEntityType | null =
+    c.type === 'work'
+      ? media === 'film' ? 'urn:entity:movie' : 'urn:entity:album'
+      : c.type === 'creator'
+        ? media === 'film' ? 'urn:entity:director' : 'urn:entity:artist'
+        : null;
+  return wanted && plan.types.includes(wanted) ? wanted : null;
+}
+
 function acceptEntity(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'search' }>, results: readonly QlooEntity[]): AcceptDecision {
   if (results.length === 0) return { match: null, rule: 'Q-NAME', reason: 'no_results' };
   const anyType = plan.types.length === 0;
@@ -275,6 +292,12 @@ function acceptEntity(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'se
     return { match: chosen, rule: 'Q-NAME', reason: 'exact_place' };
   }
   if (distinct.length > 1) {
+    // ground-v2: a work or creator whose domain names the medium (film, music)
+    // is that medium's entity when exactly one exact match has that type
+    // ("Rebecca" on a film poster is the movie, not the novel).
+    const preferred = domainEntityType(c, plan);
+    const ofType = preferred ? distinct.filter((e) => e.types.includes(preferred)) : [];
+    if (ofType.length === 1) return { match: ofType[0]!, rule: 'Q-NAME', reason: 'exact_name_domain_type' };
     const types = new Set(distinct.map((e) => [...e.types].sort().join(',')));
     return { match: null, rule: 'Q-DOUBT', reason: types.size > 1 ? 'exact_matches_of_different_types' : 'several_exact_matches' };
   }

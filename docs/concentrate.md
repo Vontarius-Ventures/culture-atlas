@@ -180,7 +180,7 @@ unavailable under Concentrate.
 
 - The profile's `schemaVersion` selects the reading (`readingForProfile`) and its version (`readingVersionForProfile`), so the profile hash, and with it the qualification artifact, binds the exact reading. Every vision profile not pinned to `atlas_observations_v2` uses the quick read. A profile pinned to `atlas_quick_read_v1` or `atlas_enrichment_v1` keeps the phase-4 prompt and schema byte-identical (a test pins the prompt hashes); every other quick or enrich profile gets reading v2. Both photo roles must be re-qualified on v2 ([quality plan](quality-plan.md) §3, §7.5).
 - **Reading v2** ([quality plan](quality-plan.md) §3). Stage-1 candidates report `domain` (what the reference is about), `evidence` (`read_text`, `logo`, `distinctive_form`, `context`) and `evidence_text` (the words read) instead of categories; the enrichment returns a `verdict` (`supported`, `weak`, `unsupported`) per first-reading candidate instead of `keep`, verbatim `visible_text` only, and `illegible_text_present`. The prompts add the evidence rules: a brand or model only from a legible name or logo, sign names exactly as written, no medium words, no generic objects, 0 to 5 candidates, nothing about a person's looks or role.
-- **Guardrails** (`vlm/guardrails.ts`, `GUARDRAIL_VERSION = 'guard-v1'`, rules G-QUAL … G-CATEGORY in [quality plan](quality-plan.md) §4). The model proposes; this pure module decides. The compiler runs `guardQuickRead` right after stage 1, before anything is published, resolved or anchored, and `guardEnrichment` inside the stage-2 publish step. Risky claims (brands, names of places or works that do not match the text read, styles read off a sign, resemblances at certainty ≤ 0.35) are *held*: never shown, sent to stage 2 by name, and published only on a binding stage-2 verdict through the existing append path (a brand also needs a stage-2 transcription of its name, G-BRAND-CORROBORATE). If stage 2 is off, fails or times out, held claims are dropped; a reading without a planned stage 2 (the legacy full reading, a fallback model's answer) drops them at once. Published cards are never removed (FAST-02): stage 2's "unsupported" on them stays an advisory veto. The server assigns categories from `domain` (fashion → Wear, music → Play, film → Watch, food or cuisine → Eat, everything else none). Recorded v1 readings and full readings pass through the same rules: missing `domain`, `evidence` and verdicts are inferred (§4.4). Every decision (rule ids, action, note; names withheld for person rules) is recorded as a `guard` trace event per stage, shown by the inspector; dropped visible-text entries and observations are recorded as counts only. A reviewed example replay is not a model reading and is not guarded.
+- **Guardrails** (`vlm/guardrails.ts`, `GUARDRAIL_VERSION = 'guard-v2'`, rules G-QUAL … G-CATEGORY in [quality plan](quality-plan.md) §4; guard-v2 adds the plate rule, the decorative "painted" exemption and the depicted-on-context hold, §13.3). The model proposes; this pure module decides. The compiler runs `guardQuickRead` right after stage 1, before anything is published, resolved or anchored, and `guardEnrichment` inside the stage-2 publish step. Risky claims (brands, names of places or works that do not match the text read, styles read off a sign, resemblances at certainty ≤ 0.35) are *held*: never shown, sent to stage 2 by name, and published only on a binding stage-2 verdict through the existing append path (a brand also needs a stage-2 transcription of its name, G-BRAND-CORROBORATE). If stage 2 is off, fails or times out, held claims are dropped; a reading without a planned stage 2 (the legacy full reading, a fallback model's answer) drops them at once. Published cards are never removed (FAST-02): stage 2's "unsupported" on them stays an advisory veto. The server assigns categories from `domain` (fashion → Wear, music → Play, film → Watch, food or cuisine → Eat, everything else none). Recorded v1 readings and full readings pass through the same rules: missing `domain`, `evidence` and verdicts are inferred (§4.4). Every decision (rule ids, action, note; names withheld for person rules) is recorded as a `guard` trace event per stage, shown by the inspector; dropped visible-text entries and observations are recorded as counts only. A reviewed example replay is not a model reading and is not guarded.
 - `reasoningEffort` (`none` | `minimal` | `low` | `medium` | `high`) is optional and part of the profile hash. The transport sends `reasoning: {effort}` only when the qualified profile sets it; otherwise no reasoning field is sent at all (FAST-03).
 - Both prompts keep the security rules (image text and `user_data` are DATA; no tools). The quick prompt adds "Read the subject as if it were a photo; never name the rendering medium or drawing style." and "Skip generic objects unless named as a specific type, style or tradition." Stage 2 receives the stage-1 title and candidate names inside the `user_data` block.
 - **Reading v2 smoke, 2026-10-19** (build package P1, 12 billed requests, no retries, 5 tuning photos, `anthropic/claude-haiku-5-5`, effort none; not a qualification run). Stage 1 took 1.9–4.8 s and stage 2 3.5–6.9 s, with at most 1031 output tokens at stage 2. Results: on the grocery-bags photo stage 1 returned no candidates instead of guessing a car model from its shape; on the Paris signs all five places carried the exact sign text as evidence and published at stage 1; on the photo of two people one tailoring style was proposed, with no identity or role; on the basketball photo "Streetball" was held and published only as a weak, non-anchor resemblance, and "NBA" was published from its logo plus the stage-2 transcription; on the bicycle photo the road bicycle was demoted as generic, and no brand was claimed because stage 2 did not read the maker's name. Two findings changed the code: the Paris enrichment drew five evidence boxes against a schema cap of four, so the whole call failed validation (the v2 schema now accepts up to eight and the merge keeps four); and one observation described a mouth, so G-PERSON-OBS also covers mouth, lips, teeth and grimaces. Stage 2 still adds a confirmation for the title despite the prompt; it is ignored. Outputs stay in the team scratchpad.
@@ -245,6 +245,9 @@ pnpm qualify:concentrate --profile-file profiles.json --role vision_photo_enrich
 pnpm qualify:concentrate --profile-file profiles.json --role composer \
   --fixtures fixtures/eval/text-v1/composer --out-dir /secure/concentrate-qualification \
   --max-requests 11 --spend-cap-usd 0.5
+# Any run: --ledger <file outside git> [--package <name>] appends one line per
+# request (endpoint, status, ms; never a body, reply or key). The request counter
+# is per out-dir and cumulative across roles: pass the running total as --max-requests.
 ```
 
 **A role qualifies on quality, not only on transport** (docs/quality-plan.md §7.5):
@@ -414,6 +417,11 @@ Before production:
 
 Until then, do not deploy these profiles.
 
+**Owner decision (2026-10-19):** the exception above is accepted ("it's
+fine"). New profiles on the same route carry the accepted value unchanged
+(see "Evaluate phase" below); the dashboard confirmation is still required
+before deployment.
+
 **Spend (phase 4):**
 
 - 47 billed Concentrate inference requests: 45 for qualification and 2 for the
@@ -423,6 +431,79 @@ Until then, do not deploy these profiles.
 - Cost: about $0.021 at the listed standard rate, and at most about $0.10 even
   at the long-context rate. The spend cap was $1.
 - Billing is not reconciled.
+
+## Evaluate phase: reading v2 re-qualification (2026-10-19)
+
+The quality plan's Evaluate phase ([quality plan §13](quality-plan.md#13-results-evaluate-phase-2026-10-19))
+re-qualified all four roles on `anthropic/claude-haiku-5-5`, effort `none`,
+with the reading-v2 profiles (enrichment cap 1600) and the two text profiles
+from "Text-role qualification". Every request is in the team call ledger
+(`qualify:concentrate --ledger`).
+
+| Role | Artifact id | Result | Requests | Latency p50 / p95 | Eval (live gates, thr-v1) |
+| --- | --- | --- | --- | --- | --- |
+| `research_text` (`reference_notes`, 4000 out, 15 s) | `rt-haiku55-none-20261019` | **pass**, 6/6 fixtures | 6 | 6.1 / 9.0 s | text-v1: T1–T13 pass; kept claims 7.5 per fixture; unsupported specifics 2.1 % |
+| `composer` (11 fixtures incl. 3 Eat calls, 1500 out, 12 s) | `co-haiku55-none-20261019` | **pass**, 11/11 | 11 | 2.2 / 4.3 s | text-v1: T1–T13 pass; 0 new names, 0 exclusion violations, 0 safety claims |
+| `vision_photo` (`atlas_quick_read_v2`, 512 px, 600 out) | `vp-quick-v2-haiku55-none-20261019` | **fail** (transport 28/28) | 28 | 2.0 / 3.2 s | golden-v1, guard-v2, score-v2: held-out passes every gate; tune fails **M5 0.75** (gate 0.80) |
+| `vision_photo_enrich` (`atlas_enrichment_v2`, 768 px, 1600 out) | `vpe-enrich-v2-haiku55-none-20261019` | **fail** (transport 28/28) | 56 | 4.0 / 6.2 s (enrichment) | held-out passes every gate; tune fails **M5 0.75** and **M9 0.867** (gate 0.90) |
+
+`qualificationState()` therefore reports `research_text` and `composer` as
+`qualified` and both photo roles as `catalog-compatible`: with these
+artifacts, the worker dispatches the text roles and **no photo role** (it says
+so at start-up: `vision_photo: 'catalog-compatible (not_qualified)'`). The
+gate failed closed as designed; no threshold was relaxed. The two tune-split
+misses are:
+
+- **M9 (must-read text) on one photo.** The bicycle photo's label requires
+  "cannondale" and "CAAD8". At 768 px the maker's name is hidden behind the
+  dog except "…ndale", and the model read "CADE" and "CAAD9" in the two
+  evaluation runs and missed both strings in the qualification run. Stage 2
+  correctly did not confirm the held "Cannondale" claim. The label asks for a
+  word that is not legible; the owner should review it (quality plan §11.4).
+  No label was changed.
+- **M5 (expected coverage), 9 of 12 tune photos.** At stage 1 alone the misses
+  are structural: the Madrid bus and the bicycle publish their expected
+  references only after stage 2 confirms them (G-BRAND, G-TEXT-ECHO holds), and
+  the stage-1-only run gates them with the same M5 ≥ 0.80 as the two-stage
+  output, although M15 (≥ 0.60) is the plan's stage-1 measure. The photo of
+  two people yields no clothing-style reference in most runs (expected
+  "Formal menswear"). In the two `eval:live` runs the two-stage M5 was 0.83;
+  in the qualification run it was 0.75. Which gate applies to the stage-1-only
+  run is an owner decision (quality plan §13.6).
+
+**Privacy (owner decision, 2026-10-19).** The owner accepted the earlier
+`privacyVerifiedAt` exception ("it's fine"). All four new profiles are on the
+same route and carry the accepted value, `2026-10-19T01:11:57.000Z`, unchanged;
+no agent set a new value. The dashboard confirmation of ZDR and no content
+logging for this route remains a deploy gate (see "Remaining release gates").
+Every request of this phase used only public test photographs and the text
+golden set.
+
+**Reading v2 hardening found by the live runs** (guard-v2, score-v2, ground-v2):
+
+- *Cap overflow no longer fails a reading.* The strict wire schema cannot carry
+  `maxItems`/`maxLength`, so the model can exceed a prompt limit; the first
+  live run lost 3 of 28 enrichments as `invalid_response` (menu, food and
+  poster photos). Reading v2 is now parsed tolerantly (about twice each limit)
+  and cut back deterministically by `normalizeQuickRead` /
+  `normalizeEnrichment` (first items win, duplicates and over-long names
+  dropped, text clipped at a word boundary). Afterwards: 0 invalid of 140
+  calls.
+- *Names in any script have a key.* `candidateNameKey` kept only `a-z0-9`, so a
+  name written only in CJK had an empty key: the provider's validation then
+  failed the whole reading as an "empty name", and such names collided. Keys
+  now keep letters and digits of every script.
+- The v2 prompts are pinned by sha256 in `two-stage.test.ts`; editing them
+  needs a new `promptVersion` and re-qualification.
+- `eval:live` now records each grounding decision (query, accepted Qloo name,
+  rule, top results) in `grounding.json`, and the decoded output and zod issues
+  of any reply that fails validation in `invalid-outputs.json`, both in
+  `--out-dir` only.
+
+**Spend (Evaluate phase, this agent):** 219 billed Concentrate requests
+(6 in an aborted first start, 2 × 56 `eval:live`, 17 text qualification, 84
+photo qualification) and 0 in the real-stack run (no photo role was
+qualified, so nothing was dispatched). Team total 289 of 400.
 
 ## Elorian fallback (operator choice)
 
@@ -591,10 +672,19 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
 
 ## Remaining release gates
 
-- Qualified profiles exist only in the operator's directory: `vision_photo` and
-  `vision_photo_enrich` on `anthropic/claude-haiku-5-5` (effort `none`, passed
-  live on 2026-10-19). The other roles (`vision_video_frame`, `research_text`,
-  `composer`) are not qualified. A mock pass is not production qualification.
+- Qualified profiles exist only in the operator's directory. After the
+  Evaluate phase (2026-10-19): `research_text` and `composer` are qualified on
+  `anthropic/claude-haiku-5-5` (effort `none`) with text-v1 eval blocks. The
+  reading-v2 photo roles failed the tune split of golden-v1 (M5, M9; see
+  "Evaluate phase") and are `catalog-compatible`, so no photo role dispatches
+  until the owner decides on the p14 label and the stage-1 gate, and the roles
+  are re-qualified. The phase-4 v1 artifacts carry no eval block and do not
+  qualify either. `vision_video_frame` is not qualified. A mock pass is not
+  production qualification.
+- Research sources (Wikipedia) are not reachable from the build sandbox
+  (egress policy), so a real-stack capture there ends with research `failed`
+  and the capture `partial` even with qualified text roles; measure the
+  end-to-end `complete` state where `en.wikipedia.org` is reachable.
 - **ZDR / content-logging confirmation for `anthropic/claude-haiku-5-5` is
   pending in the Concentrate dashboard.** After it, re-qualify with the
   confirmed `privacyVerifiedAt` (see above).

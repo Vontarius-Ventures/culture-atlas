@@ -162,7 +162,7 @@ ${V2_EVIDENCE_RULES}
 - certainty is your honest 0..1 confidence for each candidate. Lower it for resemblances.
 - tag_query: a short taxonomy phrase for a style, tradition or cuisine candidate (e.g. "mid-century modern"); null otherwise.
 - title: at most six words. interpretation: one plain sentence of at most twenty words that phrases readings as resemblance.
-- quality.usable is false when the photo is too blurred, too dark, or has no useful subject; then set quality.issue and return no candidates.`;
+- quality.usable is false when the photo is too blurred, too dark, or has no useful subject; then set quality.issue and return no candidates. People are a useful subject when their clothing or styling can be read: never mark a photo unusable only because it shows people.`;
 
 export const VLM_ENRICH_SYSTEM_PROMPT_V2 = `You add detail to a first reading of a single photo for culture atlas, a cultural discovery app. Respond only with the structured output schema.
 
@@ -172,7 +172,7 @@ ${SECURITY_RULES}
 Content rules:
 - Read the subject as if it were a photo.
 - observations: up to five short, concrete, visually verifiable statements (garments, objects, colors, materials, composition, setting, food). Do not guess at what cannot be seen.
-- visible_text: exact transcriptions of legible text only, at most eight items; never descriptions of text. Never transcribe licence plates. Set illegible_text_present to true when text is present but cannot be read, otherwise false.
+- visible_text: exact transcriptions of legible text only, at most eight items, including small printed words on objects (badges, decals, labels, packaging); never descriptions of text. Copy only letters you can read; never complete or guess a word. Never transcribe licence plates. Set illegible_text_present to true when text is present but cannot be read, otherwise false.
 - confirmed: one entry per first-reading candidate, using its exact name, with a rationale of at most fifteen words grounded in what is visible, and a verdict: supported (the photo clearly supports it), weak (plausible but not established), or unsupported (the photo does not support it). A brand, maker or model is supported only when its name or logo is legible. Do not add a confirmed entry for the title.
 - additional_candidates: up to four more specific, searchable references the first reading missed, each with a short rationale, and the same fields as the first reading (domain, evidence, evidence_text, tag_query: a taxonomy phrase for a style, tradition or cuisine, otherwise null). Fewer is better than filler.
 ${V2_EVIDENCE_RULES}

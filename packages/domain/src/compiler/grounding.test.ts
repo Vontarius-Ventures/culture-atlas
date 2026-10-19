@@ -197,6 +197,26 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
     expect(acceptMatch(c, searchPlan(c), [results[0]!])).toMatchObject({ match: { entity_id: 'FIXTURE-W1' }, reason: 'exact_name' });
   });
 
+  it('ground-v2: a film work or creator takes the one exact match of its medium, else stays in doubt', () => {
+    const film = cand({ name: 'Fixture Echo', type: 'work', certainty: 0.9, domain: 'film' });
+    const results = [ent('W1', 'Fixture Echo', 'urn:entity:book'), ent('W2', 'Fixture Echo', 'urn:entity:movie')];
+    expect(acceptMatch(film, searchPlan(film), results)).toMatchObject({ match: { entity_id: 'FIXTURE-W2' }, rule: 'Q-NAME', reason: 'exact_name_domain_type' });
+    // Two same-named movies: still a doubt.
+    const twoMovies = [...results, ent('W3', 'Fixture Echo', 'urn:entity:movie')];
+    expect(acceptMatch(film, searchPlan(film), twoMovies)).toMatchObject({ match: null, rule: 'Q-DOUBT' });
+    // No medium domain: no preference (the original reject-on-doubt).
+    const plain = cand({ name: 'Fixture Echo', type: 'work', certainty: 0.9, domain: 'other' });
+    expect(acceptMatch(plain, searchPlan(plain), results)).toMatchObject({ match: null, rule: 'Q-DOUBT', reason: 'exact_matches_of_different_types' });
+    const director = cand({ name: 'Fixture Person', type: 'creator', certainty: 0.9, domain: 'film', evidence: 'read_text' });
+    const people = [ent('P1', 'Fixture Person', 'urn:entity:person'), ent('P2', 'Fixture Person', 'urn:entity:director')];
+    expect(acceptMatch(director, searchPlan(director), people)).toMatchObject({ match: { entity_id: 'FIXTURE-P2' }, reason: 'exact_name_domain_type' });
+  });
+
+  it('ground-v2: "painted" on a craft is decoration, so it is looked up; a still life never is', () => {
+    expect(planLookup(cand({ name: 'Hand-painted fixture stools', type: 'tradition', domain: 'craft', tag_queries: ['painted folk furniture'] }))).toMatchObject({ kind: 'tags' });
+    expect(planLookup(cand({ name: 'Painted fixture scene', type: 'style', domain: 'art', tag_queries: ['painted scene'] }))).toEqual({ kind: 'none', reason: 'medium_word' });
+  });
+
   it('takes decor over a music genre ranked first for a non-music style (Neoclassical)', () => {
     const c = cand({ name: 'Neoclassicism', type: 'style', tag_queries: ['neoclassical'], domain: 'architecture' });
     const results = [
@@ -261,7 +281,7 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
   });
 
   it('is versioned', () => {
-    expect(GROUNDING_VERSION).toBe('ground-v1');
+    expect(GROUNDING_VERSION).toBe('ground-v2');
   });
 });
 

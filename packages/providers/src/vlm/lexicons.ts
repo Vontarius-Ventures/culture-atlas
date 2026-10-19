@@ -1,6 +1,6 @@
 /**
  * Word lists for the deterministic reading guardrails (docs/quality-plan.md
- * §4, guard-v1). Pure data plus two tokenizer helpers; no I/O.
+ * §4, guard-v2). Pure data plus two tokenizer helpers; no I/O.
  *
  * The lists were seeded from the recorded phase-4 readings of the 15 tuning
  * photos (never from the held-out split). Changing any list changes the

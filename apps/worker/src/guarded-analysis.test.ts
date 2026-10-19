@@ -174,8 +174,8 @@ describe('reading guardrails in the compiler', () => {
 
     const trace = await guardTrace(job_id);
     expect(trace.map((t) => [t.stage, t.version])).toEqual([
-      [1, 'guard-v1'],
-      [2, 'guard-v1'],
+      [1, 'guard-v2'],
+      [2, 'guard-v2'],
     ]);
     expect(trace[0]!.decisions.map((d) => [d.name, d.action])).toEqual([
       ['Vintage Racing', 'publish'],

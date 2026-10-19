@@ -242,7 +242,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v1', scorer_version: 'score-v1', pass: true },
+      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v2', scorer_version: 'score-v2', pass: true },
     });
     expect(run.artifact!.eval!.metrics).toMatchObject({ tune_M1: 0, tune_M3: 1, tune_M13: 1, failed_calls: 0 });
     expect(qualificationState(profile, outDir)).toBe('qualified');

@@ -367,6 +367,11 @@ describe('reading v2 (quality plan §3)', () => {
     expect(sha256(VLM_SYSTEM_PROMPT)).toBe('b62f04a1d1a0b815ed824dc14048f859bf5658cec1cce5bef68c267e0d224a72');
   });
 
+  it('the v2 prompts qualified in the 2026-10-19 Evaluate run are pinned: an edit needs a new promptVersion and re-qualification', () => {
+    expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('ae79cce212c1004417d8d3b913b81df365a03ee9189a4fb3a11bbb32e2bc34ef');
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('d23612b57176d5e1052ae8a5b3e6fd67c3fd2fdc4c034dc280ee1dff7a62c17c');
+  });
+
   it('both v2 prompts keep the security rules and add the evidence rules', () => {
     const security = VLM_QUICK_SYSTEM_PROMPT.slice(
       VLM_QUICK_SYSTEM_PROMPT.indexOf('Security rules'),

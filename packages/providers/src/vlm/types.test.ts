@@ -9,8 +9,14 @@ import {
   VlmQuickRead,
   VlmQuickReadV1,
   VlmQuickReadV2,
+  V2_LIMITS,
+  candidateNameKey,
   confirmationVerdict,
   isEnrichmentV2,
+  mergeEnrichmentContext,
+  normalizeEnrichment,
+  normalizeQuickRead,
+  toVlmAnalysis,
 } from './types';
 
 // Shapes follow the measured stage-1/stage-2 outputs in docs/analysis-latency-plan.md.
@@ -168,8 +174,11 @@ describe('reading v2 schemas', () => {
     expect(VlmQuickReadV2.safeParse({ ...quickV2, candidates: [] }).success).toBe(true);
     const { domain: _d, ...noDomain } = quickV2.candidates[0]!;
     expect(VlmQuickReadV2.safeParse({ ...quickV2, candidates: [noDomain] }).success).toBe(false);
+    // Over the 60-char limit is tolerated and clipped by normalization; over the tolerance still fails.
     const longText = { ...quickV2.candidates[0]!, evidence_text: 'x'.repeat(61) };
-    expect(VlmQuickReadV2.safeParse({ ...quickV2, candidates: [longText] }).success).toBe(false);
+    expect(normalizeQuickRead(VlmQuickReadV2.parse({ ...quickV2, candidates: [longText] })).candidates[0]!.evidence_text).toHaveLength(60);
+    const tooLong = { ...quickV2.candidates[0]!, evidence_text: 'x'.repeat(201) };
+    expect(VlmQuickReadV2.safeParse({ ...quickV2, candidates: [tooLong] }).success).toBe(false);
     const badDomain = { ...quickV2.candidates[0]!, domain: 'wear' };
     expect(VlmQuickReadV2.safeParse({ ...quickV2, candidates: [badDomain] }).success).toBe(false);
   });
@@ -217,5 +226,68 @@ describe('reading v2 schemas', () => {
     });
     expect(legacy.candidates[0]!.domain).toBeUndefined();
     expect(legacy.candidates[0]!.suggested_categories).toEqual([]);
+  });
+});
+
+describe('reading v2 tolerates cap overflow (the strict wire schema cannot carry caps)', () => {
+  const cand = (name: string, extra: Record<string, unknown> = {}) => ({
+    name,
+    type: 'style',
+    relation: 'resembles',
+    certainty: 0.6,
+    domain: 'design',
+    evidence: 'context',
+    evidence_text: null,
+    tag_query: name,
+    ...extra,
+  });
+
+  it('a quick read with too many, duplicate or over-long candidates is cut back, never failed', () => {
+    const raw = VlmQuickReadV2.parse({
+      title: 'FIXTURE title that runs far past the sixty character prompt limit for titles',
+      interpretation: 'A short sentence.',
+      candidates: [cand('Fixture A'), cand('fixture a'), cand('x'.repeat(81)), cand('Fixture B'), cand('Fixture C'), cand('Fixture D'), cand('Fixture E'), cand('Fixture F')],
+      quality: { usable: true, issue: null },
+    });
+    const q = normalizeQuickRead(raw);
+    expect(q.candidates.map((c) => c.name)).toEqual(['Fixture A', 'Fixture B', 'Fixture C', 'Fixture D', 'Fixture E']);
+    expect(q.title.length).toBeLessThanOrEqual(V2_LIMITS.titleChars);
+    expect(q.title).toBe('FIXTURE title that runs far past the sixty character prompt');
+    expect(normalizeQuickRead(q)).toEqual(q);
+    expect(normalizeQuickRead(raw, 2).candidates).toHaveLength(2);
+    expect(toVlmAnalysis(raw).candidates.map((c) => c.id)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5']);
+  });
+
+  it('an enrichment over its limits parses and merges to the documented limits', () => {
+    const e = VlmEnrichmentV2.parse({
+      ...enrichmentV2,
+      observations: Array.from({ length: 9 }, (_, i) => ({ text: `FIXTURE observation ${i}`, kind: 'object' })),
+      visible_text: [...Array.from({ length: 14 }, (_, i) => `LINE ${i}`), 'LINE 0', ' '],
+      additional_candidates: Array.from({ length: 7 }, (_, i) => ({ ...cand(`Fixture extra ${i}`), rationale: 'r' })),
+      uncertainty: { overall: 'medium', notes: ['a', 'b', 'c', 'd', 'e'] },
+      competing_subjects: ['s1', 's2', 's3', 's4', 's5'],
+    });
+    const n = normalizeEnrichment(e);
+    expect(n.observations).toHaveLength(V2_LIMITS.observations);
+    expect(n.visible_text).toEqual(Array.from({ length: 8 }, (_, i) => `LINE ${i}`));
+    expect(n.additional_candidates).toHaveLength(V2_LIMITS.additionalCandidates);
+    expect(n.uncertainty.notes).toHaveLength(3);
+    expect(n.competing_subjects).toHaveLength(3);
+    const base = toVlmAnalysis({ title: 't', interpretation: 'i', candidates: [], quality: { usable: true, issue: null } });
+    const { analysis, merge } = mergeEnrichmentContext(base, e);
+    expect(analysis.visible_text).toHaveLength(8);
+    expect(analysis.observations).toHaveLength(5);
+    expect(merge.stage2Text).toHaveLength(8);
+    expect(merge.additionIds).toHaveLength(4);
+  });
+
+  it('names in any script have a key of their own (CJK no longer reads as an empty name)', () => {
+    expect(candidateNameKey('愚园路')).toBe('愚园路');
+    expect(candidateNameKey('愚园路')).not.toBe(candidateNameKey('豫园'));
+    expect(candidateNameKey('Café  Flore')).toBe('cafe flore');
+    const q = normalizeQuickRead(
+      VlmQuickReadV2.parse({ title: 't', interpretation: 'i', candidates: [cand('愚园路', { type: 'place', domain: 'place' }), cand('豫园', { type: 'place', domain: 'place' })], quality: { usable: true, issue: null } }),
+    );
+    expect(q.candidates.map((c) => c.name)).toEqual(['愚园路', '豫园']);
   });
 });

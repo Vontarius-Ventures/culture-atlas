@@ -20,6 +20,8 @@
  *   # vision_video_frame keeps --fixtures <dir of frame folders>.
  *
  *   # 3. The same command plus --confirm-paid-requests sends real, billed requests.
+ *   #    --ledger <file outside git> [--package <name>] appends one line per request
+ *   #    (endpoint, status, ms; never the body, reply or key).
  *
  *   # Two-stage photo reading (amendment 2.2): qualify the stage-1 quick read
  *   # (vision_photo, schemaVersion atlas_quick_read_v1) and then stage 2
@@ -117,6 +119,8 @@ const run = await qualifyProfile({
   spendCapMicros: Math.floor(spendCapUsd * 1_000_000),
   confirmPaidRequests: flag('confirm-paid-requests'),
   stage1Profile,
+  ledgerFile: arg('ledger'),
+  ledgerPackage: arg('package'),
   log,
 });
 if (run.dryRun) {

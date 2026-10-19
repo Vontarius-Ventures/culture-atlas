@@ -26,6 +26,8 @@ import {
   VlmQuickReadV1,
   VlmQuickReadV2,
   candidateNameKey,
+  normalizeEnrichment,
+  normalizeQuickRead,
   toVlmAnalysis,
   type VlmAnalyzeInput,
   type VlmEnricher,
@@ -245,7 +247,8 @@ export class ConcentrateVlm implements VlmProvider {
             content,
             schema: VlmQuickReadV2,
             schemaName: VLM_READING_VERSIONS.quickV2.schema,
-            validate: (quick) => validateQuickRead(quick, max),
+            // Reading v2 is cut back to its limits before the checks (a cap overflow never fails it).
+            validate: (quick) => validateQuickRead(normalizeQuickRead(quick, max), max),
           },
           options,
         )
@@ -259,9 +262,10 @@ export class ConcentrateVlm implements VlmProvider {
           },
           options,
         );
+    const quick = v2 ? normalizeQuickRead(result.data, max) : result.data;
     return {
-      analysis: toVlmAnalysis(result.data),
-      quick: result.data,
+      analysis: toVlmAnalysis(quick),
+      quick,
       model: result.model,
       durationMs: result.durationMs,
       usage: result.usage,
@@ -308,7 +312,7 @@ export class ConcentrateVlmEnricher implements VlmEnricher {
               content,
               schema: VlmEnrichmentV2,
               schemaName: VLM_READING_VERSIONS.enrichV2.schema,
-              validate,
+              validate: (e) => validate(normalizeEnrichment(e)),
             },
             options,
           )
@@ -323,7 +327,7 @@ export class ConcentrateVlmEnricher implements VlmEnricher {
             options,
           );
     return {
-      enrichment: result.data,
+      enrichment: normalizeEnrichment(result.data),
       model: result.model,
       durationMs: result.durationMs,
       usage: result.usage,

@@ -46,7 +46,7 @@ function evalBlock(role: QualificationArtifact['role'], overrides: Partial<EvalB
     thresholds_sha256: 'b'.repeat(64),
     guardrail_version: photo ? REQUIRED_GUARDRAIL_VERSION : null,
     grounding_version: null,
-    scorer_version: 'score-v1',
+    scorer_version: 'score-v2',
     metrics: { tune_M1: 0, holdout_M1: 0 },
     pass: true,
     ...overrides,
