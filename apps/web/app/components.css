@@ -495,6 +495,8 @@
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* Never let the column squeeze the clamped box: that cut long titles mid-line. */
+  flex-shrink: 0;
 }
 
 .text-art__subtitle {
@@ -523,8 +525,19 @@
 }
 
 @media (max-width: 767px) {
+  .text-art {
+    padding: var(--space-4) var(--space-3);
+  }
   .text-art__title {
     font-size: 20px;
+    -webkit-line-clamp: 3;
+  }
+}
+
+@media (max-width: 359px) {
+  /* 130 px tiles: two lines stay clear of the Save chip (the full title is under the tile). */
+  .text-art__title {
+    -webkit-line-clamp: 2;
   }
 }
 

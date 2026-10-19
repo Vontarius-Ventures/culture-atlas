@@ -887,6 +887,44 @@
   margin-top: 0;
 }
 
+/* Screen 16 mockup: the result title wraps naturally (no balancing), as drawn. */
+.capture-result .result-intro .display {
+  text-wrap: wrap;
+}
+
+/* Screen 16 mockup: a 20 px reading under the title, then the references as pills. */
+.capture-result .result-intro .lede {
+  font-size: 20px;
+  line-height: 1.4;
+  margin-top: calc(var(--space-3) - var(--space-4));
+}
+
+.reference-pills {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.reference-pills a,
+.reference-pills span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 15px;
+}
+
+.reference-pills a:hover {
+  border-color: var(--muted);
+}
+
 /* Screen 16 mockup: the result page's "Discoveries" heading uses the display face. */
 .capture-result .result-grid > .section-title {
   font-family: var(--font-display);
@@ -899,6 +937,13 @@
 @media (max-width: 767px) {
   .capture-result .result-grid > .section-title {
     font-size: 24px;
+  }
+  .capture-result .result-intro .lede {
+    font-size: 17px;
+  }
+  /* Mockup 16 keeps the desktop 16 px above the Back row on phones. */
+  .page.capture-result {
+    padding-top: var(--space-4);
   }
   /* Screen 16 mockup: a wide crop of the photo on phones keeps the strip in view. */
   .capture-result .result-photo__img {
@@ -1412,6 +1457,12 @@
   font-size: 14px;
   color: var(--muted);
   min-height: 1.5em;
+}
+
+/* Mockup 18: the panel ends at Save. The live region stays in the DOM, taking no space until it speaks. */
+.taste-panel__status:empty {
+  margin: 0;
+  min-height: 0;
 }
 
 @media (max-width: 1023px) {

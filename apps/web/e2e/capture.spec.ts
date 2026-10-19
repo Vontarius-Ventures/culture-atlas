@@ -39,7 +39,14 @@ test.describe('Capture', () => {
     await expect(refs).toHaveAttribute('aria-expanded', 'false');
     await refs.click();
     await expect(
-      page.getByRole('link', { name: /Resembles Endurance racing jackets/ }),
+      page.locator('.reference-list').getByRole('link', { name: /Resembles Endurance racing jackets/ }),
+    ).toBeVisible();
+    // Screen 16: the first references also sit as pills under the reading, phrased the same way.
+    const pills = page.getByRole('list', { name: 'References' });
+    await expect(pills.getByRole('listitem')).not.toHaveCount(0);
+    expect(await pills.getByRole('listitem').count()).toBeLessThanOrEqual(3);
+    await expect(
+      pills.getByRole('link', { name: /Resembles Endurance racing jackets/ }),
     ).toBeVisible();
     await expectNoHorizontalScroll(page);
   });
