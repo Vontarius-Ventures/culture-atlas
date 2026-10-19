@@ -164,9 +164,11 @@ export function TastePicksView() {
   };
 
   const searchAdded = (r: OnboardingSearchResult) => {
+    // Matched by pick id, never by name: several results can share one ("Nina · Place", "Nina · Film").
     const local = searchPicks.get(r.result_id);
-    if (local !== undefined) return local !== null;
-    return r.picked || picks.some((p) => p.source === 'search' && p.label === r.name);
+    const id = local !== undefined ? local : (r.pick_id ?? null);
+    if (id) return picks.some((p) => p.id === id);
+    return local === undefined && r.picked;
   };
 
   const toggleSearch = async (r: OnboardingSearchResult, added: boolean) => {
@@ -181,9 +183,7 @@ export function TastePicksView() {
         setSearchPicks((prev) => new Map(prev).set(r.result_id, res.pick.id));
         toast.announce(`${r.name} added`);
       } else {
-        const id =
-          searchPicks.get(r.result_id) ??
-          picks.find((p) => p.source === 'search' && p.label === r.name)?.id;
+        const id = searchPicks.get(r.result_id) ?? r.pick_id ?? null;
         if (!id) return;
         await api.request('deleteOnboardingPick', {
           params: { id },

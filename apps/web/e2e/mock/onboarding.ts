@@ -346,7 +346,9 @@ export class OnboardingMock {
           name: r.name,
           type_label: r.type_label,
           category: r.category,
+          // The mock's search names are unique, so the name stands for the Qloo id here.
           picked: this.picks.some((p) => p.source === 'search' && p.label === r.name),
+          pick_id: this.picks.find((p) => p.source === 'search' && p.label === r.name)?.id ?? null,
         }));
         return { json: { status: 'ok', results } };
       }

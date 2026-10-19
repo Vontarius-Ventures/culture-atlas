@@ -192,6 +192,12 @@ export const OnboardingSearchResult = z.object({
   type_label: z.string(),
   category: Category.nullable(),
   picked: z.boolean(),
+  /**
+   * The account's current pick for this exact Qloo id (null when not picked).
+   * Clients remove by this id: several results can share a display name
+   * ("Nina · Place", "Nina · Film"), so a name never identifies a pick.
+   */
+  pick_id: z.uuid().nullable().optional(),
 });
 export type OnboardingSearchResult = z.infer<typeof OnboardingSearchResult>;
 

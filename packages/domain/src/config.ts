@@ -43,6 +43,10 @@ export const DomainConfigSchema = z.object({
   ANON_DAILY_PLANS: int(5),
   ACCOUNT_DAILY_ANALYSES: int(100),
   ACCOUNT_DAILY_PLANS: int(50),
+  /** Live Qloo searches per account per day from the taste pickers (amendment 2.2; the hackathon key is shared). */
+  ACCOUNT_DAILY_ONBOARDING_SEARCHES: int(200),
+  /** Taste seed jobs per account per day (onboarding completion plus Settings -> Taste reseeds). */
+  ACCOUNT_DAILY_TASTE_SEEDS: int(12),
   IP_DAILY_REQUESTS: int(2000),
   /**
    * Reverse proxies in front of the web app that append to X-Forwarded-For.

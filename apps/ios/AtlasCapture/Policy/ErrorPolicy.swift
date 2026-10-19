@@ -23,7 +23,7 @@ public enum ErrorPolicy {
     case "unauthenticated", "token_revoked", "account_required": return .signInRequired
     case "token_expired": return .refreshThenRetryOnce
     case "scope_denied": return .featureUnavailableKeepLocal
-    case "not_found", "conflict", "idempotency_conflict": return .reloadState
+    case "not_found", "conflict", "idempotency_conflict", "onboarding_required": return .reloadState
     case "account_mismatch": return .lockToOriginalAccount
     case "action_required": return .showLocalAction
     case "idempotency_in_progress", "rate_limited", "service_unavailable", "provider_unavailable", "internal":

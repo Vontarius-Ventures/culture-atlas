@@ -213,6 +213,25 @@ test.describe('Settings → Taste (screen 18)', () => {
     await expect(page.getByRole('button', { name: /Add more to Watch/ })).toBeFocused();
   });
 
+  test('Add more also offers the group’s images: a removed image pick can be added back', async ({
+    page,
+  }) => {
+    const api = await openV22(page, '/settings/taste', opts);
+    await page.getByRole('button', { name: 'Remove Linen days' }).click();
+    await expect(page.getByRole('button', { name: 'Remove Linen days' })).toHaveCount(0);
+    await page.getByRole('button', { name: /Add more to Wear/ }).click();
+    const images = page.getByRole('list', { name: 'Wear images' });
+    const linen = images.getByRole('button', { name: 'Linen days' });
+    await expect(linen).toHaveAttribute('aria-pressed', 'false');
+    await linen.click();
+    await expect(page.getByRole('button', { name: 'Remove Linen days' })).toBeVisible();
+    await expect(linen).toHaveAttribute('aria-pressed', 'true');
+    expect(api.onboarding.picks.map((p) => p.catalog_item_id)).toContain('img-linen');
+    // Only this group's images are offered.
+    await expect(images.getByRole('button', { name: 'Sunday listening' })).toHaveCount(0);
+    await expectNoHorizontalScroll(page);
+  });
+
   test('exclusions save explicitly and are not picks', async ({ page }) => {
     const api = await openV22(page, '/settings/taste', opts);
     const group = page.getByRole('group', { name: 'Foods to leave out' });
@@ -226,5 +245,55 @@ test.describe('Settings → Taste (screen 18)', () => {
     await expect(page.getByText('Saved', { exact: true })).toBeVisible();
     expect(api.onboarding.exclusions).toEqual(['peanuts', 'dairy']);
     expect(api.onboarding.picks).toHaveLength(5);
+  });
+});
+
+test.describe('Reduced motion (ONB-07)', () => {
+  const building: MockOptions = {
+    account: true,
+    onboarding: {
+      required: false,
+      picks: ['img-tea', 'chip-wear-japandi', 'img-listening'],
+      seed: 'unavailable',
+    },
+  };
+
+  async function openBuilding(page: Page) {
+    const api = await openV22(page, '/', building);
+    api.onboarding.completedAt = new Date().toISOString();
+    api.onboarding.seedJobId = '00000000-0000-4000-8000-0000000005ee';
+    await page.goto('/welcome/building');
+    await expect(page.getByRole('heading', { name: 'Building your feed…' })).toBeVisible();
+    await expect(page.locator('.collage li').first()).toBeVisible();
+  }
+
+  const motion = (page: Page, selector: string) =>
+    page.locator(selector).evaluateAll((els) =>
+      els.map((el) => {
+        const cs = getComputedStyle(el);
+        return { animation: cs.animationName, transition: cs.transitionDuration };
+      }),
+    );
+
+  test('screen 15 collage settles with motion by default and without it under reduced motion', async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await openBuilding(page);
+    expect((await motion(page, '.collage li')).some((m) => m.animation !== 'none')).toBe(true);
+
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const reduced = await motion(page, '.collage li');
+    expect(reduced.length).toBeGreaterThan(0);
+    expect(reduced.every((m) => m.animation === 'none')).toBe(true);
+  });
+
+  test('screen 14 image tiles have no transitions under reduced motion', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await openV22(page, '/welcome/taste', { account: true, onboarding: { required: true } });
+    const tiles = page.locator('.pick-tile__media img');
+    await expect(tiles.first()).toBeVisible();
+    const m = await motion(page, '.pick-tile__media img');
+    expect(m.every((x) => x.transition === '0s' && x.animation === 'none')).toBe(true);
   });
 });

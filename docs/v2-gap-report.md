@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. Branch `claude/wizardly-cannon-yu8trw`. All real-stack rows ran against the production build (`next start`) with `STORAGE_DRIVER=s3` and `IDENTITY_MAIL_DRIVER=ses` pointed at `scripts/local-aws.ts`, never a real AWS account. Authority: `specs/capture-platform-v2/` (v2.1).
 
-Section 9 (added 2026-10-19) covers the spec amendment 2.2 merge (taste onboarding, fast analysis) and its gate; sections 0–8 describe the v2 state as of 2026-10-17. This report describes the final tree after the package merges listed below, the two design-fidelity branches (`fidelity/v2-capture`, `fidelity/v1-and-account`) and the fixes for the last review round (section 8).
+Section 9 (added 2026-10-19, updated after the 2.2 review round the same day) covers the spec amendment 2.2 merge (taste onboarding, fast analysis), the screens 14–18 fidelity branch (`fidelity/v22`), the review fixes and the final gate; sections 0–8 describe the v2 state as of 2026-10-17. This report describes the final tree after the package merges listed below, the two design-fidelity branches (`fidelity/v2-capture`, `fidelity/v1-and-account`) and the fixes for the last review round (section 8).
 
 | Branch | Package |
 | --- | --- |
@@ -250,6 +250,41 @@ Date: 2026-10-19. Authority: [specs/onboarding-and-fast-analysis.md](../specs/on
 9. **Mock images (owner request).** The 12 image picks are now generated mock photos in `apps/web/public/samples/onboarding` (800×1000, no people, text or logos), recorded in `fixtures/images/LICENSES.md`. The catalog was updated with the script's own version function (new `catalog_version`). The web mock, native fixtures and tests, and the screen 14/15/18 mockups point at them.
 10. **Older real-stack journeys.** `journey.spec.ts` and `v2-journey.spec.ts` now answer the questionnaire after account creation.
 
+### Review round after the fidelity merge (2026-10-19)
+
+`fidelity/v22` (screens 14–18 matched to their mockups on the real stack with live Qloo; [design-fidelity-v22.md](design-fidelity-v22.md)) was merged, then the review findings below were checked against the code. Each one was reproduced or confirmed by reading the code before it was fixed; every fix has a test that fails without it.
+
+| Finding | Outcome |
+| --- | --- |
+| Onboarding search and Settings → Taste reseeds had no per-account bound on the shared Qloo key (major) | **Fixed.** Search takes one unit of a per-account daily quota (`ACCOUNT_DAILY_ONBOARDING_SEARCHES`, default 200, 429 `quota_exceeded`, shown as "Search is taking a break"); the process-wide queue is bounded (12 waiting) and one account may hold at most 2 searches in flight or waiting. Reseeds start no sooner than 2 minutes after the account's previous seed (a queued seed absorbs further edits) and are capped per account per day (`ACCOUNT_DAILY_TASTE_SEEDS`, default 12). Tests: quota and other-account isolation, bounded in-flight, reseed spacing and daily cap (`onboarding.test.ts`). |
+| Seed cap applied per attempt, so one job could make 24 Qloo requests (major, and the duplicate minor) | **Fixed.** The 6-request cap is now per job across all attempts: each request is reserved atomically on `taste_seed_runs.qloo_requests_used` (migration `150`) before it is sent; inline retries are off; an attempt that meets 429/5xx/an open circuit stops asking; a retry probes with one request first; once 6 are spent the job ends `partial`/`failed` and the labeled examples fill the rest. Worker tests assert ≤ 6 calls over the whole job under throttling and under timeouts. Trade-off: after a long outage fewer categories may be seeded (the throttled test ends with 2 of 4 ready). |
+| Overlapping image/chip picks left saves behind; result depended on removal order (major, and the duplicate minor) | **Fixed.** Removing a pick hands ownership of a still-shared save to the remaining pick, so the last pick to go unsaves it. Tests cover image+chip in both orders, the image whose two tags are both chips (3 picks on 2 saves), two images sharing Wabi Sabi, and a save that pre-dated onboarding (kept). "3 picks on 2 saves" still completes onboarding: each is an explicit choice the person made, and the counter counts choices. |
+| Stage-2 appended cards got interleaved ranks and could push published cards out of the first six (major) | **Fixed.** Appended cards rank after every card already published in any category, and never inside the stage-1 rank range, so later stage-1 sections (Eat) still precede them. The worker test asserts the appended rank and that the previously shown cards keep their positions (it fails with the old ranks). |
+| Advisory veto removed a published reference; stage-2 references re-sorted the list (major) | **Fixed.** A veto only lowers certainty: the reference stays listed (now qualified, e.g. "Resembles …") in the place it was first shown (`published_certainty`), and stage-2 references come after every stage-1 reference (`enrichment_added`, migration `160`). The worker test now asserts the opposite of the old behaviour. |
+| Required onboarding enforced only in the client (minor, reported twice) | **Fixed.** `GET /v1/discoveries` answers 409 `onboarding_required` to the account's own browser and phone while the questionnaire is owed (new error code, added to `error-policy.json` and the iOS/Android policy tables as `reload_state`); the web Discover view goes to `/welcome/taste` on it. Saves and uploads stay allowed (the pending save at sign-up is part of onboarding; the first upload never shows the questionnaire). |
+| `food.exclusions` changed through the preferences API did not invalidate feed snapshots (minor) | **Fixed.** `updatePreferences` drops the account's snapshots whenever `food` changes. Test: an excluded Eat card disappears without `refresh`. |
+| Stage-1 output was placed in the stage-2 `<user_data>` block unescaped (minor) | **Fixed.** All three prompt builders escape `<`, `>` and `&` as JSON unicode escapes (same JSON value, cannot close the block). Regression tests in `vlm/prompt.test.ts`. |
+| `privacyVerifiedAt` set by the build agent before ZDR was confirmed (minor) | **Recorded as a process exception the owner must accept** ([concentrate.md](concentrate.md)): nothing sent can be recalled; the artifacts stay outside the repo and must not be used to deploy; the owner either accepts the exception or discards them and re-qualifies after the operator's confirmation. Only the operator sets the flag from now on. |
+| Search results matched picks by display name (minor) | **Fixed.** Search results carry `pick_id`; both pickers match and remove by pick id only. Domain test with two results named "Nina". |
+| Settings → Taste "Add more" lacked the image grid (minor) | **Fixed.** The panel shows the group's catalog images above the chips (the amendment's "same pickers" wins over mockup 18). Mock flow test re-adds a removed image pick. |
+| README contradicted itself on live qualification (minor) | **Fixed.** README now says the two photo roles were qualified live with the privacy gate pending, everywhere. |
+| ONB-07 reduced motion was claimed as checked but not asserted (minor) | **Fixed.** The mock suite now asserts the screen 15 collage animates by default and has `animation: none` under reduced motion, and screen 14 tiles have no transitions, at all four widths. Native reduced motion is still unverified. |
+
+### Final gate (2026-10-19, after the review fixes)
+
+| Check | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | passes, lockfile unchanged |
+| `pnpm typecheck`, `pnpm lint` | pass |
+| `pnpm test` | 120 files, 991 tests pass (hermetic: the shell's live provider variables no longer leak into tests) |
+| Fresh-database migrate | 28 migrations (including `150_taste_seed_request_count.sql` and `160_enrichment_reference_order.sql`) apply; a second run applies nothing |
+| `next build` | passes |
+| Playwright mock suite (1440/390/360/320) | 410 passed, 21 skipped (desktop-only screenshot specs), 1 failed: the v1 save-picker test timed out once under load and passed 8 of 8 on `--repeat-each 2` |
+| Real-stack v1 and v2 journeys (`playwright.real.config.ts`, `next dev` + worker + media worker, 2.2 stand-ins, `AGENT_REMOTE_CAPTURE_ENABLED=true`) | 6 of 6 (3 widths each) |
+| Real-stack 2.2 journeys (`v22-journey.spec.ts`) | 9 of 9 on a fresh database |
+| Live-Qloo fidelity run, screens 14–18 (`v22-fidelity.spec.ts`) | 6 of 6 (3 widths × main and Qloo-unavailable); 81 live Qloo requests forwarded by the gate, 12 refused during the simulated outage; every seed run used ≤ 6 requests |
+| Android core JVM tests | not rerun: the Android Gradle plugin cannot be resolved offline in this container; the one-line policy change (`onboarding_required` → reload) is uncompiled, like all Swift |
+
 ### Gate after the merge (2026-10-19)
 
 | Check | Result |
@@ -278,15 +313,15 @@ Date: 2026-10-19. Authority: [specs/onboarding-and-fast-analysis.md](../specs/on
 
 | ID | Status | Evidence / what is missing |
 | --- | --- | --- |
-| ONB-01 | done, verified-here | Server `required` state, 409 below 3, web gate; anonymous never redirected (real journey). The feed API itself does not refuse a required account; the web gate redirects it. |
+| ONB-01 | done, verified-here | Server `required` state, 409 below 3, web gate; anonymous never redirected (real journey). Since the review round the feed API itself refuses a required account (409 `onboarding_required`), so a client that ignores the gate still cannot read the personal feed. |
 | ONB-02 | done, verified-here | Picks are saves backed by Qloo ids (catalog or signed search result); image counted once (unit and route tests; the journey checks `picks_count` and Saved for later). |
 | ONB-03 | done, verified-here | Catalog-only completion, degraded search, seed retries through 503s and an open circuit, no fabricated cards (real journey, unit tests). |
-| ONB-04 | done; latency partial | Request cap (≤ 6) and concurrency (≤ 3) held in every live run. Locally, against live Qloo, the first category came after 1.4 s (Oct 18) and after 4.9, 5.1, 7.8 and 12.6 s (Oct 19, p50 about 6.4 s). That misses 5 s, because Qloo insights took 3.6–13.7 s per call. Not measured on a deployed demo ([latency plan](analysis-latency-plan.md#taste-seed-onb-04-live-qloo)). |
+| ONB-04 | done; latency partial | Request cap (≤ 6 per job, across retries, since the review round) and concurrency (≤ 3) held in every live run. Locally, against live Qloo, the first category came after 1.4 s (Oct 18) and after 4.9, 5.1, 7.8 and 12.6 s (Oct 19, p50 about 6.4 s). That misses 5 s, because Qloo insights took 3.6–13.7 s per call. Not measured on a deployed demo ([latency plan](analysis-latency-plan.md#taste-seed-onb-04-live-qloo)). |
 | ONB-05 | done | Exclusions as plan defaults and Eat filter (unit and route tests); the journey checks the exclusion is stored and is not a pick. |
 | ONB-06 | done, verified-here | Real journey (sign-in trigger, asked once). |
-| ONB-07 | partial | Web: keyboard, 320 px and reduced motion checked by the mock and real suites, and axe passes. A screenshot comparison against the mockups was done by package D. Native: needs-physical-device. |
+| ONB-07 | partial | Web: keyboard and 320 px checked by the mock and real suites, axe passes, and reduced motion is asserted by the mock suite (screen 15 collage and screen 14 tiles, since the review round). Screens 14–18 were compared with their mockups on the real stack with live Qloo ([design-fidelity-v22.md](design-fidelity-v22.md)). Native: needs-physical-device. |
 | FAST-01 | model time verified-here; end to end partial | Live qualification on 15 real public test photographs (the owner asked for these instead of owned photos): stage-1 p50 2.27 s, p95 4.63 s over 30 calls. One live real-stack upload reached its first useful section in 8.0 s. The end-to-end p95 and the deployed demo are not measured. The ZDR/logging dashboard confirmation is pending. |
-| FAST-02 | done | Merge rules and failure isolation (unit and worker tests); the real journey shows both stages with the fake transport. |
+| FAST-02 | done | Merge rules and failure isolation (unit and worker tests); since the review round, appended cards rank after every published card and an advisory veto only lowers certainty (the reference stays listed in place). The real journey shows both stages with the fake transport. |
 | FAST-03 | done; qualified live (privacy gate pending) | Effort is sent only when the profile sets it (transport and contract tests). Both roles have passing live artifacts from 2026-10-19, with effort `none` and 0 reasoning tokens. They stay with the operator and must be redone after the ZDR confirmation. |
 | FAST-04 | done, verified-here | The strip only reads the feed snapshot (mock suite counts requests); real journey. |
 
@@ -295,7 +330,9 @@ Date: 2026-10-19. Authority: [specs/onboarding-and-fast-analysis.md](../specs/on
 - **Live qualification (build plan phase 4).** `vision_photo` (quick read) and `vision_photo_enrich` passed on `anthropic/claude-haiku-5-5` with effort `none` on 2026-10-19 ([concentrate.md](concentrate.md)). Still open: the operator's ZDR/no-logging dashboard confirmation, then re-qualification with the confirmed `privacyVerifiedAt` and a higher enrichment output cap. The automated browser suites still use the fake transport. Profiles not pinned to `atlas_observations_v2` are treated as quick-read profiles, so check deployed profile files.
 - **Licensed photography.** The onboarding images are generated mock photos (owner request). Replace them before a public release if generated imagery is not acceptable there.
 - **Wear chips.** Qloo has no fashion-style tags for brands, so the Wear chips are style, decor and ambience tags. Whether they are useful signals for brand insights is unverified with live data.
-- **Qloo limits.** The limit is per process: the web app and the worker can each hold 3 requests in flight against the same key.
+- **Qloo limits.** The limit is per process: the web app and the worker can each hold 3 requests in flight against the same key. Per-account daily caps now bound onboarding search and reseeds; they are counters in PostgreSQL, so they hold across processes.
+- **Seed after a long outage.** With the per-job cap of 6, a seed that spent requests during an outage may publish fewer categories once Qloo returns (the rest show labeled examples until the next taste change reseeds).
+- **Native review fixes.** The iOS and Android apps were not changed for the review round beyond mapping `onboarding_required` to "reload state"; their Settings → Taste pickers and search-result matching were not re-checked against the web fixes (no toolchain).
 - **ONB-06 timing.** The ONB-06 check runs at sign-in only. An account that is already signed in is asked at its next sign-in.
 - **Native.** iOS and Android were not compiled (no Xcode, Swift or Android SDK). The Android core module's 28 JVM tests pass. The `firebase-messaging` pin is unresolved offline. The native ready push now has a server-side sender, but it was not delivered to a real device.
 - **Web ready watcher.** It is per tab and in memory: it covers analyses started or opened in that tab.

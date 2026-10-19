@@ -135,7 +135,7 @@ object ErrorPolicy {
         "unauthenticated", "token_revoked", "account_required" -> Action.SIGN_IN_REQUIRED
         "token_expired" -> Action.REFRESH_THEN_RETRY_ONCE
         "scope_denied" -> Action.FEATURE_UNAVAILABLE_KEEP_LOCAL
-        "not_found", "conflict", "idempotency_conflict" -> Action.RELOAD_STATE
+        "not_found", "conflict", "idempotency_conflict", "onboarding_required" -> Action.RELOAD_STATE
         "account_mismatch" -> Action.LOCK_TO_ORIGINAL_ACCOUNT
         "action_required" -> Action.SHOW_LOCAL_ACTION
         "idempotency_in_progress", "rate_limited", "service_unavailable", "provider_unavailable", "internal" ->

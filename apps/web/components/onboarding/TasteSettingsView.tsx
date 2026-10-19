@@ -48,6 +48,8 @@ export function TasteSettingsView() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<OnboardingCatalogResponse | null>(null);
   const [open, setOpen] = useState<GroupKey | null>(null);
+  /** Search results added or removed on this page: result id -> pick id (null once removed). */
+  const [searchPicks, setSearchPicks] = useState<ReadonlyMap<string, string | null>>(new Map());
   const [exclusions, setExclusions] = useState<string[]>([]);
   const [savedExclusions, setSavedExclusions] = useState<string[]>([]);
   const [savingExclusions, setSavingExclusions] = useState(false);
@@ -134,18 +136,29 @@ export function TasteSettingsView() {
     }
   };
 
+  const searchPickId = (r: OnboardingSearchResult): string | null => {
+    const local = searchPicks.get(r.result_id);
+    return local !== undefined ? local : (r.pick_id ?? null);
+  };
+
   const toggleSearch = async (r: OnboardingSearchResult, added: boolean) => {
     setError(null);
     try {
       if (added) {
-        const pick = allPicks.find((p) => p.source === 'search' && p.label === r.name);
-        if (pick) await remove(pick);
+        // Remove the pick for this exact result (by id), never one that merely shares its name.
+        const id = searchPickId(r);
+        const pick = id ? allPicks.find((p) => p.id === id) : undefined;
+        if (pick) {
+          await remove(pick);
+          setSearchPicks((prev) => new Map(prev).set(r.result_id, null));
+        }
         return;
       }
-      await api.request('createTastePick', {
+      const res = await api.request('createTastePick', {
         body: { source: 'search', result_id: r.result_id },
         idempotencyKey: newIdempotencyKey(),
       });
+      setSearchPicks((prev) => new Map(prev).set(r.result_id, res.pick.id));
       clearFeedCache();
       await reload();
       toast.announce(`${r.name} added`);
@@ -213,6 +226,9 @@ export function TasteSettingsView() {
             const panelId = `add-${key}`;
             const isOpen = open === key;
             const chips = key !== 'other' && catalog ? catalog.chips[key] : [];
+            // Same pickers as the questionnaire (amendment 2.2): this group's catalog images too.
+            const images =
+              key !== 'other' && catalog ? catalog.images.filter((i) => i.category === key) : [];
             return (
               <section key={key} className="taste-group" aria-labelledby={`taste-g-${key}`}>
                 <div className="taste-group__head">
@@ -259,6 +275,52 @@ export function TasteSettingsView() {
                   <div className="add-panel" id={panelId} hidden={!isOpen}>
                     {isOpen && (
                       <>
+                        {images.length > 0 && (
+                          <>
+                            <p className="add-panel__title">{COPY['onboarding.images.title']}</p>
+                            <ul
+                              className="pick-grid add-panel__images"
+                              aria-label={`${label} images`}
+                            >
+                              {images.map((entry) => {
+                                const pick = picks.find((p) => p.catalog_item_id === entry.id);
+                                return (
+                                  <li key={entry.id}>
+                                    <button
+                                      type="button"
+                                      className="pick-tile"
+                                      aria-pressed={Boolean(pick)}
+                                      disabled={
+                                        busy === entry.id || (pick ? busy === pick.id : false)
+                                      }
+                                      onClick={() =>
+                                        void (pick
+                                          ? remove(pick)
+                                          : addCatalog(entry.id, entry.label))
+                                      }
+                                    >
+                                      <span className="pick-tile__media">
+                                        {entry.image && (
+                                          <img
+                                            src={entry.image.url}
+                                            alt=""
+                                            width={entry.image.width}
+                                            height={entry.image.height}
+                                            decoding="async"
+                                          />
+                                        )}
+                                        <span className="pick-tile__mark" aria-hidden="true">
+                                          <Icon name="check" size={18} />
+                                        </span>
+                                      </span>
+                                      <span className="pick-tile__label">{entry.label}</span>
+                                    </button>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </>
+                        )}
                         <p className="add-panel__title">{COPY['onboarding.chips.title']}</p>
                         {chips.length > 0 && (
                           <div className="pill-row" role="group" aria-label={`${label} ideas`}>
@@ -284,9 +346,10 @@ export function TasteSettingsView() {
                           labelClassName="add-panel__search-label"
                           placeholder="Search"
                           category={key}
-                          isAdded={(r) =>
-                            allPicks.some((p) => p.source === 'search' && p.label === r.name)
-                          }
+                          isAdded={(r) => {
+                            const id = searchPickId(r);
+                            return Boolean(id && allPicks.some((p) => p.id === id));
+                          }}
                           onToggle={toggleSearch}
                         />
                         <div className="add-panel__done">

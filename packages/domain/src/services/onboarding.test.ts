@@ -31,6 +31,7 @@ import {
   putExclusions,
   search,
   signSearchResult,
+  TASTE_RESEED_MIN_INTERVAL_MS,
 } from './onboarding';
 import { getPreferences, updatePreferences } from './agent-platform';
 import { TASTE_SEED_MAX_QLOO_REQUESTS } from './taste-seed';
@@ -529,5 +530,206 @@ describe('agent scopes', () => {
     // Picks stay taste: a preferences-only agent cannot read them.
     await expect(listTastePicks(a)).rejects.toMatchObject({ code: 'scope_denied' });
     await expect(updatePreferences(a, { food: { exclusions: Array.from({ length: 13 }, (_, i) => `x${i}`) } }, updated.version)).rejects.toMatchObject({ code: 'invalid_input' });
+  });
+});
+
+describe('ONB-02 overlapping picks never leave an onboarding save behind', () => {
+  const byId = (id: string) => catalog.items.find((i) => i.id === id)!;
+  /** An image and a chip that share at least one Qloo tag, found from the catalog itself. */
+  const overlap = (() => {
+    for (const img of catalog.items.filter((i) => i.kind === 'image')) {
+      const chip = chips.find((c) => c.qloo.some((q) => img.qloo.some((r) => r.id === q.id)));
+      if (chip) return { img, chip };
+    }
+    throw new Error('catalog has no image/chip overlap');
+  })();
+  /** An image every tag of which is also a chip (three picks, two saves). */
+  const covered = catalog.items.find(
+    (i) => i.kind === 'image' && i.qloo.length >= 2 && i.qloo.every((q) => chips.some((c) => c.qloo.some((r) => r.id === q.id))),
+  )!;
+
+  async function onboardingSaves(accountId: string) {
+    const { rows } = await db.query<{ key: string }>(
+      `SELECT di.canonical_key AS key FROM saved_items si JOIN discovery_items di ON di.id = si.discovery_item_id
+        WHERE si.owner_account_id = $1 ORDER BY 1`,
+      [accountId],
+    );
+    return rows.map((r) => r.key);
+  }
+
+  for (const order of ['image first', 'chip first'] as const) {
+    it(`image + chip sharing a tag, removed ${order}: nothing stays saved`, async () => {
+      const { principal, ctx } = await accountCtx();
+      const a = await pick(ctx, overlap.img.id);
+      const b = await pick(ctx, overlap.chip.id);
+      expect((await getState(ctx)).state.picks_count).toBe(2);
+      const [first, second] = order === 'image first' ? [a, b] : [b, a];
+      await deletePick(ctx, first.pick.id);
+      // The remaining pick still stands for its saves.
+      const remaining = (await getState(ctx)).picks;
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0]!.saved_item_ids).toHaveLength(second.pick.discovery_item_ids.length);
+      await deletePick(ctx, second.pick.id);
+      expect((await getState(ctx)).state.picks_count).toBe(0);
+      expect(await onboardingSaves(principal.accountId)).toEqual([]);
+    });
+  }
+
+  it('an image and the chips for each of its tags (3 picks on 2 saves), image removed first: every save goes', async () => {
+    expect(covered).toBeDefined();
+    const { principal, ctx } = await accountCtx();
+    const img = await pick(ctx, covered.id);
+    const chipPicks = [];
+    for (const ref of covered.qloo) {
+      const chip = chips.find((c) => c.qloo.some((r) => r.id === ref.id))!;
+      chipPicks.push(await pick(ctx, chip.id));
+    }
+    expect((await getState(ctx)).state.picks_count).toBe(1 + covered.qloo.length);
+    await deletePick(ctx, img.pick.id);
+    expect((await onboardingSaves(principal.accountId)).length).toBe(covered.qloo.length);
+    for (const p of chipPicks) await deletePick(ctx, p.pick.id);
+    expect((await getState(ctx)).state.picks_count).toBe(0);
+    expect(await onboardingSaves(principal.accountId)).toEqual([]);
+  });
+
+  it('two images sharing a tag (img-tea and img-corners share Wabi Sabi) clean up in either order', async () => {
+    const tea = byId('img-tea');
+    const corners = byId('img-corners');
+    expect(tea.qloo.some((q) => corners.qloo.some((r) => r.id === q.id))).toBe(true);
+    const { principal, ctx } = await accountCtx();
+    const t = await pick(ctx, tea.id);
+    const c = await pick(ctx, corners.id);
+    await deletePick(ctx, t.pick.id);
+    await deletePick(ctx, c.pick.id);
+    expect(await onboardingSaves(principal.accountId)).toEqual([]);
+  });
+
+  it('a save the account had before onboarding still survives an overlapping pick being removed', async () => {
+    const { principal, ctx } = await accountCtx();
+    const tag = overlap.chip.qloo[0]!;
+    const before = await insertItem({ accountId: principal.accountId }, { kind: 'style', key: `qloo:${tag.id}`, title: overlap.chip.label });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: before });
+    const a = await pick(ctx, overlap.img.id);
+    const b = await pick(ctx, overlap.chip.id);
+    await deletePick(ctx, a.pick.id);
+    await deletePick(ctx, b.pick.id);
+    expect((await listSaved(ctx, { filter: 'all' })).items.map((s) => s.item.id)).toEqual([before]);
+  });
+});
+
+describe('the shared Qloo key: per-account bounds on search and reseeds', () => {
+  it('onboarding search has a per-account daily quota (429 quota_exceeded), other accounts unaffected', async () => {
+    const config = testConfig({ ACCOUNT_DAILY_ONBOARDING_SEARCHES: '2' });
+    const qloo = searchQloo([entity('Nina Simone', 'urn:entity:artist')]);
+    const { principal } = await accountCtx();
+    const ctx = testContext(principal, { config, providers: testProviders({ qloo }) });
+    expect((await search(ctx, { q: 'nina' })).status).toBe('ok');
+    expect((await search(ctx, { q: 'nina s' })).status).toBe('ok');
+    await expect(search(ctx, { q: 'nina si' })).rejects.toMatchObject({ code: 'quota_exceeded', status: 429 });
+    expect(qloo.calls.filter((c) => c.op === 'search')).toHaveLength(2); // the refused search never reached Qloo
+    const { principal: other } = await accountCtx();
+    expect((await search(testContext(other, { config, providers: testProviders({ qloo }) }), { q: 'nina' })).status).toBe('ok');
+  });
+
+  it('one account cannot queue searches without bound: past 2 in flight it is told unavailable at once', async () => {
+    const release: (() => void)[] = [];
+    class SlowQloo extends FakeQloo {
+      override async searchEntities(req: Parameters<FakeQloo['searchEntities']>[0]) {
+        await new Promise<void>((r) => release.push(r));
+        return super.searchEntities(req);
+      }
+    }
+    const qloo = new SlowQloo({ search: () => [entity('Nina Simone', 'urn:entity:artist')] }, { live: true });
+    const { principal } = await accountCtx();
+    const ctx = testContext(principal, { providers: testProviders({ qloo }) });
+    const first = search(ctx, { q: 'a' });
+    const second = search(ctx, { q: 'b' });
+    await expect.poll(() => release.length).toBe(2);
+    expect(await search(ctx, { q: 'c' })).toEqual({ status: 'unavailable', results: [] });
+    release.splice(0).forEach((r) => r());
+    expect((await first).status).toBe('ok');
+    expect((await second).status).toBe('ok');
+    expect(qloo.calls).toHaveLength(2);
+  });
+
+  it('Settings -> Taste reseeds are spaced out and capped per account per day', async () => {
+    const config = testConfig({ ACCOUNT_DAILY_TASTE_SEEDS: '2' });
+    const { principal } = await newAccount();
+    const ctx = testContext(principal, { config });
+    for (const c of chips.slice(0, 3)) await pick(ctx, c.id);
+    const done = await complete(ctx); // seed 1 of 2 today
+    await db.query(`UPDATE jobs SET state = 'complete', attempt = 1 WHERE id = $1`, [done.seed.job_id]);
+    await pick(ctx, chips[3]!.id); // seed 2 of 2, not before the minimum interval
+    const jobs = await seedJobs(principal.accountId);
+    expect(jobs).toHaveLength(2);
+    const { rows } = await db.query<{ available_at: Date; created_at: Date }>(
+      `SELECT j.available_at, r.created_at FROM jobs j, taste_seed_runs r WHERE j.id = $1 AND r.job_id = $2`,
+      [jobs[1]!.id, done.seed.job_id],
+    );
+    expect(rows[0]!.available_at.getTime()).toBeGreaterThanOrEqual(rows[0]!.created_at.getTime() + TASTE_RESEED_MIN_INTERVAL_MS - 1000);
+    await db.query(`UPDATE jobs SET state = 'complete', attempt = 1 WHERE id = $1`, [jobs[1]!.id]);
+    // The daily cap is reached: picks still change (and count), but no third seed is queued today.
+    const more = await pick(ctx, chips[4]!.id);
+    expect(more.state.picks_count).toBe(5);
+    await deletePick(ctx, more.pick.id);
+    expect(await seedJobs(principal.accountId)).toHaveLength(2);
+  });
+});
+
+describe('ONB-01 on the server: the personal feed waits for the questionnaire', () => {
+  it('an account that owes the questionnaire gets 409 onboarding_required from the feed; after completion it is served', async () => {
+    const { principal, ctx } = await newAccount();
+    await expect(getDiscoveries(ctx, { limit: 6 })).rejects.toMatchObject({ code: 'onboarding_required', status: 409 });
+    for (const c of chips.slice(0, 3)) await pick(ctx, c.id);
+    await expect(getDiscoveries(ctx, { limit: 6 })).rejects.toMatchObject({ code: 'onboarding_required' });
+    await complete(ctx);
+    expect((await getDiscoveries(ctx, { limit: 6 })).items.length).toBeGreaterThan(0);
+    // With the gate switched off nothing blocks.
+    const { principal: later } = await newAccount();
+    const off = testContext(later, { config: testConfig({ ONBOARDING_REQUIRED: 'false' }) });
+    expect((await getDiscoveries(off, { limit: 6 })).items.length).toBeGreaterThan(0);
+    expect(principal.accountId).not.toBe(later.accountId);
+  });
+
+  it('anonymous visitors keep the example feed', async () => {
+    const { ctx } = await anonCtx();
+    expect((await getDiscoveries(ctx, { limit: 6 })).is_example_feed).toBe(true);
+  });
+});
+
+describe('ONB-05 exclusions changed through the preferences API reach the cached feed', () => {
+  it('updatePreferences(food.exclusions) drops the account’s feed snapshots, so excluded Eat cards disappear at once', async () => {
+    const { principal, ctx } = await accountCtx();
+    const owner = { accountId: principal.accountId };
+    const satay = await insertItem(owner, { kind: 'food', category: 'eat', title: 'Peanut satay skewers' });
+    const salad = await insertItem(owner, { kind: 'food', category: 'eat', title: 'Cucumber salad' });
+    const cap = await insertCaptureWithAnalysis(owner, { recommendItemIds: [satay, salad] });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: cap.itemId });
+    expect((await getDiscoveries(ctx, {})).items.map((c) => c.id)).toContain(satay); // snapshot cached
+    const prefs = await getPreferences(ctx);
+    await updatePreferences(ctx, { food: { exclusions: ['peanuts'] } }, prefs.version);
+    const after = (await getDiscoveries(ctx, {})).items.map((c) => c.id); // no refresh
+    expect(after).toContain(salad);
+    expect(after).not.toContain(satay);
+  });
+});
+
+describe('ONB-02 search results identify picks by Qloo id, not by name', () => {
+  it('two results named "Nina": picking one marks only that one, with its pick id', async () => {
+    const place = entity('Nina', 'urn:entity:place');
+    const film = entity('Nina', 'urn:entity:movie');
+    const { principal } = await accountCtx();
+    const ctx = testContext(principal, { providers: testProviders({ qloo: searchQloo([place, film]) }) });
+    const first = await search(ctx, { q: 'nina' });
+    expect(first.results.map((r) => [r.name, r.type_label, r.picked, r.pick_id])).toEqual([
+      ['Nina', expect.any(String), false, null],
+      ['Nina', expect.any(String), false, null],
+    ]);
+    const added = await createPick(ctx, { source: 'search', result_id: first.results[0]!.result_id });
+    const again = await search(ctx, { q: 'nina' });
+    expect(again.results.map((r) => [r.picked, r.pick_id])).toEqual([
+      [true, added.pick.id],
+      [false, null],
+    ]);
   });
 });

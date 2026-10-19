@@ -56,6 +56,11 @@ export async function updatePreferences(ctx: ServiceContext, patch: unknown, ver
        WHERE id=$1 AND preferences_version=$3`, [account.accountId, JSON.stringify(parsed.data), version, ctx.now()],
     );
     if (!rowCount) throw new AppError('precondition_failed');
+    if (parsed.data.food !== undefined) {
+      // Eat exclusions are applied when a feed snapshot is built (ONB-05): drop the
+      // account's cached snapshots so the next read filters with the new list.
+      await tx.query('DELETE FROM feed_snapshots WHERE owner_account_id = $1', [account.accountId]);
+    }
     await agentActivity(ctx, 'preferences.update', undefined, tx);
   });
   // Write-only grants need not acquire preferences:read to receive their result.

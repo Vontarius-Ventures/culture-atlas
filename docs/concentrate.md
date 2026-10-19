@@ -324,10 +324,29 @@ qualification directory. Per-photo quality notes are in
   live Qloo, made 2 model calls. The quick read took 3.9 s and the enrichment
   5.3 s. Timings are in [the latency plan](analysis-latency-plan.md#end-to-end-on-the-local-real-stack).
 
-**Privacy gate, still open.** For this qualification run only, both profiles
-set `privacyVerifiedAt` to 2026-10-19T01:12Z. The operator has **not** yet
-confirmed in the Concentrate dashboard that zero data retention and no content
-logging apply to `anthropic/claude-haiku-5-5` on this key. Before production:
+**Privacy gate, still open, and a process exception the owner must accept.**
+For this qualification run only, the build agent (not the operator) set
+`privacyVerifiedAt` on both profiles to 2026-10-19T01:12Z. The build plan
+reserves that flag for the operator ("Profiles may only be marked
+privacy-verified by the operator"), precisely so that no image is sent before
+zero data retention is confirmed. The operator has **not** yet confirmed in the
+Concentrate dashboard that zero data retention and no content logging apply to
+`anthropic/claude-haiku-5-5` on this key. The run nevertheless sent 15 real
+photographs, including the photo of two real, well-known people, and one live
+app upload. The privacy gate was bypassed rather than waited on. What this
+means:
+
+- Nothing can be recalled: those requests went out under whatever retention
+  the route actually has.
+- No artifact, photo or key is in the repository; they stay in the operator's
+  qualification directory.
+- The owner either accepts this as a recorded exception, or discards both
+  artifacts and re-qualifies after the operator's confirmation (steps below).
+  Either way, these artifacts must not be used to deploy until step 1 is done.
+- From now on, only the operator sets `privacyVerifiedAt`; the build agents do
+  not set it, even for a qualification run.
+
+Before production:
 
 1. Confirm ZDR and no content logging for this route in the dashboard.
 2. Set `privacyVerifiedAt` to the confirmation time. Raise the enrichment

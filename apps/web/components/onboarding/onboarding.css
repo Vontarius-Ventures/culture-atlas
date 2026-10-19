@@ -1407,6 +1407,17 @@
   margin-bottom: var(--space-2);
 }
 
+.add-panel__images {
+  grid-template-columns: repeat(auto-fill, 140px);
+  margin-bottom: var(--space-6);
+}
+
+@media (max-width: 767px) {
+  .add-panel__images {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .add-panel__search-label {
   display: block;
   font-weight: 500;

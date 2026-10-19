@@ -41,6 +41,7 @@ import {
   type TastePicksResponse,
   type TasteSeedStatus,
 } from '../schemas/onboarding';
+import { currentUsage, secondsUntilUtcMidnight, tryConsume, utcDay } from '../quotas';
 import { iso } from '../util/time';
 import { recordPreference, saveItem, type TargetItem } from './preferences';
 import { getTasteRevision } from './taste';
@@ -69,6 +70,10 @@ import { enqueueTasteSeed, getTasteSeedStatus } from './taste-seed';
 const SEARCH_TOKEN_TTL_SECONDS = 30 * 60;
 const SEARCH_TIMEOUT_MS = 4000;
 const SEARCH_MAX_CONCURRENT = 3;
+/** Searches waiting for a slot, process-wide; beyond this a search reports `unavailable` at once. */
+const SEARCH_MAX_WAITING = 12;
+/** Searches one account may have in flight or waiting (the pickers debounce and cancel older ones). */
+const SEARCH_MAX_PER_ACCOUNT = 2;
 
 type Tx = Db;
 
@@ -464,11 +469,22 @@ export async function deletePick(ctx: ServiceContext, pickId: string): Promise<D
     const pctx: ServiceContext = { ...ctx, db: tx };
     for (const r of rows) {
       if (!r.created_save) continue;
-      const shared = await tx.query(
-        `SELECT 1 FROM onboarding_pick_items WHERE account_id = $1 AND discovery_item_id = $2 AND pick_id <> $3 LIMIT 1`,
+      // Another current pick stands for the same item (an image and a chip
+      // can share a Qloo tag): it inherits ownership of the save, so removing
+      // that pick later unsaves the item instead of leaving it behind.
+      const heir = await tx.query<{ pick_id: string }>(
+        `SELECT pi.pick_id FROM onboarding_pick_items pi JOIN onboarding_picks p ON p.id = pi.pick_id
+          WHERE pi.account_id = $1 AND pi.discovery_item_id = $2 AND pi.pick_id <> $3
+          ORDER BY p.created_at, p.id LIMIT 1`,
         [accountId, r.discovery_item_id, pickId],
       );
-      if (shared.rowCount) continue;
+      if (heir.rows[0]) {
+        await tx.query(
+          'UPDATE onboarding_pick_items SET created_save = true WHERE pick_id = $1 AND discovery_item_id = $2',
+          [heir.rows[0].pick_id, r.discovery_item_id],
+        );
+        continue;
+      }
       await recordPreference(pctx, { action: 'remove', target_type: 'discovery_item', target_id: r.discovery_item_id });
     }
     await tx.query('DELETE FROM onboarding_picks WHERE id = $1 AND account_id = $2', [pickId, accountId]);
@@ -516,16 +532,55 @@ export async function getCatalog(ctx: ServiceContext): Promise<OnboardingCatalog
 
 let searchesInFlight = 0;
 const searchWaiters: (() => void)[] = [];
+const searchesByAccount = new Map<string, number>();
 
-/** Process-wide cap on concurrent onboarding searches (the hackathon key throttles bursts). */
-async function withSearchSlot<T>(fn: () => Promise<T>): Promise<T> {
-  while (searchesInFlight >= SEARCH_MAX_CONCURRENT) await new Promise<void>((r) => searchWaiters.push(r));
-  searchesInFlight++;
+/** Thrown when the bounded search queue is full; reported as `unavailable`, never queued without bound. */
+class SearchQueueFull extends Error {}
+
+/**
+ * Process-wide cap on concurrent onboarding searches (the hackathon key
+ * throttles bursts), with a bounded wait queue and at most
+ * SEARCH_MAX_PER_ACCOUNT searches per account in flight or waiting, so one
+ * account cannot fill the queue for everyone.
+ */
+async function withSearchSlot<T>(accountId: string, fn: () => Promise<T>): Promise<T> {
+  const mine = searchesByAccount.get(accountId) ?? 0;
+  if (mine >= SEARCH_MAX_PER_ACCOUNT) throw new SearchQueueFull();
+  if (searchesInFlight >= SEARCH_MAX_CONCURRENT && searchWaiters.length >= SEARCH_MAX_WAITING) throw new SearchQueueFull();
+  searchesByAccount.set(accountId, mine + 1);
   try {
-    return await fn();
+    while (searchesInFlight >= SEARCH_MAX_CONCURRENT) await new Promise<void>((r) => searchWaiters.push(r));
+    searchesInFlight++;
+    try {
+      return await fn();
+    } finally {
+      searchesInFlight--;
+      searchWaiters.shift()?.();
+    }
   } finally {
-    searchesInFlight--;
-    searchWaiters.shift()?.();
+    const left = (searchesByAccount.get(accountId) ?? 1) - 1;
+    if (left > 0) searchesByAccount.set(accountId, left);
+    else searchesByAccount.delete(accountId);
+  }
+}
+
+/**
+ * One unit of the account's daily onboarding-search quota on the shared Qloo
+ * key (ACCOUNT_DAILY_ONBOARDING_SEARCHES). Throws 429 quota_exceeded, which
+ * the pickers show as "Search is taking a break".
+ */
+async function consumeSearchQuota(ctx: ServiceContext, accountId: string): Promise<void> {
+  const used = await tryConsume(ctx.db, {
+    bucket: `account:${accountId}`,
+    metric: 'onboarding_searches',
+    day: utcDay(ctx.now()),
+    limit: ctx.config.ACCOUNT_DAILY_ONBOARDING_SEARCHES,
+  });
+  if (used === null) {
+    throw new AppError('quota_exceeded', {
+      message: 'Search is taking a break for today. Pick from the ideas above.',
+      retryAfter: secondsUntilUtcMidnight(ctx.now()),
+    });
   }
 }
 
@@ -537,9 +592,10 @@ async function withSearchSlot<T>(fn: () => Promise<T>): Promise<T> {
 export async function search(ctx: ServiceContext, query: OnboardingSearchQuery): Promise<OnboardingSearchResponse> {
   const owner = requireAccountOwner(ctx.principal);
   const types = SEARCH_TYPES[query.category ?? 'all'];
+  await consumeSearchQuota(ctx, owner.accountId);
   let entities;
   try {
-    const res = await withSearchSlot(() =>
+    const res = await withSearchSlot(owner.accountId, () =>
       ctx.providers.qloo.searchEntities(
         { query: query.q, types: types as never, take: 10 },
         { timeoutMs: SEARCH_TIMEOUT_MS, maxRetries: 0 },
@@ -550,15 +606,15 @@ export async function search(ctx: ServiceContext, query: OnboardingSearchQuery):
   } catch {
     return { status: 'unavailable', results: [] };
   }
-  const { rows: active } = await ctx.db.query<{ choice_key: string }>(
-    `SELECT p.choice_key FROM onboarding_picks p
+  const { rows: active } = await ctx.db.query<{ choice_key: string; id: string }>(
+    `SELECT p.choice_key, p.id FROM onboarding_picks p
       WHERE p.account_id = $1 AND p.source = 'search'
         AND EXISTS (SELECT 1 FROM onboarding_pick_items pi
                       JOIN saved_items si ON si.discovery_item_id = pi.discovery_item_id AND si.owner_account_id = p.account_id
                      WHERE pi.pick_id = p.id)`,
     [owner.accountId],
   );
-  const activeKeys = new Set(active.map((r) => r.choice_key));
+  const activeKeys = new Map(active.map((r) => [r.choice_key, r.id]));
   const seen = new Set<string>();
   const results: OnboardingSearchResponse['results'] = [];
   for (const e of entities) {
@@ -574,6 +630,7 @@ export async function search(ctx: ServiceContext, query: OnboardingSearchQuery):
       type_label: info.label,
       category: info.category,
       picked: activeKeys.has(`qloo:${ref.id}`),
+      pick_id: activeKeys.get(`qloo:${ref.id}`) ?? null,
     });
     if (results.length >= 10) break;
   }
@@ -698,26 +755,45 @@ export async function complete(ctx: ServiceContext): Promise<CompleteOnboardingR
   return { state: await currentState(ctx, ctx.db, accountId), seed: await seedStatusFor(ctx.db, accountId, ctx.now()) };
 }
 
-async function queueTasteSeed(ctx: ServiceContext, accountId: string): Promise<void> {
+async function queueTasteSeed(ctx: ServiceContext, accountId: string, availableAt?: Date): Promise<boolean> {
   // When taste_seed_enabled is off nothing is queued: the feed keeps its labeled examples.
   const owner: Owner = { kind: 'account', accountId };
   const row = await loadStateRow(ctx.db, accountId);
-  await enqueueTasteSeed(ctx.db, {
+  const out = await enqueueTasteSeed(ctx.db, {
     accountId,
     tasteRevision: await getTasteRevision(ctx.db, owner),
     catalogVersion: row?.catalog_version ?? null,
     config: ctx.config,
     traceId: ctx.traceId,
     now: ctx.now(),
+    availableAt,
   });
+  if (out.enqueued) {
+    // Counted so Settings -> Taste reseeds stay within the account's daily cap
+    // (completion is always queued; it counts toward the same day).
+    await tryConsume(ctx.db, {
+      bucket: `account:${accountId}`,
+      metric: 'taste_seeds',
+      day: utcDay(ctx.now()),
+      limit: 2_000_000_000,
+    });
+  }
+  return out.enqueued;
 }
+
+/** Minimum spacing between Settings -> Taste reseeds of one account. */
+export const TASTE_RESEED_MIN_INTERVAL_MS = 2 * 60_000;
 
 /**
  * Settings -> Taste: once onboarding is complete, a pick added or removed
  * queues a fresh seed for the new taste revision, so the personal feed follows
- * the picks. A seed that is still queued (not yet started) already reads the
- * current saves when it runs, so no second one is queued behind it; this keeps
- * a burst of edits to one bounded seed.
+ * the picks. Bounded on the shared Qloo key:
+ * - a seed that is still queued (not yet started) already reads the current
+ *   saves when it runs, so no second one is queued behind it;
+ * - a new seed starts no sooner than TASTE_RESEED_MIN_INTERVAL_MS after the
+ *   account's previous one was queued (it waits, absorbing further edits);
+ * - at most ACCOUNT_DAILY_TASTE_SEEDS seeds per account per day; past that the
+ *   picks still change taste and the feed, only no new Qloo seed runs today.
  */
 async function reseedAfterTasteChange(ctx: ServiceContext, accountId: string): Promise<void> {
   const row = await loadStateRow(ctx.db, accountId);
@@ -727,7 +803,15 @@ async function reseedAfterTasteChange(ctx: ServiceContext, accountId: string): P
     [accountId],
   );
   if (queued.rowCount) return;
-  await queueTasteSeed(ctx, accountId);
+  const now = ctx.now();
+  if ((await currentUsage(ctx.db, `account:${accountId}`, 'taste_seeds', utcDay(now))) >= ctx.config.ACCOUNT_DAILY_TASTE_SEEDS) return;
+  const { rows } = await ctx.db.query<{ created_at: Date }>(
+    'SELECT created_at FROM taste_seed_runs WHERE owner_account_id = $1 ORDER BY created_at DESC LIMIT 1',
+    [accountId],
+  );
+  const last = rows[0]?.created_at;
+  const earliest = last ? new Date(last.getTime() + TASTE_RESEED_MIN_INTERVAL_MS) : null;
+  await queueTasteSeed(ctx, accountId, earliest && earliest > now ? earliest : undefined);
 }
 
 /** GET /v1/onboarding/state */

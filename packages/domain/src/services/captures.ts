@@ -494,9 +494,11 @@ function exclusionFilterSql(owner: Owner, itemAlias: string, param: number): str
 }
 
 /**
- * References shown for an analysis. Excludes references the user rejected and
- * those a stage-2 enrichment advised against (advisory veto: the cards they
- * contributed to stay published).
+ * References shown for an analysis, excluding those the user rejected.
+ * Stage 2 never removes or reorders what stage 1 listed (FAST-02): an advisory
+ * veto only lowers certainty (the reference then reads as qualified, e.g.
+ * "Resembles …") and keeps its place (published_certainty), and references
+ * stage 2 added come after every stage-1 reference.
  */
 export async function loadAnalysisReferences(db: Queryable, analysisId: string): Promise<ReferenceSummary[]> {
   const { rows } = await db.query<{
@@ -511,8 +513,9 @@ export async function loadAnalysisReferences(db: Queryable, analysisId: string):
     `SELECT r.id, r.canonical_name AS name, r.type, cr.relation, cr.certainty, cr.resolution_status,
             (r.research_status = 'complete' AND r.overview IS NOT NULL) AS has_page
        FROM capture_references cr JOIN cultural_references r ON r.id = cr.reference_id
-      WHERE cr.analysis_id = $1 AND cr.resolution_status <> 'rejected' AND NOT cr.advisory_veto
-      ORDER BY cr.is_anchor DESC, (cr.relation = 'user_selected') DESC, cr.certainty DESC NULLS LAST, r.canonical_name`,
+      WHERE cr.analysis_id = $1 AND cr.resolution_status <> 'rejected'
+      ORDER BY cr.enrichment_added, cr.is_anchor DESC, (cr.relation = 'user_selected') DESC,
+               COALESCE(cr.published_certainty, cr.certainty) DESC NULLS LAST, r.canonical_name`,
     [analysisId],
   );
   const seen = new Set<string>();

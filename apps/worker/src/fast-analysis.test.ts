@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { captures, setFeatureKill, type ServiceContext } from '@culture-atlas/domain';
+import { CATEGORIES, captures, LIMITS, setFeatureKill, type ServiceContext } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
 import {
   ProviderError,
@@ -149,14 +149,18 @@ describe('two-stage photo reading (FAST-02)', () => {
   it('stage 2 adds reasons, evidence and references without reordering or removing published cards', async () => {
     let captureId = '';
     let before: Awaited<ReturnType<typeof recRows>> = [];
+    let beforeRefs: string[] = [];
+    let ownerCtx: ServiceContext | null = null;
     const enricher = new ScriptedEnricher(async () => {
       // Everything stage 1 published is visible before stage 2 lands.
       before = await recRows(captureId);
+      beforeRefs = (await captures.getCapture(ownerCtx!, { id: captureId })).references.map((r) => r.name);
       return ENRICHMENT;
     });
     const vlm = new QuickVlm();
     const { providers } = world({ overrides: { vlm, vlmEnrich: enricher, qloo: qlooWithEnrichmentFilm() } });
     const ctx = await accountCtx(providers);
+    ownerCtx = ctx;
     const { capture_id, job_id } = await submit(ctx);
     captureId = capture_id;
     await runJobs(ctx, [job_id]);
@@ -176,18 +180,30 @@ describe('two-stage photo reading (FAST-02)', () => {
     for (const b of before) expect(after.find((a) => a.id === b.id)).toEqual(b);
     const kept = after.filter((a) => before.some((b) => b.id === a.id)).map((a) => a.id);
     expect(kept).toEqual(before.map((b) => b.id));
+    // ...and they keep their displayed positions: a card stage 2 appends ranks after every card
+    // already published in ANY category (not interleaved by category), so it cannot push a shown card
+    // out of the first rendered cards.
     // A thin category (two films) was filled after its published cards from the new reference.
     const films = after.filter((a) => a.category === 'watch');
     expect(films.map((f) => f.title)).toEqual(['Fixture Film One', 'Fixture Film Two', 'Fixture Film Three']);
-    expect(films[2]!.rank).toBeGreaterThan(Math.max(...before.filter((b) => b.category === 'watch').map((b) => b.rank)));
+    expect(films[2]!.rank).toBeGreaterThan(Math.max(...before.map((b) => b.rank)));
+    // Beyond every rank stage 1 can give, so stage-1 sections that land later (Eat) still precede it.
+    expect(films[2]!.rank).toBeGreaterThanOrEqual(LIMITS.recommendationsPerCategory * CATEGORIES.length);
+    const appendedIds = new Set([films[2]!.id]);
+    const shownBefore = after.filter((a) => !appendedIds.has(a.id)).map((a) => a.id);
+    expect(after.slice(0, shownBefore.length).map((a) => a.id)).toEqual(shownBefore);
     for (const c of ['wear', 'play', 'watch', 'eat']) expect(after.filter((a) => a.category === c).length).toBeLessThanOrEqual(3);
 
     const view = await captures.getCapture(ctx, { id: capture_id });
     expect(view.status).toBe('ready');
-    // The advisory veto keeps the style card but moves the reference out of "Explore the references".
+    // The advisory veto only lowers certainty: the style card and the reference both stay, the reference
+    // keeps its place and now reads as qualified; the reference stage 2 added comes after every published one.
     expect(view.recommendations.map((r) => r.title)).toContain('Vintage Racing');
-    expect(view.references.map((r) => r.name)).not.toContain('Vintage Racing');
-    expect(view.references.map((r) => r.name)).toEqual(expect.arrayContaining(['Fixture Denim Co', 'Mid-Century Modern']));
+    expect(beforeRefs).toContain('Vintage Racing');
+    const names = view.references.map((r) => r.name);
+    expect(names.slice(0, beforeRefs.length)).toEqual(beforeRefs);
+    expect(names.slice(beforeRefs.length)).toContain('Mid-Century Modern');
+    expect(view.references.find((r) => r.name === 'Vintage Racing')!.qualified).toBe(true);
     const { rows: refs } = await db.query<{ name: string; certainty: number; advisory_veto: boolean; is_anchor: boolean; evidence_region: { boxes: unknown[] } }>(
       `SELECT r.canonical_name AS name, cr.certainty, cr.advisory_veto, cr.is_anchor, cr.evidence_region
          FROM capture_references cr JOIN cultural_references r ON r.id = cr.reference_id

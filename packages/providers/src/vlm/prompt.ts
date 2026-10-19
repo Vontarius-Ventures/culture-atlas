@@ -26,6 +26,20 @@ Content rules:
 - quality.usable is false when the photo is too blurred, too dark, or has no useful subject; then set quality.issue and return few or no candidates.
 - uncertainty.overall summarizes how ambiguous the reading is; add short notes for ambiguous matches.`;
 
+/**
+ * JSON for a <user_data> block. Every string in it can come from untrusted
+ * text (a user's focus, or model output read from text inside a photo), so
+ * '<', '>' and '&' are written as JSON unicode escapes: the value is the same
+ * JSON, but no string can close the block early ("</user_data>") and put
+ * text outside the part the system prompt marks as data.
+ */
+export function userDataJson(data: unknown): string {
+  return JSON.stringify(data).replace(
+    /[<>&]/g,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
 export function buildVlmUserText(input: VlmAnalyzeInput): string {
   const data = {
     focus: input.focus ?? { kind: 'whole photo' },
@@ -37,7 +51,7 @@ export function buildVlmUserText(input: VlmAnalyzeInput): string {
     'Analyze the attached photo.',
     'If a focus is given, prioritize that subject or region. Prefer confirmed interests when the visual evidence is weak, and do not propose rejected references again.',
     '<user_data format="json">',
-    JSON.stringify(data),
+    userDataJson(data),
     '</user_data>',
   ].join('\n');
 }
@@ -97,7 +111,7 @@ export function buildVlmQuickUserText(input: VlmAnalyzeInput): string {
     'Give a fast first reading of the attached photo.',
     'If a focus is given, prioritize that subject or region. Prefer confirmed interests when the visual evidence is weak, and do not propose rejected references again.',
     '<user_data format="json">',
-    JSON.stringify(data),
+    userDataJson(data),
     '</user_data>',
   ].join('\n');
 }
@@ -132,7 +146,7 @@ export function buildVlmEnrichUserText(input: {
   return [
     'Add detail to the first reading of the attached photo.',
     '<user_data format="json">',
-    JSON.stringify(data),
+    userDataJson(data),
     '</user_data>',
   ].join('\n');
 }

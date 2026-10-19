@@ -12,7 +12,7 @@ import type { DiscoveriesQuery, DiscoveriesResponse } from '../schemas/discoveri
 import { decodeCursor, encodeCursor } from '../util/cursor';
 import { addHours } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
-import { excludedFoodItemIds, foodExclusionsFor } from './onboarding';
+import { excludedFoodItemIds, foodExclusionsFor, isOnboardingRequired } from './onboarding';
 import { getTasteRevision } from './taste';
 
 /**
@@ -294,6 +294,12 @@ export async function getDiscoveries(ctx: ServiceContext, query: DiscoveriesQuer
   requireScopes(ctx.principal, 'taste:read');
   requireWholeLibrary(ctx.principal);
   const owner = ownerOf(ctx.principal);
+  // ONB-01: the account's own clients (browser, enrolled phone) do not get the
+  // personal feed while the account still owes the taste questionnaire; every
+  // client sees the same typed error, so ignoring the client gate does not help.
+  if ((ctx.principal.kind === 'account' || ctx.principal.kind === 'installation') && (await isOnboardingRequired(ctx, ctx.principal.accountId))) {
+    throw new AppError('onboarding_required', { details: { next: '/welcome/taste' } });
+  }
   const limit = query.limit ?? LIMITS.feedPageDefault;
   const category = query.category ?? null;
 

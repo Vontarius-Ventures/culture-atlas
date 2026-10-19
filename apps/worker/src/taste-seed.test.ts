@@ -285,7 +285,7 @@ describe('taste seed job', () => {
     expect(discovery.longestCategoryRun(feed.items.slice(0, 8))).toBeLessThanOrEqual(2);
   });
 
-  it('with Qloo throttled, stays within the caps, publishes nothing invented and retries until Qloo is back (ONB-03)', async () => {
+  it('with Qloo throttled, stays within the per-job cap of 6 across attempts, invents nothing and retries until Qloo is back (ONB-03, ONB-04)', async () => {
     const principal = await onboardedAccount();
     const { accountId } = principal;
     let healthy = false;
@@ -294,7 +294,8 @@ describe('taste seed job', () => {
     const jobId = await enqueue(accountId);
 
     await runAttempt(q.providers, jobId);
-    expect(q.calls.length).toBe(6); // 4 first tries + 2 inline retries, then the budget is spent
+    // The first wave (3 in flight) meets the throttle; the fourth category is not asked, no inline retries.
+    expect(q.calls.length).toBe(3);
     expect(q.state.peak).toBeLessThanOrEqual(3);
     expect(await job(jobId)).toMatchObject({ state: 'queued', attempt: 1, error_code: 'rate_limited', error_retryable: true });
     const waiting = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
@@ -307,22 +308,38 @@ describe('taste seed job', () => {
       `SELECT pq.status, pq.http_status FROM provider_queries pq JOIN taste_seed_runs tr ON tr.id = pq.taste_seed_run_id WHERE tr.owner_account_id = $1`,
       [accountId],
     );
-    expect(errors.length).toBe(6);
+    expect(errors.length).toBe(3);
     expect(errors.every((e) => e.status === 'error' && e.http_status === 429)).toBe(true);
     // Meanwhile the feed is the labeled example feed, never invented cards.
     const meanwhile = await wholeFeed(ctx);
     expect(meanwhile.is_example_feed).toBe(true);
     expect(meanwhile.items.every((i) => i.is_example)).toBe(true);
 
-    healthy = true;
-    const before = q.calls.length;
+    // Still throttled: the retry probes with ONE request and stops.
     await runAttempt(q.providers, jobId);
-    expect(q.calls.length - before).toBe(4);
-    expect(await job(jobId)).toMatchObject({ state: 'complete', attempt: 2 });
+    expect(q.calls.length).toBe(4);
+    expect(await job(jobId)).toMatchObject({ state: 'queued', attempt: 2 });
+
+    healthy = true;
+    await runAttempt(q.providers, jobId);
+    // 4 of the job's 6 requests were spent while throttled; the last 2 go to the probe and one more category.
+    expect(q.calls.length).toBe(6);
+    expect(q.state.peak).toBeLessThanOrEqual(3);
+    const { rows: used } = await getTestDb().query<{ n: number }>('SELECT qloo_requests_used AS n FROM taste_seed_runs WHERE job_id = $1', [jobId]);
+    expect(used[0]!.n).toBe(6);
+    expect(await job(jobId)).toMatchObject({ state: 'partial', attempt: 3 });
     const done = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
-    expect(done.state).toBe('complete');
-    expect(done.categories.every((c) => c.state === 'ready')).toBe(true);
+    expect(done.state).toBe('partial');
+    expect(done.poll_after_ms).toBeNull();
+    // The probe and one more category; the other two stay unavailable and the feed fills them with labeled examples.
+    expect(done.categories.filter((c) => c.state === 'ready')).toHaveLength(2);
+    expect(done.categories.filter((c) => c.state === 'unavailable')).toHaveLength(2);
+    expect(done.categories.find((c) => c.category === 'wear')!.state).toBe('ready'); // the probe
     expect((await wholeFeed(ctx)).is_example_feed).toBe(false);
+
+    // Nothing further runs: the job is finished and its budget is spent.
+    await runAttempt(q.providers, jobId);
+    expect(q.calls.length).toBe(6);
   });
 
   it('an open Qloo circuit re-queues the seed for after the cooldown instead of giving up (ONB-03)', async () => {
@@ -385,14 +402,14 @@ describe('taste seed job', () => {
     for (const item of feed.items.filter((i) => i.category !== 'wear')) expect(item.is_example).toBe(true);
   });
 
-  it('retries a timing-out category without re-requesting published ones, then ends partial (timeouts)', async () => {
+  it('retries a timing-out category without re-requesting published ones, then ends partial within 6 requests (timeouts)', async () => {
     const principal = await onboardedAccount();
     const { accountId } = principal;
     const q = scriptedQloo((type) => (type === 'urn:entity:brand' ? 'timeout' : RESULTS[type]!), 100);
     const jobId = await enqueue(accountId);
 
     await runAttempt(q.providers, jobId);
-    expect(q.calls.length).toBe(5); // Wear twice (timeout + one retry), the others once
+    expect(q.calls.length).toBe(4); // one request per category, no inline retry
     expect(q.state.peak).toBeLessThanOrEqual(3);
     const first = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
     expect(first.state).toBe('retrying');
@@ -402,10 +419,11 @@ describe('taste seed job', () => {
       const before = q.calls.length;
       await runAttempt(q.providers, jobId);
       const made = q.calls.slice(before);
-      expect(made.length).toBeLessThanOrEqual(6);
       expect(made.every((u) => u.searchParams.get('filter.type') === 'urn:entity:brand')).toBe(true);
     }
-    expect(await job(jobId)).toMatchObject({ state: 'partial', attempt: 4 });
+    // 4 + 1 + 1: the per-job cap ends the retries after the third attempt.
+    expect(q.calls.length).toBe(6);
+    expect(await job(jobId)).toMatchObject({ state: 'partial', attempt: 3 });
     const last = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
     expect(last.state).toBe('partial');
     expect(last.poll_after_ms).toBeNull();

@@ -61,6 +61,12 @@ export interface CallBudgetOptions {
    * counted session request (strict request caps such as the taste seed's 6).
    */
   clientMaxRetries?: number;
+  /**
+   * Reserves one request from a budget that outlives this session (the taste
+   * seed's per-job cap across attempts). Called before every counted request;
+   * false ends the session's budget (BudgetExhaustedError), no request is sent.
+   */
+  reserveRequest?: () => Promise<boolean>;
 }
 
 const defaultSleep = (ms: number, signal?: AbortSignal) =>
@@ -123,6 +129,10 @@ export class QlooSession {
     let attempt = 0;
     for (;;) {
       if (this.used >= this.options.maxRequests) throw new BudgetExhaustedError();
+      if (this.options.reserveRequest && !(await this.options.reserveRequest())) {
+        this.used = this.options.maxRequests;
+        throw new BudgetExhaustedError();
+      }
       this.used++;
       const id = this.options.newId();
       const started = Date.now();

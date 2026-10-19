@@ -24,6 +24,8 @@ export const ERROR_CODES = {
   precondition_failed: 412,
   precondition_required: 428,
   action_required: 409,
+  /** Amendment 2.2 (ONB-01): the account still owes the taste questionnaire. */
+  onboarding_required: 409,
   cursor_expired: 410,
   idempotency_conflict: 409,
   idempotency_in_progress: 409,
@@ -65,6 +67,7 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   precondition_failed: 'Preferences changed. Reload before saving.',
   precondition_required: 'An If-Match version is required.',
   action_required: 'Allow this action on the selected phone first.',
+  onboarding_required: 'Pick at least 3 things you love to start your feed.',
   cursor_expired: 'This cursor expired. Resync the current state.',
   idempotency_conflict: 'This idempotency key was already used with a different request.',
   idempotency_in_progress: 'The original request is still being processed.',

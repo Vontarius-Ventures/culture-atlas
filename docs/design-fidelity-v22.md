@@ -129,6 +129,18 @@ All of these were re-verified here. New in this pass:
 - In this session's shell, which exports live provider variables (`CONCENTRATE_*`, `ELORIAN_*`, `QLOO_*`), 7 readiness tests fail (`apps/web/lib/server/model-readiness.test.ts`, `agent-media-http.test.ts`), because they read the live configuration. Commit `67f0559` on `claude/wizardly-cannon-yu8trw` ("Keep tests hermetic from live provider credentials") already fixes that. This branch was cut from `2816e1a`, before that commit.
 - `pnpm typecheck` and `pnpm lint` are clean.
 
+## Re-run after the review fixes (2026-10-19)
+
+After the 2.2 review round the live-Qloo run above was repeated on a fresh database (same commands, `ca_fid_v22c`): 6 of 6 pass at 1440, 390 and 320. The captures in `apps/web/e2e/screenshots/fidelity/v22/` were refreshed. 81 Qloo requests went through the gate (12 more were refused during the simulated outage); no model was called (stand-in reading).
+
+| Screen | Verdict after the fixes | What changed |
+| --- | --- | --- |
+| 14 Taste picks | **Match** (unchanged) | Only live data differs between runs (Qloo search results and their order). |
+| 15 Building your feed | **Match** (unchanged) | The seed now has a per-job cap of 6 requests across retries; the "unavailable" state is identical. |
+| 16 While we look / More to explore | **Close, not 1:1** (unchanged verdict) | An advisory stage-2 veto no longer removes a reference, and references stage 2 adds are listed after the stage-1 ones, so the pills can show one more qualified reference ("Resembles Film-noir" in this run). Cards stage 2 appends rank after every card already shown. |
+| 17 Ready notice | **Match (toast)** (unchanged) | None. |
+| 18 Settings → Taste | **Close** (was Match) | "Add more" now shows the group's catalog images above the chips, because the amendment says "add more (same pickers)" and wins over mockup 18, which draws chips and search only. Two columns of image tiles on phones, 140 px tiles on desktop. Everything above and below the panel is unchanged. |
+
 ## Not covered
 
 - **Native screens (iOS/Android onboarding, Settings → Taste, ready push).** No Swift or Android toolchain is available here, so they were not built or captured.

@@ -1073,7 +1073,8 @@ export class CaptureCompiler {
       for (const r of vetoedRefs) {
         r.certainty = Math.round(r.certainty * ENRICHMENT_VETO_CERTAINTY_FACTOR * 1000) / 1000;
         await tx.query(
-          `UPDATE capture_references SET certainty = LEAST(certainty, $4), advisory_veto = true
+          `UPDATE capture_references SET published_certainty = COALESCE(published_certainty, certainty),
+                  certainty = LEAST(certainty, $4), advisory_veto = true
             WHERE analysis_id = $1 AND reference_id = $2 AND relation = $3`,
           [this.analysisId, r.referenceId, r.relation, r.certainty],
         );
@@ -1088,8 +1089,8 @@ export class CaptureCompiler {
       }
       for (const r of newRefs) {
         await tx.query(
-          `INSERT INTO capture_references (analysis_id, reference_id, relation, evidence_region, certainty, resolution_status, is_anchor)
-           VALUES ($1, $2, $3, $4::jsonb, $5, $6, false)
+          `INSERT INTO capture_references (analysis_id, reference_id, relation, evidence_region, certainty, resolution_status, is_anchor, enrichment_added)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, false, true)
            ON CONFLICT (analysis_id, reference_id, relation) DO NOTHING`,
           [this.analysisId, r.referenceId, r.relation, JSON.stringify({ region_ids: r.regionIds, boxes: r.boxes }), Math.min(1, Math.max(0, r.certainty)), r.resolution],
         );
@@ -1259,6 +1260,23 @@ export class CaptureCompiler {
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
       if (!append) await tx.query('DELETE FROM recommendations WHERE analysis_id = $1 AND category = $2', [this.analysisId, category]);
       let position = append?.existing ?? 0;
+      // Appended (stage-2) cards rank after EVERY card already published, in any
+      // category, so the flat result order and the initially rendered cards never
+      // change (FAST-02): an interleaved rank would push a published card down.
+      let appendRank = 0;
+      if (append) {
+        const { rows } = await tx.query<{ next: number }>(
+          'SELECT COALESCE(MAX(rank), -1) + 1 AS next FROM recommendations WHERE analysis_id = $1',
+          [this.analysisId],
+        );
+        // Never below the stage-1 rank range, so sections stage 1 publishes later (Eat) still precede them.
+        appendRank = Math.max(rows[0]?.next ?? 0, LIMITS.recommendationsPerCategory * CATEGORIES.length);
+      }
+      const nextRank = () => {
+        const rank = append ? appendRank++ : this.rankFor(order, category, position);
+        position++;
+        return rank;
+      };
       for (const p of picked) {
         const contributors = p.originRefs.map((id) => refs.find((r) => r.referenceId === id)).filter((r): r is ResolvedRef => !!r);
         if (p.payload.source === 'insights') {
@@ -1276,7 +1294,7 @@ export class CaptureCompiler {
             analysisId: this.analysisId,
             discoveryItemId: itemId,
             category,
-            rank: this.rankFor(order, category, position++),
+            rank: nextRank(),
             title: c.name,
             externalIds: { qloo: c.entityId },
             displayReason: buildReason(contributors),
@@ -1300,7 +1318,7 @@ export class CaptureCompiler {
             analysisId: this.analysisId,
             discoveryItemId: itemId,
             category: 'wear',
-            rank: this.rankFor(order, category, position++),
+            rank: nextRank(),
             title: r.name,
             externalIds: { qloo_tag: r.qloo!.tagId },
             displayReason: 'A style direction your photo resembles.',

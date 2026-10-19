@@ -20,7 +20,13 @@ import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
 import type { SeedCategoryState } from '../schemas/onboarding';
 import { rebuildFeedSnapshots } from '../services/discovery';
-import { ensureSeedRun, readFoodExclusions, TASTE_SEED_MAX_CONCURRENCY, TASTE_SEED_MAX_QLOO_REQUESTS } from '../services/taste-seed';
+import {
+  ensureSeedRun,
+  readFoodExclusions,
+  TASTE_SEED_INLINE_RETRIES,
+  TASTE_SEED_MAX_CONCURRENCY,
+  TASTE_SEED_MAX_QLOO_REQUESTS,
+} from '../services/taste-seed';
 
 /**
  * Taste seed (spec amendment 2.2, "Seeding the feed"; package B of
@@ -294,6 +300,26 @@ async function categoryStates(db: Queryable, runId: string): Promise<Map<Categor
   return new Map(rows.map((r) => [r.category, r.state]));
 }
 
+/** Requests the job may still make (ONB-04 cap minus what every attempt so far reserved). */
+async function seedRequestsLeft(db: Queryable, runId: string): Promise<number> {
+  const { rows } = await db.query<{ used: number }>('SELECT qloo_requests_used AS used FROM taste_seed_runs WHERE id = $1', [runId]);
+  return Math.max(0, TASTE_SEED_MAX_QLOO_REQUESTS - (rows[0]?.used ?? TASTE_SEED_MAX_QLOO_REQUESTS));
+}
+
+/** Atomically reserves one of the job's Qloo requests; false once the per-job cap is reached. */
+async function reserveSeedRequest(db: Queryable, runId: string): Promise<boolean> {
+  const { rowCount } = await db.query(
+    'UPDATE taste_seed_runs SET qloo_requests_used = qloo_requests_used + 1 WHERE id = $1 AND qloo_requests_used < $2',
+    [runId, TASTE_SEED_MAX_QLOO_REQUESTS],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/** Qloo as a whole is throttling or failing (not one slow category). */
+function isOutage(err: unknown): boolean {
+  return isProviderError(err) && (err.kind === 'rate_limited' || err.kind === 'server' || err.kind === 'unavailable');
+}
+
 async function markUnavailable(db: Queryable, runId: string, categories: readonly Category[]): Promise<void> {
   if (!categories.length) return;
   await db.query(
@@ -359,13 +385,19 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
   }
 
   const failures: Failure[] = [];
-  if (todo.length > 0) {
+  // ONB-04: at most TASTE_SEED_MAX_QLOO_REQUESTS for the whole job, across every attempt.
+  let jobBudgetLeft = await seedRequestsLeft(ctx.db, runId);
+  if (todo.length > 0 && jobBudgetLeft <= 0) {
+    failures.push({ error: new BudgetExhaustedError(), retryable: false });
+    await markUnavailable(ctx.db, runId, todo);
+  } else if (todo.length > 0) {
     const session = new QlooSession(ctx.providers.qloo, {
-      maxRequests: Math.min(ctx.budget.qlooRequests, TASTE_SEED_MAX_QLOO_REQUESTS),
-      maxRetries: ctx.budget.providerRetries,
+      maxRequests: Math.min(ctx.budget.qlooRequests, TASTE_SEED_MAX_QLOO_REQUESTS, jobBudgetLeft),
+      maxRetries: Math.min(ctx.budget.providerRetries, TASTE_SEED_INLINE_RETRIES),
       signal: ctx.signal,
       newId: randomUUID,
       clientMaxRetries: 0,
+      reserveRequest: () => reserveSeedRequest(ctx.db, runId),
     });
     if (!session.insightsUsable()) {
       const reason = session.capability().reason;
@@ -390,20 +422,38 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
       const excludedKeys = new Set([...hidden, ...saved.rows.map((r) => r.canonical_key)]);
       const foodExclusions = readFoodExclusions(prefs.rows[0]?.preferences);
 
+      // Qloo throttled or down: stop asking in this attempt (the job retries later),
+      // so an outage costs as few of the job's requests as possible.
+      let outage = false;
+      const runCategory = async (category: Category) => {
+        if (outage) {
+          failures.push({ error: new AppError('provider_unavailable', { retryable: true }), retryable: true });
+          await markUnavailable(ctx.db, runId, [category]);
+          return;
+        }
+        let out: CategoryOutput;
+        try {
+          out = await ctx.runStage(`category:${category}`, () => fetchCategory(session, category, { signals, excludedKeys, foodExclusions }));
+        } catch (err) {
+          if (!(err instanceof BudgetExhaustedError) && !isProviderError(err)) throw err;
+          if (isOutage(err)) outage = true;
+          failures.push(failureOf(err));
+          await markUnavailable(ctx.db, runId, [category]);
+          return;
+        }
+        await publishCategory(ctx, runId, owner, category, out);
+      };
+
       await ctx.setStage('recommending');
       try {
-        await forEachLimited(todo, TASTE_SEED_MAX_CONCURRENCY, async (category) => {
-          let out: CategoryOutput;
-          try {
-            out = await ctx.runStage(`category:${category}`, () => fetchCategory(session, category, { signals, excludedKeys, foodExclusions }));
-          } catch (err) {
-            if (!(err instanceof BudgetExhaustedError) && !isProviderError(err)) throw err;
-            failures.push(failureOf(err));
-            await markUnavailable(ctx.db, runId, [category]);
-            return;
-          }
-          await publishCategory(ctx, runId, owner, category, out);
-        });
+        let rest = todo;
+        if (ctx.attempt > 1 && todo.length > 1) {
+          // A retry first probes Qloo with one request (a fast category) before fanning out.
+          const probe = todo.find((c) => c !== 'eat') ?? todo[0]!;
+          await runCategory(probe);
+          rest = todo.filter((c) => c !== probe);
+        }
+        await forEachLimited(rest, TASTE_SEED_MAX_CONCURRENCY, runCategory);
       } finally {
         // Failed attempts are evidence too (inspector); successful ones were stored on publish.
         const failed = session.recorded.filter((q) => q.status === 'error');
@@ -413,13 +463,15 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
         }
       }
     }
+    jobBudgetLeft = await seedRequestsLeft(ctx.db, runId);
   }
 
   if (failures.length === 0) {
     await setRunState(ctx.db, runId, 'complete');
     return { state: 'complete', ...result };
   }
-  if (failures.some((f) => f.retryable) && ctx.attempt < ctx.job.max_attempts) {
+  // A retry needs requests left in the job's budget; otherwise the job ends with what it has.
+  if (failures.some((f) => f.retryable) && ctx.attempt < ctx.job.max_attempts && jobBudgetLeft > 0) {
     await setRunState(ctx.db, runId, 'retrying');
     throw retryError(failures);
   }

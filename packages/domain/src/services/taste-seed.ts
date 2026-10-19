@@ -18,8 +18,12 @@ import { iso } from '../util/time';
  * GET /v1/onboarding/seed returns getTasteSeedStatus(db, accountId).
  *
  * The seed is bounded: at most TASTE_SEED_MAX_QLOO_REQUESTS Qloo requests per
- * attempt (retries included, the adapter's own retries disabled) and at most
- * TASTE_SEED_MAX_CONCURRENCY at a time. It never fabricates: a category Qloo
+ * job, across all of its attempts (each request is reserved on
+ * taste_seed_runs.qloo_requests_used before it is sent; the adapter's own
+ * retries are disabled) and at most TASTE_SEED_MAX_CONCURRENCY at a time. An
+ * attempt that meets a throttled or failing Qloo stops asking, and a retry
+ * probes with one request before fanning out, so an outage spends little of
+ * the cap. It never fabricates: a category Qloo
  * returns nothing for stays `empty` and the feed's labeled examples fill the
  * gap; a Qloo outage leaves it `unavailable` and the job retries with backoff.
  */
@@ -30,8 +34,12 @@ export const TASTE_SEED_MAX_CONCURRENCY = 3;
 export const TASTE_SEED_MAX_ATTEMPTS = 4;
 /** Per-attempt deadline. Eat (cuisine tags) measured ~12 s uncached on the hackathon key. */
 export const TASTE_SEED_DEADLINE_MS = 90_000;
-/** Inline retries of one Qloo call inside an attempt (each counts toward the request cap). */
-export const TASTE_SEED_INLINE_RETRIES = 1;
+/**
+ * Inline retries of one Qloo call inside an attempt. None: with a per-job cap
+ * of 6, a failed call is retried by the job's next attempt (with backoff), not
+ * at once against a key that is throttling.
+ */
+export const TASTE_SEED_INLINE_RETRIES = 0;
 /** Poll interval suggested to screen 15 while the job is active. */
 export const TASTE_SEED_POLL_MS = 1_000;
 const RETRY_POLL_MAX_MS = 15_000;
@@ -180,6 +188,8 @@ export async function enqueueTasteSeed(
     config: ServiceFeatureEnv;
     traceId?: string;
     now?: Date;
+    /** Debounced start (Settings -> Taste reseeds); default now. */
+    availableAt?: Date;
   },
 ): Promise<{ status: TasteSeedStatus; enqueued: boolean; reused: boolean }> {
   const now = input.now ?? new Date();
@@ -199,6 +209,7 @@ export async function enqueueTasteSeed(
       deadline_ms: TASTE_SEED_DEADLINE_MS,
     },
     traceId: input.traceId,
+    availableAt: input.availableAt,
     resultType: 'taste_seed',
   });
   await ensureSeedRun(db, {

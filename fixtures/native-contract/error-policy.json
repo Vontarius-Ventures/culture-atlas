@@ -14,6 +14,7 @@
     { "code": "account_mismatch", "status": 409, "action": "lock_to_original_account" },
     { "code": "action_required", "status": 409, "action": "show_local_action" },
     { "code": "idempotency_conflict", "status": 409, "action": "reload_state" },
+    { "code": "onboarding_required", "status": 409, "action": "reload_state" },
     { "code": "idempotency_in_progress", "status": 409, "action": "retry_backoff" },
     { "code": "cursor_expired", "status": 410, "action": "resync" },
     { "code": "payload_too_large", "status": 413, "action": "reject_item" },
