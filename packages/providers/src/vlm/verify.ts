@@ -17,15 +17,15 @@ import { candidateNameKey, type VlmAnalyzeInput, type VlmCandidate, type VlmVerd
  * own text does not bear out. Its answer can only lower a reference's
  * certainty ("no") or mark it qualified ("no", "unsure"); it never removes a
  * reference or a card, never raises certainty and never adds a claim. When the
- * call fails, nothing changes. It is off by default (analysis_verifier_enabled)
- * until the tune-split evaluation decides.
+ * call fails, nothing changes. It is off by default (analysis_verifier_enabled);
+ * the tune-split evaluation (docs/quality-plan.md §15) kept it off.
  *
  * Everything here but the provider interface is pure, so the compiler, the
  * live evaluation and the replay apply the same selection and the same
  * outcome rules.
  */
 
-export const VERIFY_READING_VERSION = { prompt: 'vlm-verify-v1', schema: 'atlas_verify_v1' } as const;
+export const VERIFY_READING_VERSION = { prompt: 'vlm-verify-v2', schema: 'atlas_verify_v1' } as const;
 /** Claims checked per call at most (the first, in reading order). */
 export const VERIFY_MAX_CLAIMS = 6;
 /** The verifier reads the photo at the stage-2 size, where labels and signs are legible. */
@@ -64,8 +64,8 @@ ${SECURITY_RULES}
 
 Content rules:
 - checks: exactly one entry per claim, using its exact name, in the order given. Never add a claim.
-- answer "yes" only when the photo itself clearly supports the claim: for a place, a legible sign or label naming it or an unmistakable landmark; for a style or tradition, visible features characteristic of it that nothing in the photo contradicts.
-- answer "no" when the photo or its legible text contradicts the claim, for example a label or sign naming a different place, origin, period or maker, or features that belong to a different style.
+- answer "yes" only when the photo itself clearly supports the claim: for a place, a legible sign or label naming it or an unmistakable landmark; for a style or tradition, visible features characteristic of it that nothing in the photo contradicts. Features a style, technique or tradition shares with its neighbours (another period, school, region or finish) are not enough for "yes": a feature specific to the claim must be visible.
+- answer "no" when the photo or its legible text contradicts the claim, for example a label or sign naming a different place, origin, period, technique or maker, or features that belong to a different style. A building, museum or site named on a sign is the evidence for what is shown: a style or period that the named place does not have is "no".
 - otherwise answer "unsure". Being unsure is never a reason to answer "yes".
 - reason: at most fifteen words, grounded in what is visible.
 - Never identify people, and never infer anyone's identity, ethnicity, role, profession or affiliation.`;

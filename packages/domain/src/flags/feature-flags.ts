@@ -39,7 +39,8 @@ export const FEATURE_FLAG_DEFAULTS = {
   fast_analysis_two_stage: false,
   while_we_look_enabled: true,
   // Photo-role requalification (docs/requalification-plan.md): the independent
-  // verifier stays off until the tune-split evaluation decides it.
+  // verifier is off by default. The tune-split evaluation (docs/quality-plan.md
+  // §15) kept it off: it lowered no forbidden-label count on the tune split.
   analysis_verifier_enabled: false,
 } as const;
 

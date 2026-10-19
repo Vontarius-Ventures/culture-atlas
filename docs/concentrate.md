@@ -174,10 +174,10 @@ unavailable under Concentrate.
 | Role | Reading (`schemaVersion`) | Prompt (`promptVersion`) | Image | Output cap | Timeout | Code |
 | --- | --- | --- | --- | --- | --- | --- |
 | `vision_photo`, `vision_video_frame` | `atlas_quick_read_v2` (`VlmQuickReadV2`, 0–5 candidates) | `vlm-quick-v2` | ≤ 512 px | 600 | 10 s | `ConcentrateVlm` quick mode, `toVlmAnalysis()` |
-| `vision_photo_enrich` | `atlas_enrichment_v2` (`VlmEnrichmentV2`) | `vlm-enrich-v2` | ≤ 768 px | 1600 | 20 s | `ConcentrateVlmEnricher`, `mergeEnrichmentContext()` |
+| `vision_photo_enrich` | `atlas_enrichment_v2` (`VlmEnrichmentV2`) | `vlm-enrich-v3` (tune step: prominent text first, partly hidden words as their visible letters; was `vlm-enrich-v2`) | ≤ 768 px | 1600 | 20 s | `ConcentrateVlmEnricher`, `mergeEnrichmentContext()` |
 | (phase 4) `vision_photo`, `vision_photo_enrich` | `atlas_quick_read_v1` / `atlas_enrichment_v1` | `vlm-quick-v1` / `vlm-enrich-v1` | as above | 600 / 1200 | as above | same classes, v1 schemas |
 | (legacy) `vision_photo` | `atlas_observations_v2` (full reading, `VlmFullReading`) | `vlm-full-v2` | profile bounds | profile | profile | `ConcentrateVlm` full mode |
-| `vision_verify` (off by default) | `atlas_verify_v1` (`VlmVerification`) | `vlm-verify-v1` | ≤ 768 px | profile | profile | `ConcentrateVlmVerifier`, `verifierTargets()`, `applyVerification()` |
+| `vision_verify` (off by default; the tune split kept it off, [quality plan](quality-plan.md) §15) | `atlas_verify_v1` (`VlmVerification`) | `vlm-verify-v2` | ≤ 768 px | profile | profile | `ConcentrateVlmVerifier`, `verifierTargets()`, `applyVerification()` |
 
 - **Text-only references and the verifier** ([requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built), guard-v4). A brand or person name that only the stage-2 reply contains, with every word transcribed, publishes as a text-only reference (G-TEXT-ONLY): listed with the text it was read from, never searched in Qloo, anchored, researched or offered as a subject choice. The verifier (`vision_verify`) runs in the background after stage 2 on published, non-anchor style, place and tradition claims that stage 2 hedged or the read text does not bear out; "no" lowers certainty and qualifies the reference, "unsure" qualifies it, nothing is ever removed. It runs only with `ANALYSIS_VERIFIER_ENABLED=true`, a qualified profile and no kill (`analysis_verifier_enabled`); its call is reserved with both photo stages before stage 1. Like the other photo roles it qualifies only on golden-v1 with a blind held-out split, and is never served by a fallback model.
 
@@ -204,9 +204,9 @@ Example profile pair for reading v2 (values from the latency plan, with the enri
     "promptVersion": "vlm-quick-v2", "schemaVersion": "atlas_quick_read_v2",
     "catalogSnapshotAt": "<snapshot fetched_at>", "qualificationArtifactId": "<artifact id>",
     "pricingSnapshotVersion": "<pricing>", "reservationMicros": "<worst case>" },
-  { "role": "vision_photo_enrich", "version": "enrich-2", "maxOutputTokens": 1600, "reasoningEffort": "none",
+  { "role": "vision_photo_enrich", "version": "enrich-3", "maxOutputTokens": 1600, "reasoningEffort": "none",
     "image": { "maxBytes": 250000, "maxPixels": 589824, "maxDimension": 768, "maxCount": 1 },
-    "timeoutMs": 20000, "promptVersion": "vlm-enrich-v2", "schemaVersion": "atlas_enrichment_v2",
+    "timeoutMs": 20000, "promptVersion": "vlm-enrich-v3", "schemaVersion": "atlas_enrichment_v2",
     "...": "other fields as above" }
 ]
 ```

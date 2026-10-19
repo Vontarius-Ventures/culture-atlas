@@ -263,8 +263,8 @@ describe('eval:live (offline rails)', () => {
   it('with vision_verify, checks the compiler\'s verifier targets after stage 2 and re-scores with and without the verifier', async () => {
     const { g, golden, thresholds } = await setup(['p01']);
     const quickV2 = { ...quickProfile, promptVersion: 'vlm-quick-v2', schemaVersion: 'atlas_quick_read_v2' } as ModelProfile;
-    const enrichV2 = { ...enrichProfile, promptVersion: 'vlm-enrich-v2', schemaVersion: 'atlas_enrichment_v2', maxOutputTokens: 1600 } as ModelProfile;
-    const verifyP = { ...enrichProfile, role: 'vision_verify', promptVersion: 'vlm-verify-v1', schemaVersion: 'atlas_verify_v1', maxOutputTokens: 600 } as ModelProfile;
+    const enrichV2 = { ...enrichProfile, promptVersion: 'vlm-enrich-v3', schemaVersion: 'atlas_enrichment_v2', maxOutputTokens: 1600 } as ModelProfile;
+    const verifyP = { ...enrichProfile, role: 'vision_verify', promptVersion: 'vlm-verify-v2', schemaVersion: 'atlas_verify_v1', maxOutputTokens: 600 } as ModelProfile;
     // FIXTURE replies: stage 2 hedges the style (weak), so it is a verifier target; the verifier answers "no".
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       const name: string = JSON.parse(init.body as string).text.format.name;

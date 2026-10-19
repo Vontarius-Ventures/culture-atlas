@@ -249,7 +249,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       qualifyProfile({
         apiKey: KEY,
         outDir: await preparedOutDir(),
-        profile: { ...profile, role: 'vision_verify', promptVersion: 'vlm-verify-v1', schemaVersion: 'atlas_verify_v1' },
+        profile: { ...profile, role: 'vision_verify', promptVersion: 'vlm-verify-v2', schemaVersion: 'atlas_verify_v1' },
         golden: { dir: g.dir, photosDir: g.photosDir },
         pipeline: versionedTestPipeline,
         maxRequests: 30,
@@ -324,7 +324,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v4', scorer_version: 'score-v4', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v5', scorer_version: 'score-v4', holdout_blind: true, pass: true },
     });
     expect(run.artifact!.eval!.metrics).toMatchObject({ holdout_M1: 0, holdout_M3: 1, holdout_M13: 1, failed_calls: 0, holdout_photos: 10, holdout_blind_photos: 10 });
     expect(qualificationState(profile, outDir)).toBe('qualified');

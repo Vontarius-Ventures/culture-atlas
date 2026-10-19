@@ -64,7 +64,7 @@ export const quickProfileV2: ModelProfile = {
 /** Reading v2, stage 2: output cap raised to 1600 at re-qualification. */
 export const enrichProfileV2: ModelProfile = {
   ...enrichProfile,
-  promptVersion: 'vlm-enrich-v2',
+  promptVersion: 'vlm-enrich-v3',
   schemaVersion: 'atlas_enrichment_v2',
   maxOutputTokens: 1600,
 };
@@ -72,7 +72,7 @@ export const enrichProfileV2: ModelProfile = {
 export const verifyProfile: ModelProfile = {
   ...profile,
   role: 'vision_verify',
-  promptVersion: 'vlm-verify-v1',
+  promptVersion: 'vlm-verify-v2',
   schemaVersion: 'atlas_verify_v1',
   reasoningEffort: 'none',
   maxOutputTokens: 600,

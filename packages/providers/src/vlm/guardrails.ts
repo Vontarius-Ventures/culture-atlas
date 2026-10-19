@@ -52,7 +52,7 @@ import {
  * published is never removed (FAST-02): a stage-2 "unsupported" on it stays
  * an advisory veto.
  */
-export const GUARDRAIL_VERSION = 'guard-v4';
+export const GUARDRAIL_VERSION = 'guard-v5';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -139,7 +139,7 @@ export interface Stage2Guard {
 // ---- rule patterns (§4.2, exact) -------------------------------------------
 
 export const VTEXT_RE =
-  /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration/i;
+  /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration|\blegible\b|transcri|\b\p{L}+-script\b/iu;
 /** The plan's list plus mouth/lips/teeth/grimace (the v2 smoke described "his mouth open mid-gesture"). */
 export const PERSON_OBS_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|grimac\w*|mouth|lips|teeth|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
@@ -451,15 +451,20 @@ const PRODUCT_TYPES: ReadonlySet<string> = new Set(['object', 'style', 'traditio
  *    ("Nissan X-Trail", "London Routemaster");
  *  - fail closed: a fashion or sport object whose leading word no
  *    lexicon knows, followed by a product noun ("Fixturo road bike"). Words
- *    of a place named in the same reading (`knownWords`) are descriptions.
+ *    of a place named in the same reading (`knownWords`) are descriptions;
+ *  - guard-v5, brand residue: an object, style, tradition or work that
+ *    repeats a naming word of a brand-like claim in the same reading
+ *    (`brandResidue`): "Beetle" next to "Volkswagen Beetle" is the same
+ *    model claim without its maker, not a new description.
  */
 export function isBrandLike(
   c: Pick<VlmCandidate, 'name' | 'type'> & { evidence?: VlmEvidence | null; domain?: VlmDomain | null; tag_queries?: readonly string[] },
-  ctx: { knownWords?: ReadonlySet<string> } = {},
+  ctx: { knownWords?: ReadonlySet<string>; brandResidue?: ReadonlySet<string> } = {},
 ): boolean {
   if (c.type === 'brand' || c.evidence === 'logo') return true;
   const tokens = contentTokens(stripParens(c.name));
   if (tokens.some((t) => MAKERS.has(t))) return true;
+  if (PRODUCT_TYPES.has(c.type) && ctx.brandResidue?.size && tokens.some((t) => ctx.brandResidue!.has(t))) return true;
   // A place named with an acronym in capitals is an organisation ("EMT Madrid", the transit operator).
   if (!PRODUCT_TYPES.has(c.type)) return c.type === 'place' && acronymTokens(c.name).length > 0;
   if (tokens.some((t, i) => CONTEXTUAL_MAKERS.has(t) && tokens.some((u, j) => j !== i && CONTEXT_PRODUCTS.has(u)))) return true;
@@ -481,6 +486,28 @@ export function isBrandLike(
       return true;
   }
   return false;
+}
+
+/**
+ * guard-v5: the naming words of the brand-like claims of one reading, without
+ * maker names (a maker already makes a claim brand-like), words any lexicon
+ * knows, words of places the reading names, and short or numeric tokens. A
+ * model or product name left after its maker ("beetle" of "Volkswagen
+ * Beetle") is in here, so the same model claimed again without the maker is
+ * still a brand claim (h02: "Beetle" added at stage 2 next to a held
+ * "Volkswagen Beetle", with no badge legible).
+ */
+export function brandResidue(
+  candidates: readonly (Pick<VlmCandidate, 'name' | 'type'> & { evidence?: VlmEvidence | null; domain?: VlmDomain | null; tag_queries?: readonly string[] })[],
+  knownWords: ReadonlySet<string> = new Set(),
+): Set<string> {
+  const out = new Set<string>();
+  for (const c of candidates) {
+    if (c.type === 'place' || !isBrandLike(c, { knownWords })) continue;
+    for (const t of brandWords(c.name))
+      if (!MAKERS.has(t) && !knownWord(t) && !knownWords.has(t) && headWord(t) && !isModelCode(t)) out.add(t);
+  }
+  return out;
 }
 
 // ---- visible text, observations, title (G-VTEXT, G-PERSON-OBS, G-MEDIUM) ----
@@ -576,6 +603,8 @@ interface ReadingFacts {
   signals: DomainSignals;
   /** Words of the places this reading names: a "London bus" is described by a place, not made by a maker. */
   knownWords: ReadonlySet<string>;
+  /** guard-v5: naming words of this reading's brand-like claims (brandResidue). */
+  brandResidue: ReadonlySet<string>;
 }
 
 /** A candidate that is itself depicted food with real evidence ("Xiaolongbao" on a steamer). */
@@ -609,6 +638,7 @@ function readingFacts(
     headTokens.some((t) => FOOD_EVIDENCE.has(t)) ||
     FOOD_PHRASES.some((p) => hasPhrase(foldText(head), p)) ||
     (stage2 && a.observations.some((o) => o.kind === 'food'));
+  const knownWords = new Set(a.candidates.filter((c) => c.type === 'place').flatMap((c) => contentTokens(c.name)));
   return {
     title: a.title,
     interpretation: a.interpretation,
@@ -620,7 +650,8 @@ function readingFacts(
     candidates: a.candidates,
     texts,
     signals: readingSignals(a, { foodText: foodText || a.candidates.some(depictedFood) }),
-    knownWords: new Set(a.candidates.filter((c) => c.type === 'place').flatMap((c) => contentTokens(c.name))),
+    knownWords,
+    brandResidue: brandResidue(a.candidates, knownWords),
   };
 }
 
@@ -751,7 +782,7 @@ function evaluate(
     }
   }
   // G-BRAND: brands never publish from stage 1 alone.
-  const brandLike = isBrandLike(c, { knownWords: facts.knownWords });
+  const brandLike = isBrandLike(c, { knownWords: facts.knownWords, brandResidue: facts.brandResidue });
   if (brandLike && opts.stage === 1) {
     if (!opts.twoStage) return drop('G-BRAND', 'no_stage_2');
     rules.push('G-BRAND');
@@ -780,6 +811,11 @@ function evaluate(
   }
   if (opts.stage === 2 && opts.addition) {
     if (c.certainty < ADDITION_MIN) return drop('G-ADDITION-FLOOR');
+    // guard-v5: a place the stage-2 reply adds on context alone (no sign read, no landmark
+    // form) is one unconfirmed guess at a district or street ("Mong Kok" for a neon street
+    // with no name legible); nothing after stage 2 can confirm it, so it is dropped (a held
+    // one is dropped as held_at_stage_2 by the caller).
+    if (c.type === 'place' && input.evidence === 'context' && !hold) return drop('G-PLACE', 'context_addition');
   }
   // A generic thing is never a reference, whatever stage 2 would say about it: demote beats hold.
   const action: GuardAction = demote ? 'demote' : hold ? 'hold' : 'publish';
@@ -1135,7 +1171,7 @@ export function guardEnrichment(input: {
       continue;
     }
     const verdict = verdictOf(c);
-    const brandLike = isBrandLike(guarded, { knownWords: facts.knownWords });
+    const brandLike = isBrandLike(guarded, { knownWords: facts.knownWords, brandResidue: facts.brandResidue });
     const person = c.type === 'creator' || guarded.domain === 'people';
     const strong = brandLike || person || ['place', 'work', 'creator'].includes(c.type);
     if (!verdict || verdict === 'unsupported') {
@@ -1212,7 +1248,7 @@ export function guardEnrichment(input: {
         continue;
       }
     }
-    if (isBrandLike(candidate, { knownWords: facts.knownWords })) {
+    if (isBrandLike(candidate, { knownWords: facts.knownWords, brandResidue: facts.brandResidue })) {
       const head = brandHeadToken(candidate.name);
       const own =
         (candidate.evidence === 'read_text' || candidate.evidence === 'logo') &&

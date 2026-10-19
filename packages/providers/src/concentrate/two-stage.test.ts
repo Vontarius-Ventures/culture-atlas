@@ -17,6 +17,7 @@ import {
   VLM_QUICK_SYSTEM_PROMPT,
   VLM_QUICK_SYSTEM_PROMPT_V2,
   VLM_SYSTEM_PROMPT,
+  VLM_READING_VERSIONS,
 } from '../vlm/prompt';
 import { VlmEnrichmentV2, VlmQuickReadV2 } from '../vlm/types';
 import { createModelGateway } from './gateway';
@@ -367,9 +368,19 @@ describe('reading v2 (quality plan §3)', () => {
     expect(sha256(VLM_SYSTEM_PROMPT)).toBe('b62f04a1d1a0b815ed824dc14048f859bf5658cec1cce5bef68c267e0d224a72');
   });
 
-  it('the v2 prompts qualified in the 2026-10-19 Evaluate run are pinned: an edit needs a new promptVersion and re-qualification', () => {
+  it('the v2 prompts are pinned: an edit needs a new promptVersion and re-qualification', () => {
     expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('ae79cce212c1004417d8d3b913b81df365a03ee9189a4fb3a11bbb32e2bc34ef');
-    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('d23612b57176d5e1052ae8a5b3e6fd67c3fd2fdc4c034dc280ee1dff7a62c17c');
+    expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v2');
+    // vlm-enrich-v3 (requalification tune, docs/quality-plan.md §15): was d23612b5… as vlm-enrich-v2.
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('b8740b2b77cfda1794dcc4ff86b264f8168d8d2330c4b42d5eb953cd5f3158de');
+    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v3');
+  });
+
+  it('vlm-enrich-v3 lists prominent text first and transcribes partly hidden words as their visible letters', () => {
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('list the most prominent first: headings, names, signs, badges and decals before list entries');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('leave out a word you cannot read letter for letter');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('transcribe a partly hidden word only as its visible letters');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('at most eight items');
   });
 
   it('both v2 prompts keep the security rules and add the evidence rules', () => {

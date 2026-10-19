@@ -83,8 +83,8 @@ export const DomainConfigSchema = z.object({
   WHILE_WE_LOOK_ENABLED: z.string().optional(),
   /**
    * Photo-role requalification: the independent verifier (vision_verify) runs
-   * only when this is "true"/"1" (default off until the tune-split evaluation
-   * enables it) and the role is qualified; the kill switch
+   * only when this is "true"/"1" (default off; the tune-split evaluation kept
+   * it off, docs/quality-plan.md §15) and the role is qualified; the kill switch
    * analysis_verifier_enabled turns it off.
    */
   ANALYSIS_VERIFIER_ENABLED: z.string().optional(),

@@ -9,6 +9,7 @@ import {
   guardEnrichment,
   guardQuickRead,
   hasMediumWord,
+  brandResidue,
   isBrandLike,
   looksLikePlate,
   sanitizeObservations,
@@ -90,7 +91,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v4');
+    expect(GUARDRAIL_VERSION).toBe('guard-v5');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -131,6 +132,19 @@ describe('G-VTEXT', () => {
     ]);
     expect(kept).toEqual(['NO LITTER', '港区 MINATO CITY', 'Musée du LOUVRE', '"a long quoted motto that the sign really does carry word for word all the way through"']);
     expect(dropped).toHaveLength(5);
+  });
+
+  it('guard-v5: drops text described as (not) legible, as a transcription note or by its script', () => {
+    const { kept, dropped } = sanitizeVisibleText([
+      'Fixture-script museum labels beside the objects (not legible enough to transcribe)',
+      'Small labels, not legible',
+      'transcription unclear',
+      'MUSEUM',
+      'Manuscripts',
+      'Script Fixture Coffee',
+    ]);
+    expect(dropped).toEqual(['Fixture-script museum labels beside the objects (not legible enough to transcribe)', 'Small labels, not legible', 'transcription unclear']);
+    expect(kept).toEqual(['MUSEUM', 'Manuscripts', 'Script Fixture Coffee']);
   });
 
   it('applies to the published reading', () => {
@@ -627,6 +641,24 @@ describe('stage 2: G-VERDICT and G-BRAND-CORROBORATE', () => {
     expect(s2.decisions[0]).toMatchObject({ action: 'drop', rules: ['G-ADDITION-FLOOR'] });
   });
 
+  it('guard-v5: a place added at stage 2 on context alone is dropped; read on a sign or by its landmark form it publishes', () => {
+    const g = quick([]);
+    const add = (over: Partial<VlmQuickCandidate>) => ({
+      ...v2({ name: 'Fixture Kok', type: 'place', certainty: 0.5, domain: 'place', evidence: 'context', ...over }),
+      rationale: 'Dense neon street',
+    });
+    const context = stage2(g, enrichment({ additional_candidates: [add({})] }));
+    expect(context.publishNow).toEqual([]);
+    expect(context.decisions[0]).toMatchObject({ action: 'drop', rules: ['G-PLACE'], note: 'context_addition' });
+    const read = stage2(
+      g,
+      enrichment({ visible_text: ['FIXTURE KOK ROAD'], additional_candidates: [add({ relation: 'depicted', certainty: 0.8, evidence: 'read_text', evidence_text: 'FIXTURE KOK ROAD' })] }),
+    );
+    expect(names(read.publishNow)).toEqual(['Fixture Kok']);
+    const landmark = stage2(g, enrichment({ additional_candidates: [add({ name: 'Fixture Tower', certainty: 0.6, evidence: 'distinctive_form' })] }));
+    expect(names(landmark.publishNow)).toEqual(['Fixture Tower']);
+  });
+
   it('a head token shorter than three letters never corroborates', () => {
     const g = quick([v2({ name: 'HP', type: 'brand', certainty: 0.8 })]);
     const s2 = stage2(g, enrichment({ visible_text: ['HP'], confirmed: [{ name: 'HP', rationale: 'Logo', verdict: 'supported' }] }));
@@ -972,6 +1004,61 @@ describe('guard-v3: a person named at stage 1 waits for a stage-2 transcription'
     expect(notRead.decisions.at(-1)).toMatchObject({ action: 'drop', name: '[withheld]', note: 'not_read_at_stage_2' });
     const read = stage2(court(), enrichment({ visible_text: ['FIXTURE LEBROOK 23'], confirmed: [supported] }));
     expect(read.publishNow.map((c) => [c.name, c.evidence, c.evidence_text])).toEqual([['Fixture Lebrook', 'read_text', 'FIXTURE LEBROOK 23']]);
+  });
+});
+
+describe('guard-v5: brand residue (a model claim repeated without its maker is still a brand claim)', () => {
+  const quickOf = (cands: VlmQuickCandidate[]) =>
+    guardQuickRead(
+      toVlmAnalysis({ title: 'An orange compact car', interpretation: 'A rounded car parked on a street.', candidates: cands, quality: { usable: true, issue: null } }),
+      { twoStage: true },
+    );
+
+  it('brandResidue keeps the naming words of brand-like claims, without makers, known words and places', () => {
+    const residue = brandResidue([
+      { name: 'Volkswagen Fixbug', type: 'object' },
+      { name: 'Lisbon tram', type: 'object' },
+      { name: 'EMT Fixtura', type: 'place' },
+      { name: 'Classic car', type: 'object' },
+    ]);
+    expect([...residue]).toEqual(['fixbug']);
+    expect(isBrandLike({ name: 'Fixbug', type: 'object' })).toBe(false);
+    expect(isBrandLike({ name: 'Fixbug', type: 'object' }, { brandResidue: residue })).toBe(true);
+    expect(isBrandLike({ name: 'Classic car', type: 'object' }, { brandResidue: residue })).toBe(false);
+    // A place is not made brand-like by the residue.
+    expect(isBrandLike({ name: 'Fixbug Street', type: 'place' }, { brandResidue: residue })).toBe(false);
+  });
+
+  it('h02 shape: a stage-2 "Fixbug" next to a held "Volkswagen Fixbug" with no badge read is dropped, not published', () => {
+    const g = quickOf([v2({ name: 'Volkswagen Fixbug', type: 'object', certainty: 0.55, domain: 'vehicle', evidence: 'distinctive_form' })]);
+    expect(names(g.held)).toEqual(['Volkswagen Fixbug']);
+    const add = { ...v2({ name: 'Fixbug', type: 'object', certainty: 0.5, domain: 'vehicle', evidence: 'distinctive_form' }), rationale: 'Rounded body' };
+    const s2 = stage2(
+      g,
+      enrichment({ confirmed: [{ name: 'Volkswagen Fixbug', rationale: 'Shape only', verdict: 'weak' }], additional_candidates: [add] }),
+    );
+    expect(s2.publishNow).toEqual([]);
+    expect(decisionFor(s2.decisions, 'Fixbug')).toMatchObject({ action: 'drop', rules: expect.arrayContaining(['G-BRAND-CORROBORATE']) });
+  });
+
+  it('the same addition publishes when the model name is read in the photo', () => {
+    const g = quickOf([v2({ name: 'Volkswagen Fixbug', type: 'object', certainty: 0.55, domain: 'vehicle', evidence: 'distinctive_form' })]);
+    const add = {
+      ...v2({ name: 'Fixbug', type: 'object', relation: 'depicted', certainty: 0.85, domain: 'vehicle', evidence: 'read_text', evidence_text: 'FIXBUG' }),
+      rationale: 'Badge',
+    };
+    const s2 = stage2(g, enrichment({ visible_text: ['FIXBUG'], confirmed: [{ name: 'Volkswagen Fixbug', rationale: 'Shape', verdict: 'weak' }], additional_candidates: [add] }));
+    expect(names(s2.publishNow)).toEqual(['Fixbug']);
+  });
+
+  it('at stage 1 the residue holds a bare model name next to its make', () => {
+    const g = quickOf([
+      v2({ name: 'Volkswagen Fixbug', type: 'object', certainty: 0.55, domain: 'vehicle', evidence: 'distinctive_form' }),
+      v2({ name: 'Fixbug styling', type: 'style', certainty: 0.7, domain: 'vehicle', evidence: 'distinctive_form', tag_query: 'rounded compact car' }),
+    ]);
+    expect(g.analysis.candidates).toEqual([]);
+    expect(names(g.held)).toEqual(['Volkswagen Fixbug', 'Fixbug styling']);
+    expect(decisionFor(g.decisions, 'Fixbug styling')!.rules).toContain('G-BRAND');
   });
 });
 

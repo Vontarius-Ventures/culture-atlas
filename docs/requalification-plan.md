@@ -68,6 +68,10 @@ Built on branch `rq/decisions`. No provider call was made (0 Concentrate, 0 Qloo
 
 The CI replay (`replay-v1`) passes every replay gate with guard-v4 (two synthetic stage-2-only names now publish text-only), and the unguarded readings still fail M1 (M17).
 
+## Step 3 record (tune split)
+
+Results, rule changes (guard-v5, `vlm-enrich-v3`, `vlm-verify-v2`) and the verifier decision are in [quality-plan §15](quality-plan.md#15-requalification-tune-split-plan-step-3-guard-v5-2026-10-19). In short: the tune split passes every live gate on run 2 under the final rules (run 1 still misses M8 and M9 on model readings); the verifier lowered no forbidden-label count, so it stays off by default and is not qualified in step 5. The freeze commit `9e24243` is recorded in `fixtures/eval/golden-v2/FREEZE.md`; no held-out photo or label was opened.
+
 ## Budget
 
 Concentrate ≤ 300 requests, Qloo ≤ 200, Wikipedia as needed (polite rate). No Elorian.

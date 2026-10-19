@@ -917,3 +917,89 @@ the first composer run failed, see §14.5) and 0 Qloo, all in the ledger
 (package `fix`). Team total: Concentrate 322 logged, at most 323, of 400;
 Qloo 195 of 300. No Elorian.
 
+
+## 15. Requalification tune split (plan step 3, guard-v5, 2026-10-19)
+
+[Requalification plan](requalification-plan.md) step 3. The tune split of
+golden-v2 (28 photos: p01–p15 and h01–h13, the p14 relabel of decision 1
+applied) was read live, two-stage, under thr-v2 and score-v4. No blind
+held-out photo (h14–h29) or label was opened or run: every run used
+`--split tune`, which sha256-checks the 28 tune photos only, and the freeze
+check of `fixtures/eval/golden-v2/FREEZE.md` (freeze commit `9e24243`
+recorded) still holds.
+
+### 15.1 Runs
+
+| Run | What was read | Requests |
+| --- | --- | --- |
+| run 1 | stage 1 (`vlm-quick-v2`), stage 2 (`vlm-enrich-v2`) and the verifier (`vlm-verify-v1`) on its own target selection, all 28 photos | 70 (28 + 28 + 14) |
+| run 2 | stage 1 and stage 2 with `vlm-enrich-v3`, all 28 photos | 56 |
+| verifier on run 2 | `vlm-verify-v2` only, on run 2's recorded readings and the runtime target selection (11 photos with targets) | 11 |
+
+Verifier on and off were scored on the same readings (`pnpm eval:replay
+--mode live --verifier both`), so the comparison measures the verifier and
+not run-to-run variance. Raw outputs and scorecards stay outside git.
+
+### 15.2 Failures found and what changed
+
+| Tune failure | Change | Kind |
+| --- | --- | --- |
+| h02 (run 1): stage 2 added "Beetle" next to the held "Volkswagen Beetle", no badge legible: M1 1, M7 0.90 | **Brand residue** (G-BRAND, guard-v5): the naming words of a reading's brand-like claims (not makers, lexicon words or places) make any object, style, tradition or work repeating them brand-like, so it needs the name read like any brand | guard rule, tests |
+| p05 (run 2): "Persian-script museum labels beside the objects (not legible enough to transcribe)" kept as visible text: M8 1 | **G-VTEXT**: "legible", "transcri…" and "<word>-script" mark a description of text | guard rule, tests |
+| h10 (run 2): "Mong Kok" added at stage 2 at 0.50 on context alone; no street or district name is legible | **G-PLACE, `context_addition`**: a place the stage-2 reply adds on context alone (no sign read, no landmark form) is dropped; a held one is dropped as before | guard rule, tests |
+| h06 (run 1): seven burger lines filled the eight visible-text slots and "PIZZA" was lost: M9 0.885 | **`vlm-enrich-v3`**: list the most prominent text first (headings, names, signs, badges, decals) before list entries and prices | prompt (new promptVersion, pinned hash) |
+| p10 (run 1): "Un minimo 100% electrico" for "Un minibús 100% eléctrico": M8 1 | **`vlm-enrich-v3`**: leave out a word not readable letter for letter; transcribe a partly hidden word only as its visible letters | prompt |
+| p05, p09 (run 1): the verifier answered "yes" to Lustreware and Haussmannian | **`vlm-verify-v2`**: "yes" needs a feature specific to the claim, not one it shares with neighbouring styles; a building or site named on a sign is evidence, and a style it does not have is "no" | verifier prompt, tests |
+
+Every change regenerated the evaluation binding. `GUARDRAIL_VERSION` is
+`guard-v5`.
+
+### 15.3 Results (live gates, tune split)
+
+| Readings | Rules | Result |
+| --- | --- | --- |
+| run 1, as run | guard-v4 | FAIL: M1 1, M7 0.90 (h02), M8 1 (p10), M9 0.885 (p14, h06); M5 0.91, forbidden published 3 |
+| run 1, replayed | guard-v5 final | FAIL: M8 1 (p10), M9 0.885 (p14, h06); M1 0, M7 1, M5 0.91, M2 0.030 |
+| run 2, as run | guard-v5 without the G-VTEXT and context-place rules | FAIL: M8 1 (p05); M9 0.923 |
+| **run 2, replayed** | **guard-v5 final** | **PASS**: M1 0, M2 0.017, M3 0.98, M4 0.17, M5 0.91, M6 0.98, M7 1, M8 0, M9 0.923, M10 0, M11 0, M12 0.12, M13 1, M15 0.87; stage 1 p50 2.3 s / p95 3.2 s, stage 2 p95 5.3 s, 0 incomplete; text-only references 2 |
+
+Under the final rules the recorded readings of the Evaluate phase replay as:
+iteration 1 PASS (M4 0.16, "Grand staircase" is now a clean drop) and
+iteration 2 FAIL only on M9 0.885 (p14). M17 holds (the unguarded run-2
+readings fail M1 with 11).
+
+How to read this. The run-2 pass uses rules written after run 2 was seen,
+which is what the tune split is for; it is not independent evidence. Run 1
+under the same rules still fails M8 and M9 on model readings (a misread word
+on p10, and p14's decals, which neither run transcribed: run 1 read "CADEX",
+run 2 nothing). Run-to-run variance on text reading is therefore close to the
+M8 and M9 gates, and the blind run (step 4) may fail on it. One forbidden
+attribution remains on the tune split in both runs: **Lustreware** on p05
+(stage 2 calls it supported, and no legible label text survives to contest
+it). M2 stays inside its gate (0.017 ≤ 0.05) and M1 is 0.
+
+### 15.4 Verifier decision: off by default
+
+| Readings, verifier prompt | Forbidden published (verifier off) | Forbidden uncontested (verifier on) | M5 / M5 uncontested | Claims checked |
+| --- | --- | --- | --- | --- |
+| run 1, `vlm-verify-v1` | 2 (Lustreware, Haussmannian architecture) | 2 | 0.913 / 0.913 | 19 |
+| run 2, `vlm-verify-v2` | 1 (Lustreware) | 1 | 0.913 / 0.913 | 12 |
+
+The rule (enable only if it lowers the forbidden-label count without
+coverage falling below the gate) is not met: the verifier contested no
+forbidden label in either run. In run 1 it answered "yes" to both wrong
+attributions; in run 2 the remaining one was not a target (stage 2 said
+supported and no legible text conflicts). It also answered "no" to nothing
+correct, so the cost was zero, but so was the gain. This matches §7.6: a
+verifier from the reader's own model family does not catch the reader's
+errors. **`analysis_verifier_enabled` stays false** (the default; the
+comments and `.env.example` record the decision), `vision_verify` is not
+qualified in step 5, and the qualification script keeps refusing it. A
+verifier from a different model family would need its own route and the
+operator's privacy confirmation for it; that is not part of this round.
+
+### 15.5 Spend
+
+This step: 137 Concentrate requests (70 + 56 + 11) of the 140 allowed for
+it, 0 Qloo, 0 Wikipedia, every call in the step's ledger (packages
+`rq-tune-run1`, `rq-tune-run2`, `rq-tune-verify2`). No Elorian.

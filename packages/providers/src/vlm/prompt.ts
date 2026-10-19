@@ -78,7 +78,8 @@ export const VLM_READING_VERSIONS = {
   enrich: { prompt: 'vlm-enrich-v1', schema: 'atlas_enrichment_v1' },
   /** Reading v2 (docs/quality-plan.md §3): domain + evidence, verdicts, evidence-gated brands. */
   quickV2: { prompt: 'vlm-quick-v2', schema: 'atlas_quick_read_v2' },
-  enrichV2: { prompt: 'vlm-enrich-v2', schema: 'atlas_enrichment_v2' },
+  /** Reading v2, stage 2. vlm-enrich-v3 (requalification tune): prominent text first, partly hidden words as their visible letters. */
+  enrichV2: { prompt: 'vlm-enrich-v3', schema: 'atlas_enrichment_v2' },
 } as const;
 
 /** Stage 1 measured as good at 512 px as at 768; stage 2 reads small logos and labels at 768. */
@@ -172,7 +173,7 @@ ${SECURITY_RULES}
 Content rules:
 - Read the subject as if it were a photo.
 - observations: up to five short, concrete, visually verifiable statements (garments, objects, colors, materials, composition, setting, food). Do not guess at what cannot be seen.
-- visible_text: exact transcriptions of legible text only, at most eight items, including small printed words on objects (badges, decals, labels, packaging); never descriptions of text. Copy only letters you can read; never complete or guess a word. Never transcribe licence plates. Set illegible_text_present to true when text is present but cannot be read, otherwise false.
+- visible_text: exact transcriptions of legible text only, at most eight items, including small printed words on objects (badges, decals, labels, packaging); never descriptions of text. When more text is legible than eight items hold, list the most prominent first: headings, names, signs, badges and decals before list entries, prices and repeated lines. Copy only letters you can read; never complete or guess a word: leave out a word you cannot read letter for letter, and transcribe a partly hidden word only as its visible letters. Never transcribe licence plates. Set illegible_text_present to true when text is present but cannot be read, otherwise false.
 - confirmed: one entry per first-reading candidate, using its exact name, with a rationale of at most fifteen words grounded in what is visible, and a verdict: supported (the photo clearly supports it), weak (plausible but not established), or unsupported (the photo does not support it). A brand, maker or model is supported only when its name or logo is legible. Do not add a confirmed entry for the title.
 - additional_candidates: up to four more specific, searchable references the first reading missed, each with a short rationale, and the same fields as the first reading (domain, evidence, evidence_text, tag_query: a taxonomy phrase for a style, tradition or cuisine, otherwise null). Fewer is better than filler.
 ${V2_EVIDENCE_RULES}

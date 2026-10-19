@@ -295,7 +295,7 @@ export async function qualifyProfile(
   // its qualification run is added only if the tune-split evaluation enables it. Until then it stays
   // unqualified (qualificationState requires a golden-v1 eval block), so production never dispatches it.
   if (profile.role === 'vision_verify')
-    throw new Error('vision_verify is not qualified by this script yet: it stays off until the tune-split evaluation enables it (docs/requalification-plan.md).');
+    throw new Error('vision_verify is not qualified by this script yet: the tune-split evaluation kept it off (docs/quality-plan.md §15), so it is not qualified this round.');
   const enrich = profile.role === 'vision_photo_enrich';
   const stage1 = enrich ? opts.stage1Profile : undefined;
   if (enrich) {
