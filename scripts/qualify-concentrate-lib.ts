@@ -221,6 +221,8 @@ export interface QualificationRun {
   dryRun: boolean;
   plannedRequests: number;
   artifact?: QualificationArtifact;
+  /** With `stage1Artifact`: the vision_photo artifact scored on the same run's stage-1 readings. */
+  stage1Artifact?: QualificationArtifact;
   stoppedBy?: string;
 }
 
@@ -243,7 +245,7 @@ export async function qualifyProfile(
     /** vision_video_frame and text roles: the fixture directory. Photo roles use `golden` instead. */
     fixturesDir?: string;
     /**
-     * Photo roles (required): the golden set (fixtures/eval/golden-v1) and the
+     * Photo roles (required): the golden set (fixtures/eval/golden-v2 since requalification) and the
      * directory holding its photos outside git. Every photo of both splits is
      * hash-checked before any request; outputs are scored in memory against
      * the live gates and never written.
@@ -270,6 +272,16 @@ export async function qualifyProfile(
      */
     stage1Profile?: ModelProfile;
     /**
+     * vision_photo_enrich only: also write the stage-1 profile's own artifact
+     * from this run. Every photo's stage-1 call is exactly the call a separate
+     * vision_photo qualification would send (same profile, same bounds, same
+     * golden set), so its readings are scored alone (a stage-1-only run: M15
+     * for coverage, M5 and M9 scoped out, thr-v2) instead of being bought
+     * twice. The stage-1 artifact counts only its own requests, latency and
+     * usage; the enrichment artifact keeps counting both, as before.
+     */
+    stage1Artifact?: boolean;
+    /**
      * Optional call ledger (JSON lines, outside git): every inference request
      * is appended as { ts, package, provider, endpoint, status, ms }, never
      * with its body, key or reply.
@@ -284,6 +296,12 @@ export async function qualifyProfile(
 ): Promise<QualificationRun> {
   const log = opts.log ?? (() => undefined);
   const { profile } = opts;
+  /** Validates an artifact against the schema and writes it to the out dir (mode 600). */
+  const writeArtifact = async (raw: unknown): Promise<QualificationArtifact> => {
+    const a = QualificationArtifactSchema.parse(raw);
+    await writeFile(path.join(opts.outDir, `${a.artifact_id}.json`), JSON.stringify(a, null, 2), { mode: 0o600 });
+    return a;
+  };
   const snapshot = CatalogSnapshotSchema.parse(
     JSON.parse(await readFile(path.join(opts.outDir, CATALOG_SNAPSHOT_FILE), 'utf8')),
   );
@@ -293,7 +311,7 @@ export async function qualifyProfile(
     );
   // The verifier is scored on the two-stage readings it checks (eval:live --roles ...,vision_verify);
   // its qualification run is added only if the tune-split evaluation enables it. Until then it stays
-  // unqualified (qualificationState requires a golden-v1 eval block), so production never dispatches it.
+  // unqualified (qualificationState requires a golden-v2 eval block), so production never dispatches it.
   if (profile.role === 'vision_verify')
     throw new Error('vision_verify is not qualified by this script yet: the tune-split evaluation kept it off (docs/quality-plan.md §15), so it is not qualified this round.');
   const enrich = profile.role === 'vision_photo_enrich';
@@ -308,6 +326,10 @@ export async function qualifyProfile(
   } else if (opts.stage1Profile) {
     throw new Error('A stage-1 profile only applies when qualifying vision_photo_enrich.');
   }
+  if (opts.stage1Artifact && !stage1)
+    throw new Error('A stage-1 artifact is written only when qualifying vision_photo_enrich with its stage-1 profile.');
+  if (opts.stage1Artifact && stage1!.qualificationArtifactId === profile.qualificationArtifactId)
+    throw new Error('The stage-1 and enrichment profiles need different qualificationArtifactId values.');
   const photoRole = PHOTO_ROLES.includes(profile.role);
   const textRole = TEXT_ROLES.includes(profile.role);
   const { thresholds, sha256: thresholdsSha256 } = await loadThresholds(opts.thresholdsFile ?? DEFAULT_THRESHOLDS);
@@ -467,6 +489,9 @@ export async function qualifyProfile(
     : undefined;
   const outcomes: Record<string, number> = {};
   const latencies: number[] = [];
+  // Stage-1 side of an enrichment run (only reported when opts.stage1Artifact is set).
+  const s1 = { outcomes: {} as Record<string, number>, latencies: [] as number[], inputTokens: 0, outputTokens: 0, unknownUsage: 0, sent: 0, passed: 0, recordings: [] as Recording[] };
+  const count1 = (key: string) => (s1.outcomes[key] = (s1.outcomes[key] ?? 0) + 1);
   let inputTokens = 0;
   let outputTokens = 0;
   let unknownUsage = 0;
@@ -525,16 +550,29 @@ export async function qualifyProfile(
             score: { ...verdict, metrics: { t1_schema_valid: 1, ...verdict.metrics } },
           });
         } else if (stage1Runner) {
-          // Stage 1 at its own bounds, then stage 2 on the same photo at the enrichment bounds.
-          const { bytes } = await boundJpegForProfile(await readFile(file.path), profile.image);
+          // Stage 1 at its own bounds, then stage 2 on the same photo at the enrichment bounds,
+          // each bounded from the original photo (as eval:live and a vision_photo qualification do).
+          const original = await readFile(file.path);
+          const { bytes } = await boundJpegForProfile(original, profile.image);
+          const { bytes: quickBytes } = await boundJpegForProfile(original, stage1!.image);
           inStage1 = true;
           sent++;
+          s1.sent++;
           const quick = await new ConcentrateVlm(stage1Runner).analyzeImage(
-            { image: { bytes, mediaType: 'image/jpeg' } },
+            { image: { bytes: quickBytes, mediaType: 'image/jpeg' } },
             { maxRetries: 0, modelIdentity: { ...identity, attemptKey: `${identity.attemptKey}:stage1` } },
           );
           const quickMs = Date.now() - started;
           inStage1 = false;
+          s1.latencies.push(quickMs);
+          if (quick.usage?.inputTokens !== undefined && quick.usage.outputTokens !== undefined) {
+            s1.inputTokens += quick.usage.inputTokens;
+            s1.outputTokens += quick.usage.outputTokens;
+          } else s1.unknownUsage++;
+          count1('complete');
+          s1.passed++;
+          const stage1PhotoId = photoIds.get(file.path);
+          if (stage1PhotoId) s1.recordings.push({ photoId: stage1PhotoId, runId: 'qualification', quick: quick.quick, quickMs });
           // Latency and usage in the artifact are the enrichment call's own.
           started = Date.now();
           const res = await new ConcentrateVlmEnricher(runner).enrichImage(
@@ -582,6 +620,10 @@ export async function qualifyProfile(
         const kind = error instanceof ProviderError ? error.kind : 'local_error';
         const outcome = error instanceof ProviderError && error.status ? `http_${error.status}` : kind;
         count(inStage1 ? `stage1_${outcome}` : outcome);
+        if (inStage1) {
+          count1(outcome);
+          s1.unknownUsage++;
+        }
         if (fixture.kind === 'text') textRows.push({ fixture: fixture.name, outcome: kind === 'timeout' ? 'timeout' : outcome });
         if (error instanceof Error && /Request cap reached/.test(error.message)) {
           stoppedBy = 'request_cap';
@@ -649,7 +691,7 @@ export async function qualifyProfile(
     if (!run.pass) log(`text evaluation: ${run.reasons.join('; ')}`);
   }
   const transportPass = !stoppedBy && failed === 0 && passed >= minimum && passed === total;
-  const artifact = QualificationArtifactSchema.parse({
+  const artifact = await writeArtifact({
     kind: 'concentrate-qualification',
     artifact_id: profile.qualificationArtifactId,
     created_at: (opts.now?.() ?? new Date()).toISOString(),
@@ -688,10 +730,46 @@ export async function qualifyProfile(
         : []),
     ],
   });
-  await writeFile(
-    path.join(opts.outDir, `${profile.qualificationArtifactId}.json`),
-    JSON.stringify(artifact, null, 2),
-    { mode: 0o600 },
-  );
-  return { dryRun: false, plannedRequests, artifact, stoppedBy };
+  let stage1Artifact: QualificationArtifact | undefined;
+  if (opts.stage1Artifact && stage1 && golden && opts.pipeline) {
+    // The stage-1 readings alone, scored exactly as a separate vision_photo qualification scores them.
+    const block = evaluatePhotoRecordings({
+      golden,
+      thresholds,
+      thresholdsSha256,
+      pipeline: opts.pipeline,
+      recordings: s1.recordings,
+      failedCalls: total - s1.recordings.length,
+      codeSha256: codeSha256!,
+    }).block;
+    const minimum1 = QUALIFICATION_MINIMUM_FIXTURES[stage1.role];
+    const transport1 = !stoppedBy && s1.passed === total && s1.passed >= minimum1;
+    stage1Artifact = await writeArtifact({
+      kind: 'concentrate-qualification',
+      artifact_id: stage1.qualificationArtifactId,
+      created_at: (opts.now?.() ?? new Date()).toISOString(),
+      role: stage1.role,
+      model: stage1.model,
+      provider: stage1.provider,
+      profile_hash: profileHash(stage1),
+      catalog_snapshot_at: snapshot.fetched_at,
+      result: transport1 && block.pass ? 'pass' : 'fail',
+      eval: block,
+      requests_sent: s1.sent,
+      spend_cap_micros: opts.spendCapMicros,
+      fixtures: { total, passed: s1.passed, failed: total - s1.passed, outcomes: s1.outcomes },
+      latency_ms: { p50: percentile(s1.latencies, 50), p95: percentile(s1.latencies, 95) },
+      usage: { input_tokens: s1.inputTokens, output_tokens: s1.outputTokens, unknown_usage_attempts: s1.unknownUsage },
+      notes: [
+        'Offline-safe aggregate only: no media, prompts, outputs or credentials are stored.',
+        'Billing is not reconciled here; usage tokens are not dollar charges.',
+        `Reading: ${readingForProfile(stage1)} (prompt ${stage1.promptVersion}, schema ${stage1.schemaVersion}).`,
+        effortNote(stage1),
+        `Scored on the stage-1 calls of the ${profile.role} qualification run ${profile.qualificationArtifactId} (one stage-1 call per golden photo at this profile's bounds); requests_sent, latency and usage are this profile's own.`,
+        ...(stoppedBy ? [`Stopped early: ${stoppedBy}.`] : []),
+        `Evaluation ${block.golden_set} (${block.golden_sha256.slice(0, 12)}): ${block.pass ? 'pass' : 'fail'}; scorer ${block.scorer_version}, guardrails ${block.guardrail_version ?? 'n/a'}, thresholds ${block.thresholds_sha256.slice(0, 12)}. Outputs were scored in memory and not stored.`,
+      ],
+    });
+  }
+  return { dryRun: false, plannedRequests, artifact, ...(stage1Artifact ? { stage1Artifact } : {}), stoppedBy };
 }

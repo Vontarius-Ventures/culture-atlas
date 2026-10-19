@@ -5,7 +5,7 @@
  * qualified (docs/quality-plan.md §7.5): the thresholds file, each golden
  * set's digest, its scorer version and the digest of the code the
  * evaluation measured (guardrails, lexicons, prompts and scorer for the
- * photo set; scorer, schemas and fixture builder for the text set).
+ * photo sets; scorer, schemas and fixture builder for the text set).
  * scripts/eval/binding.test.ts recomputes every value from the repository
  * and fails when this file is out of date. Regenerating it makes every
  * artifact scored on the old inputs stale, so the affected roles drop to
@@ -16,6 +16,11 @@ export const EVAL_BINDING = {
   sets: {
     'golden-v1': {
       golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
+      scorer_version: 'score-v4',
+      code_sha256: '6b227a3c6b025a2d2c8be8db24d8847e07bd287a99ac8d35cd5784be11a02653',
+    },
+    'golden-v2': {
+      golden_sha256: 'e4289b6f9923d1422f6a082f733c7b12d0fa44eba0c4ae3fe594540f5565c7d0',
       scorer_version: 'score-v4',
       code_sha256: '6b227a3c6b025a2d2c8be8db24d8847e07bd287a99ac8d35cd5784be11a02653',
     },

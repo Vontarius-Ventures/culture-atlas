@@ -37,7 +37,7 @@ export function label(id: string, overrides: Partial<PhotoLabel> = {}): PhotoLab
 
 export async function syntheticGolden(ids: readonly string[], prefix = 'ca-golden-'): Promise<{ dir: string; photosDir: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), prefix));
-  const dir = path.join(root, 'golden-v1');
+  const dir = path.join(root, 'golden-v2');
   const photosDir = path.join(root, 'photos');
   await mkdir(path.join(dir, 'labels'), { recursive: true });
   await mkdir(photosDir, { recursive: true });
@@ -63,7 +63,7 @@ export async function syntheticGolden(ids: readonly string[], prefix = 'ca-golde
       },
     });
   }
-  await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ version: 'golden-v1', photos }));
+  await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ version: 'golden-v2', photos }));
   return { dir, photosDir };
 }
 

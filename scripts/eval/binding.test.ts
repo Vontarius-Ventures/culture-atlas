@@ -23,6 +23,9 @@ describe('evaluation binding (qualification gate, quality plan §7.5)', () => {
         'scripts/eval/scorer.ts',
       ]),
     );
+    // The photo roles' set binds the same photo code as golden-v1.
+    expect(BOUND_CODE['golden-v2']).toEqual(BOUND_CODE['golden-v1']);
+    expect(EVAL_BINDING.sets).toHaveProperty('golden-v2');
     expect(BOUND_CODE['text-v1']).toEqual(expect.arrayContaining(['scripts/eval/text-scorer.ts', 'scripts/eval/build-text-fixtures.ts']));
   });
 

@@ -119,6 +119,19 @@ function catalogPages() {
 }
 /** Blind held-out photo ids (h01..): photo roles qualify only with at least 10 of them (quality plan §7.5). */
 const ids = (n: number, prefix = 'h') => Array.from({ length: n }, (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`);
+/** Width of the first base64 JPEG in a request body (SOF marker), to check the bounds a call was sent at. */
+function jpegWidth(text: string): number {
+  const b64 = /data:image\/jpeg;base64,([A-Za-z0-9+/=]+)/.exec(text)?.[1];
+  if (!b64) throw new Error('no JPEG in the request');
+  const bytes = Buffer.from(b64, 'base64');
+  for (let i = 2; i < bytes.length - 9; ) {
+    if (bytes[i] !== 0xff) throw new Error('bad JPEG marker');
+    const marker = bytes[i + 1]!;
+    if (marker >= 0xc0 && marker <= 0xc3) return bytes.readUInt16BE(i + 7);
+    i += 2 + bytes.readUInt16BE(i + 2);
+  }
+  throw new Error('no SOF marker');
+}
 function responses(status = 200, candidate?: string) {
   return vi.fn(async (_url: string, init: RequestInit) => {
     if (status !== 200) return new Response('{"error":{"message":"PRIVATE"}}', { status });
@@ -279,7 +292,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     const fetchImpl = responses();
     const g = await syntheticGolden(ids(10));
     const binding = (await syntheticBinding({ golden: g }))!;
-    const set = binding.sets['golden-v1']!;
+    const set = binding.sets['golden-v2']!;
     const run = async (b?: EvalBindingLike) =>
       realQualifyProfile({
         apiKey: KEY,
@@ -294,9 +307,9 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
         ...(b ? { binding: b } : {}),
       });
     await expect(run({ ...binding, thresholds_sha256: '1'.repeat(64) })).rejects.toThrow('thresholds.json differs');
-    await expect(run({ ...binding, sets: { 'golden-v1': { ...set, golden_sha256: '0'.repeat(64) } } })).rejects.toThrow('golden-v1 differs');
-    await expect(run({ ...binding, sets: { 'golden-v1': { ...set, scorer_version: 'score-v0' } } })).rejects.toThrow('differs from the committed score-v0');
-    await expect(run({ ...binding, sets: { 'golden-v1': { ...set, code_sha256: '2'.repeat(64) } } })).rejects.toThrow('the evaluated code');
+    await expect(run({ ...binding, sets: { 'golden-v2': { ...set, golden_sha256: '0'.repeat(64) } } })).rejects.toThrow('golden-v2 differs');
+    await expect(run({ ...binding, sets: { 'golden-v2': { ...set, scorer_version: 'score-v0' } } })).rejects.toThrow('differs from the committed score-v0');
+    await expect(run({ ...binding, sets: { 'golden-v2': { ...set, code_sha256: '2'.repeat(64) } } })).rejects.toThrow('the evaluated code');
     // The committed binding (the default) does not describe a temp golden set either.
     await expect(run()).rejects.toThrow('not the committed ones');
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -324,7 +337,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v5', scorer_version: 'score-v4', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v2', guardrail_version: 'guard-v5', scorer_version: 'score-v4', holdout_blind: true, pass: true },
     });
     expect(run.artifact!.eval!.metrics).toMatchObject({ holdout_M1: 0, holdout_M3: 1, holdout_M13: 1, failed_calls: 0, holdout_photos: 10, holdout_blind_photos: 10 });
     expect(qualificationState(profile, outDir)).toBe('qualified');
@@ -369,7 +382,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     });
     expect(run.artifact).toMatchObject({ result: 'fail', fixtures: { passed: 10, failed: 0 }, eval: { pass: false } });
     expect(run.artifact!.eval!.metrics.holdout_M2).toBe(1);
-    expect(run.artifact!.notes.some((n) => /Evaluation golden-v1 .*: fail/.test(n))).toBe(true);
+    expect(run.artifact!.notes.some((n) => /Evaluation golden-v2 .*: fail/.test(n))).toBe(true);
     expect(qualificationState(profile, outDir)).toBe('catalog-compatible');
   });
 
@@ -446,13 +459,118 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       requests_sent: 20,
       fixtures: { total: 10, passed: 10, failed: 0 },
       usage: { input_tokens: 16_000, output_tokens: 3000 },
-      eval: { golden_set: 'golden-v1', pass: true },
+      eval: { golden_set: 'golden-v2', pass: true },
     });
     expect(e.artifact!.notes.some((n) => n.startsWith('Stage-1 input from fixture/vision-1 quick read'))).toBe(true);
     expect(qualificationState(enrich, outDir)).toBe('qualified');
     const artifact = await readFile(path.join(outDir, `${enrich.qualificationArtifactId}.json`), 'utf8');
     expect(artifact).not.toContain('Tapered legs');
     expect(artifact).not.toContain(KEY);
+  });
+
+  it('one enrichment run can also write the stage-1 artifact, scored on its stage-1 readings alone', async () => {
+    const quick: ModelProfile = { ...profile, qualificationArtifactId: 'vision-photo-quick-combined' };
+    const bodies: Array<{ text: { format: { name: string } }; input: unknown }> = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      bodies.push(body);
+      return new Response(
+        JSON.stringify({
+          id: 'resp',
+          model: 'fixture/vision-1',
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(reading(body.text.format.name)) }] }],
+          usage: body.text.format.name === quick.schemaVersion ? { input_tokens: 900, output_tokens: 100 } : { input_tokens: 1600, output_tokens: 300 },
+        }),
+      );
+    });
+    const outDir = await preparedOutDir();
+    const g = await syntheticGolden(ids(10));
+    const common = {
+      apiKey: KEY,
+      outDir,
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
+      spendCapMicros: 2_000_000,
+      fetch: fetchImpl as unknown as typeof fetch,
+    };
+    // Only with an enrichment run and its stage-1 profile, and never onto the same artifact file.
+    await expect(qualifyProfile({ ...common, profile: quick, stage1Artifact: true, maxRequests: 30, confirmPaidRequests: false })).rejects.toThrow('stage-1 artifact');
+    await expect(
+      qualifyProfile({ ...common, profile: enrich, stage1Profile: { ...quick, qualificationArtifactId: enrich.qualificationArtifactId }, stage1Artifact: true, maxRequests: 30, confirmPaidRequests: false }),
+    ).rejects.toThrow('different qualificationArtifactId');
+    // The plan is the enrichment run's: two requests per photo, nothing bought twice.
+    await expect(
+      qualifyProfile({ ...common, profile: enrich, stage1Profile: quick, stage1Artifact: true, maxRequests: 30, confirmPaidRequests: false }),
+    ).resolves.toEqual({ dryRun: true, plannedRequests: 20 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    const run = await qualifyProfile({ ...common, profile: enrich, stage1Profile: quick, stage1Artifact: true, maxRequests: 20, confirmPaidRequests: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(20);
+    // Each stage is bounded from the original photo at its own profile's bounds (640 px synthetic photos).
+    const widths = bodies.map((b) => ({ schema: b.text.format.name, width: jpegWidth(JSON.stringify(b.input)) }));
+    expect(widths.filter((w) => w.schema === quick.schemaVersion).every((w) => w.width === quick.image.maxDimension)).toBe(true);
+    expect(widths.filter((w) => w.schema === enrich.schemaVersion).every((w) => w.width === 640)).toBe(true);
+    expect(run.artifact).toMatchObject({
+      result: 'pass',
+      role: 'vision_photo_enrich',
+      requests_sent: 20,
+      usage: { input_tokens: 16_000, output_tokens: 3000 },
+      eval: { golden_set: 'golden-v2', pass: true },
+    });
+    expect(run.stage1Artifact).toMatchObject({
+      result: 'pass',
+      role: 'vision_photo',
+      artifact_id: quick.qualificationArtifactId,
+      profile_hash: profileHash(quick),
+      requests_sent: 10,
+      fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
+      usage: { input_tokens: 9000, output_tokens: 1000, unknown_usage_attempts: 0 },
+      eval: { golden_set: 'golden-v2', guardrail_version: 'guard-v5', holdout_blind: true, pass: true },
+    });
+    // Scored as a stage-1-only run: the same block a separate vision_photo qualification would carry.
+    expect(run.stage1Artifact!.eval!.metrics).toMatchObject({ holdout_M13: 1, failed_calls: 0, holdout_photos: 10 });
+    expect(run.artifact!.eval!.metrics).toHaveProperty('holdout_M14_enrich_p95');
+    expect(run.stage1Artifact!.eval!.metrics).not.toHaveProperty('holdout_M14_enrich_p95');
+    expect(run.stage1Artifact!.notes.some((n) => n.includes(`qualification run ${enrich.qualificationArtifactId}`))).toBe(true);
+    expect(qualificationState(quick, outDir)).toBe('qualified');
+    expect(qualificationState(enrich, outDir)).toBe('qualified');
+    const file = await readFile(path.join(outDir, `${quick.qualificationArtifactId}.json`), 'utf8');
+    expect(file).not.toContain('Mid-century modern');
+    expect(file).not.toContain(KEY);
+    expect((await stat(path.join(outDir, `${quick.qualificationArtifactId}.json`))).mode & 0o077).toBe(0);
+  });
+
+  it('a stage-1 call that fails fails the stage-1 artifact as well as the enrichment one', async () => {
+    const quick: ModelProfile = { ...profile, qualificationArtifactId: 'vision-photo-quick-combined-fail' };
+    let calls = 0;
+    const ok = responses();
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      calls++;
+      // The third photo's stage-1 call returns a reading that fails its schema.
+      if (calls === 5)
+        return new Response(JSON.stringify({ id: 'r', model: 'fixture/vision-1', status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: '{"title":1}' }] }] }));
+      return ok(url, init);
+    });
+    const g = await syntheticGolden(ids(10));
+    const outDir = await preparedOutDir();
+    const run = await qualifyProfile({
+      apiKey: KEY,
+      outDir,
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
+      spendCapMicros: 2_000_000,
+      fetch: fetchImpl as unknown as typeof fetch,
+      profile: enrich,
+      stage1Profile: quick,
+      stage1Artifact: true,
+      maxRequests: 20,
+      confirmPaidRequests: true,
+    });
+    expect(run.stage1Artifact).toMatchObject({ result: 'fail', requests_sent: 10, fixtures: { passed: 9, failed: 1 }, eval: { pass: false } });
+    expect(run.stage1Artifact!.eval!.metrics.failed_calls).toBe(1);
+    expect(run.artifact).toMatchObject({ result: 'fail' });
+    expect(qualificationState(quick, outDir)).toBe('catalog-compatible');
   });
 
   it('stage 2 is asked about exactly what production sends: the guarded stage-1 names, never a dropped claim', async () => {

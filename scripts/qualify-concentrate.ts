@@ -9,7 +9,7 @@
  *   #    to the snapshot's fetched_at. Dry run (hash-checks the golden photos,
  *   #    prints the plan, sends nothing):
  *   pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
- *     --golden fixtures/eval/golden-v1 --photos /secure/golden-photos \
+ *     --golden fixtures/eval/golden-v2 --photos /secure/golden-photos \
  *     --out-dir /secure/concentrate-qualification --max-requests 30 --spend-cap-usd 2
  *
  *   # Photo roles qualify only on the golden set (both splits, sha256-pinned),
@@ -29,6 +29,9 @@
  *   # photo as its input, so it needs both profiles in the file and twice the
  *   # requests. A profile's reasoningEffort is sent as reasoning.effort and is
  *   # bound into the artifact through the profile hash; without it nothing is sent.
+ *   # --with-stage1-artifact (vision_photo_enrich only) also writes the vision_photo
+ *   # artifact, scored on the same run's stage-1 readings alone, so the stage-1
+ *   # calls are not bought twice (docs/concentrate.md, "Qualification").
  *
  * Key: CONCENTRATE_API_KEY_FILE (preferred; must be chmod 600) or CONCENTRATE_API_KEY.
  * The key is never printed or written. The artifact holds aggregates only; copy
@@ -119,6 +122,7 @@ const run = await qualifyProfile({
   spendCapMicros: Math.floor(spendCapUsd * 1_000_000),
   confirmPaidRequests: flag('confirm-paid-requests'),
   stage1Profile,
+  stage1Artifact: flag('with-stage1-artifact'),
   ledgerFile: arg('ledger'),
   ledgerPackage: arg('package'),
   log,
@@ -133,5 +137,12 @@ if (run.dryRun) {
     `${a.result.toUpperCase()}: ${a.fixtures.passed}/${a.fixtures.total} fixtures, ${a.requests_sent} request(s), outcomes ${JSON.stringify(a.fixtures.outcomes)}`,
   );
   log(`artifact written: ${a.artifact_id}.json (profile hash ${a.profile_hash.slice(0, 12)}...)`);
-  process.exit(a.result === 'pass' ? 0 : 1);
+  const s1 = run.stage1Artifact;
+  if (s1) {
+    log(
+      `stage 1 (${s1.role}) ${s1.result.toUpperCase()}: ${s1.fixtures.passed}/${s1.fixtures.total} fixtures, ${s1.requests_sent} request(s), outcomes ${JSON.stringify(s1.fixtures.outcomes)}`,
+    );
+    log(`artifact written: ${s1.artifact_id}.json (profile hash ${s1.profile_hash.slice(0, 12)}...)`);
+  }
+  process.exit(a.result === 'pass' && (!s1 || s1.result === 'pass') ? 0 : 1);
 }

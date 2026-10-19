@@ -19,20 +19,28 @@ import { TEXT_SCORER_VERSION } from './text-scorer';
  */
 
 /** Source files whose behaviour an evaluation measures, per golden set (paths from the repository root). */
+/** The photo reading code an evaluation on a photo golden set measures. */
+const PHOTO_CODE: readonly string[] = [
+  'packages/providers/src/vlm/guardrails.ts',
+  'packages/providers/src/vlm/lexicons.ts',
+  'packages/providers/src/vlm/types.ts',
+  'packages/providers/src/vlm/prompt.ts',
+  // The verifier's target selection, outcome rules and prompt (vision_verify is a photo role).
+  'packages/providers/src/vlm/verify.ts',
+  'packages/providers/src/concentrate/providers.ts',
+  'scripts/eval/scorer.ts',
+  'scripts/eval/labels.ts',
+  'scripts/eval/pipeline.ts',
+  'scripts/eval/golden-photos.ts',
+];
+
+/** Photo golden sets in the binding: golden-v1 (replay-v1, earlier artifacts) and golden-v2 (the photo roles). */
+export const PHOTO_GOLDEN_SETS = ['golden-v1', 'golden-v2'] as const;
+
 export const BOUND_CODE: Record<string, readonly string[]> = {
-  'golden-v1': [
-    'packages/providers/src/vlm/guardrails.ts',
-    'packages/providers/src/vlm/lexicons.ts',
-    'packages/providers/src/vlm/types.ts',
-    'packages/providers/src/vlm/prompt.ts',
-    // The verifier's target selection, outcome rules and prompt (vision_verify is a golden-v1 role).
-    'packages/providers/src/vlm/verify.ts',
-    'packages/providers/src/concentrate/providers.ts',
-    'scripts/eval/scorer.ts',
-    'scripts/eval/labels.ts',
-    'scripts/eval/pipeline.ts',
-    'scripts/eval/golden-photos.ts',
-  ],
+  'golden-v1': PHOTO_CODE,
+  // The requalification set (docs/requalification-plan.md): the photo roles qualify only on it.
+  'golden-v2': PHOTO_CODE,
   'text-v1': [
     'scripts/eval/text-scorer.ts',
     'scripts/eval/text-schemas.ts',
@@ -61,16 +69,21 @@ export async function codeDigest(root: string, files: readonly string[]): Promis
 }
 
 export async function computeEvalBinding(root: string): Promise<EvalBinding> {
-  const golden = await loadGoldenSet(path.join(root, 'fixtures/eval/golden-v1'));
   const text = JSON.parse(await readFile(path.join(root, 'fixtures/eval/text-v1/manifest.json'), 'utf8')) as { golden_set: string; golden_sha256: string };
+  const sets: EvalBinding['sets'] = {};
+  for (const name of PHOTO_GOLDEN_SETS) {
+    const golden = await loadGoldenSet(path.join(root, 'fixtures/eval', name));
+    if (golden.manifest.version !== name) throw new Error(`fixtures/eval/${name} declares version ${golden.manifest.version}.`);
+    sets[name] = {
+      golden_sha256: goldenDigest(golden),
+      scorer_version: SCORER_VERSION,
+      code_sha256: await codeDigest(root, BOUND_CODE[name]!),
+    };
+  }
   return {
     thresholds_sha256: sha256Hex(await readFile(path.join(root, 'fixtures/eval/thresholds.json'))),
     sets: {
-      [golden.manifest.version]: {
-        golden_sha256: goldenDigest(golden),
-        scorer_version: SCORER_VERSION,
-        code_sha256: await codeDigest(root, BOUND_CODE[golden.manifest.version]!),
-      },
+      ...sets,
       [text.golden_set]: {
         golden_sha256: text.golden_sha256,
         scorer_version: TEXT_SCORER_VERSION,
@@ -96,7 +109,7 @@ export function bindingSource(b: EvalBinding): string {
  * qualified (docs/quality-plan.md §7.5): the thresholds file, each golden
  * set's digest, its scorer version and the digest of the code the
  * evaluation measured (guardrails, lexicons, prompts and scorer for the
- * photo set; scorer, schemas and fixture builder for the text set).
+ * photo sets; scorer, schemas and fixture builder for the text set).
  * scripts/eval/binding.test.ts recomputes every value from the repository
  * and fails when this file is out of date. Regenerating it makes every
  * artifact scored on the old inputs stale, so the affected roles drop to

@@ -41,7 +41,7 @@ const snapshot = {
 /** A passing aggregate eval block on the role's required golden set (docs/quality-plan.md §7.5). */
 function evalBlock(role: QualificationArtifact['role'], overrides: Partial<EvalBlock> = {}): EvalBlock {
   const photo = role === 'vision_photo' || role === 'vision_photo_enrich' || role === 'vision_verify';
-  const set = REQUIRED_GOLDEN_SET[role] ?? 'golden-v1';
+  const set = REQUIRED_GOLDEN_SET[role] ?? 'golden-v2';
   // Scored on exactly the committed inputs (EVAL_BINDING), as a fresh qualification would be.
   const bound = EVAL_BINDING.sets[set as keyof typeof EVAL_BINDING.sets];
   return {
@@ -210,7 +210,7 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
 });
 
 describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
-  it('photo roles need a passing golden-v1 evaluation with the current guardrail version', async () => {
+  it('photo roles need a passing golden-v2 evaluation with the current guardrail version', async () => {
     // The verifier (vision_verify) is gated exactly like the photo roles it checks.
     for (const role of ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const) {
       expect(evalGateFailure(role, undefined)).toBe('missing_eval');
@@ -218,6 +218,9 @@ describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
       expect(evalGateFailure(role, evalBlock(role, { guardrail_version: 'guard-v0' }))).toBe('stale_guardrail_version');
       expect(evalGateFailure(role, evalBlock(role, { guardrail_version: null }))).toBe('stale_guardrail_version');
       expect(evalGateFailure(role, evalBlock(role, { golden_set: 'text-v1' }))).toBe('wrong_golden_set');
+      // An artifact scored on golden-v1 (whose held-out split was used for tuning) no longer qualifies.
+      expect(REQUIRED_GOLDEN_SET[role]).toBe('golden-v2');
+      expect(evalGateFailure(role, evalBlock(role, { golden_set: 'golden-v1' }))).toBe('wrong_golden_set');
       expect(evalGateFailure(role, evalBlock(role, { pass: false }))).toBe('eval_failed');
     }
     const d = await dir();
