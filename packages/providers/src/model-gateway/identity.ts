@@ -11,6 +11,7 @@ import type {
   VlmProvider,
   VlmResult,
 } from '../vlm/types';
+import type { VlmVerifier, VlmVerifyInput, VlmVerifyResult } from '../vlm/verify';
 import type { ModelIdentity } from './types';
 
 /**
@@ -74,6 +75,22 @@ class BoundVlmEnricher implements VlmEnricher {
   }
 }
 
+class BoundVlmVerifier implements VlmVerifier {
+  constructor(
+    private readonly inner: VlmVerifier,
+    private readonly next: NextIdentity,
+  ) {}
+  get id() {
+    return this.inner.id;
+  }
+  capability() {
+    return this.inner.capability();
+  }
+  verifyImage(input: VlmVerifyInput, options?: CallOptions): Promise<VlmVerifyResult> {
+    return this.inner.verifyImage(input, withIdentity(options, this.next, 'vlm_verify'));
+  }
+}
+
 class BoundText implements TextModelProvider {
   constructor(
     private readonly inner: TextModelProvider,
@@ -117,6 +134,7 @@ export function bindModelIdentity(
     config: registry.config,
     vlm: new BoundVlm(registry.vlm, next),
     vlmEnrich: new BoundVlmEnricher(registry.vlmEnrich, next),
+    vlmVerify: new BoundVlmVerifier(registry.vlmVerify, next),
     text: new BoundText(registry.text, next),
     composer: new BoundText(registry.composer, next),
     research,

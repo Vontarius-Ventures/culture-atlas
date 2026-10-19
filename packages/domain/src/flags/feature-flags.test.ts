@@ -42,11 +42,12 @@ function inputs(over: Partial<FeatureFlagInputs> = {}): FeatureFlagInputs {
       budgetAvailable: true,
       providerReady: true,
       enrichReady: true,
+      verifyReady: true,
     },
     agentApiConfigured: true,
     sharingConfigured: true,
     onboarding: { requiredConfigured: true, seedConfigured: true, whileWeLookConfigured: true },
-    optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: false },
+    optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: false, analysisVerifier: false },
     ...over,
   };
 }
@@ -131,13 +132,13 @@ describe('evaluateFeatureFlags', () => {
     expect(off.flags.agent_remote_capture_enabled).toBe(false);
     const on = evaluateFeatureFlags(
       inputs({
-        optIn: { automaticAnalysis: true, nativeVideoModelInput: true, agentRemoteCapture: true },
+        optIn: { automaticAnalysis: true, nativeVideoModelInput: true, agentRemoteCapture: true, analysisVerifier: false },
       }),
     );
     expect(on.flags.automatic_analysis && on.flags.agent_remote_capture_enabled).toBe(true);
     const noAnalysis = evaluateFeatureFlags(
       inputs({
-        optIn: { automaticAnalysis: true, nativeVideoModelInput: true, agentRemoteCapture: false },
+        optIn: { automaticAnalysis: true, nativeVideoModelInput: true, agentRemoteCapture: false, analysisVerifier: false },
         analysis: { ...inputs().analysis, budgetAvailable: false },
       }),
     );
@@ -188,6 +189,24 @@ describe('amendment 2.2 flags', () => {
     const killed = evaluateFeatureFlags(inputs({ killed: new Set(['fast_analysis_two_stage']) }));
     expect(killed.flags.fast_analysis_two_stage).toBe(false);
     expect(killed.flags.concentrate_analysis_enabled).toBe(true);
+  });
+
+  it('the verifier is off by default and needs the opt-in, the two-stage reading and a ready vision_verify profile', () => {
+    expect(FEATURE_FLAG_DEFAULTS.analysis_verifier_enabled).toBe(false);
+    expect(KILLABLE_FLAGS).toContain('analysis_verifier_enabled');
+    const off = evaluateFeatureFlags(inputs());
+    expect(off.flags.analysis_verifier_enabled).toBe(false);
+    expect(off.reasons.analysis_verifier_enabled).toEqual(['not_enabled']);
+    const optIn = { ...inputs().optIn, analysisVerifier: true };
+    expect(evaluateFeatureFlags(inputs({ optIn })).flags.analysis_verifier_enabled).toBe(true);
+    const noModel = evaluateFeatureFlags(inputs({ optIn, analysis: { ...inputs().analysis, verifyReady: false } }));
+    expect(noModel.reasons.analysis_verifier_enabled).toEqual(['model_unqualified']);
+    const noTwoStage = evaluateFeatureFlags(inputs({ optIn, analysis: { ...inputs().analysis, enrichReady: false } }));
+    expect(noTwoStage.reasons.analysis_verifier_enabled).toEqual(['two_stage_unavailable']);
+    // A kill turns only the verifier off; killing two-stage reading turns it off too.
+    const killed = evaluateFeatureFlags(inputs({ optIn, killed: new Set(['analysis_verifier_enabled']) }));
+    expect([killed.flags.analysis_verifier_enabled, killed.flags.fast_analysis_two_stage]).toEqual([false, true]);
+    expect(evaluateFeatureFlags(inputs({ optIn, killed: new Set(['fast_analysis_two_stage']) })).flags.analysis_verifier_enabled).toBe(false);
   });
 
   it('onboarding, seed and While-we-look turn off by env or kill, independently', () => {
@@ -419,7 +438,7 @@ describe('service-enforced flags', () => {
               killed,
               agentApiConfigured: api !== 'false',
               sharingConfigured: sharing !== 'false',
-              optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: remote === 'true' },
+              optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: remote === 'true', analysisVerifier: false },
               onboarding: {
                 requiredConfigured: o.required !== 'false',
                 seedConfigured: o.seed !== 'false',

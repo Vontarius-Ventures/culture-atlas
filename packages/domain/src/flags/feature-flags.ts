@@ -38,6 +38,9 @@ export const FEATURE_FLAG_DEFAULTS = {
   taste_seed_enabled: true,
   fast_analysis_two_stage: false,
   while_we_look_enabled: true,
+  // Photo-role requalification (docs/requalification-plan.md): the independent
+  // verifier stays off until the tune-split evaluation decides it.
+  analysis_verifier_enabled: false,
 } as const;
 
 export type FeatureFlagName = Exclude<keyof typeof FEATURE_FLAG_DEFAULTS, 'meta_glasses_label'>;
@@ -63,6 +66,7 @@ export const KILLABLE_FLAGS = [
   'taste_seed_enabled',
   'fast_analysis_two_stage',
   'while_we_look_enabled',
+  'analysis_verifier_enabled',
 ] as const satisfies readonly FeatureFlagName[];
 export type KillableFlag = (typeof KILLABLE_FLAGS)[number];
 export const isKillableFlag = (value: string): value is KillableFlag =>
@@ -94,6 +98,8 @@ export interface FeatureFlagInputs {
     providerReady: boolean;
     /** A qualified, ready vision_photo_enrich profile (stage-2 enrichment). */
     enrichReady: boolean;
+    /** A qualified, ready vision_verify profile (the independent verifier). */
+    verifyReady: boolean;
   };
   agentApiConfigured: boolean;
   sharingConfigured: boolean;
@@ -111,6 +117,8 @@ export interface FeatureFlagInputs {
     automaticAnalysis: boolean;
     nativeVideoModelInput: boolean;
     agentRemoteCapture: boolean;
+    /** ANALYSIS_VERIFIER_ENABLED: set by the operator only after the tune-split evaluation enables the verifier. */
+    analysisVerifier: boolean;
   };
 }
 
@@ -204,7 +212,15 @@ export function evaluateFeatureFlags(i: FeatureFlagInputs): FeatureFlagEvaluatio
     while_we_look_enabled: gate('while_we_look_enabled', [
       [i.onboarding.whileWeLookConfigured, 'not_enabled'],
     ]),
+    analysis_verifier_enabled: false,
   };
+  // The verifier runs only after a stage 2, so it needs the two-stage reading,
+  // a qualified, ready vision_verify profile and the operator's opt-in.
+  flags.analysis_verifier_enabled = gate('analysis_verifier_enabled', [
+    [i.optIn.analysisVerifier, 'not_enabled'],
+    [flags.fast_analysis_two_stage, 'two_stage_unavailable'],
+    [i.analysis.verifyReady, 'model_unqualified'],
+  ]);
   // Remote capture is an agent API operation: a killed or unconfigured agent
   // API turns it off too (the phone then cancels queued commands on claim).
   flags.agent_remote_capture_enabled = gate('agent_remote_capture_enabled', [
@@ -281,6 +297,8 @@ export interface AnalysisReadiness {
   providerReady: boolean;
   /** Stage-2 enrichment role is qualified and ready (absent: not ready). */
   enrichReady?: boolean;
+  /** Verifier role (vision_verify) is qualified and ready (absent: not ready). */
+  verifyReady?: boolean;
 }
 
 /**
@@ -390,6 +408,7 @@ export async function resolveFeatureFlags(
       // Elorian is never used for analysis stages (amendment 2.2), so only a
       // ready Concentrate enrichment profile counts here.
       enrichReady: analysisReadiness.enrichReady === true,
+      verifyReady: analysisReadiness.verifyReady === true,
     },
     agentApiConfigured: notOff(env.AGENT_API_ENABLED),
     sharingConfigured: notOff(env.COLLECTION_SHARING_ENABLED),
@@ -402,6 +421,7 @@ export async function resolveFeatureFlags(
       automaticAnalysis: on(env.AUTOMATIC_ANALYSIS_ENABLED),
       nativeVideoModelInput: on(env.NATIVE_VIDEO_MODEL_INPUT_ENABLED),
       agentRemoteCapture: on(env.AGENT_REMOTE_CAPTURE_ENABLED),
+      analysisVerifier: on(env.ANALYSIS_VERIFIER_ENABLED),
     },
   });
 }

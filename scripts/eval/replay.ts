@@ -54,6 +54,9 @@ const RecordingFileSchema = z
     enrichment: z.unknown().optional(),
     quick_ms: z.number().nonnegative().optional(),
     enrich_ms: z.number().nonnegative().optional(),
+    /** The verifier's reply (vision_verify) when eval:live ran it. */
+    verification: z.unknown().optional(),
+    verify_ms: z.number().nonnegative().optional(),
   })
   .strict();
 
@@ -75,6 +78,7 @@ export async function loadReplayFixtures(dir: string): Promise<{ manifest: Repla
       enrichment: body.enrichment,
       quickMs: body.quick_ms,
       enrichMs: body.enrich_ms,
+      ...(body.verification !== undefined ? { verification: body.verification, verifyMs: body.verify_ms } : {}),
       gate: r.gate,
       shape: r.shape,
       covers: r.covers,
@@ -144,7 +148,7 @@ export function runReplay(
   const runs: ScoredRun[] = [];
   const decisions: Record<string, GuardDecisionLike[]> = {};
   for (const rec of recordings) {
-    const { decisions: d, finalCandidates: _f, ...run } = pipeline.run(rec);
+    const { decisions: d, finalCandidates: _f, verifyTargets: _t, ...run } = pipeline.run(rec);
     runs.push(run);
     decisions[`${rec.photoId}/${rec.runId}`] = d;
   }

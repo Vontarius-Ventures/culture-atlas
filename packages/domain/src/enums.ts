@@ -167,8 +167,12 @@ export const LIMITS = {
   vlmCandidatesToResolve: 5,
   /** Concurrent Qloo resolve requests per analysis (the hackathon key throttles bursts). */
   qlooResolveConcurrency: 3,
-  /** Model calls one photo reading may take: stage-1 quick read + stage-2 enrichment. */
-  visionCallsPerAnalysis: 2,
+  /**
+   * Model calls one photo reading may take: stage-1 quick read + stage-2
+   * enrichment + the background verifier (vision_verify, off by default).
+   * The verifier's call is reserved separately and only when it is enabled.
+   */
+  visionCallsPerAnalysis: 3,
   anchorsMax: 5,
   researchedReferencesMax: 5,
   qlooRequestsPerJob: 12,

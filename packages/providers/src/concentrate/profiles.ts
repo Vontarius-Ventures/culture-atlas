@@ -14,6 +14,8 @@ export const MODEL_ROLE_VALUES = [
   'composer',
   /** Stage-2 background enrichment of a photo (spec amendment 2.2). */
   'vision_photo_enrich',
+  /** Independent background verifier after stage 2 (docs/requalification-plan.md); off by default. */
+  'vision_verify',
 ] as const satisfies readonly ModelRole[];
 
 /**
@@ -138,6 +140,8 @@ export type CatalogSnapshot = z.infer<typeof CatalogSnapshotSchema>;
 export const REQUIRED_GOLDEN_SET: Partial<Record<ModelRole, string>> = {
   vision_photo: 'golden-v1',
   vision_photo_enrich: 'golden-v1',
+  // The verifier is a photo role: it qualifies only on the same golden set, the same binding and a blind held-out split.
+  vision_verify: 'golden-v1',
   research_text: 'text-v1',
   composer: 'text-v1',
 };
@@ -149,7 +153,7 @@ export const REQUIRED_GOLDEN_SET: Partial<Record<ModelRole, string>> = {
  */
 export const REQUIRED_GUARDRAIL_VERSION: string = GUARDRAIL_VERSION;
 
-const PHOTO_EVAL_ROLES: readonly ModelRole[] = ['vision_photo', 'vision_photo_enrich'];
+const PHOTO_EVAL_ROLES: readonly ModelRole[] = ['vision_photo', 'vision_photo_enrich', 'vision_verify'];
 
 /**
  * Aggregate evaluation evidence bound into an artifact: versions, hashes and
@@ -265,6 +269,8 @@ export const QUALIFICATION_MINIMUM_FIXTURES: Record<ModelRole, number> = {
   composer: 3,
   // Amendment 2.2: both photo stages qualify on >=10 real, owned photos.
   vision_photo_enrich: 10,
+  // The verifier is held to the photo roles' bar.
+  vision_verify: 10,
 };
 
 function findString(value: unknown, needle: string): boolean {

@@ -13,7 +13,7 @@ export { canonicalTokens } from './text';
  * doubt becomes a reference under the candidate's own name, never a
  * look-alike's name. No I/O; every decision carries a rule id and a reason.
  */
-export const GROUNDING_VERSION = 'ground-v3';
+export const GROUNDING_VERSION = 'ground-v4';
 
 export type GroundingRule = 'Q-TYPE' | 'Q-TAGTYPES' | 'Q-NAME' | 'Q-SUBSET' | 'Q-PLACE' | 'Q-EVIDENCE' | 'Q-DOUBT';
 
@@ -37,6 +37,11 @@ export interface GuardedCandidate {
   corroborated?: boolean;
   /** Named by the user in a correction: the user is the evidence. */
   userSelected?: boolean;
+  /**
+   * A text-only reference (guardrails G-TEXT-ONLY, requalification decision
+   * 2): a name read only in the stage-2 reply. Never searched in Qloo.
+   */
+  text_only?: boolean | null;
 }
 
 export type LookupPlan =
@@ -163,6 +168,8 @@ export function planLookup(c: GuardedCandidate): LookupPlan {
   const user = c.userSelected === true;
   const name = c.name.trim();
   if (!name) return { kind: 'none', reason: 'empty_name' };
+  // ground-v4: a text-only reference is shown with the text it was read from and nothing else.
+  if (c.text_only === true && !user) return { kind: 'none', reason: 'text_only_reference' };
   const textEvidence = c.evidence === 'read_text';
   if (!user && (mediumWord(name, c.domain) || mediumWord(tagQueryOf(c), c.domain)) && !((c.type === 'work' || c.type === 'creator') && textEvidence)) {
     return { kind: 'none', reason: 'medium_word' };
@@ -267,6 +274,32 @@ function domainEntityType(c: GuardedCandidate, plan: Extract<LookupPlan, { kind:
   return wanted && plan.types.includes(wanted) ? wanted : null;
 }
 
+/** Small words an acronym skips ("Museum of Modern Art" -> MOMA would need "of"; we never count it). */
+const ACRONYM_SKIP: ReadonlySet<string> = new Set(['of', 'the', 'and', 'for', 'de', 'du', 'des', 'la', 'le', 'les', 'el', 'a', 'an']);
+
+/**
+ * The searched brand word as an acronym, when the candidate's own name writes
+ * it in capitals (2 to 5 letters: "NBA", "EMT"), else null. Lower-case or
+ * mixed-case words never are ("Fila" is a name, not F.I.L.A.).
+ */
+function brandAcronym(c: GuardedCandidate, query: string): string | null {
+  const q = query.trim().toLowerCase();
+  if (!/^[a-z]{2,5}$/.test(q)) return null;
+  const written = c.name.split(/[^\p{L}\p{N}]+/u).find((w) => w.toLowerCase() === q);
+  return written && /^\p{Lu}{2,5}$/u.test(written) ? q : null;
+}
+
+/** First letters of a multi-word name's words, small words skipped ("National Basketball Association" -> "nba"); null for one word. */
+function initialsOf(name: string): string | null {
+  const words = name
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w && !ACRONYM_SKIP.has(w));
+  return words.length >= 2 && words.every((w) => /^[a-z]/.test(w)) ? words.map((w) => w[0]).join('') : null;
+}
+
 function acceptEntity(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'search' }>, results: readonly QlooEntity[]): AcceptDecision {
   if (results.length === 0) return { match: null, rule: 'Q-NAME', reason: 'no_results' };
   const anyType = plan.types.length === 0;
@@ -280,6 +313,14 @@ function acceptEntity(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'se
   const names = (e: QlooEntity) => (isPlace ? [e.name, ...akaNames(e)] : [e.name]);
   const exact = typed.filter((e) => names(e).some((n) => sameTokens(tokensOf(n), want)));
   if (exact.length === 0) {
+    // ground-v4, Q-ACRONYM: a brand written as an acronym in the photo ("NBA") is the one brand whose
+    // full name has exactly those initials ("National Basketball Association"); two such brands are a doubt.
+    const acronym = isBrand ? brandAcronym(c, plan.query) : null;
+    if (acronym) {
+      const spelled = typed.filter((e, i) => typed.findIndex((x) => x.entity_id === e.entity_id) === i && initialsOf(e.name) === acronym);
+      if (spelled.length === 1) return { match: spelled[0]!, rule: 'Q-NAME', reason: 'exact_brand_acronym' };
+      if (spelled.length > 1) return { match: null, rule: 'Q-DOUBT', reason: 'several_acronym_expansions' };
+    }
     const subset = typed.some((e) => strictSubset(tokensOf(e.name), want));
     return { match: null, rule: subset ? 'Q-SUBSET' : 'Q-NAME', reason: subset ? 'shorter_name' : 'no_exact_name' };
   }

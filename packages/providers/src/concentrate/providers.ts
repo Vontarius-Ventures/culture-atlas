@@ -37,19 +37,31 @@ import {
   type VlmQuickRead,
   type VlmResult,
 } from '../vlm/types';
+import {
+  VERIFY_MAX_DIMENSION,
+  VERIFY_READING_VERSION,
+  VLM_VERIFY_SYSTEM_PROMPT,
+  VlmVerification,
+  buildVlmVerifyUserText,
+  type VlmVerifier,
+  type VlmVerifyInput,
+  type VlmVerifyResult,
+} from '../vlm/verify';
 import { boundJpegForProfile } from './image';
 import type { ModelProfile } from './profiles';
 
-export type VlmReading = 'full' | 'quick' | 'enrich';
+export type VlmReading = 'full' | 'quick' | 'enrich' | 'verify';
 
 /**
  * Which reading a profile was qualified for. Its schemaVersion names it (and
- * is part of profileHash): the stage-2 role always enriches; a vision profile
- * pinned to the legacy full schema keeps the single full reading; every other
- * vision profile uses the two-stage quick read (amendment 2.2).
+ * is part of profileHash): the stage-2 role always enriches and the verifier
+ * role always verifies; a vision profile pinned to the legacy full schema
+ * keeps the single full reading; every other vision profile uses the
+ * two-stage quick read (amendment 2.2).
  */
 export function readingForProfile(profile: Pick<ModelProfile, 'role' | 'schemaVersion'>): VlmReading {
   if (profile.role === 'vision_photo_enrich') return 'enrich';
+  if (profile.role === 'vision_verify') return 'verify';
   return profile.schemaVersion === VLM_READING_VERSIONS.full.schema ? 'full' : 'quick';
 }
 
@@ -158,6 +170,8 @@ export class ConcentrateVlm implements VlmProvider {
     const fromProfile = readingForProfile(runner.profile);
     if (fromProfile === 'enrich')
       throw new Error('The enrichment role is served by ConcentrateVlmEnricher');
+    if (fromProfile === 'verify')
+      throw new Error('The verifier role is served by ConcentrateVlmVerifier');
     this.reading = options.reading ?? fromProfile;
   }
   capability(): CapabilityEntry {
@@ -332,6 +346,47 @@ export class ConcentrateVlmEnricher implements VlmEnricher {
       durationMs: result.durationMs,
       usage: result.usage,
     };
+  }
+}
+
+/**
+ * The independent verifier (role vision_verify, docs/requalification-plan.md):
+ * one batched yes/no/unsure check of the selected claims against the photo at
+ * <= 768 px. Claims and transcribed text are passed as DATA inside the
+ * escaped user_data block; the prompt keeps the security rules word for word.
+ */
+export class ConcentrateVlmVerifier implements VlmVerifier {
+  readonly id: string;
+  constructor(readonly runner: StructuredResponseRunner) {
+    if (readingForProfile(runner.profile) !== 'verify')
+      throw new Error('ConcentrateVlmVerifier requires the vision_verify role');
+    this.id = `vlm-verify:concentrate:${runner.profile.model}`;
+  }
+  capability(): CapabilityEntry {
+    return this.runner.capability();
+  }
+  async verifyImage(input: VlmVerifyInput, options?: CallOptions): Promise<VlmVerifyResult> {
+    if (!input.claims.length) throw new ProviderError('concentrate', 'bad_request', 'Nothing to verify');
+    const image = await stageImage(input.image, this.runner.profile.image, VERIFY_MAX_DIMENSION);
+    const result = await this.runner.run(
+      {
+        system: VLM_VERIFY_SYSTEM_PROMPT,
+        content: [
+          { type: 'text', text: buildVlmVerifyUserText(input) },
+          {
+            type: 'image',
+            mediaType: 'image/jpeg',
+            base64: Buffer.from(image.bytes).toString('base64'),
+            width: image.width,
+            height: image.height,
+          },
+        ],
+        schema: VlmVerification,
+        schemaName: VERIFY_READING_VERSION.schema,
+      },
+      options,
+    );
+    return { verification: result.data, model: result.model, durationMs: result.durationMs, usage: result.usage };
   }
 }
 

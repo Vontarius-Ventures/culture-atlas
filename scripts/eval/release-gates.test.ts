@@ -30,9 +30,35 @@ describe('grounding gate (thresholds.json "grounding")', () => {
     const judged = scoreGrounding(rows, labels, thresholds.grounding, judgements);
     expect(judged.metrics).toMatchObject({ grounding_precision: 1, end_to_end_precision: 1, recall: 1, forbidden_accepts: 0, holdout_candidates: 40 });
     expect(judged.pass).toBe(true);
-    // One wrong match among 40 breaks the 0.95 precision gate? No: 39/40 = 0.975. Three do.
-    const wrong = judgements.map((j, i) => (i < 3 ? { ...j, correct_match: false } : j));
-    expect(scoreGrounding(rows, labels, thresholds.grounding, wrong).gates.find((g) => g.metric === 'grounding_precision')).toMatchObject({ value: 0.925, pass: false });
+    // thr-v2 (decision 4): zero wrong matches is the hard gate, so one wrong match among 40 fails.
+    const wrong = judgements.map((j, i) => (i < 1 ? { ...j, correct_match: false } : j));
+    expect(scoreGrounding(rows, labels, thresholds.grounding, wrong).gates.find((g) => g.metric === 'grounding_precision')).toMatchObject({ value: 0.975, pass: false });
+  });
+
+  it('thr-v2 recall gate is 0.50 (decision 4): the recorded 0.54 passes, a lower recall still fails', async () => {
+    const { thresholds } = await loadThresholds(thresholdsFile);
+    const labels = new Map([['h01', label('h01')]]);
+    const records = Array.from({ length: 50 }, (_, i) => exact(`Fixture style ${i}`, i < 23 ? { accepted: false, rule: 'Q-DOUBT', reason: 'several_exact_matches' } : {}));
+    const rows = [{ photo: 'h01', records }];
+    // Findable: all 50; accepted and correct: 27 -> 0.54.
+    const judgements = records.map((r) => ({ photo: 'h01', candidate: r.candidate, correct_match: true, good_candidate: true, findable: true }));
+    const recall = (rep: ReturnType<typeof scoreGrounding>) => rep.gates.find((g) => g.metric === 'recall');
+    expect(recall(scoreGrounding(rows, labels, thresholds.grounding, judgements))).toMatchObject({ value: 0.54, limit: 0.5, pass: true });
+    const fewer = [{ photo: 'h01', records: records.map((r, i) => (i < 26 ? { ...r, accepted: false } : r)) }];
+    expect(recall(scoreGrounding(fewer, labels, thresholds.grounding, judgements))).toMatchObject({ value: 0.48, pass: false });
+  });
+
+  it('a text-only reference must never reach Qloo (decision 2): any lookup for one is a forbidden search', async () => {
+    const { thresholds } = await loadThresholds(thresholdsFile);
+    const l = label('p13');
+    expect(forbiddenAccept(exact('NBA', { plan: 'search', candidateType: 'brand', corroborated: true, textOnly: true, entityType: 'urn:entity:brand', tagFamily: null }), l)).toBe('text_only_searched');
+    const rows = [
+      { photo: 'p13', records: [{ ...exact('NBA', { plan: 'search', textOnly: true }), accepted: false, rule: 'Q-NAME', reason: 'no_exact_name' }, { candidate: 'Fixture Lebrook', accepted: false, plan: 'none' as const, reason: 'text_only_reference', textOnly: true }] },
+    ];
+    const rep = scoreGrounding(rows, new Map([['p13', l]]), thresholds.grounding);
+    expect(rep.metrics.text_only_searched).toBe(1);
+    expect(rep.forbidden).toEqual([{ photo: 'p13', candidate: 'NBA', why: 'text_only_searched' }]);
+    expect(rep.gates.find((g) => g.metric === 'forbidden_accepts')).toMatchObject({ value: 1, pass: false });
   });
 
   it('counts every forbidden accept: an object or uncorroborated brand searched, a forbidden family or type, a subset or doubtful match', () => {

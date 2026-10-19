@@ -101,6 +101,8 @@ export function evaluateCaptureCapabilities(
       taste_seed_enabled: true,
       fast_analysis_two_stage: false,
       while_we_look_enabled: true,
+      // Off until the tune-split evaluation enables it; the server overlay decides.
+      analysis_verifier_enabled: false,
     },
     limits: {
       photo_max_bytes: limits.photoMaxBytes,

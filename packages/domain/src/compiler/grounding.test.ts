@@ -287,7 +287,48 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
   });
 
   it('is versioned', () => {
-    expect(GROUNDING_VERSION).toBe('ground-v3');
+    expect(GROUNDING_VERSION).toBe('ground-v4');
+  });
+});
+
+describe('ground-v4 (requalification decisions 2 and 4)', () => {
+  it('never searches a text-only reference, whatever its type or evidence', () => {
+    for (const type of ['brand', 'creator', 'place', 'object', 'work'])
+      expect(planLookup(cand({ name: 'NBA', type, relation: 'depicted', certainty: 0.9, corroborated: true, evidence: 'read_text', text_only: true }))).toEqual({
+        kind: 'none',
+        reason: 'text_only_reference',
+      });
+  });
+
+  // FIXTURE shapes of the recorded p13 miss: Qloo lists the league's full name first and several "NBA ..." brands after it.
+  const league = ent('league', 'National Basketball Association', 'urn:entity:brand');
+  const nbaResults = [league, ent('game', 'NBA 2k23', 'urn:entity:brand'), ent('tv', 'NBA TV', 'urn:entity:brand'), ent('store', 'NBA Store', 'urn:entity:brand')];
+
+  it('Q-ACRONYM: a brand written as an acronym is the one brand whose full name has those initials', () => {
+    const nba = cand({ name: 'NBA', type: 'brand', relation: 'depicted', certainty: 0.9, corroborated: true });
+    expect(acceptMatch(nba, searchPlan(nba), nbaResults)).toEqual({ match: league, rule: 'Q-NAME', reason: 'exact_brand_acronym' });
+    // As a corroborated object, searched by its maker word ("NBA court" -> "nba"), the same.
+    const court = cand({ name: 'NBA court', type: 'object', corroborated: true });
+    expect(acceptMatch(court, searchPlan(court), nbaResults).match).toBe(league);
+  });
+
+  it('Q-ACRONYM never fires on a lower-case word, a one-word name, or when an exact name exists', () => {
+    const lower = cand({ name: 'Nba', type: 'brand', corroborated: true });
+    expect(acceptMatch(lower, searchPlan(lower), nbaResults)).toMatchObject({ match: null, reason: 'no_exact_name' });
+    const fila = cand({ name: 'FILA', type: 'brand', corroborated: true });
+    const filaResults = [ent('fila', 'Fila', 'urn:entity:brand'), ent('phl', 'Philadelphia Fixture Lions Association', 'urn:entity:brand')];
+    expect(acceptMatch(fila, searchPlan(fila), filaResults)).toMatchObject({ match: { name: 'Fila' }, reason: 'exact_brand' });
+    const single = cand({ name: 'EMT', type: 'brand', corroborated: true });
+    expect(acceptMatch(single, searchPlan(single), [ent('e', 'Emtek', 'urn:entity:brand')])).toMatchObject({ match: null });
+  });
+
+  it('Q-ACRONYM rejects on doubt: two brands with the same initials are neither accepted', () => {
+    const nba = cand({ name: 'NBA', type: 'brand', corroborated: true });
+    const two = [league, ent('other', 'National Bicycle Alliance', 'urn:entity:brand')];
+    expect(acceptMatch(nba, searchPlan(nba), two)).toEqual({ match: null, rule: 'Q-DOUBT', reason: 'several_acronym_expansions' });
+    // Only brand searches: a place or creator acronym is never expanded.
+    const place = cand({ name: 'EMT', type: 'place', relation: 'depicted', certainty: 0.9 });
+    expect(acceptMatch(place, searchPlan(place), [ent('p', 'Estación Madrid Tren', 'urn:entity:place', { popularity: 0.5 })])).toMatchObject({ match: null });
   });
 });
 

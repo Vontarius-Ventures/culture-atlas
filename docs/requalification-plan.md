@@ -31,6 +31,43 @@ The independent verifier (quality-plan §7.6) is **built this round** for wrong 
 6. **End to end**: real-stack upload with live models, live Qloo and live Wikipedia; confirm `complete`, record first-useful-section time and stage timings.
 7. **Review + fix**: adversarial review of the new text-only path, the verifier and the blind-set integrity; final gate; push.
 
+## Step 1 record (decisions + verifier, built)
+
+Built on branch `rq/decisions`. No provider call was made (0 Concentrate, 0 Qloo, 0 Wikipedia); every number below is an offline replay of recorded data.
+
+**Decision 1, p14 label.** At 768 px the down tube shows "…ndale" and the top-tube decal "CAAD8"; the dog hides the rest of the maker's name. `must_read_text` is now `["ndale", "CAAD8"]`; the expected reference is the legible model "CAAD8" (`requires_text: "CAAD"`); "Cannondale" moved to acceptable and still needs "cannondale" read in full. Labels gained a `history` field; p14's entry records the change, the reason and this decision.
+
+**Decision 2, text-only references (guard-v4, rule G-TEXT-ONLY).** A stage-2 addition naming a brand or a person whose every word is transcribed at stage 2 but which the stage-1 call never said (previously dropped as `single_read`) publishes as a text-only reference. Evidence gates are unchanged: brands need every brand word in `visible_text` and a `read_text`/`logo` claim; persons need every name word transcribed; a claim still held at stage 2 (low certainty, text echo) is dropped. A text-only reference:
+- carries `text_only: true` and the transcription in `evidence_text`, no category, no tag query; a person's name stays "resembles";
+- is never brand-corroborated, never searched in Qloo (`planLookup` → `text_only_reference`; the grounding gate counts any lookup as `text_only_searched`), never an anchor or signal, never researched, never a dish-idea input;
+- is stored as `capture_references.text_only` with `read_text` (migration 170; a CHECK keeps it non-anchor);
+- is listed under "Explore the references" by name with "Read in the photo: “…”" (`ReferenceSummary.read_text`), never phrased as a resemblance or a match;
+- never becomes a "What caught your eye?" choice when it is a person (G-SUBJECT drops any label sharing a word of the name);
+- shows in the inspector's new "Reading decisions" section with reason code `single_read_text_only`.
+
+**Decision 3, gate assignment (thr-v2).** `thresholds.json` gains `"two_stage_only": ["M5", "M9"]`. The scorer (score-v4) classifies each split as `two_stage`, `stage1` or `mixed`; only a stage-1-only split leaves M5 and M9 ungated (reported, listed under `scopedOut`), and its coverage gate is M15 ≥ 0.60. A mixed split (some enrichment failed) is gated as strictly as two-stage. No gate value changed.
+
+**Decision 4, grounding (thr-v2, ground-v4).** `recall_min` 0.60 → 0.50; `grounding_precision_min` 0.95 → 1.0 (zero wrong matches is the hard gate); every other grounding gate unchanged. The brand-acronym rule (Q-ACRONYM: a brand written as an acronym in capitals matches the one brand whose multi-word name has exactly those initials; two such brands are a doubt; an exact name always wins) was measured on the recorded live grounding records before it was kept: of the 5 brand-only searches with recorded results (iteration 2; iteration 1 recorded no result lists), exactly one decision changed, "NBA" → "National Basketball Association", which is the correct entity. Citroën, Fila, Selznick International Pictures and Lukfook Jewellery did not change. Precision on the recorded data stays 1.0 (27/27 accepted matches correct by the existing hand judgements plus this one); recall on the recorded findable set rises from 14/26 to 15/26 (0.58).
+
+**The verifier (role `vision_verify`, default off).**
+- Schema `atlas_verify_v1` / prompt `vlm-verify-v1` (`packages/providers/src/vlm/verify.ts`): one batched yes/no/unsure per claim; the security rules word for word; claims and transcribed text passed only inside the escaped `user_data` block and named as claims to check, never instructions; at most 6 claims, image at ≤ 768 px.
+- Targets (pure, shared by compiler and evaluation): published style, place and tradition claims that are not anchors and not text-only, and that stage 2 hedged (verdict weak) or whose own words the photo's legible text does not contain while that text names something.
+- Outcome: "no" lowers certainty × 0.5 and marks the reference qualified; "unsure" (or no answer) marks it qualified; "yes" changes nothing. Never removes or reorders a reference or a card, never touches an anchor, never raises certainty; a failed call changes nothing. Stored as `capture_references.verifier_check` (published order kept via `published_certainty`).
+- Plumbing: model role, profile validation, gateway runner and readiness (never a fallback), registry, job identity binding, ledger role CHECK (migration 170), qualification gating (golden-v1 eval block, current guardrail version, blind held-out split, ≥ 10 fixtures; the binding now also covers `verify.ts`).
+- Runtime: planned with the two-stage reading before stage 1; its call is reserved then in the spend ledger (all three profiles) and in the job's vision-call budget (`visionCallsPerAnalysis` 2 → 3; reserved only when the verifier is on). It runs in the background after stage 2 published and before research. On only with `ANALYSIS_VERIFIER_ENABLED=true`, a two-stage plan, a qualified role and no kill (`analysis_verifier_enabled`, `fast_analysis_two_stage` or `concentrate_analysis_enabled`); the server flag `analysis_verifier_enabled` (default false) reports the same.
+- Not built here: qualification of the verifier by `qualify:concentrate` (it refuses the role explicitly). If Tune enables the verifier, that run is added before step 5.
+
+**How Tune measures the verifier (step 3).** Since the verifier never removes a claim, M2 cannot move. score-v4 reports, without gates: `forbidden_published` (forbidden labels published), `forbidden_uncontested` (those the verifier did not answer "no" to), `M5_uncontested` (expected coverage counting only claims it did not contest) and `verifier_checked`. `pnpm eval:live --roles vision_photo,vision_photo_enrich,vision_verify` records the verifier reply next to each reading; `pnpm eval:replay --recordings <dir> --mode live --verifier both` scores the same readings with and without it. The verifier is enabled by default only if `forbidden_uncontested` (with) is below `forbidden_published` (without) on the tune split and `M5_uncontested` stays at or above the M5 gate. Offline, no Qloo grounding runs, so no claim is known to anchor: every eligible claim is checked, which is stricter than production.
+
+**Offline replay of the recorded live readings (guard-v4, score-v4, thr-v2, live gates).**
+
+| Recordings | Tune | Held-out (not blind) |
+| --- | --- | --- |
+| Iteration 1 | FAIL only M9 0.87 (p14: neither "ndale" nor "CAAD8" transcribed); M5 0.83, M1 0, M7 1, text-only 1 | PASS |
+| Iteration 2 | FAIL M5 0.75 (p10: "RMT MADRID" misread, p11, p14 "CADE") and M9 0.87 (p14); M1 0, M7 1; "NBA" on p13 now publishes text-only | PASS (text-only 3) |
+
+The CI replay (`replay-v1`) passes every replay gate with guard-v4 (two synthetic stage-2-only names now publish text-only), and the unguarded readings still fail M1 (M17).
+
 ## Budget
 
 Concentrate ≤ 300 requests, Qloo ≤ 200, Wikipedia as needed (polite rate). No Elorian.

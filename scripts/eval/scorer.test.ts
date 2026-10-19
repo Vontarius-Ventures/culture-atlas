@@ -6,7 +6,9 @@ import {
   brandCorroborated,
   candidateStatus,
   forbiddenClassViolations,
+  gatesFor,
   headToken,
+  runKind,
   scoreRun,
   scoreRuns,
   scorerTeeth,
@@ -278,5 +280,102 @@ describe('score-v3 (review findings: the yardstick must not move with the guard)
       ['person_identity', 'subject: Fixture Lebrook James'],
       ['medium', 'subject: Still life painting'],
     ]);
+  });
+});
+
+describe('score-v4 (requalification decisions 3, 2 and the verifier)', () => {
+  const labels = new Map<string, PhotoLabel>([
+    ['p03', label('p03', { expected: [{ name: 'Mid-century modern', aliases: [], generic: false }], must_read_text: ['TEAK'] })],
+    ['p04', label('p04', { expected: [{ name: 'Neoclassical', aliases: [], generic: false }] })],
+  ]);
+  const stage1 = (photoId: string, candidates: CandidateView[]) => run(photoId, { candidates }, { twoStage: false });
+
+  it('classifies a split as two-stage, stage 1 alone, or mixed', () => {
+    expect(runKind([{ twoStage: true }, { twoStage: true }])).toBe('two_stage');
+    expect(runKind([{ twoStage: false }])).toBe('stage1');
+    expect(runKind([{ twoStage: true }, { twoStage: false }])).toBe('mixed');
+  });
+
+  it('thr-v2 gates M5 and M9 on the two-stage run only; the stage-1 run keeps M15 >= 0.60 as its coverage gate', async () => {
+    const { thresholds } = await loadThresholds(thresholdsFile);
+    expect(thresholds.version).toBe('thr-v2');
+    expect(thresholds.two_stage_only).toEqual(['M5', 'M9']);
+    // No gate value differs by run kind: the stage-1 gates are the live gates minus the two-stage-only metrics.
+    const s1 = gatesFor({ ...thresholds.live, ...thresholds.live_tune }, 'stage1', thresholds.two_stage_only);
+    expect(s1.scopedOut.sort()).toEqual(['M5', 'M9']);
+    expect(s1.gates.M15).toEqual({ op: '>=', value: 0.6 });
+    expect(s1.gates.M3).toEqual(thresholds.live_tune.M3);
+    expect(gatesFor(thresholds.live, 'two_stage', thresholds.two_stage_only).gates).toEqual(thresholds.live);
+    expect(gatesFor(thresholds.live, 'mixed', thresholds.two_stage_only).gates).toEqual(thresholds.live);
+
+    // One of two photos covered: M5 0.5, below the gate. Stage 1 alone is not gated on it ...
+    const covered = c('Mid-century modern');
+    const s1card = scoreRuns(labels, [stage1('p03', [covered]), stage1('p04', [c('Gilded mirror')])], thresholds, 'live');
+    expect(s1card.splits.tune!.runKind).toBe('stage1');
+    expect(s1card.splits.tune!.metrics.M5).toBe(0.5);
+    expect(s1card.splits.tune!.scopedOut.sort()).toEqual(['M5', 'M9']);
+    expect(s1card.splits.tune!.gates.map((g) => g.metric)).not.toContain('M5');
+    expect(s1card.splits.tune!.failures.some((f) => f.startsWith('M5 '))).toBe(false);
+    // ... but its own coverage gate still applies: M15 0.5 < 0.60 fails the stage-1 run.
+    expect(s1card.splits.tune!.failures).toEqual(expect.arrayContaining([expect.stringMatching(/^M15 0.5 /)]));
+
+    // The same readings as a two-stage run are gated on M5 (and M9).
+    const card = scoreRuns(labels, [run('p03', { candidates: [covered] }), run('p04', { candidates: [c('Gilded mirror')] })], thresholds, 'live');
+    expect(card.splits.tune!.runKind).toBe('two_stage');
+    expect(card.splits.tune!.failures).toEqual(expect.arrayContaining([expect.stringMatching(/^M5 0.5 /), expect.stringMatching(/^M9 0 /)]));
+    // A failed enrichment makes the split mixed, which is gated as strictly as two-stage.
+    const mixed = scoreRuns(labels, [run('p03', { candidates: [covered] }), stage1('p04', [c('Gilded mirror')])], thresholds, 'live');
+    expect(mixed.splits.tune!.runKind).toBe('mixed');
+    expect(mixed.splits.tune!.gates.map((g) => g.metric)).toContain('M5');
+  });
+
+  it('reports what the verifier contested without removing anything (report only, no gate)', async () => {
+    const { thresholds } = await loadThresholds(thresholdsFile);
+    const l = new Map<string, PhotoLabel>([
+      [
+        'p05',
+        label('p05', {
+          expected: [{ name: 'Persian ceramics', aliases: [], generic: false }],
+          forbidden: [{ pattern: 'iznik', field: 'candidate', why: 'the labels name Nishapur' }],
+        }),
+      ],
+    ]);
+    const before = scoreRuns(l, [run('p05', { candidates: [c('Persian ceramics'), c('Iznik pottery')] })], thresholds, 'live');
+    expect(before.splits.tune!.metrics.forbidden_published).toBe(1);
+    expect(before.splits.tune!.metrics.verifier_checked).toBe(0);
+    expect(before.splits.tune!.metrics.forbidden_uncontested).toBeNull();
+    const after = scoreRuns(
+      l,
+      [run('p05', { candidates: [c('Persian ceramics', { verifier: 'yes' }), c('Iznik pottery', { verifier: 'no', certainty: 0.35 })] })],
+      thresholds,
+      'live',
+    );
+    const m = after.splits.tune!.metrics;
+    // Still published (the verifier never removes a claim), so M2 does not move ...
+    expect(m.M2).toBe(before.splits.tune!.metrics.M2);
+    expect(m.forbidden_published).toBe(1);
+    // ... but it is contested, and the expected claim it confirmed still covers the photo.
+    expect(m.verifier_checked).toBe(2);
+    expect(m.forbidden_uncontested).toBe(0);
+    expect(m.M5_uncontested).toBe(1);
+    const denied = scoreRuns(l, [run('p05', { candidates: [c('Persian ceramics', { verifier: 'no' })] })], thresholds, 'live');
+    expect(denied.splits.tune!.metrics.M5).toBe(1);
+    expect(denied.splits.tune!.metrics.M5_uncontested).toBe(0);
+    for (const k of ['forbidden_published', 'verifier_checked', 'forbidden_uncontested', 'M5_uncontested', 'text_only'])
+      expect(Object.keys(thresholds.live)).not.toContain(k);
+  });
+
+  it('counts text-only references and scores them like any published name', async () => {
+    const { thresholds } = await loadThresholds(thresholdsFile);
+    const l = new Map<string, PhotoLabel>([
+      ['p13', label('p13', { acceptable: [{ name: 'NBA', aliases: [], pattern: '^nba$', type: 'brand', requires_text: 'NBA', generic: false }] })],
+    ]);
+    const nba = c('NBA', { type: 'brand', evidence: 'read_text', evidence_text: 'NBA', text_only: true });
+    const card = scoreRuns(l, [run('p13', { candidates: [nba], visible_text: ['NBA'] })], thresholds, 'live');
+    expect(card.splits.tune!.metrics.text_only).toBe(1);
+    expect(card.rows[0]!.statuses.acceptable).toBe(1);
+    expect(card.splits.tune!.metrics.M7).toBe(1);
+    // Without the text, a text-only brand is a brand without text like any other (M1).
+    expect(scoreRuns(l, [run('p13', { candidates: [nba] })], thresholds, 'live').splits.tune!.metrics.M1).toBe(1);
   });
 });

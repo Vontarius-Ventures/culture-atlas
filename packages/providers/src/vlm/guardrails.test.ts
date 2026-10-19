@@ -90,7 +90,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v3');
+    expect(GUARDRAIL_VERSION).toBe('guard-v4');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -996,13 +996,119 @@ describe('guard-v3: G-BRAND-CORROBORATE needs every brand word, from two separat
     expect(names(stage2(g, enrichment({ visible_text: ['NISSAN', 'FIXTRAIL'], confirmed: conf })).publishNow)).toEqual(['Nissan Fixtrail']);
   });
 
-  it('a stage-2 brand addition is not confirmed by its own reply alone', () => {
+  it('a stage-2 brand addition is not confirmed by its own reply alone (guard-v4: it becomes a text-only reference)', () => {
     const add = { ...v2({ name: 'Nike Fixture Max', type: 'object', relation: 'depicted', certainty: 0.9, evidence: 'read_text', evidence_text: 'NIKE FIXTURE MAX', domain: 'fashion' }), rationale: 'Logo' };
     const alone = stage2(quickOf('Sneakers on a shelf', []), enrichment({ visible_text: ['NIKE FIXTURE MAX'], additional_candidates: [add] }));
-    expect(alone.publishNow).toEqual([]);
-    expect(alone.decisions[0]).toMatchObject({ action: 'drop', note: 'single_read' });
+    // Not a full reference: never brand-corroborated, so never searched in Qloo.
+    expect(alone.decisions[0]).toMatchObject({ action: 'publish', note: 'single_read_text_only' });
+    expect(alone.decisions[0]!.rules).toContain('G-TEXT-ONLY');
+    expect(alone.textOnlyIds).toEqual([alone.publishNow[0]!.id]);
+    expect(brandCorroboratedIds(alone.decisions).size).toBe(0);
     const both = stage2(quickOf('Nike Fixture Max sneakers on a shelf', []), enrichment({ visible_text: ['NIKE FIXTURE MAX'], additional_candidates: [add] }));
     expect(names(both.publishNow)).toEqual(['Nike Fixture Max']);
+    expect(both.textOnlyIds).toEqual([]);
+    expect(both.publishNow[0]!.text_only).toBeUndefined();
+    expect(brandCorroboratedIds(both.decisions).size).toBe(1);
+  });
+});
+
+/*
+ * guard-v4: the text-only reference path (docs/requalification-plan.md
+ * decision 2). Brand or person names that only the stage-2 reply contains
+ * ("NBA", "EMT Madrid", poster credits) publish as text-only references
+ * instead of being dropped as single reads, still evidence-gated.
+ */
+describe('guard-v4: G-TEXT-ONLY publishes stage-2-only brand and person names as text-only references', () => {
+  const court = () =>
+    guardQuickRead(
+      toVlmAnalysis({
+        title: 'An outdoor basketball hoop',
+        interpretation: 'A hoop against a clear sky.',
+        candidates: [v2({ name: 'Streetball', type: 'tradition', domain: 'sport', certainty: 0.7, tag_query: 'streetball' })],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+  const nba = { ...v2({ name: 'NBA', type: 'brand', relation: 'depicted', certainty: 0.8, evidence: 'logo', evidence_text: 'NBA', domain: 'sport' }), rationale: 'Logo on the backboard' };
+
+  it('publishes a brand read only at stage 2 with every word transcribed, with the text it was read from', () => {
+    const s2 = stage2(court(), enrichment({ visible_text: ['NBA'], additional_candidates: [nba] }));
+    expect(names(s2.publishNow)).toEqual(['NBA']);
+    const ref = s2.publishNow[0]!;
+    expect(ref).toMatchObject({ text_only: true, evidence: 'read_text', evidence_text: 'NBA', suggested_categories: [], tag_queries: [] });
+    expect(s2.textOnlyIds).toEqual([ref.id]);
+    expect(decisionFor(s2.decisions, 'NBA')).toMatchObject({ action: 'publish', note: 'single_read_text_only' });
+    expect(decisionFor(s2.decisions, 'NBA')!.rules).toEqual(expect.arrayContaining(['G-BRAND-CORROBORATE', 'G-TEXT-ONLY']));
+    expect(decisionFor(s2.decisions, 'NBA')!.rules).not.toContain('G-CATEGORY');
+    expect(brandCorroboratedIds(s2.decisions).has(ref.id)).toBe(false);
+    // The reading itself keeps it, after the published stage-1 candidates (FAST-02).
+    expect(names(s2.analysis.candidates)).toEqual(['Streetball', 'NBA']);
+  });
+
+  it('stays evidence-gated: every brand word must be in visible_text, and the claim must rest on read text or a logo', () => {
+    const emt = { ...v2({ name: 'EMT Madrid', type: 'place', relation: 'depicted', certainty: 0.8, evidence: 'read_text', evidence_text: 'EMT', domain: 'vehicle' }), rationale: 'Bus livery' };
+    const partly = stage2(court(), enrichment({ visible_text: ['EMT'], additional_candidates: [emt] }));
+    expect(partly.publishNow).toEqual([]);
+    expect(decisionFor(partly.decisions, 'EMT Madrid')).toMatchObject({ action: 'drop', note: 'not_read_at_stage_2' });
+    const misread = stage2(court(), enrichment({ visible_text: ['RMT MADRID'], additional_candidates: [emt] }));
+    expect(misread.publishNow).toEqual([]);
+    const read = stage2(court(), enrichment({ visible_text: ['EMT MADRID'], additional_candidates: [{ ...emt, evidence_text: 'EMT MADRID' }] }));
+    expect(read.publishNow.map((c) => [c.name, c.text_only, c.evidence_text])).toEqual([['EMT Madrid', true, 'EMT MADRID']]);
+    // A brand the reply names on context alone is dropped even when the words appear on a sign.
+    const guess = { ...nba, evidence: 'context' as const, evidence_text: null };
+    expect(stage2(court(), enrichment({ visible_text: ['NBA'], additional_candidates: [guess] })).publishNow).toEqual([]);
+    // Without a usable photo nothing publishes.
+    const blurred = guardQuickRead(toVlmAnalysis({ title: 'A blur', interpretation: 'Blurred.', candidates: [], quality: { usable: false, issue: 'blurred' } }), { twoStage: true });
+    expect(stage2(blurred, enrichment({ visible_text: ['NBA'], additional_candidates: [nba] })).publishNow).toEqual([]);
+  });
+
+  it('a held-at-stage-2 brand addition (low certainty) is still dropped, never text-only', () => {
+    const low = { ...nba, relation: 'resembles' as const, certainty: 0.3 };
+    const s2 = stage2(court(), enrichment({ visible_text: ['NBA'], additional_candidates: [low] }));
+    expect(s2.publishNow).toEqual([]);
+    expect(s2.textOnlyIds).toEqual([]);
+  });
+
+  it('a person name read only at stage 2 is a text-only reference: resembles, never a subject choice', () => {
+    const poster = guardQuickRead(
+      toVlmAnalysis({
+        title: 'A vintage film poster',
+        interpretation: 'A poster for a 1940s film.',
+        candidates: [v2({ name: 'Classic Hollywood', type: 'style', domain: 'film', certainty: 0.7, tag_query: 'classic hollywood' })],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+    const credit = { ...v2({ name: 'Fixture Lebrook', type: 'creator', relation: 'depicted', certainty: 0.8, evidence: 'read_text', evidence_text: 'FIXTURE LEBROOK', domain: 'film' }), rationale: 'Credit line' };
+    const s2 = stage2(
+      poster,
+      enrichment({
+        visible_text: ['A FIXTURE LEBROOK PRODUCTION'],
+        additional_candidates: [credit],
+        competing_subjects: ['Fixture Lebrook', 'The poster title', 'Lebrook credit'],
+      }),
+    );
+    expect(s2.publishNow.map((c) => [c.name, c.text_only, c.relation, c.evidence_text])).toEqual([
+      ['Fixture Lebrook', true, 'resembles', 'A FIXTURE LEBROOK PRODUCTION'],
+    ]);
+    expect(decisionFor(s2.decisions, 'Fixture Lebrook')!.rules).toEqual(expect.arrayContaining(['G-IDENTITY', 'G-TEXT-ONLY']));
+    // Never a "What caught your eye?" choice, although the name was read.
+    expect(s2.analysis.competing_subjects.map((s) => s.label)).toEqual(['The poster title']);
+    // Not transcribed at stage 2: dropped, and the trace never carries the name.
+    const unread = stage2(poster, enrichment({ visible_text: ['A PRODUCTION'], additional_candidates: [credit] }));
+    expect(unread.publishNow).toEqual([]);
+    expect(unread.decisions.at(-1)).toMatchObject({ action: 'drop', name: '[withheld]', note: 'not_read_at_stage_2' });
+  });
+
+  it('a person named by both readings stays a full reference (two reads), as in guard-v3', () => {
+    const poster = guardQuickRead(
+      toVlmAnalysis({ title: 'A Fixture Lebrook film poster', interpretation: 'A poster.', candidates: [], quality: { usable: true, issue: null } }),
+      { twoStage: true },
+    );
+    const credit = { ...v2({ name: 'Fixture Lebrook', type: 'creator', relation: 'depicted', certainty: 0.8, evidence: 'read_text', evidence_text: 'FIXTURE LEBROOK', domain: 'film' }), rationale: 'Credit line' };
+    const s2 = stage2(poster, enrichment({ visible_text: ['FIXTURE LEBROOK'], additional_candidates: [credit] }));
+    expect(s2.publishNow.map((c) => [c.name, c.text_only ?? null])).toEqual([['Fixture Lebrook', null]]);
+    expect(s2.textOnlyIds).toEqual([]);
   });
 });
 

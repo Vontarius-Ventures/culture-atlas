@@ -176,8 +176,8 @@ describe('Qloo grounding in the compiler (quality plan §5)', () => {
     );
     const accept = Object.fromEntries(pq.map((r) => [r.query_context.candidate_name, r.query_context.accept]));
     expect(Object.keys(accept).sort()).toEqual(['Fixture Palais', 'Fixturedale', 'Neoclassicism']);
-    expect(accept['Fixturedale']).toEqual({ matched: true, rule: 'Q-NAME', reason: 'exact_brand', grounding_version: 'ground-v3' });
-    expect(accept['Fixture Palais']).toEqual({ matched: false, rule: 'Q-PLACE', reason: 'same_name_in_several_places', grounding_version: 'ground-v3' });
+    expect(accept['Fixturedale']).toEqual({ matched: true, rule: 'Q-NAME', reason: 'exact_brand', grounding_version: 'ground-v4' });
+    expect(accept['Fixture Palais']).toEqual({ matched: false, rule: 'Q-PLACE', reason: 'same_name_in_several_places', grounding_version: 'ground-v4' });
     expect(accept['Neoclassicism']).toMatchObject({ matched: true, rule: 'Q-NAME' });
 
     // The resolve trace records each grounding decision; the guard trace says why the others never got there.

@@ -52,7 +52,7 @@ import {
  * published is never removed (FAST-02): a stage-2 "unsupported" on it stays
  * an advisory veto.
  */
-export const GUARDRAIL_VERSION = 'guard-v3';
+export const GUARDRAIL_VERSION = 'guard-v4';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -78,6 +78,13 @@ export type GuardRule =
   | 'G-VERDICT'
   | 'G-BRAND-CORROBORATE'
   | 'G-CATEGORY'
+  /**
+   * guard-v4 (docs/requalification-plan.md decision 2): a brand or person name
+   * that only the stage-2 reply contains, with every word transcribed, is
+   * published as a text-only reference (note TEXT_ONLY_NOTE) instead of being
+   * dropped as a single read.
+   */
+  | 'G-TEXT-ONLY'
   // Additive (not candidate rules): visible_text and observation filters, counted in `dropped`.
   | 'G-VTEXT'
   | 'G-PERSON-OBS';
@@ -117,6 +124,12 @@ export interface Stage2Guard {
   advisoryVetoes: string[];
   /** Ids in publishNow that publish only as a resembling, non-anchor reference (a weak verdict on a held style). */
   nonAnchorIds: string[];
+  /**
+   * guard-v4: ids in publishNow that publish only as text-only references
+   * (G-TEXT-ONLY): never resolved in Qloo, never anchors or signals, shown
+   * with the text they were read from (their evidence_text).
+   */
+  textOnlyIds: string[];
   /** Published candidates, then publishNow; sanitized visible text and observations; title unchanged. */
   analysis: VlmAnalysis;
   decisions: GuardDecision[];
@@ -399,7 +412,7 @@ export function isModelCode(token: string): boolean {
   return !DECADE_RE.test(token) && !ORDINAL_RE.test(token) && !UNIT_RE.test(token);
 }
 /** Any lexicon knows the word: it describes, it does not name a maker. */
-function knownWord(t: string): boolean {
+export function knownWord(t: string): boolean {
   return (
     STOP.has(t) || isGenericToken(t) || DESCRIPTORS.has(t) || FASHION.has(t) || FOOD.has(t) || FOOD_EVIDENCE.has(t) ||
     MUSIC.has(t) || FILM.has(t) || ARCHITECTURE.has(t) || DESIGN.has(t) || STYLE_MOVEMENTS.has(t) || CONTEXT_PRODUCTS.has(t)
@@ -807,9 +820,20 @@ function stage1Texts(published: VlmAnalysis, held: readonly VlmCandidate[]): str
  */
 export function guardSubjects(
   labels: readonly string[],
-  ctx: { published: readonly Pick<VlmCandidate, 'name'>[]; texts: readonly string[]; mentionsPeople?: boolean },
+  ctx: {
+    published: readonly Pick<VlmCandidate, 'name'>[];
+    texts: readonly string[];
+    mentionsPeople?: boolean;
+    /**
+     * guard-v4: person names published only as text-only references. They
+     * never become a "What caught your eye?" choice: a label sharing any word
+     * of such a name is dropped, even though the name was read.
+     */
+    withheldPersons?: readonly string[];
+  },
 ): { kept: string[]; dropped: string[] } {
   const known = [...ctx.published.map((c) => c.name), ...ctx.texts];
+  const withheld = new Set((ctx.withheldPersons ?? []).flatMap(personWords));
   const kept: string[] = [];
   const dropped: string[] = [];
   for (const label of labels) {
@@ -826,7 +850,8 @@ export function guardSubjects(
       PERSON_OBS_RE.test(label) ||
       VTEXT_RE.test(label) ||
       (brand && brandReadIn(label, ctx.texts) === null && !ctx.published.some((c) => candidateNameKey(c.name) === candidateNameKey(label))) ||
-      !nameLike.every((t) => known.some((k) => textHasToken(k, t)));
+      !nameLike.every((t) => known.some((k) => textHasToken(k, t))) ||
+      tokens.some((t) => withheld.has(t));
     (bad ? dropped : kept).push(label);
   }
   return { kept, dropped };
@@ -836,12 +861,13 @@ function guardCompetingSubjects(
   a: VlmAnalysis,
   published: readonly Pick<VlmCandidate, 'name'>[],
   texts: readonly string[],
+  withheldPersons: readonly string[] = [],
 ): { subjects: VlmAnalysis['competing_subjects']; dropped: number } {
   // A role word is a person's role only when the reading shows people ("record player" on a shelf is a device).
   const mentionsPeople = readingFacts(a, texts, true).mentionsPeople;
   const g = guardSubjects(
     a.competing_subjects.map((s) => s.label),
-    { published, texts, mentionsPeople },
+    { published, texts, mentionsPeople, withheldPersons },
   );
   const keep = new Set(g.kept);
   return {
@@ -1001,9 +1027,15 @@ export function brandCorroboratedIds(
   decisions: readonly { candidateId: string; action: string; rules: readonly string[] }[],
 ): Set<string> {
   return new Set(
-    decisions.filter((d) => d.action === 'publish' && d.rules.includes('G-BRAND-CORROBORATE')).map((d) => d.candidateId),
+    decisions
+      // A text-only reference (G-TEXT-ONLY) is never searched in Qloo, corroborated or not.
+      .filter((d) => d.action === 'publish' && d.rules.includes('G-BRAND-CORROBORATE') && !d.rules.includes('G-TEXT-ONLY'))
+      .map((d) => d.candidateId),
   );
 }
+
+/** Decision note of a G-TEXT-ONLY publication (the inspector's reason code). */
+export const TEXT_ONLY_NOTE = 'single_read_text_only';
 
 // ---- stage 2 -------------------------------------------------------------------
 
@@ -1049,6 +1081,8 @@ export function guardEnrichment(input: {
   );
   const publishNow: VlmCandidate[] = [];
   const nonAnchorIds: string[] = [];
+  const textOnlyIds: string[] = [];
+  const withheldPersons: string[] = [];
   const demotedObs: VlmCandidate[] = [];
   const names = new Set(kept.map((c) => candidateNameKey(c.name)));
   const accept = (c: VlmCandidate, rules: GuardRule[], note?: string) => {
@@ -1061,6 +1095,35 @@ export function guardEnrichment(input: {
     decisions.push(decision(c, 'publish', [...rules, 'G-CATEGORY'], note));
     publishNow.push(finalize(c, facts.signals));
     return true;
+  };
+  /**
+   * G-TEXT-ONLY (guard-v4, decision 2): a stage-2 addition naming a brand or
+   * a person whose every word is transcribed at stage 2, but which the
+   * stage-1 call never said (a single read). It publishes as a text-only
+   * reference: the text it was read from becomes its evidence_text, it gets
+   * no category (never a discovery signal), and the compiler never resolves,
+   * anchors or researches it. A person's name stays "resembles" (a credit on
+   * a poster is not the person) and never becomes a subject choice.
+   */
+  const acceptTextOnly = (c: VlmCandidate, read: string, rules: GuardRule[], person: boolean) => {
+    const key = candidateNameKey(c.name);
+    if (names.has(key)) {
+      decisions.push(decision(c, 'drop', rules, 'duplicate'));
+      return;
+    }
+    names.add(key);
+    decisions.push(decision(c, 'publish', [...rules, 'G-TEXT-ONLY'], TEXT_ONLY_NOTE));
+    publishNow.push({
+      ...c,
+      evidence: 'read_text',
+      evidence_text: read.slice(0, 60),
+      relation: person ? 'resembles' : c.relation,
+      suggested_categories: [],
+      tag_queries: [],
+      text_only: true,
+    });
+    textOnlyIds.push(c.id);
+    if (person) withheldPersons.push(c.name);
   };
 
   for (const id of merge.heldIds) {
@@ -1132,13 +1195,20 @@ export function guardEnrichment(input: {
       continue;
     }
     if (candidate.type === 'creator' || candidate.domain === 'people') {
-      // guard-v3: a person added at stage 2 needs the name transcribed at stage 2 and named at stage 1.
-      if (!personReadIn(candidate.name, stage2Texts)) {
+      // guard-v3: a person added at stage 2 needs the name transcribed at stage 2 ...
+      const read = personReadIn(candidate.name, stage2Texts);
+      if (!read) {
         decisions.push(decision(candidate, 'drop', [...v.rules, 'G-IDENTITY'], 'not_read_at_stage_2'));
         continue;
       }
+      // ... and named at stage 1 to be a full reference. guard-v4: named only in the stage-2 reply,
+      // it is a text-only reference (never an identity, an anchor or a Qloo search).
       if (!personReadIn(candidate.name, firstRead)) {
-        decisions.push(decision(candidate, 'drop', [...v.rules, 'G-IDENTITY'], 'single_read'));
+        if (v.action === 'hold') {
+          decisions.push(decision(candidate, 'drop', [...v.rules, 'G-IDENTITY'], 'held_at_stage_2'));
+          continue;
+        }
+        acceptTextOnly(candidate, read, [...v.rules, 'G-IDENTITY'], true);
         continue;
       }
     }
@@ -1149,14 +1219,9 @@ export function guardEnrichment(input: {
         !!head &&
         !!candidate.evidence_text &&
         textHasToken(candidate.evidence_text, head);
-      if (!own || corroboratingText(candidate.name, stage2Texts) === null) {
+      const read = own ? corroboratingText(candidate.name, stage2Texts) : null;
+      if (read === null) {
         decisions.push(decision(candidate, 'drop', [...v.rules, 'G-BRAND-CORROBORATE'], 'not_read_at_stage_2'));
-        continue;
-      }
-      // guard-v3: the claim, its evidence_text and the transcription all come from one reply;
-      // the brand words must also be in what the stage-1 call said (a second, separate reading).
-      if (brandReadIn(candidate.name, firstRead) === null) {
-        decisions.push(decision(candidate, 'drop', [...v.rules, 'G-BRAND-CORROBORATE'], 'single_read'));
         continue;
       }
       if (v.action === 'hold') {
@@ -1166,6 +1231,13 @@ export function guardEnrichment(input: {
           decisions.push(decision(candidate, 'drop', [...v.rules, 'G-BRAND-CORROBORATE'], 'held_at_stage_2'));
           continue;
         }
+      }
+      // guard-v3: the claim, its evidence_text and the transcription all come from one reply;
+      // the brand words must also be in what the stage-1 call said (a second, separate reading)
+      // for a full reference. guard-v4: otherwise it is a text-only reference, never searched.
+      if (brandReadIn(candidate.name, firstRead) === null) {
+        acceptTextOnly(candidate, read, [...v.rules, 'G-BRAND-CORROBORATE'], false);
+        continue;
       }
       accept(candidate, [...v.rules, 'G-BRAND-CORROBORATE']);
       continue;
@@ -1186,7 +1258,7 @@ export function guardEnrichment(input: {
   for (const c of demotedObs) observations.push(demotedObservation(c, nextObservationId(observations)));
   const candidates = [...kept.map((c) => ({ ...c })), ...publishNow];
   // G-SUBJECT: stage-2 competing subjects become "What caught your eye?" choices; they pass the guard too.
-  const subjects = guardCompetingSubjects(merged, usable ? candidates : [], texts.kept);
+  const subjects = guardCompetingSubjects(merged, usable ? candidates : [], texts.kept, withheldPersons);
   const analysis: VlmAnalysis = {
     ...structuredClone(merged),
     title: published.title,
@@ -1201,6 +1273,7 @@ export function guardEnrichment(input: {
     publishNow,
     advisoryVetoes,
     nonAnchorIds,
+    textOnlyIds,
     analysis,
     decisions,
     dropped: { visibleText: texts.dropped.length, observations: obs.dropped.length, subjects: subjects.dropped },

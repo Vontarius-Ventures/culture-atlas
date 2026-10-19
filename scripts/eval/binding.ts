@@ -25,6 +25,8 @@ export const BOUND_CODE: Record<string, readonly string[]> = {
     'packages/providers/src/vlm/lexicons.ts',
     'packages/providers/src/vlm/types.ts',
     'packages/providers/src/vlm/prompt.ts',
+    // The verifier's target selection, outcome rules and prompt (vision_verify is a golden-v1 role).
+    'packages/providers/src/vlm/verify.ts',
     'packages/providers/src/concentrate/providers.ts',
     'scripts/eval/scorer.ts',
     'scripts/eval/labels.ts',

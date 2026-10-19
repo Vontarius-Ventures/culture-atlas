@@ -5,6 +5,7 @@ import type { ResearchProvider } from './research/types';
 import type { ObjectStorage } from './storage/types';
 import type { TextModelProvider } from './text/types';
 import type { VlmEnricher, VlmProvider } from './vlm/types';
+import type { VlmVerifier } from './vlm/verify';
 
 /**
  * Placeholder implementations used when a provider is not configured or its
@@ -35,6 +36,18 @@ export class UnavailableVlmEnricher implements VlmEnricher {
     return unavailable(this.reason);
   }
   async enrichImage(): Promise<never> {
+    return fail('vlm', this.reason);
+  }
+}
+
+/** The verifier without a qualified vision_verify profile (never a fallback model). */
+export class UnavailableVlmVerifier implements VlmVerifier {
+  readonly id = 'vlm-verify:unavailable';
+  constructor(private readonly reason: CapabilityReason = 'not_configured') {}
+  capability(): CapabilityEntry {
+    return unavailable(this.reason);
+  }
+  async verifyImage(): Promise<never> {
     return fail('vlm', this.reason);
   }
 }

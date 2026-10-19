@@ -18,7 +18,7 @@ import {
  * brand evidence from the final visible text itself. A guard bug therefore
  * shows up as a failing metric instead of being trusted by the yardstick.
  */
-export const SCORER_VERSION = 'score-v3';
+export const SCORER_VERSION = 'score-v4';
 
 export interface CandidateView {
   name: string;
@@ -29,6 +29,10 @@ export interface CandidateView {
   domain?: string | null;
   evidence?: string | null;
   evidence_text?: string | null;
+  /** score-v4: published only as a text-only reference (decision 2): never an anchor, never searched. */
+  text_only?: boolean | null;
+  /** score-v4: the verifier's answer on this claim (vision_verify), when it checked it. */
+  verifier?: 'yes' | 'no' | 'unsure' | null;
 }
 
 export interface ReadingView {
@@ -43,7 +47,7 @@ export interface ReadingView {
 }
 
 export interface CallRecord {
-  stage: 'quick' | 'enrich';
+  stage: 'quick' | 'enrich' | 'verify';
   ms: number;
   /** HTTP 200, status completed and a zod-valid structured output. */
   valid: boolean;
@@ -350,6 +354,14 @@ export interface RunRow {
   expectedHit: boolean | null;
   stage1Publishable: boolean | null;
   qlooForbiddenAccepts: number;
+  /** score-v4: published candidates the verifier answered for (0 when it did not run). */
+  verifierChecked: number;
+  /** score-v4: forbidden published candidates the verifier did not contest (answer other than "no"). */
+  forbiddenUncontested: number;
+  /** score-v4: an expected candidate is published and not contested by the verifier (null as expectedHit). */
+  expectedHitUncontested: boolean | null;
+  /** score-v4: candidates published only as text-only references. */
+  textOnly: number;
 }
 
 function key(name: string): string {
@@ -411,6 +423,13 @@ export function scoreRun(label: PhotoLabel, run: ScoredRun): RunRow {
 
   const usableWithExpected = label.quality.usable && label.expected.length > 0;
   const expectedHit = usableWithExpected ? f.candidates.some((c) => candidateStatus(label, c, vt) === 'expected') : null;
+  // score-v4: the verifier never removes a published claim; it only contests it ("no"), which
+  // lowers its certainty and marks it qualified. These measures show what it contested.
+  const contested = (c: CandidateView) => c.verifier === 'no';
+  const expectedHitUncontested = usableWithExpected
+    ? f.candidates.some((c) => !contested(c) && candidateStatus(label, c, vt) === 'expected')
+    : null;
+  const forbiddenUncontested = f.candidates.filter((c) => !contested(c) && candidateStatus(label, c, vt) === 'forbidden').length;
   const stage1Texts = [...vt, ...run.stage1Published.map((c) => c.evidence_text ?? '').filter(Boolean)];
   const stage1Publishable = usableWithExpected
     ? run.stage1Published.some((c) => {
@@ -446,6 +465,10 @@ export function scoreRun(label: PhotoLabel, run: ScoredRun): RunRow {
     expectedHit,
     stage1Publishable,
     qlooForbiddenAccepts,
+    verifierChecked: f.candidates.filter((c) => !!c.verifier).length,
+    forbiddenUncontested,
+    expectedHitUncontested,
+    textOnly: f.candidates.filter((c) => c.text_only === true).length,
   };
 }
 
@@ -477,6 +500,7 @@ export function aggregate(rows: readonly RunRow[], runs: readonly ScoredRun[], f
   const calls = [...runs.flatMap((r) => r.calls ?? []), ...failedCalls];
   const quickMs = calls.filter((c) => c.stage === 'quick' && c.valid).map((c) => c.ms);
   const enrichMs = calls.filter((c) => c.stage === 'enrich' && c.valid).map((c) => c.ms);
+  const verified = rows.some((r) => r.verifierChecked > 0);
   // M16: stage-1 published-set stability between runs of the same photo.
   const byPhoto = new Map<string, Set<string>[]>();
   for (const r of runs) {
@@ -509,7 +533,33 @@ export function aggregate(rows: readonly RunRow[], runs: readonly ScoredRun[], f
     M15: ratio(s1Rows.filter((r) => r.stage1Publishable).length, s1Rows.length),
     M16: pairs.length ? Math.round((pairs.reduce((a, b) => a + b, 0) / pairs.length) * 10_000) / 10_000 : null,
     qloo_forbidden_accepts: sum((r) => r.qlooForbiddenAccepts),
+    // score-v4, report only (no gate): the verifier's effect and the text-only references.
+    forbidden_published: sum((r) => r.statuses.forbidden),
+    verifier_checked: sum((r) => r.verifierChecked),
+    forbidden_uncontested: verified ? sum((r) => r.forbiddenUncontested) : null,
+    M5_uncontested: verified ? ratio(expectedRows.filter((r) => r.expectedHitUncontested).length, expectedRows.length) : null,
+    text_only: sum((r) => r.textOnly),
   };
+}
+
+/**
+ * What a split's runs were (docs/requalification-plan.md decision 3): every
+ * run two-stage (quick read + enrichment + guards), every run stage 1 alone,
+ * or a mix (some enrichments failed). Only a stage-1-only split leaves the
+ * two-stage-only metrics ungated; a mix is gated as strictly as two-stage.
+ */
+export type RunKind = 'two_stage' | 'stage1' | 'mixed';
+export function runKind(runs: readonly Pick<ScoredRun, 'twoStage'>[]): RunKind {
+  if (runs.length && runs.every((r) => r.twoStage)) return 'two_stage';
+  if (runs.every((r) => !r.twoStage)) return 'stage1';
+  return 'mixed';
+}
+
+/** The gates that apply to a split of this run kind; two-stage-only metrics are scoped out of a stage-1-only split. */
+export function gatesFor(gates: Thresholds['replay'], kind: RunKind, twoStageOnly: readonly string[]): { gates: Thresholds['replay']; scopedOut: string[] } {
+  if (kind !== 'stage1') return { gates, scopedOut: [] };
+  const scopedOut = Object.keys(gates).filter((m) => twoStageOnly.includes(m));
+  return { gates: Object.fromEntries(Object.entries(gates).filter(([m]) => !twoStageOnly.includes(m))), scopedOut };
 }
 
 export interface GateResult {
@@ -542,6 +592,10 @@ export interface SplitScore {
   metrics: Metrics;
   gates: GateResult[];
   notApplicable: string[];
+  /** score-v4: two-stage, stage 1 alone, or mixed (decision 3). */
+  runKind: RunKind;
+  /** score-v4: gated metrics left ungated because the split is stage 1 alone (thresholds two_stage_only). */
+  scopedOut: string[];
   pass: boolean;
   failures: string[];
 }
@@ -580,17 +634,21 @@ export function scoreRuns(
     const idx = rows.map((r, i) => (r.split === split ? i : -1)).filter((i) => i >= 0);
     const failed = failedCalls.filter((f) => labels.get(f.photoId)?.split === split).map((f) => f.call);
     if (!idx.length && !failed.length) continue;
-    const metrics = aggregate(idx.map((i) => rows[i]!), idx.map((i) => runs[i]!), failed);
-    const gates =
+    const splitRuns = idx.map((i) => runs[i]!);
+    const metrics = aggregate(idx.map((i) => rows[i]!), splitRuns, failed);
+    const all =
       mode === 'replay'
         ? split === 'tune'
           ? thresholds.replay
           : {}
         : { ...thresholds.live, ...(split === 'tune' ? thresholds.live_tune : {}) };
+    // A photo whose reading failed outright counts as a run that is not two-stage.
+    const kind = runKind([...splitRuns, ...(failed.length ? [{ twoStage: false }] : [])]);
+    const { gates, scopedOut } = gatesFor(all, kind, thresholds.two_stage_only ?? []);
     const g = applyGates(metrics, gates);
     const failures = g.results.filter((r) => !r.pass).map((r) => `${r.metric} ${r.value} (gate ${r.gate.op} ${r.gate.value})`);
     if (g.results.some((r) => r.metric === 'M12' && !r.pass)) failures.push('labels stale: more than the allowed share of published candidates match no label entry');
-    splits[split] = { metrics, gates: g.results, notApplicable: g.notApplicable, pass: g.pass, failures };
+    splits[split] = { metrics, gates: g.results, notApplicable: g.notApplicable, runKind: kind, scopedOut, pass: g.pass, failures };
   }
   const evaluated = Object.values(splits);
   return {
