@@ -1,0 +1,98 @@
+{
+  "id": "h22",
+  "split": "holdout",
+  "file": "h22-busy-street-japan.jpg",
+  "subject_domains": [
+    "place",
+    "signage",
+    "vehicle",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Japan",
+      "pattern": "^japan$|japanese (street|city|signage|shopping|downtown|urban|cityscape)|street in japan|japan(ese)? street",
+      "type": "place"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Den Den Town",
+      "pattern": "den ?den town|nipponbashi|nihonbashi|日本橋|osaka",
+      "type": "place"
+    },
+    {
+      "name": "Ramen",
+      "pattern": "ramen|ラーメン",
+      "requires_text": "ラーメン"
+    },
+    {
+      "name": "Mac",
+      "pattern": "\\bmac\\b|macintosh",
+      "type": "brand",
+      "requires_text": "Mac"
+    },
+    {
+      "name": "Apple",
+      "pattern": "^apple( store| mac)?$|apple inc",
+      "type": "brand",
+      "requires_text": "Apple"
+    },
+    {
+      "name": "Vodafone",
+      "pattern": "vodafone",
+      "type": "brand",
+      "requires_text": "vodaf"
+    },
+    {
+      "pattern": "pedestrian (crossing|scramble)|zebra crossing|crosswalk|shopping (street|district)|electronics (district|town|street|stores?)|vertical (banners|signs)|banners|signage|billboards?|elevated walkway|pedestrian bridge|taxis?|traffic|crowds?|busy street",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "chin(a|ese)|korea|taiwan|hong kong|seoul|shanghai|beijing|taipei",
+      "why": "the signs are Japanese (katakana ラーメン)"
+    },
+    {
+      "pattern": "akihabara|shinjuku|shibuya|ginza|harajuku|ikebukuro|kabukicho",
+      "why": "a banner reads 日本橋本店; no other district is named"
+    },
+    {
+      "pattern": "toyota|nissan|honda|mazda|subaru|suzuki|daihatsu|mitsubishi|lexus|isuzu|hino|fuso|crown|prius",
+      "why": "no car badge is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cuisine|sushi|izakaya",
+      "why": "restaurant signs are not dishes",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "ラーメン",
+    "Mac"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Busy shopping street seen from above: vertical banners (ラーメン, 'Mac' with an apple logo, 'vodaf...' cut off, a small 日本橋本店 banner), pedestrians on a crossing, taxis. Pedestrians: no descriptions. 'Apple' is acceptable only if the word is read (only the logo is shown). Tokyo is left unlabelled."
+}

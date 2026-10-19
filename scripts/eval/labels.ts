@@ -114,8 +114,11 @@ export const PhotoLabelSchema = z
   })
   .strict()
   .superRefine((l, ctx) => {
-    if (l.id.startsWith('p') !== (l.split === 'tune'))
-      ctx.addIssue({ code: 'custom', message: `${l.id}: p* photos are tune, h* photos are holdout` });
+    // p* photos are always tune and held-out photos are always h*. An h* photo
+    // may move to tune once it is no longer blind (golden-v2 moves h01-h13),
+    // never the other way.
+    if (l.id.startsWith('p') && l.split !== 'tune')
+      ctx.addIssue({ code: 'custom', message: `${l.id}: p* photos are tune; held-out photos are h*` });
     if (!l.quality.usable && (l.expected.length || l.acceptable.length))
       ctx.addIssue({ code: 'custom', message: `${l.id}: an unusable photo has no expected or acceptable references` });
     if (!l.quality.usable && !l.forbidden_classes.includes('unusable_with_candidates'))

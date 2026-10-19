@@ -1,0 +1,65 @@
+{
+  "id": "h06",
+  "split": "tune",
+  "file": "h06-qwenvl_menu.jpeg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Pepperoni pizza",
+      "pattern": "pizza",
+      "aliases": [
+        "Pizza"
+      ]
+    },
+    {
+      "name": "Burger",
+      "pattern": "burger",
+      "aliases": [
+        "Hamburger",
+        "Cheeseburger"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "american (cuisine|diner|food|fast food)|fast food|diner"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "domino|pizza hut|mcdonald|burger king|shake shack|five guys|papa john",
+      "why": "no restaurant or brand name is printed",
+      "class": "brand_without_text"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [
+    "BURGERS",
+    "PIZZA"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A designed menu card with food photos, not a photo of a table."
+}

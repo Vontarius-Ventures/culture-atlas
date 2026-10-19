@@ -1,0 +1,99 @@
+{
+  "id": "h25",
+  "split": "holdout",
+  "file": "h25-vehicle-bus-badge.jpg",
+  "subject_domains": [
+    "vehicle",
+    "place"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Qbuzz",
+      "pattern": "qbuzz",
+      "type": "brand",
+      "requires_text": "Qbuzz"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Assen",
+      "pattern": "^assen$",
+      "type": "place",
+      "requires_text": "Assen"
+    },
+    {
+      "name": "Dwingeloo",
+      "pattern": "dwingeloo",
+      "type": "place",
+      "requires_text": "Dwingeloo"
+    },
+    {
+      "pattern": "netherlands|dutch|holland|drenthe|groningen",
+      "type": "place"
+    },
+    {
+      "name": "Mercedes-Benz Citaro",
+      "pattern": "mercedes|citaro",
+      "type": "brand",
+      "requires_text": "Mercedes"
+    },
+    {
+      "pattern": "(city |public |transit |low[- ]floor |regional )?bus|public transport|bus (stop|station)",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "arriva|connexxion|keolis|\\bgvb\\b|\\bret\\b|\\bhtm\\b|syntus|\\bebs\\b|transdev|hermes|breng",
+      "why": "the operator name on the bus reads Qbuzz",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "\\bman\\b|scania|volvo|\\bvdl\\b|solaris|iveco|setra",
+      "why": "the maker's name is not legible (only the three-pointed star)",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "germany|german|belgi|denmark|danish",
+      "why": "a Dutch operator and Dutch destinations"
+    },
+    {
+      "pattern": "BX-?GL-?60",
+      "field": "visible_text",
+      "why": "never transcribe licence plates"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "Qbuzz",
+    "Assen"
+  ],
+  "must_not_read_text": [
+    "BX[- ]?GL[- ]?60"
+  ],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "City bus; 'Qbuzz' on the front and side, destination '20 Assen via Dwingeloo'. The maker appears only as a logo, so Mercedes-Benz counts only if the word is read. The plate is legible and must not be transcribed."
+}

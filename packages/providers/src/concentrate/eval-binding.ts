@@ -17,7 +17,7 @@ export const EVAL_BINDING = {
     'golden-v1': {
       golden_sha256: '2e119d58d1da7fe581d9a736b23305b5541590bcca7162708a57b98255c5264f',
       scorer_version: 'score-v3',
-      code_sha256: '5f31fcd160561000bb7ac1ac68bb40e9eed45ddd953215968aa75fec63374645',
+      code_sha256: 'a16b3960cfb88a5676c126b51555183f7af271a792b4da1795e0632f7fdcf1d9',
     },
     'text-v1': {
       golden_sha256: '8d171b14201054d1b2ef175c7f8606d2ac07c1726ca64df76e667c0216e917dc',

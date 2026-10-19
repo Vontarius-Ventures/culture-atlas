@@ -12,6 +12,10 @@ fixtures/eval/
   golden-v1/
     manifest.json    { version, photos: [{ id, split, file, sha256, width, height, source }] }
     labels/<id>.json one hand-written label per photo (schema: scripts/eval/labels.ts)
+  golden-v2/         tune = p01-p15 + h01-h13; blind held-out = h14-h29
+    manifest.json, labels/<id>.json   as in golden-v1
+    FREEZE.md        the freeze procedure for the blind split
+    freeze.json      sha256 of every held-out label and manifest entry (checked by labels.test.ts)
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -50,6 +54,19 @@ fixtures/eval/
   The scorer reports tune and held-out separately. Not yet covered: a painting with a legible museum label
   and a photo with prompt-injection text (no suitable openly licensed photo was
   found this round).
+- **golden-v2: a fresh blind split.** Requalification (docs/requalification-plan.md)
+  moves `h01`–`h13` into the tune split (labels unchanged apart from `split`;
+  an `h*` photo may move to tune, a held-out photo is always `h*`) and adds a
+  blind held-out split `h14`–`h29`: 16 new photos from eight repositories that
+  golden-v1 never used (food, interiors, a craft object, Latin and Japanese
+  signage, vehicles with and without legible badges, clothing with and without
+  legible logos, one real well-known person whose identity must not be claimed,
+  a busy street). Their labels were written before any model saw the photos and
+  are frozen: `freeze.json` pins them and `FREEZE.md` gives the procedure (record
+  the freeze commit, bind golden-v2, run the blind split once, change nothing
+  afterwards). golden-v1 stays as it was for `replay-v1` and earlier artifacts.
+  The photo on h27 shows a real person; its upstream path holds no name, and no
+  name is written in this repository.
 - **Version bumps and the binding.** Editing a label, the manifest,
   `thresholds.json`, a scorer, a text fixture or prompt builder, or any guard
   rule changes `EVAL_BINDING` (`pnpm eval:binding`; the test suite fails until

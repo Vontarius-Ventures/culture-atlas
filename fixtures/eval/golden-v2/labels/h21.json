@@ -1,0 +1,82 @@
+{
+  "id": "h21",
+  "split": "holdout",
+  "file": "h21-sign-priory-galleries.jpg",
+  "subject_domains": [
+    "signage",
+    "place",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Priory Galleries",
+      "pattern": "priory galler",
+      "type": "brand",
+      "requires_text": "galleries"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "The Ship",
+      "pattern": "^(the )?ship$|at the ship|ship inn|the ship (inn|pub)",
+      "requires_text": "ship"
+    },
+    {
+      "pattern": "art gallery|galler(y|ies)|antiques?( shop| dealer)?|shop ?front|storefront|hanging (shop )?sign|pub sign|wrought[- ]iron (bracket|sign)",
+      "generic": true
+    },
+    {
+      "pattern": "england|english|united kingdom|\\bu\\.?k\\.?\\b|britain|british",
+      "type": "place"
+    },
+    {
+      "pattern": "georgian|victorian|period (building|townhouse)|historic (building|town)|market town|old town|high street|sash windows?|red[- ]brick|chimneys?|terrace"
+    },
+    {
+      "pattern": "no entry( sign)?|road sign|hatchback|\\bcar\\b",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "colchester|wivenhoe|ipswich|norwich|cambridge|oxford|\\byork\\b|\\bbath\\b|canterbury|chester|\\brye\\b|lewes|stamford|ludlow|london|essex|suffolk",
+      "why": "no legible text names the town or county"
+    },
+    {
+      "pattern": "peugeot|renault|citro[eë]n|\\bford\\b|vauxhall|toyota|nissan|honda|fiat|volkswagen|\\bvw\\b",
+      "why": "the red car's badge is not legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cuisine|pub food",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "priory",
+    "galleries"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Shop front 'priory galleries at the ship' on the fascia and on a hanging sign. A driver and a passer-by at the frame edge: no description. must_read uses single words because the hanging sign breaks the name over lines."
+}
