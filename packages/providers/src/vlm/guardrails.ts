@@ -121,8 +121,9 @@ export interface Stage2Guard {
 
 export const VTEXT_RE =
   /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration/i;
+/** The plan's list plus mouth/lips/teeth/grimace (the v2 smoke described "his mouth open mid-gesture"). */
 export const PERSON_OBS_RE =
-  /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
+  /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|grimac\w*|mouth|lips|teeth|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
 export const MEDIUM_RE =
   /\b(still[- ]?life|paintings?|painted|illustrat\w*|drawings?|sketch(es)?|render(ing)?|watercolou?r|oil on canvas|vector|cartoons?|clip ?art|photographs?|digital art)\b/i;
 export const ROLE_RE =

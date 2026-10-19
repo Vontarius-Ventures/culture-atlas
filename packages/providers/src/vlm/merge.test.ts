@@ -244,6 +244,14 @@ describe('mergeEnrichmentContext: held claims and verdicts (quality plan §3.4)'
     expect(vetoedCandidateKeys(base, v2)).toEqual(new Set(['porch culture']));
   });
 
+  it('v2: five evidence boxes (five signs) parse, and the merge keeps the first four valid ones', () => {
+    const box = (x: number) => ({ x, y: 0.1, w: 0.1, h: 0.1 });
+    const five = VlmEnrichment.parse({ ...v2, regions: [0.1, 0.2, 0.3, 0.4, 0.5].map((x, i) => ({ label: `sign ${i + 1}`, box: box(x) })) });
+    const a = mergeEnrichmentContext(published, five, held).analysis;
+    expect(a.regions.map((r) => r.label)).toEqual(['sign 1', 'sign 2', 'sign 3', 'sign 4']);
+    expect(VlmEnrichment.safeParse({ ...v2, regions: Array.from({ length: 9 }, () => ({ label: 'x', box: box(0.1) })) }).success).toBe(false);
+  });
+
   it('a v1 enrichment maps keep into verdicts', () => {
     const m = mergeEnrichmentContext(toVlmAnalysis(quick), enrichment).merge;
     expect(m.reading).toBe('v1');

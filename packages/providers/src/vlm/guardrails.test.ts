@@ -145,10 +145,11 @@ describe('G-PERSON-OBS', () => {
       { id: 'o1', text: 'The man in front has a shaved head and is shouting', kind: 'person_style' as const, region_ids: [] },
       { id: 'o2', text: 'The man behind has gray hair and a serious expression', kind: 'object' as const, region_ids: [] },
       { id: 'o3', text: 'Two men wear dark suits with white collared shirts', kind: 'garment' as const, region_ids: [] },
+      { id: 'o4', text: 'The man on the left leans forward and points, with his mouth open mid-gesture.', kind: 'other' as const, region_ids: [] },
     ];
     const { kept, dropped } = sanitizeObservations(obs);
     expect(kept.map((o) => o.id)).toEqual(['o3']);
-    expect(dropped.map((o) => o.id)).toEqual(['o1', 'o2']);
+    expect(dropped.map((o) => o.id)).toEqual(['o1', 'o2', 'o4']);
   });
 });
 

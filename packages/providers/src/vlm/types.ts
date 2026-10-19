@@ -245,6 +245,14 @@ export const VlmEnrichmentV2 = z.object({
     }),
   ),
   additional_candidates: z.array(VlmQuickCandidate.extend({ rationale: z.string() })).max(4),
+  /**
+   * Evidence boxes: the prompt asks for up to four and the merge keeps the
+   * first four valid ones (ENRICHMENT_REGIONS_MAX). The schema tolerates up to
+   * eight, because a photo with five signed objects drew five boxes in the v2
+   * smoke and a cap overflow on boxes must not fail the whole stage 2 (which
+   * would drop every held claim).
+   */
+  regions: z.array(z.object({ label: z.string(), box: VlmRegion.shape.box })).max(8),
 });
 export type VlmEnrichmentV1 = z.infer<typeof VlmEnrichmentV1>;
 export type VlmEnrichmentV2 = z.infer<typeof VlmEnrichmentV2>;
@@ -275,6 +283,8 @@ export function confirmationVerdict(entry: Confirmation): VlmVerdict {
 export const ENRICHMENT_VETO_CERTAINTY_FACTOR = 0.5;
 /** Hard cap on candidates in a merged reading (5 stage-1 + 4 additional). */
 export const MERGED_CANDIDATES_MAX = 9;
+/** Evidence regions one enrichment may add (the first valid ones). */
+export const ENRICHMENT_REGIONS_MAX = 4;
 
 /** Name key used to match enrichment confirmations to stage-1 candidates (case, accents, punctuation). */
 export function candidateNameKey(name: string): string {
@@ -407,6 +417,7 @@ export function mergeEnrichmentContext(
   // Regions first so candidates can reference them.
   const added: VlmAnalysis['regions'] = [];
   for (const region of e.regions) {
+    if (added.length >= ENRICHMENT_REGIONS_MAX) break;
     if (!boxIsValid(region.box)) continue;
     added.push({ id: nextId('r', [...out.regions, ...added]), label: region.label, box: { ...region.box } });
   }
