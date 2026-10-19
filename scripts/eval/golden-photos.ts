@@ -99,6 +99,8 @@ export interface PhotoEval {
     guardrail_version: string | null;
     grounding_version: string | null;
     scorer_version: string;
+    code_sha256: string;
+    holdout_blind: boolean | null;
     metrics: Record<string, number>;
     pass: boolean;
   };
@@ -112,6 +114,9 @@ export function flattenMetrics(scorecard: Scorecard): Record<string, number> {
   return metrics;
 }
 
+/** Blind held-out photos a photo-role qualification needs (quality plan §7.1: at least 10). */
+export const HOLDOUT_MIN_PHOTOS = 10;
+
 /** Scores recorded readings against the live gates and builds the artifact eval block. */
 export function evaluatePhotoRecordings(input: {
   golden: GoldenSet;
@@ -121,6 +126,8 @@ export function evaluatePhotoRecordings(input: {
   recordings: readonly Recording[];
   /** Calls that failed (no recording), counted against M13. */
   failedCalls?: number;
+  /** Digest of the measured code (computeEvalBinding().sets[golden_set].code_sha256). */
+  codeSha256: string;
 }): PhotoEval {
   const runs = input.recordings.map((r) => {
     const { decisions: _d, finalCandidates: _f, ...run } = input.pipeline.run(r);
@@ -132,6 +139,13 @@ export function evaluatePhotoRecordings(input: {
   const metrics = flattenMetrics(scorecard);
   // M13 counts only completed calls; a failed call (no recording) fails the evaluation outright.
   metrics.failed_calls = input.failedCalls ?? 0;
+  // A held-out split is a generalization estimate only while it is blind: at least 10 photos, none used for tuning.
+  const scoredHoldout = new Set(input.recordings.map((r) => r.photoId));
+  const holdout = input.golden.manifest.photos.filter((p) => p.split === 'holdout' && scoredHoldout.has(p.id));
+  const blindHoldout = holdout.filter((p) => p.blind === true).length;
+  metrics.holdout_photos = holdout.length;
+  metrics.holdout_blind_photos = blindHoldout;
+  const holdoutBlind = holdout.length >= HOLDOUT_MIN_PHOTOS && blindHoldout === holdout.length;
   return {
     scorecard,
     block: {
@@ -141,6 +155,8 @@ export function evaluatePhotoRecordings(input: {
       guardrail_version: input.pipeline.guardrailVersion,
       grounding_version: null,
       scorer_version: SCORER_VERSION,
+      code_sha256: input.codeSha256,
+      holdout_blind: holdoutBlind,
       metrics,
       pass: scorecard.pass && allSplitsScored && !input.failedCalls,
     },

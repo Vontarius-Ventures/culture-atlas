@@ -90,7 +90,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v2');
+    expect(GUARDRAIL_VERSION).toBe('guard-v3');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -139,7 +139,7 @@ describe('G-VTEXT', () => {
       { twoStage: true },
     );
     expect(g.analysis.visible_text.map((t) => t.text)).toEqual(['NBA']);
-    expect(g.dropped).toEqual({ visibleText: 1, observations: 0 });
+    expect(g.dropped).toEqual({ visibleText: 1, observations: 0, subjects: 0 });
   });
 });
 
@@ -253,7 +253,9 @@ describe('G-IDENTITY', () => {
       ['[withheld]', ['G-IDENTITY']],
       ['[withheld]', ['G-IDENTITY']],
     ]);
-    expect(names(g.analysis.candidates)).toEqual(['Fixture Author']);
+    // guard-v3: a name read only in the model's own evidence_text is held for a stage-2 transcription.
+    expect(g.analysis.candidates).toEqual([]);
+    expect(names(g.held)).toEqual(['Fixture Author']);
   });
 });
 
@@ -469,7 +471,9 @@ describe('G-BRAND', () => {
     expect(brandHeadToken('Spalding NBA basketball')).toBe('spalding');
     expect(brandHeadToken('Cannondale CAAD8')).toBe('cannondale');
     expect(brandHeadToken('Vintage Fixture bicycle')).toBe('fixture');
-    expect(brandHeadToken('Red bicycle')).toBe('red');
+    // guard-v3: colours and materials never head a brand ("Red bicycle" names no maker).
+    expect(brandHeadToken('Red bicycle')).toBeNull();
+    expect(brandHeadToken('Blue Fixture Coffee cup')).toBe('fixture');
     expect(brandHeadToken('Bicycle')).toBeNull();
   });
 });
@@ -584,7 +588,16 @@ describe('stage 2: G-VERDICT and G-BRAND-CORROBORATE', () => {
   });
 
   it('additions: certainty floor, brand needs its own read text plus a stage-2 transcription', () => {
-    const g = quick([v2({ name: 'Road cycling', type: 'tradition', certainty: 0.6, tag_query: 'road cycling', domain: 'sport' })]);
+    // The stage-1 reading named the maker in its title, so the stage-2 addition is not a single read (guard-v3).
+    const g = guardQuickRead(
+      toVlmAnalysis({
+        title: 'Cannondale bike on a porch',
+        interpretation: 'A red road bike beside a dog.',
+        candidates: [v2({ name: 'Road cycling', type: 'tradition', certainty: 0.6, tag_query: 'road cycling', domain: 'sport' })],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
     const s2 = stage2(
       g,
       enrichment({
@@ -658,17 +671,18 @@ describe('stage 2: G-VERDICT and G-BRAND-CORROBORATE', () => {
     );
     expect(s2.analysis.visible_text.map((t) => t.text)).toEqual(['OPEN']);
     expect(s2.analysis.observations.map((o) => o.text)).toEqual(['Red road bike']);
-    expect(s2.dropped).toEqual({ visibleText: 1, observations: 1 });
+    expect(s2.dropped).toEqual({ visibleText: 1, observations: 1, subjects: 0 });
   });
 });
 
 describe('G-CATEGORY (server-side table)', () => {
   it('maps domains to categories; architecture, crafts, places, vehicles and sport get none', () => {
-    const cat = (domain: VlmCandidate['domain'], type: VlmCandidate['type'] = 'style') => categoriesFor({ name: 'x', type, tag_queries: [], domain });
-    expect(cat('fashion')).toEqual(['wear']);
-    expect(cat('music')).toEqual(['play']);
-    expect(cat('film')).toEqual(['watch']);
-    expect(cat('food')).toEqual(['eat']);
+    // Names whose own words name the domain (guard-v3 requires that, or a reading that shows it).
+    const cat = (domain: VlmCandidate['domain'], type: VlmCandidate['type'] = 'style', name = 'x') => categoriesFor({ name, type, tag_queries: [], domain });
+    expect(cat('fashion', 'style', 'Denim workwear')).toEqual(['wear']);
+    expect(cat('music', 'style', 'Cool jazz')).toEqual(['play']);
+    expect(cat('film', 'style', 'Film noir')).toEqual(['watch']);
+    expect(cat('food', 'style', 'Dim sum')).toEqual(['eat']);
     expect(cat('other', 'cuisine')).toEqual(['eat']);
     for (const d of ['architecture', 'interior', 'design', 'craft', 'art', 'vehicle', 'sport', 'place', 'signage', 'people', 'other'] as const)
       expect(cat(d)).toEqual([]);
@@ -790,5 +804,262 @@ describe('shared stage-2 input and brand corroboration (used by the compiler, qu
     const byName = new Map(s2.analysis.candidates.map((c) => [c.name, c.id]));
     expect([...ids]).toEqual([byName.get('Fixturedale')]);
     expect(byName.has('Fixturo Civic')).toBe(false);
+  });
+});
+
+/*
+ * guard-v3: regression tests for the review findings on guard-v2. Each case
+ * is the probe from the review, rewritten as FIXTURE data where a real name
+ * is not needed to show the shape (brand words are kept where the rule is a
+ * word list).
+ */
+describe('guard-v3: G-CUISINE-FOOD and G-CATEGORY do not take the model domain on trust', () => {
+  const cathedral = (cands: VlmQuickCandidate[]) =>
+    guardQuickRead(
+      toVlmAnalysis({ title: 'Gothic cathedral facade', interpretation: 'A stone church front with pointed arches.', candidates: cands, quality: { usable: true, issue: null } }),
+      { twoStage: true },
+    );
+
+  it('drops a food-domain tradition or style on a photo with no food, not only type cuisine', () => {
+    const g = cathedral([
+      v2({ name: 'Mediterranean diet', type: 'tradition', domain: 'food', certainty: 0.6, tag_query: 'mediterranean diet' }),
+      v2({ name: 'Fixture tea ceremony', type: 'tradition', domain: 'food', certainty: 0.6, tag_query: 'tea ceremony' }),
+    ]);
+    expect(g.analysis.candidates).toEqual([]);
+    expect(g.decisions.map((d) => d.rules)).toEqual([['G-CUISINE-FOOD'], ['G-CUISINE-FOOD']]);
+  });
+
+  it('a domain the name contradicts is replaced by the name\'s own domain ("Bossa Nova" claimed as food plays, never eats)', () => {
+    const g = cathedral([
+      v2({ name: 'Bossa Nova', type: 'style', domain: 'food', certainty: 0.6, tag_query: 'bossa nova' }),
+      v2({ name: 'Gothic Revival', type: 'style', domain: 'fashion', certainty: 0.6, tag_query: 'gothic revival' }),
+    ]);
+    expect(g.analysis.candidates.map((c) => [c.name, c.domain, c.suggested_categories])).toEqual([
+      ['Bossa Nova', 'music', ['play']],
+      ['Gothic Revival', 'architecture', []],
+    ]);
+  });
+
+  it('a category the name does not support needs the reading to show it', () => {
+    const style = { name: 'Fixture look', type: 'style' as const, tag_queries: ['fixture look'], domain: 'fashion' as const };
+    expect(categoriesFor(style)).toEqual([]);
+    expect(categoriesFor(style, { domains: new Set(['fashion']) })).toEqual(['wear']);
+    // A coat on a person in the title shows clothing.
+    const person = guardQuickRead(
+      toVlmAnalysis({ title: 'Woman in a long coat', interpretation: 'A street portrait.', candidates: [v2({ name: 'Fixture look', domain: 'fashion', tag_query: 'fixture look' })], quality: { usable: true, issue: null } }),
+      { twoStage: true },
+    );
+    expect(person.analysis.candidates[0]!.suggested_categories).toEqual(['wear']);
+    const building = cathedral([v2({ name: 'Fixture look', domain: 'fashion', tag_query: 'fixture look' })]);
+    expect(building.analysis.candidates[0]!.suggested_categories).toEqual([]);
+  });
+
+  it('a dish that is itself depicted with real evidence is its own food evidence', () => {
+    const g = guardQuickRead(
+      toVlmAnalysis({
+        title: 'Steamed parcels in a bamboo basket',
+        interpretation: 'A close view of a steamer.',
+        candidates: [v2({ name: 'Fixturebao', type: 'object', relation: 'depicted', evidence: 'distinctive_form', certainty: 0.8, domain: 'food' })],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+    expect(g.analysis.candidates.map((c) => [c.name, c.suggested_categories])).toEqual([['Fixturebao', ['eat']]]);
+  });
+});
+
+describe('guard-v3: G-BRAND beyond the closed maker list', () => {
+  it('holds unlisted and everyday-word makers, model codes and numbered models at stage 1', () => {
+    const g = guardQuickRead(
+      toVlmAnalysis({
+        title: 'A street scene',
+        interpretation: 'People and vehicles.',
+        candidates: [
+          v2({ name: 'Trek road bike', type: 'object', relation: 'depicted', evidence: 'distinctive_form', certainty: 0.7, domain: 'sport' }),
+          v2({ name: 'Mitsubishi', type: 'object', certainty: 0.6, domain: 'vehicle' }),
+          v2({ name: 'Jordan 1 sneakers', type: 'object', certainty: 0.6, domain: 'fashion' }),
+          v2({ name: 'Supreme streetwear', type: 'style', certainty: 0.6, domain: 'fashion', tag_query: 'supreme streetwear' }),
+          v2({ name: 'Fixturo trail shoes', type: 'object', certainty: 0.6, domain: 'fashion' }),
+        ],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+    expect(g.analysis.candidates).toEqual([]);
+    expect(names(g.held)).toEqual(['Trek road bike', 'Mitsubishi', 'Jordan 1 sneakers', 'Supreme streetwear', 'Fixturo trail shoes']);
+    for (const d of g.decisions) expect(d).toMatchObject({ action: 'hold', rules: expect.arrayContaining(['G-BRAND']) });
+  });
+
+  it('does not treat descriptions as makers', () => {
+    const notBrand = [
+      { name: 'Japanese streetwear', type: 'style' as const, domain: 'fashion' as const },
+      { name: 'Teddy coat', type: 'object' as const, domain: 'fashion' as const },
+      { name: 'Giant panda', type: 'object' as const, domain: 'other' as const },
+      { name: '1950s fashion', type: 'style' as const, domain: 'fashion' as const },
+      { name: '35mm film camera', type: 'object' as const, domain: 'design' as const },
+      { name: 'London red double-decker bus', type: 'object' as const, domain: 'vehicle' as const },
+      { name: 'Bus 88', type: 'object' as const, domain: 'vehicle' as const },
+    ];
+    for (const c of notBrand) expect(isBrandLike(c), c.name).toBe(false);
+    // A place named in the same reading describes the product.
+    expect(isBrandLike({ name: 'Fixtureville sneakers', type: 'object', domain: 'fashion' })).toBe(true);
+    expect(isBrandLike({ name: 'Fixtureville sneakers', type: 'object', domain: 'fashion' }, { knownWords: new Set(['fixtureville']) })).toBe(false);
+  });
+});
+
+describe('guard-v3: G-STYLE-OF replacements go through the person rules', () => {
+  it('a tag query that repeats the attributed name is an identity claim, never a style', () => {
+    const g = guardQuickRead(
+      reading([
+        { name: 'Fixturo-style outfit', type: 'style', domain: 'fashion', tag_queries: ['Fixturo West'], certainty: 0.7 },
+        { name: 'Eames-style lounge chair', type: 'object', tag_queries: ['Eames'], certainty: 0.7 },
+        { name: 'Shaker-style cabinet', type: 'object', tag_queries: ['Shaker'], certainty: 0.7 },
+      ]),
+      { twoStage: true },
+    );
+    expect(names(g.analysis.candidates)).toEqual(['Shaker']);
+    expect(g.decisions.slice(0, 2)).toEqual([
+      { candidateId: 'c1', name: '[withheld]', action: 'drop', rules: ['G-IDENTITY'], note: 'style_of_attribution' },
+      { candidateId: 'c2', name: '[withheld]', action: 'drop', rules: ['G-IDENTITY'], note: 'style_of_attribution' },
+    ]);
+  });
+
+  it('re-runs G-PERSON-ROLE and G-MEDIUM on the replacement', () => {
+    const g = guardQuickRead(
+      reading(
+        [
+          { name: 'Fixture-style kit', type: 'style', tag_queries: ['football coaching'], certainty: 0.7 },
+          { name: 'Fixture-inspired object', type: 'object', tag_queries: ['still life'], certainty: 0.7 },
+        ],
+        { title: 'Two men on a pitch' },
+      ),
+      { twoStage: true },
+    );
+    expect(g.analysis.candidates).toEqual([]);
+    // The role is only in the replacement's name; the medium word in a tag query already drops the original.
+    expect(g.decisions.filter((d) => d.action === 'drop').map((d) => d.rules.at(-1))).toEqual(['G-STYLE-OF', 'G-PERSON-ROLE', 'G-MEDIUM']);
+    expect(g.decisions[1]).toMatchObject({ name: '[withheld]', rules: ['G-PERSON-ROLE'] });
+  });
+});
+
+describe('guard-v3: a person named at stage 1 waits for a stage-2 transcription', () => {
+  const court = () =>
+    guardQuickRead(
+      toVlmAnalysis({
+        title: 'Players on a court',
+        interpretation: 'A game in progress.',
+        candidates: [v2({ name: 'Fixture Lebrook', type: 'creator', domain: 'people', relation: 'depicted', certainty: 0.9, evidence: 'read_text', evidence_text: 'Fixture Lebrook' })],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+
+  it('is held, never published from its own evidence_text, and dropped without a stage 2', () => {
+    const g = court();
+    expect(g.analysis.candidates).toEqual([]);
+    expect(g.decisions[0]).toMatchObject({ action: 'hold', rules: ['G-IDENTITY'] });
+    const single = guardQuickRead(
+      toVlmAnalysis({ title: 'Players on a court', interpretation: 'A game.', candidates: [v2({ name: 'Fixture Lebrook', type: 'creator', domain: 'people', certainty: 0.9, evidence: 'read_text', evidence_text: 'Fixture Lebrook' })], quality: { usable: true, issue: null } }),
+      { twoStage: false },
+    );
+    expect(single.decisions[0]).toMatchObject({ action: 'drop', name: '[withheld]', note: 'no_stage_2' });
+  });
+
+  it('publishes only when stage 2 transcribed every word of the name', () => {
+    const supported = { name: 'Fixture Lebrook', rationale: 'Jersey lettering', verdict: 'supported' as const };
+    const notRead = stage2(court(), enrichment({ visible_text: ['LEBROOK'], confirmed: [supported] }));
+    expect(notRead.publishNow).toEqual([]);
+    expect(notRead.decisions.at(-1)).toMatchObject({ action: 'drop', name: '[withheld]', note: 'not_read_at_stage_2' });
+    const read = stage2(court(), enrichment({ visible_text: ['FIXTURE LEBROOK 23'], confirmed: [supported] }));
+    expect(read.publishNow.map((c) => [c.name, c.evidence, c.evidence_text])).toEqual([['Fixture Lebrook', 'read_text', 'FIXTURE LEBROOK 23']]);
+  });
+});
+
+describe('guard-v3: G-BRAND-CORROBORATE needs every brand word, from two separate readings', () => {
+  const quickOf = (title: string, cands: VlmQuickCandidate[]) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation: 'A shop counter.', candidates: cands, quality: { usable: true, issue: null } }), { twoStage: true });
+
+  it('a colour word on a sign never corroborates a brand ("Blue Fixture Coffee" from "BLUE MONDAY SALE")', () => {
+    const g = quickOf('A paper cup', [v2({ name: 'Blue Fixture Coffee cup', type: 'object', certainty: 0.6, domain: 'design' })]);
+    expect(names(g.held)).toEqual(['Blue Fixture Coffee cup']);
+    const s2 = stage2(g, enrichment({ visible_text: ['BLUE MONDAY SALE'], confirmed: [{ name: 'Blue Fixture Coffee cup', rationale: 'Cup', verdict: 'supported' }] }));
+    expect(s2.publishNow).toEqual([]);
+    expect(brandCorroboratedIds(s2.decisions).size).toBe(0);
+    const ok = stage2(g, enrichment({ visible_text: ['BLUE FIXTURE COFFEE'], confirmed: [{ name: 'Blue Fixture Coffee cup', rationale: 'Cup', verdict: 'supported' }] }));
+    expect(names(ok.publishNow)).toEqual(['Blue Fixture Coffee cup']);
+  });
+
+  it('a make read on a badge does not vouch for a model guessed from the shape', () => {
+    const g = quickOf('A parked SUV', [v2({ name: 'Nissan Fixtrail', type: 'object', certainty: 0.6, domain: 'vehicle' })]);
+    const conf = [{ name: 'Nissan Fixtrail', rationale: 'Badge', verdict: 'supported' as const }];
+    expect(stage2(g, enrichment({ visible_text: ['NISSAN'], confirmed: conf })).publishNow).toEqual([]);
+    expect(names(stage2(g, enrichment({ visible_text: ['NISSAN', 'FIXTRAIL'], confirmed: conf })).publishNow)).toEqual(['Nissan Fixtrail']);
+  });
+
+  it('a stage-2 brand addition is not confirmed by its own reply alone', () => {
+    const add = { ...v2({ name: 'Nike Fixture Max', type: 'object', relation: 'depicted', certainty: 0.9, evidence: 'read_text', evidence_text: 'NIKE FIXTURE MAX', domain: 'fashion' }), rationale: 'Logo' };
+    const alone = stage2(quickOf('Sneakers on a shelf', []), enrichment({ visible_text: ['NIKE FIXTURE MAX'], additional_candidates: [add] }));
+    expect(alone.publishNow).toEqual([]);
+    expect(alone.decisions[0]).toMatchObject({ action: 'drop', note: 'single_read' });
+    const both = stage2(quickOf('Nike Fixture Max sneakers on a shelf', []), enrichment({ visible_text: ['NIKE FIXTURE MAX'], additional_candidates: [add] }));
+    expect(names(both.publishNow)).toEqual(['Nike Fixture Max']);
+  });
+});
+
+describe('guard-v3: G-SUBJECT guards competing subjects ("What caught your eye?")', () => {
+  it('drops brand guesses, person names and medium words from stage-2 competing subjects', () => {
+    const g = guardQuickRead(
+      toVlmAnalysis({ title: 'A street', interpretation: 'Cars and people.', candidates: [v2({ name: 'Fixture Harbour', type: 'place', certainty: 0.7, evidence: 'read_text', evidence_text: 'FIXTURE HARBOUR', relation: 'depicted', domain: 'place' })], quality: { usable: true, issue: null } }),
+      { twoStage: true },
+    );
+    const s2 = stage2(
+      g,
+      enrichment({
+        visible_text: ['FIXTURE HARBOUR'],
+        competing_subjects: ['Nissan X-Trail', 'Fixture Lebrook', 'Still life painting'],
+      }),
+    );
+    expect(s2.analysis.competing_subjects).toEqual([]);
+    expect(s2.dropped.subjects).toBe(3);
+    const ok = stage2(g, enrichment({ visible_text: ['FIXTURE HARBOUR'], competing_subjects: ['The red bicycle', 'Fixture Harbour sign', 'Turquoise glazed vessels'] }));
+    expect(ok.analysis.competing_subjects.map((s) => s.label)).toEqual(['The red bicycle', 'Fixture Harbour sign', 'Turquoise glazed vessels']);
+  });
+
+  it('applies to the stage-1 (full or frame aggregate) reading too', () => {
+    const g = guardQuickRead(
+      reading([{ name: 'Wabi-sabi', tag_queries: ['wabi sabi'] }], {
+        competing_subjects: [
+          { id: 's1', label: 'Fixture Lebrook', region_ids: [] },
+          { id: 's2', label: 'Ceramic bowl', region_ids: [] },
+          { id: 's3', label: 'Honda Fixture', region_ids: [] },
+        ],
+      }),
+      { twoStage: true },
+    );
+    expect(g.analysis.competing_subjects.map((s) => s.label)).toEqual(['Ceramic bowl']);
+    expect(g.dropped.subjects).toBe(2);
+  });
+});
+
+describe('guard-v3: G-MEDIUM covers artwork, prints, canvas and nature morte', () => {
+  it('drops the review probe names and rewrites the title and interpretation', () => {
+    const g = guardQuickRead(
+      reading(
+        [
+          { name: 'Dutch Golden Age artwork', domain: 'art', tag_queries: ['dutch golden age'] },
+          { name: 'Vanitas print', domain: 'art', tag_queries: ['vanitas'] },
+          { name: 'Nature morte', domain: 'art', tag_queries: ['nature morte'] },
+          { name: 'Batik print', domain: 'craft', tag_queries: ['batik'] },
+        ],
+        { title: 'Dutch artwork of a fruit bowl', interpretation: 'A canvas print resembling a fruit bowl on a table.' },
+      ),
+      { twoStage: true },
+    );
+    expect(names(g.analysis.candidates)).toEqual(['Batik print']);
+    expect(g.analysis.title).toBe('Dutch fruit bowl');
+    expect(g.analysis.interpretation).toBe('Resembling a fruit bowl on a table.');
+    expect(hasMediumWord('Leopard print coat', 'fashion')).toBe(false);
+    expect(hasMediumWord('Canvas sneakers', 'fashion')).toBe(false);
+    expect(hasMediumWord('Fixture lithograph', 'art')).toBe(true);
   });
 });

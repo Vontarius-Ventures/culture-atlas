@@ -253,6 +253,11 @@ describe('eval:live (offline rails)', () => {
     const ledger = (await readFile(ledgerFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
     expect(ledger.filter((l) => l.provider === 'qloo')).toEqual([expect.objectContaining({ endpoint: '/v2/tags', status: 200 })]);
     expect(await readFile(path.join(out, 'grounding.json'), 'utf8')).not.toContain('synthetic-qloo-key');
+    // The grounding gate of thresholds.json is applied, not left to be read by eye: one lookup is
+    // below the sample-size gates and nothing was judged by hand, so the run does not pass.
+    expect(result.grounding).toMatchObject({ pass: false, metrics: { lookups: 1, accepted: 1, forbidden_accepts: 0, grounding_precision: null } });
+    expect(result.grounding!.gates.find((g) => g.metric === 'labelled_candidates')).toMatchObject({ value: 1, pass: false });
+    expect(JSON.parse(await readFile(path.join(out, 'scorecard.json'), 'utf8')).grounding_gate).toMatchObject({ pass: false });
   });
 
   it('stops at the first 429 without retrying and counts the failure against M13', async () => {

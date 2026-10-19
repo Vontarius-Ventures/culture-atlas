@@ -195,13 +195,23 @@ describe('scoreTextFixture: composer', () => {
     expect(newNames('A night with Haruomi Hosono.', '<data>"artists":["Ryuichi Sakamoto"]</data>', [])).toEqual(['Haruomi Hosono']);
   });
 
-  it('T8: an excluded ingredient or a safety promise in the prose fails', () => {
+  it('T8 (text-score-v2): scored on the prose production shows; a summary lost to the dietary filter fails', () => {
+    // Production drops a sentence naming an excluded ingredient; with nothing left the model's summary is lost.
     const peanut = scoreTextFixture('plan_prose', DIET, {
       title: 'Bangkok nights',
       summary: 'Green papaya salad with crushed peanuts meets In the Mood for Love.',
     });
-    expect(peanut.metrics.t8_exclusion_violations).toBe(1);
-    expect(peanut.reasons.join('\n')).toMatch(/T8: mentions excluded peanuts/);
+    expect(peanut.metrics).toMatchObject({ t8_exclusion_violations: 0, t8_raw_exclusion_mentions: 1, t8_summary_kept: 0 });
+    expect(peanut.reasons.join('\n')).toMatch(/T8: no summary sentence survives the dietary filter/);
+    expect(peanut.pass).toBe(false);
+    // One offending sentence among others: it is never shown, the rest is; the raw mention is still reported.
+    const mixed = scoreTextFixture('plan_prose', DIET, {
+      title: 'Bangkok nights',
+      summary: 'Grilled lemongrass chicken meets In the Mood for Love.',
+      rationale: 'Green papaya salad gets crushed peanuts. The film keeps a slow pace.',
+    });
+    expect(mixed.metrics).toMatchObject({ t8_exclusion_violations: 0, t8_raw_exclusion_mentions: 1, t8_summary_kept: 1 });
+    expect(mixed.pass).toBe(true);
     const safe = scoreTextFixture('plan_prose', DIET, {
       title: 'Bangkok nights',
       summary: 'Green papaya salad and grilled lemongrass chicken meet In the Mood for Love.',

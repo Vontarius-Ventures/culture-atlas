@@ -1,5 +1,5 @@
-import { brandHeadToken, hasMediumWord, type QlooEntity, type QlooEntityType, type QlooTag } from '@culture-atlas/providers';
-import { canonicalTokens, nameTokens, sameTokens, strictSubset } from './text';
+import { brandHeadToken, brandReadIn, hasMediumWord, type QlooEntity, type QlooEntityType, type QlooTag } from '@culture-atlas/providers';
+import { canonicalTokens, sameTokens, strictSubset } from './text';
 
 export { canonicalTokens } from './text';
 
@@ -13,7 +13,7 @@ export { canonicalTokens } from './text';
  * doubt becomes a reference under the candidate's own name, never a
  * look-alike's name. No I/O; every decision carries a rule id and a reason.
  */
-export const GROUNDING_VERSION = 'ground-v2';
+export const GROUNDING_VERSION = 'ground-v3';
 
 export type GroundingRule = 'Q-TYPE' | 'Q-TAGTYPES' | 'Q-NAME' | 'Q-SUBSET' | 'Q-PLACE' | 'Q-EVIDENCE' | 'Q-DOUBT';
 
@@ -109,26 +109,26 @@ const HEAD_SKIP: ReadonlySet<string> = new Set(['the', 'a', 'an', 'of', 'and', '
  * The brand's own word, as G-BRAND-CORROBORATE reads it: the guardrails'
  * lexicon-based brandHeadToken ("Spalding NBA basketball" -> "spalding",
  * "Cannondale CAAD8" -> "cannondale"), so the token Qloo is searched for is
- * the token that was transcribed in the photo. Falls back to the first
- * distinctive token when the lexicon finds none.
+ * the token that was transcribed in the photo. ground-v3: a colour or
+ * material never heads a brand ("Blue Bottle Coffee cup" is never searched
+ * as "blue"), and a name with no brand word has no head (it was never
+ * corroborated either), instead of falling back to its first word.
  */
 export function headToken(name: string): string | null {
   const head = brandHeadToken(name);
-  if (head && head.length >= 3 && !HEAD_SKIP.has(head) && !/^\d+$/.test(head)) return head;
-  for (const t of nameTokens(name)) if (t.length >= 3 && !HEAD_SKIP.has(t) && !/^\d+$/.test(t)) return t;
-  return null;
+  return head && head.length >= 3 && !HEAD_SKIP.has(head) && !/^\d+$/.test(head) ? head : null;
 }
 
 /**
- * G-BRAND-CORROBORATE condition (a): a transcription read in the photo
- * contains the brand's head token as a whole word (accent- and
- * case-insensitive). The guardrails also require a supported verdict; when
- * they have run, their `corroborated` flag wins over this check.
+ * G-BRAND-CORROBORATE condition (a), the guardrails' own test (guard-v3):
+ * every brand word of the name is a whole word of a transcription read in the
+ * photo (accent- and case-insensitive), so a colour on a sign or a make on a
+ * badge never vouches for a different brand or a guessed model. The
+ * guardrails also require a supported verdict; when they have run, their
+ * `corroborated` flag wins over this check.
  */
 export function textCorroborates(name: string, visibleText: readonly string[]): boolean {
-  const head = headToken(name);
-  if (!head) return false;
-  return visibleText.some((v) => nameTokens(v).includes(head));
+  return brandReadIn(name, visibleText) !== null;
 }
 
 function tagFamilyMatches(tag: Pick<QlooTag, 'id' | 'type'>, family: string): boolean {
@@ -172,6 +172,7 @@ export function planLookup(c: GuardedCandidate): LookupPlan {
     case 'object': {
       if (user) return { kind: 'search', query: name, types: [] };
       if (c.corroborated !== true) return { kind: 'none', reason: 'object_not_searched' };
+      // The maker is searched by its own word (ground-v3: never a colour or material, see headToken).
       const head = headToken(name);
       return head ? { kind: 'search', query: head, types: ['urn:entity:brand'] } : { kind: 'none', reason: 'object_not_searched' };
     }

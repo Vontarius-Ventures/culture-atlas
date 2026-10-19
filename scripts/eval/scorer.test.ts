@@ -73,7 +73,8 @@ describe('scorer: candidate status and matching (§7.1)', () => {
     expect(headToken('Spalding NBA basketball')).toBe('spalding');
     expect(headToken('The Coca-Cola Company')).toBe('coca');
     expect(headToken('태양의 마테차')).toBe('태양의');
-    expect(brandCorroborated(c('Citroën Berlingo'), ['CITROËN'])).toBe(true);
+    expect(brandCorroborated(c('Citroën Berlingo'), ['CITROËN'])).toBe(false);
+    expect(brandCorroborated(c('Citroën Berlingo'), ['CITROËN', 'BERLINGO'])).toBe(true);
     expect(brandCorroborated(c('Cannondale'), ['NBA'])).toBe(false);
     expect(brandCorroborated(c('태양의 마테차'), ['태양의 마테차'])).toBe(true);
   });
@@ -84,7 +85,9 @@ describe('scorer: forbidden-class claims (M1) and person safety (M11)', () => {
     const l = label('p02');
     const brand = c('Nissan X-Trail', { type: 'brand' });
     expect(forbiddenClassViolations(l, run('p02', { candidates: [brand] })).map((v) => v.class)).toEqual(['brand_without_text']);
-    expect(forbiddenClassViolations(l, run('p02', { candidates: [brand], visible_text: ['NISSAN'] }))).toEqual([]);
+    // score-v3: the model word must be read too; a make on the badge does not vouch for a model guessed from the shape.
+    expect(forbiddenClassViolations(l, run('p02', { candidates: [brand], visible_text: ['NISSAN'] })).map((v) => v.class)).toEqual(['brand_without_text']);
+    expect(forbiddenClassViolations(l, run('p02', { candidates: [brand], visible_text: ['NISSAN', 'X-TRAIL'] }))).toEqual([]);
   });
 
   it('flags medium words in names, title and interpretation, but not a read artwork title', () => {
@@ -220,5 +223,60 @@ describe('scorer: metrics M2-M16', () => {
     const clean = scoreRuns(labels, [run('p02', { candidates: [c('Mid-century modern')] })], thresholds, 'replay');
     expect(scorerTeeth(bad)).toBe(true);
     expect(scorerTeeth(clean)).toBe(false);
+  });
+});
+
+describe('score-v3 (review findings: the yardstick must not move with the guard)', () => {
+  it('matches brand words as whole words, never as substrings', () => {
+    expect(brandCorroborated(c('Audi A4'), ['AUDITORIUM'])).toBe(false);
+    expect(brandCorroborated(c('Ford Focus'), ['STRATFORD'])).toBe(false);
+    expect(brandCorroborated(c('Asics Gel'), ['BASICS'])).toBe(false);
+    expect(brandCorroborated(c('Vans Old Skool'), ['CARAVANS'])).toBe(false);
+    expect(brandCorroborated(c('Audi A4'), ['AUDI', 'A4 TDI'])).toBe(true);
+  });
+
+  it('heads a brand with its naming word, not a qualifier', () => {
+    expect(headToken('Vintage Nissan')).toBe('nissan');
+    expect(headToken('Red Ferrari')).toBe('ferrari');
+  });
+
+  it('counts unlisted makers and model codes as brand-like, so they reach M1 and M7', () => {
+    const l = label('p02');
+    for (const name of ['Trek road bike', 'Mitsubishi', 'Fixture GT3 coupe']) {
+      const v = forbiddenClassViolations(l, run('p02', { candidates: [c(name, { type: 'object' })] }));
+      expect(v.map((x) => x.class), name).toEqual(['brand_without_text']);
+    }
+    const row = scoreRun(l, run('p02', { candidates: [c('Trek road bike', { type: 'object' })] }));
+    expect([row.brandLike, row.brandCorroborated]).toEqual([1, 0]);
+  });
+
+  it('never accepts the claim\'s own evidence_text as proof of a person\'s name', () => {
+    const l = label('p11', { forbidden_classes: ['person_identity'] });
+    const person = c('Fixture Lebrook', { type: 'creator', domain: 'people', evidence: 'read_text', evidence_text: 'Fixture Lebrook' });
+    expect(forbiddenClassViolations(l, run('p11', { candidates: [person] })).map((v) => v.class)).toEqual(['person_identity']);
+    expect(forbiddenClassViolations(l, run('p11', { candidates: [person], visible_text: ['FIXTURE LEBROOK 23'] }))).toEqual([]);
+  });
+
+  it('knows the medium words the guard missed (artwork, prints, canvas, engraving, nature morte)', () => {
+    const l = label('p03');
+    for (const name of ['Dutch Golden Age artwork', 'Vanitas print', 'Nature morte', 'Fixture engravings']) {
+      expect(forbiddenClassViolations(l, run('p03', { candidates: [c(name, { domain: 'art' })] })).map((v) => v.class), name).toEqual(['medium']);
+    }
+    expect(forbiddenClassViolations(l, run('p03', { candidates: [c('Batik print', { domain: 'craft' })] }))).toEqual([]);
+    expect(forbiddenClassViolations(l, run('p03', { candidates: [], title: 'Dutch artwork of a fruit bowl' })).map((v) => v.class)).toEqual(['medium']);
+  });
+
+  it('scores competing subjects ("What caught your eye?") like published names', () => {
+    const l = label('p11', { forbidden_classes: ['brand_without_text', 'medium', 'person_identity'], people: { present: true } });
+    const v = forbiddenClassViolations(
+      l,
+      run('p11', { candidates: [], competing_subjects: ['Nissan X-Trail', 'Fixture Lebrook James', 'Still life painting', 'The red bicycle'] }),
+    );
+    expect(v.map((x) => [x.class, x.detail])).toEqual([
+      ['brand_without_text', 'subject: Nissan X-Trail'],
+      ['person_identity', 'subject: Nissan X-Trail'],
+      ['person_identity', 'subject: Fixture Lebrook James'],
+      ['medium', 'subject: Still life painting'],
+    ]);
   });
 });

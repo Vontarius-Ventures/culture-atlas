@@ -1,6 +1,6 @@
 {
   "golden_set": "text-v1",
-  "scorer_version": "text-score-v1",
+  "scorer_version": "text-score-v2",
   "roles": {
     "research_text": [
       "research_text/research-bushido.json",

@@ -7,14 +7,14 @@ import {
   PlanProse,
 } from '../composer/creative';
 import { DishIdeas } from '../compiler/dishes';
-import { aggregateFrameReadings, type FrameReading } from './analysis-run';
+import { aggregateFrameReadings, publishableCitations, type FrameReading } from './analysis-run';
 
 function reading(
   frameKey: string,
   timestampMs: number | null,
   candidates: Array<{
     name: string;
-    type?: 'style' | 'brand';
+    type?: 'style' | 'brand' | 'object' | 'creator';
     relation?: 'depicted' | 'resembles';
     certainty?: number;
   }>,
@@ -134,5 +134,24 @@ describe('Atlas text schemas sent through the strict Concentrate transform', () 
     const report = checkContractEquivalence(schema, { samples: 120, seed: 11 });
     expect(report.failures).toEqual([]);
     expect(report.roundTrips).toBe(120);
+  });
+});
+
+describe('media result citations (review finding: unguarded candidate names reached the owner API)', () => {
+  it('lists only what the stage-1 guardrails publish; brand guesses and person names never appear', () => {
+    const aggregate = aggregateFrameReadings([
+      reading('a', 1000, [
+        { name: 'Nissan X-Trail', type: 'object', relation: 'depicted', certainty: 0.8 },
+        { name: 'Fixture Racer', type: 'creator', relation: 'depicted', certainty: 0.9 },
+        { name: 'Bauhaus', certainty: 0.7 },
+      ]),
+      reading('b', 2000, [{ name: 'Nissan X-Trail', type: 'object', relation: 'depicted', certainty: 0.8 }]),
+    ]);
+    // The raw aggregate still carries every model proposal...
+    expect(aggregate.citations.map((c) => c.name).sort()).toEqual(['Bauhaus', 'Fixture Racer', 'Nissan X-Trail']);
+    // ...the published result only the guarded set.
+    expect(publishableCitations(aggregate)).toEqual([
+      { name: 'Bauhaus', type: 'style', relation: 'resembles', cited_frames: [{ frame_id: 'd-a', timestamp_ms: 1000 }] },
+    ]);
   });
 });

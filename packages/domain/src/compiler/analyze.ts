@@ -86,6 +86,15 @@ export const WARNINGS = {
   delayed: { code: 'discoveries_delayed', message: 'Related discoveries are taking longer.' },
 } as const;
 
+/**
+ * A reference that belongs in Eat: G-CATEGORY gave it the eat category (a
+ * cuisine, or a food-domain claim with food in the photo), or it is a
+ * cuisine. Places and traditions qualify only through that category.
+ */
+export function isEatReference(r: Pick<ResolvedRef, 'type' | 'suggestedCategories'>): boolean {
+  return r.type === 'cuisine' || r.suggestedCategories.includes('eat');
+}
+
 export interface ResolvedRef {
   referenceId: string;
   name: string;
@@ -661,7 +670,7 @@ export class CaptureCompiler {
    */
   private guardObserved(observed: ObserveOutput): Stage1Guard {
     if (observed.example)
-      return { analysis: observed.analysis, held: [], demoted: [], decisions: [], titleChanged: false, dropped: { visibleText: 0, observations: 0 } };
+      return { analysis: observed.analysis, held: [], demoted: [], decisions: [], titleChanged: false, dropped: { visibleText: 0, observations: 0, subjects: 0 } };
     return guardQuickRead(observed.analysis, { twoStage: this.twoStage.enabled && !!observed.quickRead });
   }
 
@@ -1542,15 +1551,17 @@ export class CaptureCompiler {
     return status;
   }
 
-  /** Cuisine/place/tradition references with support: resolved via Qloo or researched. */
+  /**
+   * References that may drive dish ideas: those G-CATEGORY placed in Eat (a
+   * cuisine, or a food-domain reference the reading supports), or that the
+   * user named, with support (resolved via Qloo, researched, or confirmed).
+   * A place or tradition outside food (streetball, a Gothic Revival
+   * building, a city on a street sign) never does: its type alone is not
+   * food evidence.
+   */
   private async supportedFoodReferences(refs: readonly ResolvedRef[]): Promise<{ id: string; name: string; type: string }[]> {
     // Ambiguous (legacy) and doubtful groundings never support dish ideas.
-    const foodish = refs.filter(
-      (r) =>
-        (r.type === 'cuisine' || r.type === 'place' || r.type === 'tradition' || r.suggestedCategories.includes('eat')) &&
-        r.resolution !== 'ambiguous' &&
-        !r.grounding?.doubt,
-    );
+    const foodish = refs.filter((r) => isEatReference(r) && r.resolution !== 'ambiguous' && !r.grounding?.doubt);
     if (foodish.length === 0) return [];
     const { rows } = await this.ctx.db.query<{ id: string }>(
       `SELECT id FROM cultural_references WHERE id = ANY($1::uuid[]) AND research_status = 'complete'`,

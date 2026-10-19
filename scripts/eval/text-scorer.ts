@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { enforceExtraction, type RawExtraction } from '../../packages/providers/src/research/wikipedia';
-import { stripSafetyClaims, violatedExclusions } from '../../packages/domain/src/composer/dietary';
+import { stripExcludedMentions, stripSafetyClaims, violatedExclusions } from '../../packages/domain/src/composer/dietary';
 import { normalizeName } from '../../packages/domain/src/compiler/text';
 import {
   TEXT_FIXTURE_SCHEMAS,
@@ -35,7 +35,7 @@ import {
  *
  * Nothing here calls a provider or stores outputs.
  */
-export const TEXT_SCORER_VERSION = 'text-score-v1';
+export const TEXT_SCORER_VERSION = 'text-score-v2';
 
 export const TEXT_GATES = {
   t2_outside_urls: 0,
@@ -333,12 +333,20 @@ function scoreProse(p: ProseOut, expect: TextExpect, m: Record<string, number>, 
   const names = newNames(prose, expect.input_text, expect.allowed_names);
   m.t7_new_names = names.length;
   if (names.length > TEXT_GATES.t7_new_names) reasons.push(`T7: names not in the input: ${names.join(', ')}`);
-  // What movie-night.ts shows: the title as written, summary and rationale
-  // with safety sentences stripped.
-  const shown = [stripSafetyClaims(p.summary), p.rationale ? stripSafetyClaims(p.rationale) : ''].join(' ');
-  const violated = violatedExclusions({ title: p.title, description: shown }, expect.exclusions);
+  // What movie-night.ts shows: the title unless it names an exclusion (then
+  // the fallback title), summary and rationale minus safety sentences and
+  // minus sentences naming an excluded ingredient. Gated on what is shown;
+  // the model's own mentions are reported as raw, and enough prose must
+  // survive the filter to be the model's (text-score-v2).
+  const show = (text: string) => stripExcludedMentions(stripSafetyClaims(text), expect.exclusions);
+  const shownTitle = violatedExclusions({ title: p.title }, expect.exclusions).length ? '' : p.title;
+  const shown = [show(p.summary), p.rationale ? show(p.rationale) : ''].join(' ');
+  const violated = violatedExclusions({ title: shownTitle, description: shown }, expect.exclusions);
   m.t8_exclusion_violations = violated.length;
-  if (violated.length) reasons.push(`T8: mentions excluded ${violated.join(', ')}`);
+  if (violated.length) reasons.push(`T8: shows excluded ${violated.join(', ')}`);
+  m.t8_raw_exclusion_mentions = violatedExclusions({ title: p.title, description: [p.summary, p.rationale ?? ''].join(' ') }, expect.exclusions).length;
+  m.t8_summary_kept = show(p.summary) ? 1 : 0;
+  if (!show(p.summary)) reasons.push('T8: no summary sentence survives the dietary filter');
   // Reported, not gated: movie-night.ts strips such sentences from the
   // summary and rationale before anything is shown.
   m.t8_raw_safety_claims = safetyClaims(p.title, p.summary, p.rationale);

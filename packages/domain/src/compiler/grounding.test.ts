@@ -58,9 +58,15 @@ describe('planLookup: what Qloo is asked (Q-TYPE, Q-TAGTYPES, Q-EVIDENCE)', () =
     }
   });
 
-  it('searches a corroborated brand-like object as a brand, by its head token only', () => {
+  it('searches a corroborated brand-like object as a brand, by its maker word only, never a colour (ground-v3)', () => {
     const plan = planLookup(cand({ name: 'Fixturo NBA basketball', type: 'object', corroborated: true }));
     expect(plan).toEqual({ kind: 'search', query: 'fixturo', types: ['urn:entity:brand'] });
+    // "Blue Bottle Coffee cup" read from "BLUE MONDAY SALE" was searched as "blue" under ground-v2.
+    expect(planLookup(cand({ name: 'Blue Fixture Coffee cup', type: 'object', corroborated: true }))).toEqual({
+      kind: 'search',
+      query: 'fixture',
+      types: ['urn:entity:brand'],
+    });
   });
 
   it('does not search a brand without corroboration (Spalding / Honda Civic guessed from shape)', () => {
@@ -281,17 +287,20 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
   });
 
   it('is versioned', () => {
-    expect(GROUNDING_VERSION).toBe('ground-v2');
+    expect(GROUNDING_VERSION).toBe('ground-v3');
   });
 });
 
 describe('brand corroboration by read text (G-BRAND-CORROBORATE (a))', () => {
-  it('needs the head token as a whole word in a transcription, accent- and case-insensitively', () => {
+  it('needs every brand word as a whole word in a transcription, accent- and case-insensitively', () => {
     expect(headToken('Fixturo NBA basketball')).toBe('fixturo');
     expect(headToken('The Fixturedale CAAD8')).toBe('fixturedale');
     expect(textCorroborates('Fixturedale', ['FIXTUREDALE'])).toBe(true);
     expect(textCorroborates('Fixture Denim Co', ['FIXTURE DENIM'])).toBe(true);
-    expect(textCorroborates('Citroën Fixture', ['CITROEN'])).toBe(true);
+    // ground-v3: a make read on a badge does not vouch for a model guessed from the shape.
+    expect(textCorroborates('Citroën Fixture', ['CITROEN'])).toBe(false);
+    expect(textCorroborates('Citroën Fixture', ['CITROEN', 'FIXTURE'])).toBe(true);
+    expect(textCorroborates('Blue Fixture Coffee', ['BLUE MONDAY SALE'])).toBe(false);
     expect(textCorroborates('Fixturo', ['NBA'])).toBe(false);
     expect(textCorroborates('Fixturo', ['FIXTUROS'])).toBe(false);
     expect(textCorroborates('Fixturo', [])).toBe(false);

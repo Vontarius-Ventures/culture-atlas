@@ -174,8 +174,8 @@ describe('reading guardrails in the compiler', () => {
 
     const trace = await guardTrace(job_id);
     expect(trace.map((t) => [t.stage, t.version])).toEqual([
-      [1, 'guard-v2'],
-      [2, 'guard-v2'],
+      [1, 'guard-v3'],
+      [2, 'guard-v3'],
     ]);
     expect(trace[0]!.decisions.map((d) => [d.name, d.action])).toEqual([
       ['Vintage Racing', 'publish'],
@@ -188,7 +188,7 @@ describe('reading guardrails in the compiler', () => {
       ['Fixture Denim Co', 'publish', ['G-VERDICT', 'G-BRAND-CORROBORATE', 'G-CATEGORY']],
       ['Fixturo X-Trail', 'drop', ['G-VERDICT', 'G-BRAND-CORROBORATE']],
     ]);
-    expect(trace[1]!.dropped).toEqual({ visibleText: 1, observations: 1 });
+    expect(trace[1]!.dropped).toEqual({ visibleText: 1, observations: 1, subjects: 0 });
   });
 
   it('fails closed: when stage 2 fails, held claims are dropped and stage-1 results stay as published', async () => {

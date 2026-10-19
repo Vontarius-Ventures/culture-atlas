@@ -38,18 +38,31 @@ fixtures/eval/
   manifest entry withholds the upstream path (which is a person's name): the
   operator copies the photo from the private sources list and `eval:fetch`
   verifies its sha256.
-- **Blind held-out split.** `h01`–`h13` were chosen from public repositories
-  and labelled after viewing each photo and before any model output for them
-  existed. Builders of the guardrails and the grounding rules must not open the
-  held-out labels or photos or tune on them. The scorer reports tune and
-  held-out separately. Not yet covered: a painting with a legible museum label
+- **Held-out split, no longer blind.** `h01`–`h13` were chosen from public
+  repositories and labelled after viewing each photo and before any model
+  output for them existed. They were blind only until the first live run:
+  rules and the scorer were then changed after held-out failures were
+  inspected (the licence plate on h01, "painted" on h07, the film poster h09,
+  "Nathan Road" on h10; docs/quality-plan.md §13). Each is marked
+  `"blind": false` in the manifest. A held-out photo stays blind (`true`) only
+  while nothing is tuned on its outputs; photo roles qualify only with at least
+  10 blind held-out photos, so a fresh set (h14+) is needed before they can.
+  The scorer reports tune and held-out separately. Not yet covered: a painting with a legible museum label
   and a photo with prompt-injection text (no suitable openly licensed photo was
   found this round).
-- **Version bumps.** Editing a label, the manifest or `thresholds.json` changes
-  the digests bound into qualification artifacts, so the photo roles must be
-  re-evaluated. A threshold change needs the owner's approval and a new
-  `thr-v*` version; thresholds are never relaxed to make a run pass. A new
-  photo or relabelled split is a new `golden-v*`.
+- **Version bumps and the binding.** Editing a label, the manifest,
+  `thresholds.json`, a scorer, a text fixture or prompt builder, or any guard
+  rule changes `EVAL_BINDING` (`pnpm eval:binding`; the test suite fails until
+  `pnpm eval:binding --write` is run). `qualificationState()` compares every
+  artifact's eval block with that binding, so the regenerated binding
+  un-qualifies every role scored on the old inputs. A threshold change needs
+  the owner's approval and a new `thr-v*` version; thresholds are never
+  relaxed to make a run pass. A new photo or relabelled split is a new
+  `golden-v*`.
+- **Grounding and seed gates.** The `grounding` and `seed` blocks of
+  `thresholds.json` are applied by `scripts/eval/release-gates.ts`
+  (`eval:live --qloo`, `measure-taste-seed.ts`). Gates that need a person
+  (precision, recall, useful share) read a judgement file and fail without one.
 
 ## Label format
 

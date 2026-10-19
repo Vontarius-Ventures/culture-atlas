@@ -79,6 +79,13 @@ export const PhotoLabelSchema = z
   .object({
     id: z.string().regex(PHOTO_ID),
     split: z.enum(['tune', 'holdout']),
+    /**
+     * Held-out photos only: true while no rule, lexicon, scorer or label was
+     * changed after inspecting model output on it. A held-out photo that was
+     * used for tuning stays in the set but is marked false, and a photo-role
+     * qualification needs at least 10 blind held-out photos (§7.5).
+     */
+    blind: z.boolean().optional(),
     file: z.string().min(1),
     subject_domains: z.array(z.enum(SUBJECT_DOMAINS)).min(1),
     quality: z
@@ -120,6 +127,13 @@ export const ManifestPhotoSchema = z
   .object({
     id: z.string().regex(PHOTO_ID),
     split: z.enum(['tune', 'holdout']),
+    /**
+     * Held-out photos only: true while no rule, lexicon, scorer or label was
+     * changed after inspecting model output on it. A held-out photo that was
+     * used for tuning stays in the set but is marked false, and a photo-role
+     * qualification needs at least 10 blind held-out photos (§7.5).
+     */
+    blind: z.boolean().optional(),
     file: z.string().regex(/^[A-Za-z0-9._-]+\.(jpe?g|png|webp)$/),
     sha256: z.string().regex(/^[0-9a-f]{64}$/),
     width: z.number().int().positive(),
@@ -139,6 +153,8 @@ export const ManifestPhotoSchema = z
   })
   .strict()
   .superRefine((p, ctx) => {
+    if ((p.split === 'holdout') !== (p.blind !== undefined))
+      ctx.addIssue({ code: 'custom', message: `${p.id}: a held-out photo states whether it is still blind; a tuning photo does not` });
     const s = p.source;
     if ((s.path === null) !== (s.raw_url === null) || (s.path === null) !== !!s.withheld)
       ctx.addIssue({ code: 'custom', message: `${p.id}: path and raw_url are both set, or both withheld with a reason` });

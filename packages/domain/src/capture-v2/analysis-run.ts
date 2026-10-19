@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { VlmAnalysis, type VlmCandidate } from '@culture-atlas/providers';
+import { VlmAnalysis, candidateNameKey, guardQuickRead, type VlmCandidate } from '@culture-atlas/providers';
 import { normalizeName } from '../compiler/text';
 import type { Db } from '../db/pool';
 import { AppError } from '../errors';
@@ -49,6 +49,26 @@ export interface CandidateCitation {
 }
 
 const UNCERTAINTY_RANK = { low: 0, medium: 1, high: 2 } as const;
+
+/**
+ * The citations a media analysis result may show its owner: only candidates
+ * the stage-1 guardrails publish for this aggregate (G-BRAND holds, G-IDENTITY
+ * and G-MEDIUM drops, ...). The raw frame readings are model proposals; a
+ * claim the compiler would never publish must not reach the client through
+ * GET /v2/media/{id}/analysis/{analysisId} either. Held claims are left out
+ * too: only the compile job's stage 2 can publish them, as references.
+ */
+export function publishableCitations(
+  aggregate: { observation: VlmAnalysis; citations: readonly CandidateCitation[] },
+): CandidateCitation[] {
+  const guarded = guardQuickRead(aggregate.observation, { twoStage: true });
+  const published = new Set(guarded.analysis.candidates.map((c) => `${candidateNameKey(c.name)}|${c.type}`));
+  const relation = new Map(guarded.analysis.candidates.map((c) => [candidateNameKey(c.name), c.relation]));
+  // The guard's relation wins (G-DEPICTED downgrades "depicted" claimed without evidence).
+  return aggregate.citations
+    .filter((c) => published.has(`${candidateNameKey(c.name)}|${c.type}`))
+    .map((c) => ({ ...c, relation: relation.get(candidateNameKey(c.name)) ?? c.relation, cited_frames: [...c.cited_frames] }));
+}
 
 /**
  * Merges independent frame readings into one validated reading. Duplicate

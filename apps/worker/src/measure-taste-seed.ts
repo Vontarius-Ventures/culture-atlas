@@ -11,8 +11,18 @@
  * ready category, per-category results, the number of Qloo requests and the
  * peak concurrency. Makes at most 6 Qloo requests per attempt. Needs
  * QLOO_API_KEY (never printed) and a Postgres reachable at TEST_DATABASE_URL.
+ *
+ * The run ends with the seed gate of fixtures/eval/thresholds.json (quality
+ * plan §10: requests, concurrency, Eat calls without food picks, echo cards,
+ * the cuisine share of Eat) and exits non-zero when it fails. The shares that
+ * need a person (useful Eat cards, fashion brands in Wear, right types in
+ * Play/Watch) come from `--judgements <file>` ({ eat_useful_share,
+ * wear_fashion_brand_share, play_watch_type_correct }); without them those
+ * gates read "needs hand judgement" and the run does not pass.
  */
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { gateLines, scoreSeed, type SeedJudgement } from '../../../scripts/eval/release-gates';
 import { JOB_HANDLERS, tasteSeed } from '@culture-atlas/domain';
 import { createIsolatedDatabase, insertAccount, testConfig } from '@culture-atlas/domain/testing';
 import { CircuitBreaker, QlooHttpProvider, createProviderRegistry } from '@culture-atlas/providers';
@@ -44,8 +54,14 @@ const entities = args('entity');
 let inflight = 0;
 let peak = 0;
 let requests = 0;
+const filterTypes: (string | null)[] = [];
 const countingFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   requests++;
+  try {
+    filterTypes.push(new URL(input instanceof Request ? input.url : String(input)).searchParams.get('filter.type'));
+  } catch {
+    filterTypes.push(null);
+  }
   inflight++;
   peak = Math.max(peak, inflight);
   try {
@@ -89,8 +105,8 @@ try {
   }
   await draining;
   const final = await tasteSeed.getTasteSeedStatus(db, accountId);
-  const recs = await db.query<{ category: string; title: string; origin: string }>(
-    `SELECT r.category, r.title, r.origin FROM recommendations r JOIN taste_seed_runs tr ON tr.id = r.taste_seed_run_id
+  const recs = await db.query<{ category: string; title: string; origin: string; qloo_id: string | null }>(
+    `SELECT r.category, r.title, r.origin, r.external_ids->>'qloo' AS qloo_id FROM recommendations r JOIN taste_seed_runs tr ON tr.id = r.taste_seed_run_id
       WHERE tr.owner_account_id = $1 ORDER BY r.category, r.rank`,
     [accountId],
   );
@@ -120,6 +136,25 @@ try {
       2,
     ),
   );
+  // The seed gate of thresholds.json; hand-judged shares come from --judgements.
+  const thresholds = JSON.parse(readFileSync(path.resolve(import.meta.dirname, '../../../fixtures/eval/thresholds.json'), 'utf8')) as { seed: Record<string, number> };
+  const judgementsFile = args('judgements')[0];
+  const judged = judgementsFile ? (JSON.parse(readFileSync(judgementsFile, 'utf8')) as SeedJudgement) : {};
+  const report = scoreSeed(
+    {
+      picks: [...tags, ...entities].map((id) => ({ id, name: id.split(':').pop()!.replace(/_/g, ' '), food: id.startsWith('urn:tag:cuisine:') })),
+      requests: filterTypes.map((filterType) => ({ filterType })),
+      peakInFlight: peak,
+      categories: final.categories.map((c) => ({
+        category: c.category,
+        cards: recs.rows.filter((r) => r.category === c.category).map((r) => ({ title: r.title, qlooId: r.qloo_id })),
+      })),
+    },
+    thresholds.seed,
+    judged,
+  );
+  for (const line of gateLines('seed gate (thresholds.json)', report)) console.error(line);
+  process.exitCode = report.pass ? 0 : 1;
 } finally {
   await iso.drop();
 }

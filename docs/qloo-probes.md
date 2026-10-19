@@ -58,8 +58,8 @@ Qloo's free-text `/search` and `/v2/tags` return look-alikes: an album for "Raci
 
 | Candidate | Lookup |
 | --- | --- |
-| object | none (`object_not_searched`). A brand-like object whose brand was read in the photo is searched as a brand by its head token. |
-| brand | `/search` with `urn:entity:brand`, only when corroborated: the guardrails' G-BRAND-CORROBORATE, or (until they run) the brand's head token as a whole word in the reading's `visible_text`. Otherwise none (`brand_not_corroborated`). |
+| object | none (`object_not_searched`). A brand-like object whose brand was read in the photo is searched as a brand by its maker word (ground-v3: never a colour or material; "Blue Bottle Coffee cup" is not searched as "blue"). |
+| brand | `/search` with `urn:entity:brand`, only when corroborated: the guardrails' G-BRAND-CORROBORATE, or (until they run) every brand word of the name as a whole word of the reading's `visible_text` (ground-v3: a make read on a badge never vouches for a model guessed from the shape). Otherwise none (`brand_not_corroborated`). |
 | creator / work | `/search` with artist, director, person, author / movie, album, book, tv_show |
 | place | `/search` with destination, locality, place, only with read text, `depicted`, or certainty ≥ 0.5 |
 | cuisine | `/v2/tags` with `urn:tag:cuisine:qloo`, "cuisine"/"food" removed from the query, only when `depicted` or certainty ≥ 0.5 |

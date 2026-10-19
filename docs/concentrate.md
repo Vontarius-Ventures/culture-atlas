@@ -275,16 +275,26 @@ pnpm qualify:concentrate --profile-file profiles.json --role composer \
 The artifact `result` is `pass` only when the transport run **and** the
 evaluation pass. The artifact carries an aggregate `eval` block:
 `{ golden_set, golden_sha256, thresholds_sha256, guardrail_version,
-grounding_version, scorer_version, metrics, pass }` (metric values only; no
-media, prompts or outputs). `qualificationState()` treats a role listed in
-`REQUIRED_GOLDEN_SET` as `qualified` only with `eval.pass === true` on the
-required golden set (`golden-v1` for photo roles, `text-v1` for text roles)
-and, for photo roles, `eval.guardrail_version === REQUIRED_GUARDRAIL_VERSION`.
-A missing or stale eval block leaves the role `catalog-compatible`. Changing a
-guard rule (and bumping `GUARDRAIL_VERSION`) un-qualifies both photo roles until
-they are re-evaluated, exactly as a profile edit does. The two phase-4
-artifacts have no eval block and are therefore `catalog-compatible`; schema v2
-changes the profile hash anyway.
+grounding_version, scorer_version, code_sha256, holdout_blind, metrics, pass }`
+(metric values only; no media, prompts or outputs). `qualificationState()`
+treats a role listed in `REQUIRED_GOLDEN_SET` as `qualified` only when the
+block passes on the required golden set (`golden-v1` for photo roles, `text-v1`
+for text roles) **and every bound input is still the committed one**
+(`EVAL_BINDING` in `concentrate/eval-binding.ts`): the golden digest, the
+thresholds digest, the scorer version and the digest of the evaluated code
+(guards, lexicons, prompts, reading types and scorer for photos; text scorer,
+schemas, fixture builder and dietary filter for text). Photo roles also need
+`guardrail_version === REQUIRED_GUARDRAIL_VERSION` and `holdout_blind: true`
+(at least 10 held-out photos, none used for tuning). The binding is generated
+by `pnpm eval:binding --write` and checked by the test suite, so any change to
+a label, a threshold, a scorer, a prompt builder or a guard rule fails CI until
+the binding is regenerated, and the regenerated binding un-qualifies every
+role scored on the old inputs (`stale_golden_set`, `stale_thresholds`,
+`stale_scorer`, `stale_code`, `holdout_not_blind`). The qualification script
+refuses to send anything when its inputs differ from the committed binding or
+when the golden set has fewer than 10 blind held-out photos. Artifacts written
+before the binding (the phase-4 and Evaluate-phase ones) have no code digest
+and are `catalog-compatible`.
 
 The artifact notes record the reading (prompt and schema versions), the
 reasoning effort the run sent and the evaluation summary; for
@@ -500,10 +510,26 @@ golden set.
   of any reply that fails validation in `invalid-outputs.json`, both in
   `--out-dir` only.
 
-**Spend (Evaluate phase, this agent):** 219 billed Concentrate requests
-(6 in an aborted first start, 2 × 56 `eval:live`, 17 text qualification, 84
-photo qualification) and 0 in the real-stack run (no photo role was
-qualified, so nothing was dispatched). Team total 289 of 400.
+**Spend (Evaluate phase, this agent):** 218 billed Concentrate requests in
+the ledger (5 in an aborted first start, 2 × 56 `eval:live`, 17 text
+qualification, 84 photo qualification), plus at most one more: the aborted
+start's request counter reserved 6 while the ledger has 5 rows for it. 0 in
+the real-stack run (no photo role was qualified, so nothing was dispatched).
+Team total 288 logged, at most 289, of 400.
+
+## Review fixes: binding gate and text-role re-qualification (2026-10-19)
+
+Docs/quality-plan.md §14 has the details. In short: guard-v3, score-v3,
+ground-v3 and text-score-v2; artifacts are bound to the committed evaluation
+inputs (above). Re-qualified on `anthropic/claude-haiku-5-5`, effort none:
+
+| Role | Result | Latency p50 / p95 | Content |
+| --- | --- | --- | --- |
+| `research_text` | **qualified**, 6/6 | 5.8 / 6.8 s | 7.3 kept claims per fixture, 4.2 % unsupported specifics |
+| `composer` | **qualified**, 11/11 (a first run under text-score-v1 failed T10 on the dietary-exclusions plan prose; production now drops prose sentences that name an excluded ingredient, and the scorer scores what is shown) | 2.9 / 6.8 s | 0 raw exclusion mentions, 0 new names, 0 safety claims |
+| `vision_photo`, `vision_photo_enrich` | not run: the held-out split is no longer blind, so they cannot qualify until a fresh one exists; production keeps failing closed for photos | | |
+
+Spend: 34 Concentrate requests (6 + 11, twice), 0 Qloo, all in the ledger.
 
 ## Elorian fallback (operator choice)
 

@@ -8,6 +8,7 @@ import {
   MediaAnalysisRun,
   VIDEO_ANALYSIS_NOTE,
   aggregateFrameReadings,
+  publishableCitations,
   captures,
   createCaptureV2Context,
   type AnalysisAssetKind,
@@ -510,7 +511,8 @@ export class MediaAnalysisWorker {
           width: meta.width ?? 1,
           height: meta.height ?? 1,
         },
-        result: result(frames, aggregate.citations, quickReading),
+        // Only what the guardrails publish; the raw frame candidates never reach the owner API.
+        result: result(frames, publishableCitations(aggregate), quickReading),
         compile: {
           compilerVersion: config.COMPILER_VERSION,
           maxAttempts: config.JOB_MAX_ATTEMPTS,

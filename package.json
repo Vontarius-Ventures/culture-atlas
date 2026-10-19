@@ -27,6 +27,7 @@
     "eval:fetch": "tsx scripts/eval-fetch.ts",
     "eval:replay": "tsx scripts/eval-replay.ts",
     "eval:live": "tsx scripts/eval-live.ts",
+    "eval:binding": "tsx scripts/eval-binding.ts",
     "mock-relay": "pnpm --filter @culture-atlas/sensor-bridge mock-relay",
     "ops:kill": "tsx scripts/feature-kill.ts",
     "ops:metrics": "tsx scripts/ops-metrics.ts",

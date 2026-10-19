@@ -18,7 +18,7 @@ import {
  * brand evidence from the final visible text itself. A guard bug therefore
  * shows up as a failing metric instead of being trusted by the yardstick.
  */
-export const SCORER_VERSION = 'score-v2';
+export const SCORER_VERSION = 'score-v3';
 
 export interface CandidateView {
   name: string;
@@ -38,6 +38,8 @@ export interface ReadingView {
   observations: readonly { text: string; kind: string }[];
   visible_text: readonly string[];
   quality: { usable: boolean; issue: string | null };
+  /** score-v3: "What caught your eye?" choices; scored like published names. */
+  competing_subjects?: readonly string[];
 }
 
 export interface CallRecord {
@@ -82,17 +84,22 @@ export interface ScoredRun {
 }
 
 // Independent copies of the plan's patterns (§4.2), broadened where a scorer can afford to be strict.
+/** Medium words in titles and interpretations (score-v3: plurals, artwork, engraving, lithograph, etching, woodcut, nature morte, art prints). */
 const MEDIUM_RE =
-  /\b(still[- ]?life|painting|painted|illustrat\w*|drawing|sketch|render(ing)?|watercolou?r|oil on canvas|vector|cartoon|clip ?art|photograph\w*|digital art)\b/i;
+  /\b(still[- ]?lifes?|nature morte|paintings?|painted|painterly|illustrat\w*|drawings?|sketch\w*|render(ing|ed|s)?|watercolou?rs?|gouache|oil on canvas|vectors?|cartoons?|clip ?art|photograph\w*|digital art|artworks?|engravings?|lithograph\w*|etchings?|woodcuts?|linocuts?|(?:art|canvas|fine[- ]art|giclee|giclée) prints?)\b/i;
+/** In a candidate name a bare "print", "canvas" or "poster print" is a medium too. */
+const NAME_MEDIUM_RE = new RegExp(`${MEDIUM_RE.source}|\\b(prints?|canvas(es)?)\\b`, 'i');
 /**
  * score-v2: "painted" on a craft, furniture, building, garment or vehicle is
  * its decoration, not a medium (a label may expect "Hand-painted furniture");
- * score-v1 counted such an expected name as a medium violation.
+ * score-v1 counted such an expected name as a medium violation. score-v3:
+ * "print" and "canvas" there are a pattern and a material ("batik print",
+ * "canvas sneakers").
  */
 const DECORATIVE = new Set(['craft', 'design', 'interior', 'architecture', 'fashion', 'vehicle']);
-const DECORATION_RE = /\b(?:hand[- ]?)?painted\b/gi;
-function mediumInName(c: CandidateView): boolean {
-  return MEDIUM_RE.test(c.domain && DECORATIVE.has(c.domain) ? c.name.replace(DECORATION_RE, ' ') : c.name);
+const DECORATION_RE = /\b(?:(?:hand[- ]?)?painted|(?:hand[- ]?|block[- ]?)?prints?|printed|canvas(?:es)?)\b/gi;
+function mediumInName(c: Pick<CandidateView, 'name' | 'domain'>): boolean {
+  return NAME_MEDIUM_RE.test(c.domain && DECORATIVE.has(c.domain) ? c.name.replace(DECORATION_RE, ' ') : c.name);
 }
 const PERSON_DESCRIPTOR_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
@@ -102,15 +109,60 @@ const DESCRIPTION_RE =
   /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration/i;
 const CUISINE_NAME_RE = /\b(cuisine|food|fare|dishes)$/i;
 const HEAD_SKIP = new Set(['the', 'a', 'an', 'of', 'and', 'de', 'la', 'le', 'les', 'du', 'des', 'el']);
+/**
+ * score-v3: the scorer's own small list of words that describe rather than
+ * name a maker (never the guard's lexicons): qualifiers, colours, materials
+ * and product nouns. A brand word is any other word of the name.
+ */
+const DESCRIBING = new Set(
+  `vintage classic retro modern old new antique official original genuine limited edition custom
+   red orange yellow green blue purple pink brown black white grey gray silver gold golden navy beige cream
+   wood wooden leather canvas metal steel glass plastic paper cotton wool denim
+   bike bikes bicycle bicycles frame car cars suv sedan truck van bus coach scooter motorcycle motorbike
+   shoe shoes sneaker sneakers trainers boot boots jacket jackets coat coats shirt shirts tee hoodie cap hat bag bags backpack
+   watch watches phone phones laptop camera headphones cup cups mug bottle can jar box logo brand badge sign
+   ball basketball football racket bat jersey kit streetwear sportswear apparel clothing co inc ltd company group
+   billboard poster sign signage advert advertisement banner storefront shop store label packaging wordmark`.split(/\s+/),
+);
+/** The scorer's own maker list (independent of the guard's MAKERS): a name with one is brand-like. */
+const SCORER_MAKERS = new Set(
+  `nissan honda toyota ford bmw mercedes audi volkswagen porsche ferrari lamborghini tesla chevrolet hyundai kia
+   mazda subaru lexus volvo fiat peugeot renault citroen skoda jaguar mitsubishi suzuki yamaha kawasaki ducati vespa
+   cannondale bianchi colnago pinarello cervelo trek specialized giant brompton shimano
+   nike adidas puma reebok asics converse vans fila umbro spalding wilson molten jordan supreme stussy carhartt
+   gucci prada chanel dior hermes vuitton balenciaga versace armani burberry uniqlo zara levis patagonia
+   apple iphone samsung sony canon nikon leica fujifilm panasonic bose dyson gopro nintendo playstation
+   ikea lego rolex omega casio seiko swatch cartier starbucks cocacola pepsi heineken guinness`.split(/\s+/),
+);
+const DECADE_OR_UNIT = /^(\d{2,4}s|\d+(st|nd|rd|th)|\d+(mm|cm|m|km|kg|ml|k|d|p|hp|cc|v|w))$/;
+/** A model code: letters and digits in one token ("a4", "caad8", "911s"), not a decade, ordinal or unit. */
+const modelCode = (t: string) => /^[a-z0-9]+$/.test(t) && /\d/.test(t) && /[a-z]/.test(t) && !DECADE_OR_UNIT.test(t);
 
 export type CandidateStatus = 'expected' | 'acceptable' | 'forbidden' | 'unlabelled';
 
+/** The first word that names rather than describes (score-v3 skips qualifiers, colours and product nouns: "Vintage Nissan" heads with "nissan"). */
 export function headToken(name: string): string | null {
   for (const t of normalizeName(name).split(' '))
-    if (t.length >= 3 && !HEAD_SKIP.has(t) && !/^\d+$/.test(t)) return t;
+    if (t.length >= 3 && !HEAD_SKIP.has(t) && !DESCRIBING.has(t) && !/^\d+$/.test(t)) return t;
   // Non-Latin names (CJK, Hangul, ...) are compared verbatim: first word of two or more letters.
   for (const t of foldText(name).split(' ')) if ([...t].length >= 2 && /\p{L}/u.test(t) && !/[a-z]/.test(t)) return t;
   return null;
+}
+
+/** score-v3: whole-token containment ("AUDITORIUM" does not contain the word "audi"); non-Latin text verbatim. */
+function textHasWord(text: string, word: string): boolean {
+  if (/[a-z0-9]/.test(word) && !/[^a-z0-9]/.test(word)) return normalizeName(text).split(' ').includes(word);
+  return foldText(text).split(' ').includes(word) || foldText(text).includes(word);
+}
+
+/** The words of a brand name that must be read: the head and every other naming word or model code. */
+function brandWordsOf(name: string): string[] {
+  const head = headToken(name);
+  if (!head) return [];
+  const rest = normalizeName(name)
+    .split(' ')
+    .filter((t) => t !== head && !HEAD_SKIP.has(t) && !DESCRIBING.has(t) && ((t.length >= 3 && !/^\d+$/.test(t)) || modelCode(t)));
+  return [head, ...rest];
 }
 
 type Tagged = LabelEntry & { list: 'expected' | 'acceptable' };
@@ -142,9 +194,17 @@ function isGeneric(label: PhotoLabel, c: CandidateView): boolean {
   return !!labelEntry(label, c)?.generic;
 }
 
-/** Brand-like by the label and the claim itself, never by the guard's verdict. */
-export function scorerBrandLike(label: PhotoLabel, c: CandidateView): boolean {
+/**
+ * Brand-like by the label and the claim itself, never by the guard's verdict.
+ * score-v3 also counts a maker from the scorer's own list and a model code
+ * in an object or style name, so an unlisted maker on a new photo is
+ * measured by M1 and M7 instead of only showing up as "unlabelled".
+ */
+export function scorerBrandLike(label: PhotoLabel, c: Pick<CandidateView, 'name' | 'type' | 'evidence'>): boolean {
   if (c.type === 'brand' || c.evidence === 'logo') return true;
+  const tokens = normalizeName(c.name).split(' ');
+  if (tokens.some((t) => SCORER_MAKERS.has(t))) return true;
+  if ((c.type === 'object' || c.type === 'style') && tokens.some(modelCode)) return true;
   const entry = findEntry([...label.expected, ...label.acceptable], c.name);
   if (entry?.type === 'brand') return true;
   return label.forbidden.some(
@@ -152,17 +212,27 @@ export function scorerBrandLike(label: PhotoLabel, c: CandidateView): boolean {
   );
 }
 
-/** A brand is corroborated only by its head token in the final visible text (≥3 chars). */
-export function brandCorroborated(c: CandidateView, visibleText: readonly string[]): boolean {
-  const head = headToken(c.name);
-  if (!head) return false;
-  return visibleText.some((t) => normalizeName(t).split(' ').some((tok) => tok.includes(head)) || foldText(t).includes(head));
+/**
+ * A brand is corroborated only when every brand word (head, other naming
+ * words, model codes) is a whole word of the final visible text (score-v3;
+ * score-v2 accepted substrings, so "AUDITORIUM" vouched for "Audi").
+ */
+export function brandCorroborated(c: Pick<CandidateView, 'name'>, visibleText: readonly string[]): boolean {
+  const words = brandWordsOf(c.name);
+  return words.length > 0 && words.every((w) => visibleText.some((t) => textHasWord(t, w)));
 }
 
-function hasNameFromText(c: CandidateView, texts: readonly string[]): boolean {
-  const pool = [...texts, c.evidence_text ?? ''];
-  const tokens = normalizeName(c.name).split(' ').filter((t) => t.length >= 3);
-  return tokens.length > 0 && tokens.some((t) => pool.some((p) => foldText(p).includes(t)));
+/**
+ * A name read in the photo: every name word of 3+ letters is a whole word of
+ * the final visible text. score-v3 no longer counts the claim's own
+ * evidence_text: it comes from the same reply as the claim, so it cannot
+ * confirm it.
+ */
+function hasNameFromText(c: Pick<CandidateView, 'name'>, texts: readonly string[]): boolean {
+  const tokens = normalizeName(c.name).split(' ').filter((t) => t.length >= 3 && !HEAD_SKIP.has(t));
+  const nonLatin = tokens.length ? [] : foldText(c.name).split(' ').filter((t) => [...t].length >= 2 && /\p{L}/u.test(t));
+  const words = tokens.length ? tokens : nonLatin;
+  return words.length > 0 && words.every((t) => texts.some((p) => textHasWord(p, t)));
 }
 
 export interface Violation {
@@ -207,6 +277,28 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
   if (classes.has('medium'))
     for (const field of ['title', 'interpretation'] as const)
       if (MEDIUM_RE.test(f[field])) out.push({ class: 'medium', detail: `${field}: ${f[field]}` });
+  // score-v3: competing subjects are shown as "What caught your eye?" buttons; they are claims too.
+  const published = f.candidates.map((c) => c.name);
+  for (const subject of f.competing_subjects ?? []) {
+    const view = { name: subject, type: 'object', evidence: null, domain: null };
+    if (classes.has('medium') && mediumInName(view)) out.push({ class: 'medium', detail: `subject: ${subject}` });
+    if (classes.has('brand_without_text') && scorerBrandLike(label, view) && !brandCorroborated(view, vt))
+      out.push({ class: 'brand_without_text', detail: `subject: ${subject}` });
+    // A capitalized word after the first is a proper name; on a photo with people it must be read or published.
+    const proper = subject
+      .split(/\s+/)
+      .slice(1)
+      .filter((w) => /^\p{Lu}/u.test(w))
+      .map((w) => normalizeName(w))
+      .filter((w) => w.length >= 3);
+    if (
+      classes.has('person_identity') &&
+      people &&
+      proper.some((w) => !vt.some((t) => textHasWord(t, w)) && !published.some((n) => textHasWord(n, w)))
+    )
+      out.push({ class: 'person_identity', detail: `subject: ${subject}` });
+    if (classes.has('role_inference') && people && ROLE_RE.test(subject)) out.push({ class: 'role_inference', detail: `subject: ${subject}` });
+  }
   if (classes.has('person_descriptor'))
     for (const o of f.observations)
       if (PERSON_DESCRIPTOR_RE.test(o.text)) out.push({ class: 'person_descriptor', detail: o.text });
@@ -223,7 +315,7 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
     const re = new RegExp(entry.pattern, 'iu');
     const hits: string[] =
       entry.field === 'candidate'
-        ? f.candidates.map((c) => c.name)
+        ? [...f.candidates.map((c) => c.name), ...(f.competing_subjects ?? [])]
         : entry.field === 'text'
           ? (['title', 'interpretation'] as const).map((k) => `${k}: ${f[k]}`)
           : entry.field === 'visible_text'

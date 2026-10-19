@@ -33,7 +33,8 @@ const MCM_TAG = CATALOG.tags['mid-century modern']![0]!.id;
 
 const QUICK = VlmQuickRead.parse({
   title: 'Vintage racing references',
-  interpretation: 'A few vintage racing references stood out.',
+  // Food in the reading: the aperitivo resemblance needs it (G-CUISINE-FOOD covers every food-domain claim).
+  interpretation: 'A few vintage racing references stood out beside a spritz on the table.',
   candidates: [
     { name: 'Fixture Denim Co', type: 'brand', relation: 'depicted', certainty: 0.9, categories: ['wear'], tag_query: null },
     {

@@ -130,7 +130,7 @@ Add these rules to both prompts. The security rules stay word for word, and so d
 
 ### 4.1 Module and API
 
-`packages/providers/src/vlm/guardrails.ts` (pure, no I/O), `vlm/lexicons.ts`, `GUARDRAIL_VERSION = 'guard-v1'` (now `guard-v2`, see §13.3).
+`packages/providers/src/vlm/guardrails.ts` (pure, no I/O), `vlm/lexicons.ts`, `GUARDRAIL_VERSION = 'guard-v1'` (now `guard-v3`, see §13.3 and §14).
 
 ```ts
 export type GuardAction = 'publish' | 'hold' | 'demote' | 'drop';
@@ -218,7 +218,7 @@ These are offline replays of prototypes, one per diagnose report. Each prototype
 
 ## 5. Qloo acceptance rules (P3, exact)
 
-This is a new pure module, `packages/domain/src/compiler/grounding.ts` with `GROUNDING_VERSION = 'ground-v1'` (now `ground-v2`, see §13.3). It replaces `bestMatch` and `nameSimilarity` thresholds in `resolveCandidate`. `nameSimilarity` stays for other callers.
+This is a new pure module, `packages/domain/src/compiler/grounding.ts` with `GROUNDING_VERSION = 'ground-v1'` (now `ground-v3`, see §13.3 and §14). It replaces `bestMatch` and `nameSimilarity` thresholds in `resolveCandidate`. `nameSimilarity` stays for other callers.
 
 ```ts
 export function planLookup(c: GuardedCandidate): { kind: 'none'; reason: string }
@@ -329,7 +329,7 @@ fixtures/eval/
 
 ### 7.2 Scorer and thresholds
 
-`scripts/eval/scorer.ts` is pure and has `SCORER_VERSION = 'score-v1'` (now `score-v2`, see §13.3).
+`scripts/eval/scorer.ts` is pure and has `SCORER_VERSION = 'score-v1'` (now `score-v3`, see §13.3 and §14).
 
 Input:
 - labels;
@@ -411,6 +411,10 @@ pnpm eval:live --golden fixtures/eval/golden-v1 --photos $EVAL_PHOTOS_DIR --spli
   - `eval.guardrail_version === GUARDRAIL_VERSION` for the photo roles.
 
   Missing or stale eval data makes the role `catalog-compatible`.
+- **Since the review fixes (§14.4)** the gate also compares every bound input
+  with the committed binding (`EVAL_BINDING`): the golden digest, the
+  thresholds digest, the scorer version and a digest of the evaluated code, and
+  photo roles need a blind held-out split of at least 10 photos.
 - **The two phase-4 artifacts** become `catalog-compatible`. This is expected: schema v2 changes the profile hash anyway.
 - **Privacy.** The owner accepted the earlier `privacyVerifiedAt` exception. New profiles on the **same route** (`anthropic/claude-haiku-5-5`) carry that accepted value over unchanged. No agent sets a new value. Any new route needs the operator. The dashboard ZDR confirmation remains a deploy gate, as `concentrate.md` says.
 
@@ -644,12 +648,28 @@ The stage-1-only qualification run (`vision_photo`) scored M1 = 0, M2 0.05 /
 p50 2.2 / 1.9 s and p95 3.2 / 3.2 s, M15 0.75 / 0.91; it failed only M5 on the
 tune split (0.75 against 0.80; held-out 0.82).
 
-**Verdict.** The safety gates (M1, M7, M8, M10, M11) hold on every run and
-both splits, and precision went from 0.70 to 0.96–1.00. The held-out split
-passed every gate in iteration 2 and in the qualification run. The tune split
-fails M9 (one photo) and, in the qualification run, M5. Neither photo role
-qualifies under thr-v1, so production dispatches no photo role until §13.6 is
-decided and the roles are re-qualified. No threshold or label was changed.
+**Verdict (corrected after review).** The safety gates did **not** hold on
+every run: in iteration 2 the held-out split failed M8 once (a licence plate,
+"RK 492 AU", on h01; the iteration-2 held-out scorecard has `pass: false` with
+`M8 1 (gate == 0)`), and the plate rule of guard-v2 was then written after
+that held-out failure had been inspected. M1, M7, M10 and M11 held on every
+live run under score-v2; the stricter score-v3 yardstick later found two more
+misses in those same recorded runs (§14.2). Precision went from 0.70 to
+0.96–1.00. The held-out split passed every gate in the qualification run
+only, and by then it was no longer blind. The tune split fails M9 (one photo)
+and, in the qualification run, M5. Neither photo role qualifies under thr-v1,
+so production dispatches no photo role until §13.6 is decided and the roles
+are re-qualified. No threshold or label was changed.
+
+**Required gate not reported at the time: real recordings, local replay
+(§10).** `pnpm eval:replay --recordings <scratchpad>/q4-outputs` on the
+phase-4 readings with guard-v2 **failed** its gate on the tune split: M2
+0.1034 (gate ≤ 0.03), M8 2 (gate = 0) and M5 0.79 (≥ 0.80 for the live tune
+gate). Forbidden labels still published: Iznik pottery, Lustreware, Yuyuan
+Garden, Georgian terraced houses, Japanese bilingual wayfinding design; the
+two M8 entries are mis-transcriptions the p10 label forbids ("M-15 Sol
+Estrella", "Un minimo 100% electrico es el plan"). The result after the
+review fixes is in §14.2.
 
 ### 13.2 What the iterations found and fixed
 
@@ -759,9 +779,139 @@ intended trade-off, but it needs an owner decision (§13.6).
 
 | | Concentrate | Qloo |
 | --- | --- | --- |
-| Evaluate phase | 219 (6 in an aborted first start, 2 × 56 `eval:live`, 17 text qualification, 84 photo qualification, 0 in the real-stack run) | 118 (47 + 60 grounding, 7 seed measurement, 4 journey seed) |
-| Team total (diagnose 38 / 56, build 32 / 21, evaluate) | **289 of 400** | **195 of 300** |
+| Evaluate phase | 218 in the ledger (5 in an aborted first start, 2 × 56 `eval:live`, 17 text qualification, 84 photo qualification, 0 in the real-stack run), plus at most 1 more: the aborted start's request counter reserved 6 requests while the ledger has 5 rows for it | 118 (47 + 60 grounding, 7 seed measurement, 4 journey seed) |
+| Team total (diagnose 38 / 56, build 32 / 21, evaluate) | **288 logged, at most 289, of 400** | **195 of 300** |
 
-Every call is in the ledger; no retries; no Elorian. Concentrate token use
+Every ledger row is a billed call; one reserved request of the aborted start
+has no ledger row (it is counted in the upper bound above). No retries; no
+Elorian. Concentrate token use
 for the qualification runs: 69,013 / 6,874 (stage 1), 100,369 / 20,730
 (enrichment run), 11,309 / 6,884 (research), 9,132 / 2,556 (composer).
+
+## 14. Review fixes (guard-v3, score-v3, ground-v3, text-score-v2, evaluation binding)
+
+A review of the Evaluate phase found gaps in the guardrails, in the scorer
+that is meant to be their independent yardstick, and in the qualification
+gate. This round fixed them with deterministic rules and an automatic
+binding, not prompt changes. Every rule below has a regression test built from
+the review's probe (FIXTURE names where a real one is not needed).
+
+### 14.1 What changed
+
+| Area | Gap | Fix |
+| --- | --- | --- |
+| G-BRAND | Only makers on a closed list were held ("Trek road bike", "Mitsubishi", "Jordan 1 sneakers", "Supreme streetwear" published at stage 1) | A larger maker list; everyday-word makers next to a product noun of their trade; model codes and numbered models; acronyms in capitals ("EMT Madrid"); fail closed for fashion and sport objects led by a word no lexicon knows (places named in the same reading count as known) |
+| G-BRAND-CORROBORATE | One brand word sufficed and could be a colour: "Blue Bottle Coffee cup" was corroborated by "BLUE MONDAY SALE" and searched in Qloo as "blue"; a make on a badge vouched for a model guessed from the shape | Every brand word must be transcribed (`brandReadIn`), colours and materials never head a brand, and Qloo searches the maker word only |
+| Single read | A stage-2 brand or person addition was confirmed by its own reply | It also needs its words in what the stage-1 call said (two separate readings, §7.6 "one read must not be the only evidence for a brand"); otherwise `single_read` drop |
+| G-IDENTITY | A person or creator published at stage 1 on the model's own `evidence_text` | Held until stage 2 transcribes every word of the name; dropped without a stage 2 |
+| G-STYLE-OF | The tag-query replacement skipped the person rules ("Kanye-style outfit" published "Kanye West" as a style) | The replacement goes through G-MEDIUM, G-PERSON-ROLE and G-IDENTITY, and a tag query that repeats the attributed name is an identity claim |
+| G-CUISINE-FOOD | Applied only to type cuisine or a "…cuisine/food" name | Applies to every food-domain claim; a dish that is itself depicted with real evidence is its own evidence |
+| G-CATEGORY | The model's domain mapped straight to a section ("Bossa Nova" as food → Eat, "Gothic Revival" as fashion → Wear) | A domain the name contradicts gives way to the name's own domain (lexicons, with new architecture and design lists); a category needs the name or the reading (title, interpretation, observations) to show that domain |
+| G-MEDIUM | Missed artwork, prints, canvas, engraving, lithograph, etching, woodcut, nature morte | Added; "print", "printed" and "canvas" are decoration in craft, design, fashion and the other decorative domains. "Poster" is not a medium word: a poster is a physical subject (the held-out film poster) |
+| G-SUBJECT (new) | Stage-2 `competing_subjects` were never guarded and became "What caught your eye?" buttons | A subject label passes the medium, role, descriptor and brand checks, and every name-like word in it must be published or read |
+| Eat dish ideas | Any resolved place or tradition fed `composeDishIdeas` (streetball, a city on a sign) | Only references G-CATEGORY placed in Eat, cuisines, or user-named references |
+| Media results | `GET /v2/media/{id}/analysis/{analysisId}` exposed the raw frame candidates | The result lists only what the stage-1 guardrails publish, with the guard's relation |
+| Plan prose | Excluded ingredients could appear in plan summary and rationale | Sentences naming an exclusion are dropped (a title naming one falls back to the default title) |
+| Scorer (score-v3) | Substring brand matching ("AUDITORIUM" for Audi), first-token head, narrow medium list, the claim's own evidence_text accepted as proof of a name, unlisted makers invisible, competing subjects unscored | Whole-word matching of every brand word; its own maker list and model codes; broader medium words; names must be in the final visible text; competing subjects scored for brand, medium, identity and role |
+| Text scorer (text-score-v2) | T8 scored text production would not show | T8 is scored on what production shows (after the new filter); raw mentions are reported; a summary emptied by the filter fails |
+
+### 14.2 Quality, before and after (offline replays of the recorded readings)
+
+No new photo readings were bought: the recorded phase-4 readings and the
+live readings of iterations 1 and 2 were replayed through each guard version.
+Held-out photos are reported, but they are no longer blind (§14.3).
+
+| Recordings, split (gates) | guard-v2, score-v2 (as reported) | guard-v2, score-v3 | guard-v3, score-v3 |
+| --- | --- | --- | --- |
+| Phase 4, tune (replay gates) | FAIL: M2 0.103, M5 0.79, M8 2 | FAIL: same | FAIL: same (M1 0, M7 1, M11 0) |
+| Iteration 1, tune (live gates) | FAIL: M9 0.87 | FAIL: M9 0.87 | FAIL: M5 0.75, M9 0.87 (M4 0.20) |
+| Iteration 1, held-out | PASS | **FAIL: M1 1, M11 1** (a director's name published from the reply's own evidence_text) | PASS |
+| Iteration 2, tune | FAIL: M9 0.87 | **FAIL: M1 1, M7 0.50** ("EMT Madrid" with no "EMT" transcribed; score-v2 passed it on the substring in "eléctricamEMTe") | FAIL: M5 0.75, M9 0.87 (M1 0, M7 1) |
+| Iteration 2, held-out | PASS | PASS | PASS |
+
+M17 (the unguarded readings fail M1) holds on all three sets. The phase-4
+replay does not move: those readings are v1 readings without the fields the
+new rules use, and their remaining forbidden labels (Iznik, Lustreware, Yuyuan
+Garden, Georgian, wayfinding) are wrong attributions that stage 2 confirmed or
+only hedged; they are what the verifier escalation (§7.6) is for.
+
+The price of the stricter evidence is recall on the tune split: M5 falls from
+0.83 to 0.75 because p10's only expected reference, the operator EMT, is now
+held (an acronym) and stage 2 either misread it ("RMT MADRID") or named it only
+in its own reply. Other correct claims lost the same way: "NBA" on p13 (named
+only at stage 2), the director and two credited names on the film poster
+(not transcribed, or named only at stage 2). Whether single-read brand
+additions may publish as non-anchor references is an owner decision (§14.6).
+
+### 14.3 Held-out split
+
+h01–h13 were blind only before the first live run (§13). The manifest now
+marks each of them `"blind": false`, the README says so, and photo-role
+qualification needs at least 10 blind held-out photos: the qualification
+script refuses to start without them, and `qualificationState()` refuses an
+artifact whose eval block does not say `holdout_blind: true`.
+
+### 14.4 Validation mechanism: the evaluation binding
+
+`EVAL_BINDING` (`packages/providers/src/concentrate/eval-binding.ts`,
+generated by `pnpm eval:binding --write`, checked by
+`scripts/eval/binding.test.ts`) holds, per golden set, the golden digest, the
+scorer version and a digest of the evaluated code (guards, lexicons, prompts,
+reading types and scorer for golden-v1; text scorer, schemas, fixture builder
+and dietary filter for text-v1), plus the thresholds digest. An artifact's
+eval block records the same values, and `evalGateFailure()` returns
+`stale_golden_set`, `stale_thresholds`, `stale_scorer`, `stale_code` or
+`holdout_not_blind` when they differ. Editing a label, a threshold, a scorer,
+a prompt builder or a guard rule therefore fails CI until the binding is
+regenerated, and regenerating it un-qualifies every role scored on the old
+inputs, with no version string to remember. The qualification script refuses
+to spend on inputs that differ from the committed binding.
+
+The grounding and seed blocks of `thresholds.json` now have a consumer
+(`scripts/eval/release-gates.ts`): `eval:live --qloo` ends with the grounding
+gate (forbidden accepts, doubtful names, sample sizes, and precision and
+recall from a hand-judgement file) and `measure-taste-seed.ts` with the seed
+gate (requests, concurrency, Eat calls without food picks, echo cards, cuisine
+share, and the judged shares). A gate that needs a person and has no
+judgement reads "needs hand judgement" and fails. Applied to the recorded
+grounding runs of iterations 1 and 2: 107 lookups (63 held-out), 0 forbidden
+accepts, 0 doubtful names; precision and recall need the judgement file.
+
+### 14.5 Text roles and photo roles
+
+- `research_text` (anthropic/claude-haiku-5-5, effort none): 6/6, p50 5.8 s,
+  p95 6.8 s, 7.3 kept claims per fixture, 4.2 % unsupported specifics.
+  **Qualified** under the binding gate.
+- `composer` (same route): a first run under text-score-v1 failed T10 (the
+  dietary-exclusions plan prose named an excluded ingredient; outputs are not
+  stored). After the plan-prose filter and text-score-v2, a fresh run passed
+  11/11, p50 2.9 s, p95 6.8 s, 0 raw exclusion mentions, 0 new names, 0 safety
+  claims. **Qualified.**
+- The Evaluate-phase artifacts (both text roles, both photo roles) no longer
+  qualify: they carry no code digest or held-out flag.
+- Photo roles were not re-run: without a blind held-out split they cannot
+  qualify, and the tune split still misses M5 and M9. Production keeps failing
+  closed for photos ("We can't look at this photo yet"), so FAST-01's first
+  useful section is still unmet end to end (it was 8.0 s at the base branch).
+  The guards add little to that path: on the 86 recorded readings the stage-1
+  guard takes 0.16 ms p50 / 0.34 ms p95 and the stage-2 guard 0.25 / 0.59 ms;
+  held claims never delay the first section, they only wait for stage 2.
+
+### 14.6 Open decisions for the owner
+
+1. **A fresh blind held-out set** (h14+, at least 10 photos, labelled before
+   any model output exists). Photo roles cannot qualify without it.
+2. **Single-read additions.** Keep dropping brand and person names that only
+   the stage-2 reply contains (costs "NBA", "EMT Madrid" and poster credits
+   on the recorded data), or publish them as non-anchor references that are
+   never searched in Qloo.
+3. The open items of §13.6 (p14 label, which run the M5 gate applies to,
+   grounding recall, Wikipedia egress) are unchanged.
+
+### 14.7 Spend
+
+This round: 34 Concentrate requests (two text-role qualifications of 17:
+the first composer run failed, see §14.5) and 0 Qloo, all in the ledger
+(package `fix`). Team total: Concentrate 322 logged, at most 323, of 400;
+Qloo 195 of 300. No Elorian.
+

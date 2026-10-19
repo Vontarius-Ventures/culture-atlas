@@ -22,9 +22,13 @@ async function recRows(captureId: string) {
   return rows;
 }
 
+/** The outfit reading with food in it (an aperitivo spritz on the table), so its food reference is supported. */
+const WITH_FOOD = 'A few vintage racing references stood out beside an aperitivo spritz.';
+const withFood = () => ({ ...vlmFixture('clear-outfit.json'), interpretation: WITH_FOOD });
+
 describe('cultural compilation pipeline (worker + fakes)', () => {
   it('compiles a capture end to end with Qloo-grounded, sourced, progressive results', async () => {
-    const { providers, vlm } = world();
+    const { providers, vlm } = world({ vlm: withFood() });
     const ctx = await anonCtx(providers);
     const { capture_id, job_id, reused } = await submit(ctx);
     expect(reused).toBe(false);
@@ -37,7 +41,7 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
 
     const view = await captures.getCapture(ctx, { id: capture_id });
     expect(view.status).toBe('ready');
-    expect(view.analysis).toMatchObject({ version: 1, title: 'Vintage racing references', interpretation: 'A few vintage racing references stood out.', warnings: [] });
+    expect(view.analysis).toMatchObject({ version: 1, title: 'Vintage racing references', interpretation: WITH_FOOD, warnings: [] });
     expect(view.analysis!.sections).toMatchObject({ observations: 'complete', references: 'complete', research: 'complete', wear: 'complete', play: 'complete', watch: 'complete', eat: 'complete' });
     expect(view.job_id).toBeNull();
 
@@ -49,7 +53,7 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
       [job_id],
     );
     expect(guardTrace).toHaveLength(1);
-    expect(guardTrace[0]!.data.version).toBe('guard-v2');
+    expect(guardTrace[0]!.data.version).toBe('guard-v3');
     expect(guardTrace[0]!.data.decisions.find((d) => d.name === 'Fixture Denim Co')).toMatchObject({ action: 'drop', rules: ['G-BRAND'], note: 'no_stage_2' });
     // References: resemblances are qualified.
     const racing = view.references.find((r) => r.name === 'Vintage Racing')!;
@@ -108,7 +112,8 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
         ],
       };
     });
-    const { providers } = world({ overrides: { composer } });
+    // The same reading with food in it (an aperitivo spritz on the table), so the food reference stays.
+    const { providers } = world({ vlm: withFood(), overrides: { composer } });
     const ctx = await anonCtx(providers);
     const { capture_id, job_id } = await submit(ctx);
     await runJobs(ctx, [job_id]);
@@ -123,6 +128,17 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     for (const r of rows) expect(r.display_reason).not.toMatch(/free|safe for/i);
   });
 
+  it('a food resemblance on a photo with no food is dropped, and Eat has nothing to compose from (guard-v3)', async () => {
+    const { providers } = world();
+    const ctx = await anonCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    expect(view.references.map((r) => r.name)).not.toContain('Italian aperitivo culture');
+    expect(view.analysis!.sections.eat).toBe('skipped');
+    expect((await recRows(capture_id)).filter((r) => r.category === 'eat')).toEqual([]);
+  });
+
   it('keeps reference results and marks discoveries unavailable when Qloo is not configured (no fabrication)', async () => {
     const { providers } = world({ qloo: null });
     expect(providers.capabilities()['qloo.insights']).toMatchObject({ status: 'unavailable', reason: 'not_configured' });
@@ -134,8 +150,9 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(view.status).toBe('partial');
     expect(view.analysis!.sections).toMatchObject({ wear: 'unavailable', play: 'unavailable', watch: 'unavailable' });
     expect(view.analysis!.warnings).toContainEqual({ code: 'discoveries_delayed', message: 'Related discoveries are taking longer.' });
-    // The brand of this single reading is dropped by G-BRAND (no stage 2); the rest stays unmatched.
-    expect(view.references.map((r) => r.name)).toEqual(['1960s motor racing style', 'Italian aperitivo culture']);
+    // The brand of this single reading is dropped by G-BRAND (no stage 2), the food resemblance by
+    // G-CUISINE-FOOD (no food in the photo); the rest stays unmatched.
+    expect(view.references.map((r) => r.name)).toEqual(['1960s motor racing style']);
     expect(view.references.every((r) => r.qualified)).toBe(true); // unmatched -> qualified
     const rows = await recRows(capture_id);
     expect(rows.filter((r) => r.origin === 'qloo' || r.origin === 'replay')).toHaveLength(0);

@@ -230,6 +230,7 @@
     {
       "id": "h01",
       "split": "holdout",
+      "blind": false,
       "file": "h01-car_eu026.jpg",
       "sha256": "637060489ccea01515c342e368e93bb366275cf7b2e13986647fa9c89f74ec63",
       "width": 573,
@@ -245,6 +246,7 @@
     {
       "id": "h02",
       "split": "holdout",
+      "blind": false,
       "file": "h02-gsam_car.jpg",
       "sha256": "45d920dfe748a66d513796600564f691240c2b00c8da4316c45d29e11ce067b2",
       "width": 640,
@@ -260,6 +262,7 @@
     {
       "id": "h03",
       "split": "holdout",
+      "blind": false,
       "file": "h03-ootd_00126.jpg",
       "sha256": "661ebf9c36b4ef974503023f8e59fe28937757646fb27b21c960869ab1cf3ac1",
       "width": 768,
@@ -275,6 +278,7 @@
     {
       "id": "h04",
       "split": "holdout",
+      "blind": false,
       "file": "h04-ootd_00151.jpg",
       "sha256": "d8ad0a63cdacfa9e7876c25624195def2f4005cc9eb8e63b3f8f275b4fa0d7f7",
       "width": 768,
@@ -290,6 +294,7 @@
     {
       "id": "h05",
       "split": "holdout",
+      "blind": false,
       "file": "h05-qwen25_food.jpeg",
       "sha256": "ac2155fa0cb0dd57b3c9952ab5beca137cc698b07a6a21be89d2c3d032dae22b",
       "width": 3024,
@@ -305,6 +310,7 @@
     {
       "id": "h06",
       "split": "holdout",
+      "blind": false,
       "file": "h06-qwenvl_menu.jpeg",
       "sha256": "4197bd0613ef9fed189f7e1b490af5304345927adbd510483d7d31b41ae30625",
       "width": 400,
@@ -320,6 +326,7 @@
     {
       "id": "h07",
       "split": "holdout",
+      "blind": false,
       "file": "h07-gsam_demo3.jpg",
       "sha256": "a9011049db02799c9bf68ba228445968a4dc2d097df8f3559c4e18a8a09a4f7f",
       "width": 3295,
@@ -335,6 +342,7 @@
     {
       "id": "h08",
       "split": "holdout",
+      "blind": false,
       "file": "h08-lol_780.png",
       "sha256": "f78aad566110d3c2efc7dc3ebc086043385af27231f44d3b03780becb492e972",
       "width": 600,
@@ -350,6 +358,7 @@
     {
       "id": "h09",
       "split": "holdout",
+      "blind": false,
       "file": "h09-qwenvl_poster.jpeg",
       "sha256": "392a8c559f8b18889b89beac808f4b4b7bf7492161031882cc3ad3af0f97aec4",
       "width": 2013,
@@ -365,6 +374,7 @@
     {
       "id": "h10",
       "split": "holdout",
+      "blind": false,
       "file": "h10-minicpm_hk.jpg",
       "sha256": "6c4e4443548303859d3b15569b77b92cf2bb1dfb9fba8e1c7bfb9bb92e503ddc",
       "width": 1300,
@@ -380,6 +390,7 @@
     {
       "id": "h11",
       "split": "holdout",
+      "blind": false,
       "file": "h11-gsam_demo5.jpg",
       "sha256": "cc6982b0cba219937872be1d27b368ab3ce109a7da95960a8ebbf176f886fad0",
       "width": 3000,
@@ -395,6 +406,7 @@
     {
       "id": "h12",
       "split": "holdout",
+      "blind": false,
       "file": "h12-qwen25_ocr1.jpg",
       "sha256": "b46c068baf48eae234bcfb3c2649ff731428531eec0ae9c29627f1a30bdaebce",
       "width": 1836,
@@ -410,6 +422,7 @@
     {
       "id": "h13",
       "split": "holdout",
+      "blind": false,
       "file": "h13-qwenvl_shanghai.jpg",
       "sha256": "e780544cac8cdd287dcd5e6e6417a291c95360198254c3347e328bba1ac07a1f",
       "width": 5304,

@@ -1,9 +1,13 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import type { EvalBindingLike } from '../../packages/providers/src/concentrate/profiles';
 import { solidJpeg } from '../../packages/providers/src/testing/images';
-import { sha256Hex, type PhotoLabel } from './labels';
+import { GUARDRAIL_VERSION } from '../../packages/providers/src/vlm/guardrails';
+import { BOUND_CODE, codeDigest } from './binding';
+import { goldenDigest, loadGoldenSet, sha256Hex, type PhotoLabel } from './labels';
 import { unguardedPipeline, type ReadingPipeline } from './pipeline';
+import { SCORER_VERSION } from './scorer';
 
 /**
  * Test helpers: a synthetic golden set in a temp dir (solid-colour JPEGs, not
@@ -45,6 +49,7 @@ export async function syntheticGolden(ids: readonly string[], prefix = 'ca-golde
     photos.push({
       id,
       split: id.startsWith('p') ? 'tune' : 'holdout',
+      ...(id.startsWith('p') ? {} : { blind: true }),
       file: `${id}.jpg`,
       sha256: sha256Hex(bytes),
       width: 640,
@@ -66,5 +71,49 @@ export async function syntheticGolden(ids: readonly string[], prefix = 'ca-golde
 export const versionedTestPipeline: ReadingPipeline = {
   ...unguardedPipeline,
   name: 'guarded',
-  guardrailVersion: 'guard-v2',
+  guardrailVersion: GUARDRAIL_VERSION,
 };
+
+const REPO = path.resolve(import.meta.dirname, '../..');
+
+/**
+ * The binding a synthetic set would have if it were committed: its own
+ * golden digest, the thresholds file, the scorer version and the repository's
+ * bound code. Lets the harness tests exercise the binding gate with temp
+ * golden sets; undefined when the inputs cannot be read (the harness then
+ * reports its own error first).
+ */
+export async function syntheticBinding(o: {
+  golden?: { dir: string };
+  fixturesDir?: string;
+  textScorer?: { version?: string };
+  thresholdsFile?: string;
+}): Promise<EvalBindingLike | undefined> {
+  try {
+    const thresholds = sha256Hex(await readFile(o.thresholdsFile ?? path.join(REPO, 'fixtures/eval/thresholds.json')));
+    if (o.golden) {
+      const golden = await loadGoldenSet(o.golden.dir);
+      const set = golden.manifest.version;
+      return {
+        thresholds_sha256: thresholds,
+        sets: { [set]: { golden_sha256: goldenDigest(golden), scorer_version: SCORER_VERSION, code_sha256: await codeDigest(REPO, BOUND_CODE[set]!) } },
+      };
+    }
+    if (o.fixturesDir) {
+      const manifest = JSON.parse(await readFile(path.join(path.dirname(o.fixturesDir), 'manifest.json'), 'utf8')) as { golden_set: string; golden_sha256: string };
+      return {
+        thresholds_sha256: thresholds,
+        sets: {
+          [manifest.golden_set]: {
+            golden_sha256: manifest.golden_sha256,
+            scorer_version: o.textScorer?.version ?? 'scoreTextFixture',
+            code_sha256: await codeDigest(REPO, BOUND_CODE[manifest.golden_set]!),
+          },
+        },
+      };
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}

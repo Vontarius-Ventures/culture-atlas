@@ -32,6 +32,7 @@ import { RequestCounter } from '../qualify-concentrate-lib';
 import { verifiedGoldenPhotos } from './golden-photos';
 import type { GoldenSet, Thresholds } from './labels';
 import type { ReadingPipeline, Recording } from './pipeline';
+import { scoreGrounding, type GroundingJudgement, type GroundingRecord } from './release-gates';
 import { SCORER_VERSION, scoreRuns, type CallRecord, type QlooAcceptRecord, type Scorecard, type ScoredRun } from './scorer';
 
 /**
@@ -95,6 +96,8 @@ export interface LiveEvalOptions {
     spacingMs: number;
     grounding: GroundingModule;
     fetch?: typeof fetch;
+    /** Hand judgements of the accepted matches (precision, recall); without them those gates cannot pass. */
+    judgements?: readonly GroundingJudgement[];
   };
   fetch?: typeof fetch;
   ledgerFile?: string;
@@ -110,6 +113,8 @@ export interface LiveEvalResult {
   plannedQlooMax: number;
   stoppedBy?: string;
   scorecard?: Scorecard;
+  /** The grounding gate of thresholds.json, applied to this run's Qloo lookups (--qloo only). */
+  grounding?: ReturnType<typeof scoreGrounding>;
   requestsSent?: number;
   qlooSent?: number;
 }
@@ -352,11 +357,11 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     const qloo = new QlooHttpProvider({ apiKey: q.apiKey, baseUrl: q.baseUrl, timeoutMs: 20_000, fetch: qFetch, defaultRetries: 0 });
     const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
     outer: for (const run of runs) {
-      const records: QlooAcceptRecord[] = [];
+      const records: GroundingRecord[] = [];
       for (const c of finals.get(run.photoId) ?? []) {
         const plan = q.grounding.planLookup(c);
         if (plan.kind === 'none') {
-          records.push({ candidate: c.name, accepted: false, plan: 'none', reason: plan.reason });
+          records.push({ candidate: c.name, accepted: false, plan: 'none', reason: plan.reason, candidateType: c.type, corroborated: c.corroborated });
           continue;
         }
         if ((await qCounter.used()) >= q.maxRequests) {
@@ -373,6 +378,8 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
           const m = verdict.match;
           records.push({
             candidate: c.name,
+            candidateType: c.type,
+            corroborated: c.corroborated,
             accepted: !!m,
             entityType: m && 'entity_id' in m ? (m.types[0] ?? null) : null,
             tagFamily: m && 'type' in m && !('entity_id' in m) ? tagFamily(m.type) : null,
@@ -389,7 +396,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
             stoppedBy = `qloo_http_${error.status}`;
             break outer;
           }
-          records.push({ candidate: c.name, accepted: false, plan: plan.kind, query: plan.query, reason: 'request_failed' });
+          records.push({ candidate: c.name, accepted: false, plan: plan.kind, query: plan.query, reason: 'request_failed', candidateType: c.type, corroborated: c.corroborated });
         }
         await sleep(q.spacingMs);
       }
@@ -409,9 +416,18 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
       ),
       { mode: 0o600 },
     );
+  // The grounding gate (thresholds.json "grounding") over every lookup this run made.
+  const grounding = opts.qloo
+    ? scoreGrounding(
+        runs.map((r) => ({ photo: r.photoId, records: (r.qloo ?? []) as GroundingRecord[] })),
+        opts.golden.labels,
+        opts.thresholds.grounding,
+        opts.qloo.judgements,
+      )
+    : undefined;
   await writeFile(
     path.join(opts.outDir, 'scorecard.json'),
-    JSON.stringify({ ...scorecard, stopped_by: stoppedBy ?? null, guardrail_version: opts.pipeline.guardrailVersion }, null, 2),
+    JSON.stringify({ ...scorecard, grounding_gate: grounding ?? null, stopped_by: stoppedBy ?? null, guardrail_version: opts.pipeline.guardrailVersion }, null, 2),
     { mode: 0o600 },
   );
   return {
@@ -420,6 +436,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     plannedQlooMax,
     stoppedBy,
     scorecard,
+    ...(grounding ? { grounding } : {}),
     requestsSent: await counter.used(),
     qlooSent,
   };

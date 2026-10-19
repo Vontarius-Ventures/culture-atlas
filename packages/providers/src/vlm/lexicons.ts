@@ -3,9 +3,13 @@
  * §4, guard-v2). Pure data plus two tokenizer helpers; no I/O.
  *
  * The lists were seeded from the recorded phase-4 readings of the 15 tuning
- * photos (never from the held-out split). Changing any list changes the
- * guardrail behaviour: bump GUARDRAIL_VERSION in guardrails.ts with it, which
- * un-qualifies the photo roles until they are re-evaluated (§2, §7.5).
+ * photos. guard-v2 also changed rules after held-out (h01-h13) failures had
+ * been inspected (docs/quality-plan.md §13), so that split is no longer blind
+ * (fixtures/eval/README.md). Changing any list changes the guardrail
+ * behaviour: bump GUARDRAIL_VERSION in guardrails.ts with it, which
+ * un-qualifies the photo roles until they are re-evaluated (§2, §7.5). The
+ * source fingerprint test (guardrails.test.ts) fails until the version and
+ * the pinned digest are updated together.
  */
 
 /**
@@ -127,6 +131,90 @@ export const MAKERS = set(`
   samsung sony canon nikon leica fujifilm panasonic lg philips bose
   ikea lego rolex casio seiko swatch tissot cartier
   starbucks cocacola pepsi heineken
+  mitsubishi dodge chrysler cadillac buick gmc infiniti acura opel dacia lada saab lancia
+  mclaren astonmartin polestar rivian byd geely mahindra piaggio lambretta aprilia ktm agusta enfield
+  merida orbea raleigh schwinn cinelli bmc wilier ridley surly bontrager
+  stussy bape yeezy skechers timberland birkenstock crocs ugg arcteryx carhartt dickies kappa ellesse
+  diadora mizuno saucony hoka onitsuka salomon oakley rayban primark benetton hilfiger kors longchamp
+  kenzo margiela miyake jacquemus ferragamo zegna brioni barbour belstaff wrangler patagonia northface
+  iphone ipad macbook airpods xiaomi huawei oppo oneplus motorola nokia toshiba hitachi technics marantz
+  sennheiser jbl dyson gopro dji polaroid kodak hasselblad pentax ricoh minolta nintendo playstation
+  xbox sega atari walkman thinkpad
+  nescafe nespresso lavazza guinness budweiser asahi kirin tsingtao carlsberg peroni aperol campari
+  smirnoff bacardi jameson hennessy moet mcdonalds kfc haribo nutella heinz kelloggs oreo nestle
+  cadbury lindt toblerone redbull fanta schweppes evian perrier sanpellegrino
+  breitling longines hublot panerai timex garmin fitbit audemars piguet patek
+  molten mikasa rawlings titleist callaway yonex babolat slazenger kookaburra
+`);
+
+/**
+ * Maker names that are also ordinary words ("Supreme", "Jordan", "Vans",
+ * "Giant"): brand-like only next to a product noun of their trade
+ * (CONTEXT_PRODUCTS), so "Supreme streetwear" and "Jordan 1 sneakers" are
+ * held while "Giant panda" is not.
+ */
+export const CONTEXTUAL_MAKERS = set(`
+  supreme jordan vans giant scott cube canyon trek specialized champion coach guess gap mango diesel boss lee
+  mini smart seat ram lotus triumph omega citizen columbia corona palace focus fuji kona marin
+`);
+
+/** Product nouns that make a contextual maker brand-like ("Vans sneakers", "Giant bike"). */
+export const CONTEXT_PRODUCTS = set(`
+  bike bikes bicycle bicycles frame frameset sneaker sneakers trainers shoe shoes boot boots
+  hoodie hoodies tee tshirt shirt shirts jersey jerseys cap caps jacket jackets coat coats bag bags backpack
+  streetwear sportswear workwear outerwear footwear apparel clothing outfit
+  watch watches laptop phone phones headphones camera
+  car cars suv suvs truck trucks van vans motorcycle motorbike scooter skateboard skateboards
+  beer lager soda
+`);
+
+/**
+ * Descriptive words that may lead a product name without making it a brand
+ * guess: nationalities and regions, periods, garment and construction
+ * styles. A fashion or sport object whose leading word is in none
+ * of the lexicons is treated as brand-like (held for stage 2): unknown
+ * makers fail closed instead of publishing ("Trek road bike").
+ */
+export const DESCRIPTORS = set(`
+  japanese chinese korean thai vietnamese indian pakistani persian iranian turkish ottoman arab arabic moroccan
+  egyptian african ethiopian nigerian ghanaian kenyan mexican peruvian brazilian argentine cuban caribbean
+  french italian spanish portuguese greek german dutch belgian swiss austrian danish swedish norwegian finnish
+  nordic scandinavian british english scottish irish welsh russian polish czech hungarian balkan
+  mediterranean latin western eastern northern southern oriental tropical alpine desert coastal nautical
+  victorian edwardian georgian regency tudor colonial medieval baroque rococo renaissance gothic
+  retro mod punk grunge preppy boho bohemian hippie western cowboy military utility tactical technical
+  racing touring road mountain gravel track fixed gear city cargo folding electric commuter vintage
+  teddy puffer bomber parka varsity biker aviator chino cardigan blazer loafer loafers brogue brogues
+  espadrille espadrilles moccasin moccasins clog clogs sandal sandals slipper slippers mule mules
+  faux fake imitation replica handwoven hand woven knitted knit quilted embroidered printed striped checked
+  plaid tartan paisley floral polka dot dotted patterned beaded fringed ruffled pleated tailored oversized
+  cropped slim skinny wide loose baggy flared
+  sports team club league pro professional amateur youth kids mens womens unisex
+  classic heritage antique folk tribal ethnic artisan craft rustic farmhouse industrial minimalist
+  double decker
+`);
+
+/** Architecture and building words: a name with one is about a building, never a wear/play/watch/eat reference. */
+export const ARCHITECTURE = set(`
+  architecture architectural gothic romanesque baroque rococo palladian neoclassical neoclassicism brutalist
+  brutalism bauhaus modernist postmodern revival cathedral church chapel basilica mosque temple pagoda shrine
+  palace castle fortress abbey monastery minaret facade facades terrace terraced townhouse townhouses
+  building buildings house houses tower towers dome domes arch arches column columns roof roofs
+  staircase balustrade colonnade portico cloister skyscraper skyscrapers bridge
+`);
+
+/** Furniture, interior and craft words: a name with one is design or craft, never a wear/play/watch/eat reference. */
+export const DESIGN = set(`
+  furniture chair chairs armchair stool stools sofa table tables cabinet cabinets lamp lamps chandelier
+  rug rugs carpet carpets vase vases ceramic ceramics pottery porcelain stoneware earthenware tile tiles
+  tableware lacquerware woodwork joinery marquetry mosaic interior interiors decor
+`);
+
+/** Movement and school names that legitimately head an "X-style" name ("Shaker-style cabinet" -> Shaker). */
+export const STYLE_MOVEMENTS = set(`
+  shaker mission bauhaus memphis deco nouveau craftsman prairie biedermeier empire regency georgian victorian
+  edwardian tudor colonial gothic baroque rococo renaissance art arts crafts zen wabi sabi mingei scandinavian
+  nordic japandi industrial brutalist modernist minimalist bohemian boho rustic farmhouse coastal
 `);
 
 /** Words that put a legacy (v1) candidate in the fashion domain (§4.4). */

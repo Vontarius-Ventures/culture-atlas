@@ -256,6 +256,21 @@ step needs Wikipedia, which this sandbox's egress policy blocks. The
 end-to-end `complete` state and its timings therefore still need one run where
 both photo roles are qualified and `en.wikipedia.org` is reachable.
 
+**FAST-01 status after the review fixes (2026-10-19).** This is a functional
+regression against the base branch, where the same journey reached its first
+useful section in 8.0 s: on this branch no photo role is qualified, so every
+real upload fails closed and FAST-01 (first useful section ≤ 10 s p50, ≤ 20 s
+p95) and the §10 end-to-end gate are **unmet**. It stays so until a fresh,
+blind held-out set exists and the photo roles pass their gates (quality plan
+§14.6); the binding gate now refuses photo-role qualification without one.
+What was measured instead: the reading guards add 0.16 ms p50 / 0.34 ms p95
+(stage 1) and 0.25 / 0.59 ms (stage 2) on 86 recorded readings; held claims
+never delay the first section (they publish only after stage 2); grounding
+sends fewer Qloo requests than before (objects and uncorroborated brands are
+never searched). The latency of guard, held claims and grounding together up
+to the first section on the real stack has not been measured, because no
+photo role can be dispatched.
+
 **Taste seed, live Qloo.** With a food pick, Eat now returns only food: dim
 sum picks gave 8/8 dim-sum styles and the journey's ramen pick 6/6 ramen
 styles, with 0 echo cards (phase 4: "Bossa Nova", "Jazz Age Fare", "Vintage

@@ -18,6 +18,7 @@ import {
   type QualificationArtifact,
 } from './profiles';
 import { limits, profile, response, visionProfile } from './test-fixtures';
+import { EVAL_BINDING } from './eval-binding';
 
 const dirs: string[] = [];
 afterAll(async () => {
@@ -40,13 +41,18 @@ const snapshot = {
 /** A passing aggregate eval block on the role's required golden set (docs/quality-plan.md §7.5). */
 function evalBlock(role: QualificationArtifact['role'], overrides: Partial<EvalBlock> = {}): EvalBlock {
   const photo = role === 'vision_photo' || role === 'vision_photo_enrich';
+  const set = REQUIRED_GOLDEN_SET[role] ?? 'golden-v1';
+  // Scored on exactly the committed inputs (EVAL_BINDING), as a fresh qualification would be.
+  const bound = EVAL_BINDING.sets[set as keyof typeof EVAL_BINDING.sets];
   return {
-    golden_set: REQUIRED_GOLDEN_SET[role] ?? 'golden-v1',
-    golden_sha256: 'a'.repeat(64),
-    thresholds_sha256: 'b'.repeat(64),
+    golden_set: set,
+    golden_sha256: bound.golden_sha256,
+    thresholds_sha256: EVAL_BINDING.thresholds_sha256,
     guardrail_version: photo ? REQUIRED_GUARDRAIL_VERSION : null,
     grounding_version: null,
-    scorer_version: 'score-v2',
+    scorer_version: bound.scorer_version,
+    code_sha256: bound.code_sha256,
+    holdout_blind: photo ? true : null,
     metrics: { tune_M1: 0, holdout_M1: 0 },
     pass: true,
     ...overrides,
@@ -221,6 +227,35 @@ describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
     expect(qualificationState(vision, d)).toBe('catalog-compatible');
     await write(artifact(vision, { eval: evalBlock('vision_photo', { pass: false }) }));
     expect(qualificationState(vision, d)).toBe('catalog-compatible');
+  });
+
+  it('binds every evaluation input: a changed golden set, thresholds file, scorer or measured code un-qualifies the role', async () => {
+    for (const role of ['vision_photo', 'research_text', 'composer'] as const) {
+      expect(evalGateFailure(role, evalBlock(role, { golden_sha256: '0'.repeat(64) }))).toBe('stale_golden_set');
+      expect(evalGateFailure(role, evalBlock(role, { thresholds_sha256: '1'.repeat(64) }))).toBe('stale_thresholds');
+      expect(evalGateFailure(role, evalBlock(role, { scorer_version: 'score-v0' }))).toBe('stale_scorer');
+      expect(evalGateFailure(role, evalBlock(role, { code_sha256: '2'.repeat(64) }))).toBe('stale_code');
+    }
+    // The review probe: an otherwise passing text artifact with zeroed golden and thresholds digests.
+    const d = await dir();
+    await writeFile(path.join(d, CATALOG_SNAPSHOT_FILE), JSON.stringify(snapshot));
+    const write = (a: QualificationArtifact) => writeFile(path.join(d, `${profile.qualificationArtifactId}.json`), JSON.stringify(a));
+    await write(artifact(profile));
+    expect(qualificationState(profile, d)).toBe('qualified');
+    await write(artifact(profile, { eval: evalBlock(profile.role, { golden_sha256: '0'.repeat(64), thresholds_sha256: '1'.repeat(64) }) }));
+    expect(qualificationState(profile, d)).toBe('catalog-compatible');
+    // A binding regenerated after a code change makes the same artifact stale.
+    await write(artifact(profile));
+    const moved = { ...EVAL_BINDING, sets: { ...EVAL_BINDING.sets, 'text-v1': { ...EVAL_BINDING.sets['text-v1'], code_sha256: '3'.repeat(64) } } };
+    expect(qualificationState(profile, d, moved)).toBe('catalog-compatible');
+  });
+
+  it('photo roles need a blind held-out split (a split used for tuning is not a generalization gate)', () => {
+    expect(evalGateFailure('vision_photo', evalBlock('vision_photo', { holdout_blind: false }))).toBe('holdout_not_blind');
+    expect(evalGateFailure('vision_photo_enrich', evalBlock('vision_photo_enrich', { holdout_blind: null }))).toBe('holdout_not_blind');
+    // An artifact from before the binding (no code digest, no held-out flag) no longer parses: never qualified.
+    const { code_sha256: _c, holdout_blind: _h, ...legacy } = evalBlock('vision_photo');
+    expect(QualificationArtifactSchema.safeParse({ ...artifact(visionProfile), eval: legacy }).success).toBe(false);
   });
 
   it('text roles need text-v1; vision_video_frame keeps transport-only qualification', () => {

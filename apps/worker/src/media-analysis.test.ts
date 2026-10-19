@@ -548,11 +548,12 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
       },
       { frame_id: video.frames[2]!.id, timestamp_ms: 3000, state: 'complete', error_code: null },
     ]);
+    // Only what the guardrails publish, with the guard's relation (G-DEPICTED: no evidence for "depicted").
     expect(row.result.candidates).toEqual([
       {
         name: 'Mid-Century Modern',
         type: 'style',
-        relation: 'depicted',
+        relation: 'resembles',
         cited_frames: [
           { frame_id: video.frames[0]!.id, timestamp_ms: 1000 },
           { frame_id: video.frames[2]!.id, timestamp_ms: 3000 },

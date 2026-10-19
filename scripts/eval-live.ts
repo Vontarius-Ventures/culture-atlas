@@ -4,7 +4,7 @@
  *   pnpm eval:live --golden fixtures/eval/golden-v1 --photos $EVAL_PHOTOS_DIR --split all \
  *     --profile-file <operator>/profiles.json --roles vision_photo,vision_photo_enrich \
  *     --out-dir <outside git, holding catalog-snapshot.json> --max-requests 60 --spend-cap-usd 0.5 \
- *     [--qloo --max-qloo-requests 40 --qloo-concurrency 2 --qloo-spacing-ms 700] \
+ *     [--qloo --max-qloo-requests 40 --qloo-concurrency 2 --qloo-spacing-ms 700 [--grounding-judgements <file>]] \
  *     [--only p13,h01] [--ledger <file>] [--confirm-paid-requests]
  *
  * Every photo is sha256-checked before anything is planned. With
@@ -22,6 +22,8 @@ import * as grounding from '../packages/domain/src/compiler/grounding';
 import { runLiveEval, type GroundingModule } from './eval/live';
 import { RUNTIME_GUARDS, runtimeGuardedPipeline } from './eval/pipeline';
 import { summarize } from './eval/replay';
+import { gateLines, type GroundingJudgement } from './eval/release-gates';
+import { readFile } from 'node:fs/promises';
 import { readApiKey } from './qualify-concentrate-lib';
 
 function arg(name: string, fallback?: string): string | undefined {
@@ -70,6 +72,10 @@ if (flag('qloo')) {
     maxRequests: maxQloo,
     spacingMs,
     grounding: grounding satisfies GroundingModule,
+    // Hand judgements of accepted matches ([{ photo, candidate, correct_match, good_candidate, findable }]).
+    judgements: arg('grounding-judgements')
+      ? (JSON.parse(await readFile(arg('grounding-judgements')!, 'utf8')) as GroundingJudgement[])
+      : undefined,
   };
 }
 
@@ -102,5 +108,6 @@ if (result.dryRun) {
 }
 for (const line of summarize({ pipeline: 'guarded', guardrail_version: RUNTIME_GUARDS.GUARDRAIL_VERSION, scorecard: result.scorecard!, decisions: {}, runs: [] }))
   log(line);
+if (result.grounding) for (const line of gateLines('grounding gate (thresholds.json)', result.grounding)) log(line);
 log(`requests sent ${result.requestsSent}, Qloo ${result.qlooSent}${result.stoppedBy ? `, stopped by ${result.stoppedBy}` : ''}; scorecard.json written to --out-dir`);
-process.exit(result.scorecard!.pass && !result.stoppedBy ? 0 : 1);
+process.exit(result.scorecard!.pass && (!result.grounding || result.grounding.pass) && !result.stoppedBy ? 0 : 1);

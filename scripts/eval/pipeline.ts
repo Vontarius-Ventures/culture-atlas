@@ -88,6 +88,7 @@ export function readingView(a: VlmAnalysis): ReadingView {
     observations: a.observations.map((o) => ({ text: o.text, kind: o.kind })),
     visible_text: a.visible_text.map((t) => t.text),
     quality: { usable: a.quality.usable, issue: a.quality.issue ?? null },
+    competing_subjects: a.competing_subjects.map((s) => s.label),
   };
 }
 

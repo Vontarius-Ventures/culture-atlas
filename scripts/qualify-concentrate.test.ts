@@ -4,15 +4,36 @@ import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   profileHash,
-  qualificationState,
+  qualificationState as realQualificationState,
+  type EvalBindingLike,
   type ModelProfile,
 } from '../packages/providers/src/index';
 import type { TextScorer } from './eval/golden-photos';
 import { unguardedPipeline } from './eval/pipeline';
 import { sha256Hex } from './eval/labels';
 import { textManifestDigest } from './eval/text-golden';
-import { syntheticGolden, versionedTestPipeline } from './eval/test-golden';
-import { discoverFixtures, fetchCatalog, qualifyProfile, readApiKey } from './qualify-concentrate-lib';
+import { syntheticBinding, syntheticGolden, versionedTestPipeline } from './eval/test-golden';
+import { discoverFixtures, fetchCatalog, qualifyProfile as realQualifyProfile, readApiKey } from './qualify-concentrate-lib';
+
+/*
+ * The synthetic golden sets live in temp dirs, so they are not the committed
+ * EVAL_BINDING. These wrappers bind each run to its own synthetic inputs (as
+ * if they were committed) and read qualification state against that binding;
+ * the committed binding itself is checked by scripts/eval/binding.test.ts.
+ */
+const bindings = new Map<string, EvalBindingLike>();
+async function qualifyProfile(o: Parameters<typeof realQualifyProfile>[0]) {
+  const binding = o.binding ?? (await syntheticBinding(o));
+  if (binding) {
+    const prev = bindings.get(o.outDir);
+    bindings.set(o.outDir, prev ? { ...binding, sets: { ...prev.sets, ...binding.sets } } : binding);
+  }
+  return realQualifyProfile({ ...o, ...(binding ? { binding } : {}) });
+}
+function qualificationState(profile: ModelProfile, dir: string | undefined) {
+  const binding = dir ? bindings.get(dir) : undefined;
+  return binding ? realQualificationState(profile, dir, binding) : realQualificationState(profile, dir);
+}
 
 /**
  * Offline tests of the operator qualification harness (fake fetch only). They
@@ -96,7 +117,8 @@ function catalogPages() {
     return new Response(JSON.stringify(body));
   });
 }
-const ids = (n: number) => Array.from({ length: n }, (_, i) => `p${String(i + 1).padStart(2, '0')}`);
+/** Blind held-out photo ids (h01..): photo roles qualify only with at least 10 of them (quality plan §7.5). */
+const ids = (n: number, prefix = 'h') => Array.from({ length: n }, (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`);
 function responses(status = 200, candidate?: string) {
   return vi.fn(async (_url: string, init: RequestInit) => {
     if (status !== 200) return new Response('{"error":{"message":"PRIVATE"}}', { status });
@@ -205,10 +227,10 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     await expect(
       qualifyProfile({ ...base, golden: { dir: g.dir, photosDir: g.photosDir }, pipeline: unguardedPipeline }),
     ).rejects.toThrow('guarded reading pipeline');
-    await writeFile(path.join(g.photosDir, 'p03.jpg'), 'tampered');
+    await writeFile(path.join(g.photosDir, 'h03.jpg'), 'tampered');
     await expect(
       qualifyProfile({ ...base, golden: { dir: g.dir, photosDir: g.photosDir }, pipeline: versionedTestPipeline }),
-    ).rejects.toThrow('p03: sha256 differs');
+    ).rejects.toThrow('h03: sha256 differs');
     await expect(
       qualifyProfile({
         ...base,
@@ -217,6 +239,47 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
         pipeline: versionedTestPipeline,
       }),
     ).rejects.toThrow('quick-read profile');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('refuses, before any request, a golden set without 10 blind held-out photos (a tuned split is no generalization gate)', async () => {
+    const fetchImpl = responses();
+    const base = { apiKey: KEY, profile, pipeline: versionedTestPipeline, maxRequests: 30, spendCapMicros: 2_000_000, confirmPaidRequests: true, fetch: fetchImpl as unknown as typeof fetch };
+    const tuneOnly = await syntheticGolden(ids(12, 'p'));
+    await expect(qualifyProfile({ ...base, outDir: await preparedOutDir(), golden: tuneOnly })).rejects.toThrow('0 blind held-out photo(s)');
+    const contaminated = await syntheticGolden(ids(12));
+    const manifestFile = path.join(contaminated.dir, 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as { photos: { id: string; blind?: boolean }[] };
+    for (const photo of manifest.photos.slice(0, 3)) photo.blind = false;
+    await writeFile(manifestFile, JSON.stringify(manifest));
+    await expect(qualifyProfile({ ...base, outDir: await preparedOutDir(), golden: contaminated })).rejects.toThrow('9 blind held-out photo(s)');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('refuses, before any request, inputs that differ from the committed binding (the artifact could never qualify)', async () => {
+    const fetchImpl = responses();
+    const g = await syntheticGolden(ids(10));
+    const binding = (await syntheticBinding({ golden: g }))!;
+    const set = binding.sets['golden-v1']!;
+    const run = async (b?: EvalBindingLike) =>
+      realQualifyProfile({
+        apiKey: KEY,
+        outDir: await preparedOutDir(),
+        profile,
+        golden: g,
+        pipeline: versionedTestPipeline,
+        maxRequests: 12,
+        spendCapMicros: 2_000_000,
+        confirmPaidRequests: true,
+        fetch: fetchImpl as unknown as typeof fetch,
+        ...(b ? { binding: b } : {}),
+      });
+    await expect(run({ ...binding, thresholds_sha256: '1'.repeat(64) })).rejects.toThrow('thresholds.json differs');
+    await expect(run({ ...binding, sets: { 'golden-v1': { ...set, golden_sha256: '0'.repeat(64) } } })).rejects.toThrow('golden-v1 differs');
+    await expect(run({ ...binding, sets: { 'golden-v1': { ...set, scorer_version: 'score-v0' } } })).rejects.toThrow('differs from the committed score-v0');
+    await expect(run({ ...binding, sets: { 'golden-v1': { ...set, code_sha256: '2'.repeat(64) } } })).rejects.toThrow('the evaluated code');
+    // The committed binding (the default) does not describe a temp golden set either.
+    await expect(run()).rejects.toThrow('not the committed ones');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -242,9 +305,9 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v2', scorer_version: 'score-v2', pass: true },
+      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v3', scorer_version: 'score-v3', holdout_blind: true, pass: true },
     });
-    expect(run.artifact!.eval!.metrics).toMatchObject({ tune_M1: 0, tune_M3: 1, tune_M13: 1, failed_calls: 0 });
+    expect(run.artifact!.eval!.metrics).toMatchObject({ holdout_M1: 0, holdout_M3: 1, holdout_M13: 1, failed_calls: 0, holdout_photos: 10, holdout_blind_photos: 10 });
     expect(qualificationState(profile, outDir)).toBe('qualified');
     const artifact = await readFile(path.join(outDir, `${profile.qualificationArtifactId}.json`), 'utf8');
     expect(artifact).not.toContain(KEY);
@@ -286,7 +349,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       fetch: fetchImpl as unknown as typeof fetch,
     });
     expect(run.artifact).toMatchObject({ result: 'fail', fixtures: { passed: 10, failed: 0 }, eval: { pass: false } });
-    expect(run.artifact!.eval!.metrics.tune_M2).toBe(1);
+    expect(run.artifact!.eval!.metrics.holdout_M2).toBe(1);
     expect(run.artifact!.notes.some((n) => /Evaluation golden-v1 .*: fail/.test(n))).toBe(true);
     expect(qualificationState(profile, outDir)).toBe('catalog-compatible');
   });

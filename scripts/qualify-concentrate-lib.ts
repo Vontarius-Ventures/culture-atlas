@@ -25,15 +25,41 @@ import {
   type QualificationArtifact,
 } from '../packages/providers/src/index';
 import { parseTextFixture } from './eval/text-schemas';
-import { REQUIRED_GOLDEN_SET, type EvalBlock } from '../packages/providers/src/concentrate/profiles';
-import { evaluatePhotoRecordings, verifiedGoldenPhotos, type TextScorer } from './eval/golden-photos';
-import { loadGoldenSet, loadThresholds, type GoldenSet } from './eval/labels';
+import { REQUIRED_GOLDEN_SET, type EvalBindingLike, type EvalBlock } from '../packages/providers/src/concentrate/profiles';
+import { EVAL_BINDING } from '../packages/providers/src/concentrate/eval-binding';
+import { BOUND_CODE, codeDigest } from './eval/binding';
+import { HOLDOUT_MIN_PHOTOS, evaluatePhotoRecordings, verifiedGoldenPhotos, type TextScorer } from './eval/golden-photos';
+import { goldenDigest, loadGoldenSet, loadThresholds, type GoldenSet } from './eval/labels';
+import { SCORER_VERSION } from './eval/scorer';
 import type { ReadingPipeline, Recording } from './eval/pipeline';
 import { verifiedTextGolden, type VerifiedTextGolden } from './eval/text-golden';
 import { summarizeTextRun, type TextRunRow } from './eval/text-scorer';
 
 /** Pass thresholds of the evaluation (docs/quality-plan.md §7.2). */
 export const DEFAULT_THRESHOLDS = path.resolve(import.meta.dirname, '../fixtures/eval/thresholds.json');
+const REPO_ROOT = path.resolve(import.meta.dirname, '..');
+
+/**
+ * Refuses, before any request, an evaluation whose inputs differ from the
+ * committed binding (EVAL_BINDING): its artifact could never qualify, so the
+ * spend would be wasted. The binding is regenerated with `pnpm eval:binding --write`.
+ */
+export function bindingPreflight(input: {
+  goldenSet: string;
+  goldenSha256: string;
+  thresholdsSha256: string;
+  scorerVersion: string;
+  codeSha256: string;
+  binding: EvalBindingLike;
+}): string | null {
+  const bound = input.binding.sets[input.goldenSet];
+  if (!bound) return `no committed binding for ${input.goldenSet}`;
+  if (bound.golden_sha256 !== input.goldenSha256) return `${input.goldenSet} differs from the committed binding (labels or manifest changed)`;
+  if (input.binding.thresholds_sha256 !== input.thresholdsSha256) return 'thresholds.json differs from the committed binding';
+  if (bound.scorer_version !== input.scorerVersion) return `scorer ${input.scorerVersion} differs from the committed ${bound.scorer_version}`;
+  if (bound.code_sha256 !== input.codeSha256) return 'the evaluated code (guards, prompts, scorer) differs from the committed binding';
+  return null;
+}
 
 /**
  * Deliberate operator qualification of ONE Concentrate role profile
@@ -250,6 +276,10 @@ export async function qualifyProfile(
      */
     ledgerFile?: string;
     ledgerPackage?: string;
+    /** The binding the artifact must match (default: the committed EVAL_BINDING; tests pass their own). */
+    binding?: EvalBindingLike;
+    /** Repository root holding the bound code (default: this checkout). */
+    repoRoot?: string;
   },
 ): Promise<QualificationRun> {
   const log = opts.log ?? (() => undefined);
@@ -320,6 +350,31 @@ export async function qualifyProfile(
         throw new Error(`Text fixture ${f.name} has no readable ${path.basename(file)}.`);
       }
     }
+  }
+  // The artifact binds the inputs it was scored on; refuse a run that could never qualify.
+  const binding = opts.binding ?? EVAL_BINDING;
+  const evalSet = golden?.manifest.version ?? textGolden?.goldenSet;
+  let codeSha256: string | undefined;
+  if (evalSet) {
+    const files = BOUND_CODE[evalSet];
+    if (!files) throw new Error(`No bound code list for ${evalSet} (scripts/eval/binding.ts).`);
+    codeSha256 = await codeDigest(opts.repoRoot ?? REPO_ROOT, files);
+    const stale = bindingPreflight({
+      goldenSet: evalSet,
+      goldenSha256: golden ? goldenDigest(golden) : textGolden!.goldenSha256,
+      thresholdsSha256,
+      scorerVersion: golden ? SCORER_VERSION : (opts.textScorer?.version ?? 'scoreTextFixture'),
+      codeSha256,
+      binding,
+    });
+    if (stale) throw new Error(`Evaluation inputs are not the committed ones: ${stale}. Run pnpm eval:binding --write first; nothing was sent.`);
+  }
+  if (golden) {
+    const blind = golden.manifest.photos.filter((p) => p.split === 'holdout' && p.blind === true).length;
+    if (blind < HOLDOUT_MIN_PHOTOS)
+      throw new Error(
+        `${golden.manifest.version} has ${blind} blind held-out photo(s); photo roles qualify only with at least ${HOLDOUT_MIN_PHOTOS} (quality plan §7.5). Nothing was sent.`,
+      );
   }
   const minimum = Math.max(
     QUALIFICATION_MINIMUM_FIXTURES[profile.role],
@@ -554,6 +609,7 @@ export async function qualifyProfile(
       pipeline: opts.pipeline,
       recordings,
       failedCalls: total - recordings.length,
+      codeSha256: codeSha256!,
     }).block;
   } else if (textRole && textGolden) {
     // T1, T9 (p95 under the profile timeout, no timeouts) and T10 (every fixture passed, enough fixtures).
@@ -580,6 +636,8 @@ export async function qualifyProfile(
       guardrail_version: null,
       grounding_version: null,
       scorer_version: opts.textScorer?.version ?? 'scoreTextFixture',
+      code_sha256: codeSha256!,
+      holdout_blind: null,
       metrics,
       pass: run.pass && textVerdicts.length === total && textVerdicts.every((v) => v.pass),
     };

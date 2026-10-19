@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import type { ModelRole } from '../model-gateway/types';
 import { GUARDRAIL_VERSION } from '../vlm/guardrails';
+import { EVAL_BINDING } from './eval-binding';
 
 /** Every model role a profile can qualify (ModelRole). */
 export const MODEL_ROLE_VALUES = [
@@ -160,24 +161,58 @@ export const EvalBlockSchema = z
     golden_sha256: z.string().regex(/^[0-9a-f]{64}$/),
     thresholds_sha256: z.string().regex(/^[0-9a-f]{64}$/),
     guardrail_version: z.string().min(1).nullable(),
+    /**
+     * Grounding is not exercised by a role's qualification (no Qloo calls), so
+     * photo and text artifacts record null; the grounding gate is applied to
+     * the live grounding run instead (scripts/eval/grounding-score.ts).
+     */
     grounding_version: z.string().min(1).nullable(),
     scorer_version: z.string().min(1),
+    /** Digest of the code the evaluation measured (EVAL_BINDING.sets[golden_set].code_sha256 when it was scored). */
+    code_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    /**
+     * Photo sets: at least 10 held-out photos were scored and none had been
+     * used for tuning (manifest `blind`). Null for text sets.
+     */
+    holdout_blind: z.boolean().nullable(),
     metrics: z.record(z.string().regex(/^[A-Za-z0-9_]{1,40}$/), z.number().finite()),
     pass: z.boolean(),
   })
   .strict();
 export type EvalBlock = z.infer<typeof EvalBlockSchema>;
 
-/** Why an artifact's eval block does not qualify its role, or null when it does (or none is required). */
-export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined): string | null {
+/**
+ * Why an artifact's eval block does not qualify its role, or null when it
+ * does (or none is required). Every input the evaluation depended on must
+ * still be the committed one (EVAL_BINDING): the golden set's digest, the
+ * thresholds file, the scorer version and the measured code. A changed label,
+ * threshold, scorer, prompt builder or guard rule therefore un-qualifies the
+ * role by itself, with no version to remember to bump. Photo roles also need
+ * the current guardrail version and a blind held-out split.
+ */
+export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined, binding: EvalBindingLike = EVAL_BINDING): string | null {
   const required = REQUIRED_GOLDEN_SET[role];
   if (!required) return null;
   if (!block) return 'missing_eval';
   if (block.golden_set !== required) return 'wrong_golden_set';
-  if (PHOTO_EVAL_ROLES.includes(role) && block.guardrail_version !== REQUIRED_GUARDRAIL_VERSION)
-    return 'stale_guardrail_version';
+  const bound = (binding.sets as Record<string, EvalBindingLike['sets'][string] | undefined>)[required];
+  if (!bound) return 'unbound_golden_set';
+  if (block.golden_sha256 !== bound.golden_sha256) return 'stale_golden_set';
+  if (block.thresholds_sha256 !== binding.thresholds_sha256) return 'stale_thresholds';
+  if (block.scorer_version !== bound.scorer_version) return 'stale_scorer';
+  if (block.code_sha256 !== bound.code_sha256) return 'stale_code';
+  if (PHOTO_EVAL_ROLES.includes(role)) {
+    if (block.guardrail_version !== REQUIRED_GUARDRAIL_VERSION) return 'stale_guardrail_version';
+    if (block.holdout_blind !== true) return 'holdout_not_blind';
+  }
   if (!block.pass) return 'eval_failed';
   return null;
+}
+
+/** The shape of EVAL_BINDING (tests pass their own). */
+export interface EvalBindingLike {
+  thresholds_sha256: string;
+  sets: Readonly<Record<string, { golden_sha256: string; scorer_version: string; code_sha256: string }>>;
 }
 
 /** Safe aggregate qualification evidence. Never media, prompts, outputs or keys. */
@@ -278,6 +313,7 @@ export const CATALOG_SNAPSHOT_FILE = 'catalog-snapshot.json';
 export function qualificationState(
   profile: ModelProfile,
   dir: string | undefined,
+  binding: EvalBindingLike = EVAL_BINDING,
 ): QualificationState {
   if (!dir || !/^[a-zA-Z0-9._-]{1,120}$/.test(profile.qualificationArtifactId)) return 'configured';
   const snapshot = CatalogSnapshotSchema.safeParse(readJson(join(dir, CATALOG_SNAPSHOT_FILE)));
@@ -296,7 +332,7 @@ export function qualificationState(
     artifact.data.provider === profile.provider &&
     artifact.data.fixtures.failed === 0 &&
     artifact.data.fixtures.passed >= QUALIFICATION_MINIMUM_FIXTURES[profile.role] &&
-    evalGateFailure(profile.role, artifact.data.eval) === null
+    evalGateFailure(profile.role, artifact.data.eval, binding) === null
   )
     return 'qualified';
   return compatible ? 'catalog-compatible' : 'configured';
