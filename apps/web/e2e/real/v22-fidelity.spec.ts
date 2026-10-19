@@ -17,8 +17,10 @@ import { expect, test, type Browser, type Page } from '@playwright/test';
  *    "Qloo unavailable" states (14 search, 15 building).
  *  - The vision model is the worker's e2e stand-in (apps/worker/src/e2e-fake-models.ts):
  *    a fixed reading for the noodles photo, so no model spend and no
- *    pretend-live reading. Run it with E2E_FAKE_QUICK_MS=15000 so the
- *    processing state (screen 16) lasts long enough for a full-page capture.
+ *    pretend-live reading. Run it with E2E_FAKE_QUICK_MS=12000 so the
+ *    processing state (screen 16) lasts long enough for a full-page capture
+ *    (it must stay under the stand-in profile's 15 s timeout, or the quick
+ *    read times out and the capture fails after three attempts).
  *
  * Opt-in: V22_FIDELITY=1. Widths are set per shot, so only the desktop project runs.
  *
