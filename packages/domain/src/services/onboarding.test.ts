@@ -679,21 +679,21 @@ describe('the shared Qloo key: per-account bounds on search and reseeds', () => 
 describe('ONB-01 on the server: the personal feed waits for the questionnaire', () => {
   it('an account that owes the questionnaire gets 409 onboarding_required from the feed; after completion it is served', async () => {
     const { principal, ctx } = await newAccount();
-    await expect(getDiscoveries(ctx, { limit: 6 })).rejects.toMatchObject({ code: 'onboarding_required', status: 409 });
+    await expect(getDiscoveries(ctx, { limit: 6, refresh: false })).rejects.toMatchObject({ code: 'onboarding_required', status: 409 });
     for (const c of chips.slice(0, 3)) await pick(ctx, c.id);
-    await expect(getDiscoveries(ctx, { limit: 6 })).rejects.toMatchObject({ code: 'onboarding_required' });
+    await expect(getDiscoveries(ctx, { limit: 6, refresh: false })).rejects.toMatchObject({ code: 'onboarding_required' });
     await complete(ctx);
-    expect((await getDiscoveries(ctx, { limit: 6 })).items.length).toBeGreaterThan(0);
+    expect((await getDiscoveries(ctx, { limit: 6, refresh: false })).items.length).toBeGreaterThan(0);
     // With the gate switched off nothing blocks.
     const { principal: later } = await newAccount();
     const off = testContext(later, { config: testConfig({ ONBOARDING_REQUIRED: 'false' }) });
-    expect((await getDiscoveries(off, { limit: 6 })).items.length).toBeGreaterThan(0);
+    expect((await getDiscoveries(off, { limit: 6, refresh: false })).items.length).toBeGreaterThan(0);
     expect(principal.accountId).not.toBe(later.accountId);
   });
 
   it('anonymous visitors keep the example feed', async () => {
     const { ctx } = await anonCtx();
-    expect((await getDiscoveries(ctx, { limit: 6 })).is_example_feed).toBe(true);
+    expect((await getDiscoveries(ctx, { limit: 6, refresh: false })).is_example_feed).toBe(true);
   });
 });
 
@@ -705,10 +705,10 @@ describe('ONB-05 exclusions changed through the preferences API reach the cached
     const salad = await insertItem(owner, { kind: 'food', category: 'eat', title: 'Cucumber salad' });
     const cap = await insertCaptureWithAnalysis(owner, { recommendItemIds: [satay, salad] });
     await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: cap.itemId });
-    expect((await getDiscoveries(ctx, {})).items.map((c) => c.id)).toContain(satay); // snapshot cached
+    expect((await getDiscoveries(ctx, { refresh: false })).items.map((c) => c.id)).toContain(satay); // snapshot cached
     const prefs = await getPreferences(ctx);
     await updatePreferences(ctx, { food: { exclusions: ['peanuts'] } }, prefs.version);
-    const after = (await getDiscoveries(ctx, {})).items.map((c) => c.id); // no refresh
+    const after = (await getDiscoveries(ctx, { refresh: false })).items.map((c) => c.id); // no refresh
     expect(after).toContain(salad);
     expect(after).not.toContain(satay);
   });
