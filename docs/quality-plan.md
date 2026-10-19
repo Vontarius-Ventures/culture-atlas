@@ -407,7 +407,7 @@ pnpm eval:live --golden fixtures/eval/golden-v1 --photos $EVAL_PHOTOS_DIR --spli
   - `result: 'pass'` requires both the transport pass and `eval.pass` against the **live** gates.
 - **`qualificationState()`** also requires, for every role:
   - `eval?.pass === true`;
-  - `eval.golden_set === REQUIRED_GOLDEN_SET[role]`, with `golden-v1` for the photo roles and `text-v1` for the text roles;
+  - `eval.golden_set === REQUIRED_GOLDEN_SET[role]`, with `golden-v1` for the photo roles (`golden-v2` since the requalification freeze, §16) and `text-v1` for the text roles;
   - `eval.guardrail_version === GUARDRAIL_VERSION` for the photo roles.
 
   Missing or stale eval data makes the role `catalog-compatible`.
@@ -1003,3 +1003,139 @@ operator's privacy confirmation for it; that is not part of this round.
 This step: 137 Concentrate requests (70 + 56 + 11) of the 140 allowed for
 it, 0 Qloo, 0 Wikipedia, every call in the step's ledger (packages
 `rq-tune-run1`, `rq-tune-run2`, `rq-tune-verify2`). No Elorian.
+
+## 16. Requalification blind run (plan steps 4–6, 2026-10-19): FAIL, photo roles stay off
+
+[Requalification plan](requalification-plan.md) steps 4–6. The blind
+held-out split of golden-v2 (h14–h29, 16 photos) was read **once**, two-stage,
+with the verifier off (the Tune decision, §15.4). It **fails three live gates**,
+so, as the plan says, nothing was qualified, no end-to-end upload was run, and
+nothing (rule, prompt, label, lexicon, scorer, threshold) was changed after the
+run.
+
+### 16.1 Freeze
+
+| Event | Commit |
+| --- | --- |
+| Labels frozen (blind-set curator) | `9e24243` |
+| Rules frozen, golden-v2 bound (`REQUIRED_GOLDEN_SET` → golden-v2 for the photo roles; `EVAL_BINDING` gains golden-v2 `e4289b6f…`; photo code digest `6b227a3c…` unchanged from the tune step's final rules) | `b2cf11a` |
+| Freeze recorded in `fixtures/eval/golden-v2/FREEZE.md` | `303b29b` |
+
+Before the run the freeze check of FREEZE.md held (empty diff of
+`freeze.json` and `h14`–`h29` against `9e24243`; `pnpm test` 1314/1314,
+typecheck and lint clean). The freeze commit also added
+`qualify:concentrate --with-stage1-artifact` (one enrichment run writes the
+`vision_photo` artifact from its own stage-1 readings, so stage-1 calls are
+not bought twice); it was never used, because qualification did not start.
+
+### 16.2 Blind run
+
+`pnpm eval:live --golden fixtures/eval/golden-v2 --split holdout --roles
+vision_photo,vision_photo_enrich --qloo --max-qloo-requests 60
+--qloo-concurrency 1 --qloo-spacing-ms 1000`, profiles of the tune step
+(`vlm-quick-v2`, `vlm-enrich-v3`, `anthropic/claude-haiku-5-5`, effort none),
+code at `303b29b`, guard-v5, score-v4, thr-v2. 16/16 photos sha256-checked;
+32 Concentrate calls, all 200, 0 invalid, 0 incomplete; 32 Qloo lookups, all
+200. An offline replay of the recordings (`eval:replay --pipeline both`)
+reproduces the scorecard exactly.
+
+| Gate (live) | Value | Limit | |
+| --- | --- | --- | --- |
+| M1 forbidden-class claims | **4** | 0 | **FAIL** |
+| M2 forbidden-label rate | 0.027 (1/37) | ≤ 0.05 | pass |
+| M3 candidate precision | 0.97 | ≥ 0.80 | pass |
+| M4 clean-dropped rate | **0.2105** (8/38) | ≤ 0.20 | **FAIL** |
+| M5 expected coverage | 1.00 (15/15) | ≥ 0.70 | pass |
+| M6 category accuracy | 1.00 | ≥ 0.90 | pass |
+| M7 brand evidence | 1.00 | 1.00 | pass |
+| M8 visible_text purity | 0 | 0 | pass |
+| M9 must_read_text recall | 1.00 | ≥ 0.90 | pass |
+| M10 quality gate | 0 | 0 | pass |
+| M11 person safety | **3** | 0 | **FAIL** |
+| M12 unlabelled share | 0.027 | ≤ 0.20 | pass |
+| M13 schema validity | 1.00 | 1.00 | pass |
+| M14 stage 1 p50 / p95; enrichment p95; incomplete | 2.2 s / 2.9 s; 4.9 s; 0 | 3 s / 6 s; 12 s; 0 | pass |
+| M15 stage-1 publishable share | 0.87 | ≥ 0.60 | pass |
+| Qloo forbidden accepts (scorecard) | 0 | 0 | pass |
+
+Report only: 37 published candidates, 2 text-only references (ENEOS on h23,
+OV-bureau Groningen Drenthe on h25, both never searched in Qloo), 1 forbidden
+label published (h18 "Mid-century modern kitchen" on a plain builder-grade
+kitchen). Without the guards the same readings score M1 12, M2 0.13, M7 0.62,
+M8 1, M11 5 (M17 holds).
+
+### 16.3 Why each gate failed
+
+- **M1 = 4 and M11 = 3, h28 (tennis) and h26 (roadster).**
+  - h28: stage 2 returned the competing subjects "main player" and
+    "background players", and both reached "What caught your eye?". The label
+    forbids role inference (`\bplayers?\b`), and the scorer counts each as
+    `role_inference` (M1 and M11: "main player", "background players", and the
+    subject "main player"). The guard missed them because G-SUBJECT applies a
+    role word only when the reading "shows people", and the guard's people
+    test (`PEOPLE_RE`: man, men, woman, women, person, people, crowd) does not
+    count "player(s)", although the reading said "Tennis player on outdoor
+    court"; its role list (`ROLE_RE`) also has "player" but not "players". The
+    scorer's own people test includes "players?".
+  - h26: the stage-1 interpretation "… resembles a mid-century British sports
+    car photographed at dusk" kept a medium word. G-MEDIUM matches
+    "photograph(s)" but not "photographed"; the scorer matches `photograph\w*`
+    and counts a `medium` claim (M1).
+- **M4 = 0.2105 (8 of 38 label-good claims dropped or demoted).** h19 lost
+  three correct Pre-Columbian/Mesoamerican claims; h15 "Cinnamon sugar donut",
+  h16 "Italian café culture", h22 "Ramen", h26 "MG MGA roadster" and h29
+  "Bomber jacket" were the others. Two of the eight are drops the guard got
+  right that the scorer still counts, reported and not fixed:
+  - h26 "MG MGA roadster" is label-good only because the expected "Classic
+    roadster" pattern matches the word "roadster"; the make is not legible
+    (the label accepts "MGA" only when "MG" is read), so dropping it was right.
+  - h22 "Ramen" was dropped as a cuisine claim on a street with no food; the
+    label accepts "Ramen" as read text (ラーメン was read), and the scorer's
+    clean-drop count does not look at the cuisine class.
+
+  Without h26 alone M4 would be 7/37 = 0.189, under the gate. M1 and M11 fail
+  regardless.
+
+These are failures, not near misses to be tuned away: the plan forbids
+changing anything after the blind run. The fixes (a people test that counts
+players and athletes, plural role words, "photographed" as a medium word, and
+a narrower h26 pattern in the next set) go into a future round with a fresh
+blind set (h30+); h14–h29 then move to tune, as h01–h13 did.
+
+### 16.4 Grounding on the blind split (live Qloo)
+
+32 lookups: 6 accepted, 0 forbidden accepts, 0 doubtful names, 0 text-only
+references searched. The release gate in `thresholds.json` reports FAIL
+because it needs a person's judgement file for precision, end-to-end
+precision and recall, and because 32 lookups are below its sample minimum of
+40. The agent's own reading of the six accepted items (not a hand judgement):
+each names its candidate (Neoclassical, Mid Century Modern, The Washington
+Post, Georgian Architecture, Vodafone, Yamaha Motor Company), so no wrong
+match was seen; one of them (h18 Mid Century Modern) sits on a label-forbidden
+candidate, which would make end-to-end precision 5/6. Two lookups rejected
+an item that was among the results: "Canopy Beds" for "Canopy bed" (a plural,
+not an exact name) and "Assen" (several places share the name, so Q-PLACE
+refused to guess).
+
+### 16.5 Steps 5 and 6 not run; state of the roles
+
+- **Qualification (step 5): not run.** `vision_photo` and
+  `vision_photo_enrich` stay `catalog-compatible`; their golden-v1 artifacts no
+  longer match (`wrong_golden_set`). Production keeps failing closed for
+  photos ("We can't look at this photo yet"), and FAST-01 stays unmet end to
+  end. `vision_verify` stays off and unqualified.
+- **End to end (step 6): not run**, because no photo role is qualified (the
+  plan makes it conditional). The v2 media photo analysis was not run for the
+  same reason.
+- **Text roles are stale too (found while preparing step 6).** thr-v2 (step 1)
+  changed the thresholds digest, so the `research_text` and `composer`
+  artifacts of §14.5 now read `stale_thresholds` and both roles are
+  `catalog-compatible`. Their inputs (text-v1, text scorer, prompt builders)
+  are unchanged; re-qualifying both costs 17 Concentrate requests. Not done in
+  this step.
+
+### 16.6 Spend
+
+This step: 32 Concentrate requests (blind run), 32 Qloo, 0 Wikipedia, all in
+the step's ledger (package `rq-blind`). Requalification round total:
+Concentrate 169 of 300 (137 tune + 32 blind), Qloo 32 of 200. No Elorian.

@@ -278,6 +278,32 @@ Fashion"). Without a food pick, Eat made no call and stayed `empty`. Wear was
 8/8 fashion brands in all three runs (phase 4: 2/10). First category ready in
 1.7–2.6 s; at most 4 requests and 3 in flight.
 
+## Requalification blind run (2026-10-19)
+
+The [requalification plan](requalification-plan.md) read the fresh blind
+split of golden-v2 (h14–h29, 16 public test photos) once, two-stage, with the
+tune step's profiles (`anthropic/claude-haiku-5-5`, effort none; verifier off).
+
+| Measure | Target | Blind run (16 photos) |
+| --- | --- | --- |
+| Stage-1 quick read, model time | p50 ≤ 3 s, p95 ≤ 6 s | p50 2.2 s, p95 2.9 s |
+| Enrichment, model time | p95 ≤ 12 s | p95 4.9 s |
+| Incomplete or invalid replies | 0 | 0 of 32 |
+| Stage-1 publishable share (M15) | ≥ 0.60 | 0.87 |
+| Grounding (live Qloo, one in flight, 1 s apart) | | 32 lookups, all 200, 0 forbidden accepts |
+
+Latency passes, but the run **fails quality gates** (M1 4, M11 3, M4 0.2105;
+[quality plan §16](quality-plan.md#16-requalification-blind-run-plan-steps-46-2026-10-19-fail-photo-roles-stay-off)),
+so the photo roles were not qualified and **the end-to-end upload was not
+run**: with no qualified photo role every real upload still fails closed
+("We can't look at this photo yet"). FAIL-closed is the intended behaviour,
+but FAST-01 (first useful section ≤ 10 s p50, ≤ 20 s p95) and the end-to-end
+`complete` state remain **unmeasured and unmet** on this branch; the last
+measured first useful section is 8.0 s at the base branch (phase 4).
+Wikipedia is now reachable, so the next qualified round can measure the
+whole path. The text roles also need re-qualification first: thr-v2 made
+their artifacts `stale_thresholds` ([concentrate.md](concentrate.md#remaining-release-gates)).
+
 ## Recommended reading format
 
 ### Stage 1: `VlmQuickRead` (interactive)
@@ -388,5 +414,7 @@ Totals: steps 1–5 about 5–6 d; steps 6–7 about 2–3 d; step 8 about 2–3
 | Qloo, phase 4 | 29 GET: 19 seed (cap 30) + 10 photo | n/a | n/a |
 | Concentrate, Evaluate phase (2026-10-19) | 219 inference (team cap 400; team total 289) | qualification runs: 189,823 in / 37,044 out; the two `eval:live` runs are of the same size | about $0.04 at the listed standard rate for the qualification runs; spend caps $0.5–$1 per run; not reconciled |
 | Qloo, Evaluate phase | 118 GET: 107 grounding, 11 seed (team total 195 of 300) | n/a | n/a |
+| Concentrate, requalification (2026-10-19) | 169 inference of the round's 300: 137 tune split, 32 blind run | not recorded by `eval:live` (its ledger holds endpoint, status and ms only) | not computed; not reconciled |
+| Qloo, requalification | 32 GET (blind-run grounding), of 200 | n/a | n/a |
 
 The 2026-10-17 per-call estimates above (for example $0.0017 for a quick read) match the catalog's long-context rate ($0.50 / $2.50 per M). The 2026-10-19 snapshot lists $0.10 / $0.50 per M for prompts under 100k tokens, which puts a quick read at about $0.0003 and an enrichment at about $0.0007. Billing evidence will decide.

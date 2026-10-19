@@ -179,7 +179,7 @@ unavailable under Concentrate.
 | (legacy) `vision_photo` | `atlas_observations_v2` (full reading, `VlmFullReading`) | `vlm-full-v2` | profile bounds | profile | profile | `ConcentrateVlm` full mode |
 | `vision_verify` (off by default; the tune split kept it off, [quality plan](quality-plan.md) §15) | `atlas_verify_v1` (`VlmVerification`) | `vlm-verify-v2` | ≤ 768 px | profile | profile | `ConcentrateVlmVerifier`, `verifierTargets()`, `applyVerification()` |
 
-- **Text-only references and the verifier** ([requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built), guard-v4). A brand or person name that only the stage-2 reply contains, with every word transcribed, publishes as a text-only reference (G-TEXT-ONLY): listed with the text it was read from, never searched in Qloo, anchored, researched or offered as a subject choice. The verifier (`vision_verify`) runs in the background after stage 2 on published, non-anchor style, place and tradition claims that stage 2 hedged or the read text does not bear out; "no" lowers certainty and qualifies the reference, "unsure" qualifies it, nothing is ever removed. It runs only with `ANALYSIS_VERIFIER_ENABLED=true`, a qualified profile and no kill (`analysis_verifier_enabled`); its call is reserved with both photo stages before stage 1. Like the other photo roles it qualifies only on golden-v1 with a blind held-out split, and is never served by a fallback model.
+- **Text-only references and the verifier** ([requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built), guard-v4). A brand or person name that only the stage-2 reply contains, with every word transcribed, publishes as a text-only reference (G-TEXT-ONLY): listed with the text it was read from, never searched in Qloo, anchored, researched or offered as a subject choice. The verifier (`vision_verify`) runs in the background after stage 2 on published, non-anchor style, place and tradition claims that stage 2 hedged or the read text does not bear out; "no" lowers certainty and qualifies the reference, "unsure" qualifies it, nothing is ever removed. It runs only with `ANALYSIS_VERIFIER_ENABLED=true`, a qualified profile and no kill (`analysis_verifier_enabled`); its call is reserved with both photo stages before stage 1. Like the other photo roles it qualifies only on golden-v2 (golden-v1 before the requalification freeze) with a blind held-out split, and is never served by a fallback model.
 
 - The profile's `schemaVersion` selects the reading (`readingForProfile`) and its version (`readingVersionForProfile`), so the profile hash, and with it the qualification artifact, binds the exact reading. Every vision profile not pinned to `atlas_observations_v2` uses the quick read. A profile pinned to `atlas_quick_read_v1` or `atlas_enrichment_v1` keeps the phase-4 prompt and schema byte-identical (a test pins the prompt hashes); every other quick or enrich profile gets reading v2. Both photo roles must be re-qualified on v2 ([quality plan](quality-plan.md) §3, §7.5).
 - **Reading v2** ([quality plan](quality-plan.md) §3). Stage-1 candidates report `domain` (what the reference is about), `evidence` (`read_text`, `logo`, `distinctive_form`, `context`) and `evidence_text` (the words read) instead of categories; the enrichment returns a `verdict` (`supported`, `weak`, `unsupported`) per first-reading candidate instead of `keep`, verbatim `visible_text` only, and `illegible_text_present`. The prompts add the evidence rules: a brand or model only from a legible name or logo, sign names exactly as written, no medium words, no generic objects, 0 to 5 candidates, nothing about a person's looks or role.
@@ -235,15 +235,20 @@ pnpm eval:fetch --dest /secure/golden-photos
 # 3. Pin a model/provider from the snapshot; set catalogSnapshotAt to its fetched_at.
 #    Dry run: hash-checks the golden photos, prints the plan, sends nothing.
 pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
-  --golden fixtures/eval/golden-v1 --photos /secure/golden-photos \
-  --out-dir /secure/concentrate-qualification --max-requests 30 --spend-cap-usd 2
+  --golden fixtures/eval/golden-v2 --photos /secure/golden-photos \
+  --out-dir /secure/concentrate-qualification --max-requests 44 --spend-cap-usd 2
 # 4. Same command plus --confirm-paid-requests sends real, billed requests.
 # Two-stage reading: qualify the quick read first, then stage 2. Stage 2 needs the
 # vision_photo profile in the same file and sends a real quick read per photo as
 # its input (two requests per photo, both under --max-requests and the spend cap).
 pnpm qualify:concentrate --profile-file profiles.json --role vision_photo_enrich \
-  --golden fixtures/eval/golden-v1 --photos /secure/golden-photos \
-  --out-dir /secure/concentrate-qualification --max-requests 60 --spend-cap-usd 2
+  --golden fixtures/eval/golden-v2 --photos /secure/golden-photos \
+  --out-dir /secure/concentrate-qualification --max-requests 88 --spend-cap-usd 2
+# Or both photo roles from one run (88 requests instead of 44 + 88): the enrichment
+# run also writes the vision_photo artifact, scored on its own stage-1 readings alone
+# (a stage-1-only run: M15 for coverage, M5 and M9 scoped out) with its own requests,
+# latency and usage. Each stage is bounded from the original photo at its own bounds.
+#   ... --role vision_photo_enrich --with-stage1-artifact
 # Text roles: prompts with content checks (fixtures/eval/text-v1, quality plan §8).
 pnpm qualify:concentrate --profile-file profiles.json --role composer \
   --fixtures fixtures/eval/text-v1/composer --out-dir /secure/concentrate-qualification \
@@ -255,8 +260,9 @@ pnpm qualify:concentrate --profile-file profiles.json --role composer \
 
 **A role qualifies on quality, not only on transport** (docs/quality-plan.md §7.5):
 
-- **Photo roles** (`vision_photo`, `vision_photo_enrich`) qualify only on the
-  golden set `golden-v1` (both splits, every photo checked against its pinned
+- **Photo roles** (`vision_photo`, `vision_photo_enrich`, `vision_verify`) qualify only on the
+  golden set `golden-v2` since the requalification freeze (`b2cf11a`; golden-v1
+  before it; both splits, every photo checked against its pinned
   sha256 before any request), never on a loose fixture directory. Each reading
   goes through the runtime guardrails (`vlm/guardrails.ts`) and is scored in
   memory by `scripts/eval/scorer.ts` against the **live** gates in
@@ -281,7 +287,7 @@ evaluation pass. The artifact carries an aggregate `eval` block:
 grounding_version, scorer_version, code_sha256, holdout_blind, metrics, pass }`
 (metric values only; no media, prompts or outputs). `qualificationState()`
 treats a role listed in `REQUIRED_GOLDEN_SET` as `qualified` only when the
-block passes on the required golden set (`golden-v1` for photo roles, `text-v1`
+block passes on the required golden set (`golden-v2` for photo roles, `text-v1`
 for text roles) **and every bound input is still the committed one**
 (`EVAL_BINDING` in `concentrate/eval-binding.ts`): the golden digest, the
 thresholds digest, the scorer version and the digest of the evaluated code
@@ -534,6 +540,21 @@ inputs (above). Re-qualified on `anthropic/claude-haiku-5-5`, effort none:
 
 Spend: 34 Concentrate requests (6 + 11, twice), 0 Qloo, all in the ledger.
 
+## Requalification blind run (2026-10-19)
+
+[Requalification plan](requalification-plan.md) steps 4–6; details in
+[quality plan §16](quality-plan.md#16-requalification-blind-run-plan-steps-46-2026-10-19-fail-photo-roles-stay-off).
+
+| Role | Result | Latency (blind run) | Gates |
+| --- | --- | --- | --- |
+| `vision_photo` + `vision_photo_enrich` (`vlm-quick-v2`, `vlm-enrich-v3`, `anthropic/claude-haiku-5-5`, effort none) | **not qualified**: the blind split h14–h29 (16 photos, read once after the freeze `b2cf11a`) **fails** | stage 1 p50 2.2 s, p95 2.9 s; enrichment p95 4.9 s; 0 invalid, 0 incomplete | FAIL M1 4, M11 3 (h28 "main player" / "background players" as competing subjects; h26 "photographed" in the interpretation), M4 0.2105; pass M2 0.027, M3 0.97, M5 1.00, M7 1.00, M8 0, M9 1.00, M15 0.87 |
+| `vision_verify` | off, not qualified (Tune decision) | | |
+
+Qualification and the end-to-end upload were not run, as the plan requires
+when the blind split fails; nothing was changed after the run. Spend: 32
+Concentrate and 32 Qloo requests (package `rq-blind`); the requalification
+round is at 169 of 300 Concentrate and 32 of 200 Qloo requests. No Elorian.
+
 ## Elorian fallback (operator choice)
 
 `MODEL_FALLBACK=elorian` plus `ELORIAN_API_KEY` adds Elorian
@@ -701,19 +722,21 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
 
 ## Remaining release gates
 
-- Qualified profiles exist only in the operator's directory. After the
-  Evaluate phase (2026-10-19): `research_text` and `composer` are qualified on
-  `anthropic/claude-haiku-5-5` (effort `none`) with text-v1 eval blocks. The
-  reading-v2 photo roles failed the tune split of golden-v1 (M5, M9; see
-  "Evaluate phase") and are `catalog-compatible`, so no photo role dispatches
-  until the owner decides on the p14 label and the stage-1 gate, and the roles
-  are re-qualified. The phase-4 v1 artifacts carry no eval block and do not
-  qualify either. `vision_video_frame` is not qualified. A mock pass is not
-  production qualification.
-- Research sources (Wikipedia) are not reachable from the build sandbox
-  (egress policy), so a real-stack capture there ends with research `failed`
-  and the capture `partial` even with qualified text roles; measure the
-  end-to-end `complete` state where `en.wikipedia.org` is reachable.
+- Qualified profiles exist only in the operator's directory. **No role is
+  qualified now** (2026-10-19, after the requalification blind run):
+  - `vision_photo` and `vision_photo_enrich` failed the blind golden-v2 run
+    (M1, M4, M11; "Requalification blind run" below) and were not
+    re-qualified; their earlier artifacts are golden-v1 (`wrong_golden_set`).
+    Photos keep failing closed. `vision_verify` is off and not qualified.
+  - `research_text` and `composer` passed on text-v1 (§14.5 of the quality
+    plan), but thr-v2 changed the thresholds digest, so their artifacts are
+    `stale_thresholds`. Their inputs are otherwise unchanged; re-qualifying both
+    takes 17 requests.
+  - `vision_video_frame` is not qualified. A mock pass is not production
+    qualification.
+- `en.wikipedia.org` is reachable from the environment now (requalification
+  decision 5), so the end-to-end `complete` state can be measured once the
+  photo and text roles qualify.
 - **ZDR / content-logging confirmation for `anthropic/claude-haiku-5-5` is
   pending in the Concentrate dashboard.** After it, re-qualify with the
   confirmed `privacyVerifiedAt` (see above).

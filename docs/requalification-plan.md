@@ -72,6 +72,15 @@ The CI replay (`replay-v1`) passes every replay gate with guard-v4 (two syntheti
 
 Results, rule changes (guard-v5, `vlm-enrich-v3`, `vlm-verify-v2`) and the verifier decision are in [quality-plan §15](quality-plan.md#15-requalification-tune-split-plan-step-3-guard-v5-2026-10-19). In short: the tune split passes every live gate on run 2 under the final rules (run 1 still misses M8 and M9 on model readings); the verifier lowered no forbidden-label count, so it stays off by default and is not qualified in step 5. The freeze commit `9e24243` is recorded in `fixtures/eval/golden-v2/FREEZE.md`; no held-out photo or label was opened.
 
+## Steps 4–6 record (freeze, blind run)
+
+Results are in [quality-plan §16](quality-plan.md#16-requalification-blind-run-plan-steps-46-2026-10-19-fail-photo-roles-stay-off). In short:
+
+- **Freeze.** Rules frozen and golden-v2 bound at `b2cf11a` (photo code digest unchanged from the tune step's final rules), recorded in `fixtures/eval/golden-v2/FREEZE.md` at `303b29b`.
+- **Blind run, once: FAIL.** On h14–h29, two-stage, verifier off: M1 4 and M11 3 (h28's competing subjects "main player" / "background players" passed G-SUBJECT because the guard's people test does not count players; h26's interpretation kept "photographed", which G-MEDIUM does not match) and M4 0.2105 (8 of 38 label-good claims dropped; one of them, h26 "MG MGA roadster", is a label-pattern artifact). M2 0.027, M5 1.00, M7 1.00, M8 0, M9 1.00, latency and M15 pass; 0 Qloo forbidden accepts.
+- **Qualification and end to end: not run**, as the exit criteria require. The photo roles stay off; nothing was changed after the run. Fixes go into a future round with a fresh blind set (h30+), and h14–h29 move to tune.
+- The text roles were found stale under thr-v2 (`stale_thresholds`); their re-qualification (17 requests) is open.
+
 ## Budget
 
 Concentrate ≤ 300 requests, Qloo ≤ 200, Wikipedia as needed (polite rate). No Elorian.
