@@ -310,13 +310,14 @@ describe('two-stage photo reading (FAST-02)', () => {
     const names = ['Alpha Fixture', 'Beta Fixture', 'Gamma Fixture', 'Delta Fixture', 'Epsilon Fixture'];
     const quick = VlmQuickRead.parse({
       ...QUICK,
-      candidates: names.map((name, i) => ({ name, type: 'brand', relation: 'resembles', certainty: 0.9 - i * 0.1, categories: ['wear'], tag_query: null })),
+      // Styles: every one is a tag lookup (a brand with no read text is never searched, quality plan §5).
+      candidates: names.map((name, i) => ({ name, type: 'style', relation: 'resembles', certainty: 0.9 - i * 0.1, categories: ['wear'], tag_query: name })),
     });
     const extra = ['Zeta Fixture', 'Eta Fixture', 'Theta Fixture', 'Iota Fixture'];
     const enricher = new ScriptedEnricher(async () => ({
       ...ENRICHMENT,
       confirmed: [],
-      additional_candidates: extra.map((name) => ({ ...ENRICHMENT.additional_candidates[0]!, name, type: 'brand' as const, tag_query: null })),
+      additional_candidates: extra.map((name) => ({ ...ENRICHMENT.additional_candidates[0]!, name, type: 'style' as const, tag_query: name })),
     }));
     const inner = fakeQloo();
     let inFlight = 0;

@@ -33,6 +33,7 @@ const RawTag = z
     type: z.string().optional(),
     subtype: z.string().optional(),
     parents: z.array(z.unknown()).optional(),
+    popularity: z.number().nullable().optional(),
   })
   .loose();
 
@@ -45,6 +46,7 @@ const RawEntity = z
     types: z.array(z.string()).optional(),
     subtype: z.string().optional(),
     popularity: z.number().optional(),
+    disambiguation: z.string().optional(),
     properties: z.record(z.string(), z.unknown()).optional(),
     tags: z.array(z.unknown()).optional(),
     query: z.unknown().optional(),
@@ -66,6 +68,7 @@ const KEPT_PROPERTIES = [
   'genre',
   'address',
   'country',
+  'geocode',
 ] as const;
 
 function normalizeTagRef(value: unknown): QlooTagRef | null {
@@ -86,7 +89,9 @@ export function normalizeTag(value: unknown): QlooTag | null {
   const parents = (parsed.data.parents ?? [])
     .map((p) => (typeof p === 'string' ? p : typeof p === 'object' && p && 'id' in p ? String((p as { id: unknown }).id) : null))
     .filter((p): p is string => !!p);
-  return { id, name, type: parsed.data.type ?? parsed.data.subtype ?? 'urn:tag', parents: parents.length ? parents : undefined };
+  const tag: QlooTag = { id, name, type: parsed.data.type ?? parsed.data.subtype ?? 'urn:tag', parents: parents.length ? parents : undefined };
+  if (typeof parsed.data.popularity === 'number') tag.popularity = parsed.data.popularity;
+  return tag;
 }
 
 /** Flattens documented explainability variants into [{entity_id, score}]. */
@@ -125,6 +130,7 @@ export function normalizeEntity(value: unknown): QlooEntity | null {
   const entity: QlooEntity = { entity_id: entityId, name: e.name, types, properties, tags };
   if (e.subtype) entity.subtype = e.subtype;
   if (typeof e.popularity === 'number') entity.popularity = e.popularity;
+  if (e.disambiguation?.trim()) entity.disambiguation = e.disambiguation.trim();
   if (e.query && typeof e.query === 'object') {
     const q = e.query as Record<string, unknown>;
     entity.query = {};

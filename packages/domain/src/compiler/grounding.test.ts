@@ -1,0 +1,279 @@
+import { describe, expect, it } from 'vitest';
+import type { QlooEntity, QlooTag } from '@culture-atlas/providers';
+import {
+  acceptMatch,
+  CUISINE_TAG_TYPES,
+  FORBIDDEN_TAG_FAMILIES,
+  GROUNDING_VERSION,
+  headToken,
+  MEDIA_TAG_TYPES,
+  MUSIC_TAG_TYPES,
+  planLookup,
+  STYLE_TAG_TYPES,
+  textCorroborates,
+  type GuardedCandidate,
+  type LookupPlan,
+} from './grounding';
+import { nameSimilarity } from './text';
+
+/**
+ * Qloo grounding rules (docs/quality-plan.md §5). Every result below is a
+ * hand-written FIXTURE shaped like a live Qloo failure recorded in the
+ * diagnose phase (look-alike places, model -> maker, music genre ranked ahead
+ * of decor, dishes and menu items, containment supersets, duplicate places,
+ * places without popularity) or like a live success. None is real Qloo data.
+ */
+
+const ent = (id: string, name: string, type: string, extra: Partial<QlooEntity> = {}): QlooEntity => ({
+  entity_id: `FIXTURE-${id}`,
+  name,
+  types: [type],
+  properties: {},
+  tags: [],
+  ...extra,
+});
+const tag = (family: string, slug: string, name: string): QlooTag => ({ id: `${family}:fixture_${slug}`, name, type: family });
+const cand = (c: Partial<GuardedCandidate> & Pick<GuardedCandidate, 'name' | 'type'>): GuardedCandidate => ({
+  relation: 'resembles',
+  certainty: 0.6,
+  tag_queries: [],
+  suggested_categories: [],
+  ...c,
+});
+const searchPlan = (c: GuardedCandidate) => {
+  const plan = planLookup(c);
+  if (plan.kind !== 'search') throw new Error(`expected a search plan, got ${JSON.stringify(plan)}`);
+  return plan;
+};
+const tagsPlan = (c: GuardedCandidate) => {
+  const plan = planLookup(c);
+  if (plan.kind !== 'tags') throw new Error(`expected a tags plan, got ${JSON.stringify(plan)}`);
+  return plan;
+};
+
+describe('planLookup: what Qloo is asked (Q-TYPE, Q-TAGTYPES, Q-EVIDENCE)', () => {
+  it('never sends an object to /search (Basketball, Paper grocery bags, Crystal chandelier)', () => {
+    for (const name of ['Basketball', 'Paper grocery bags', 'Crystal chandelier', 'Nissan X-Trail']) {
+      expect(planLookup(cand({ name, type: 'object', relation: 'depicted', certainty: 0.95 }))).toEqual({ kind: 'none', reason: 'object_not_searched' });
+    }
+  });
+
+  it('searches a corroborated brand-like object as a brand, by its head token only', () => {
+    const plan = planLookup(cand({ name: 'Fixturo NBA basketball', type: 'object', corroborated: true }));
+    expect(plan).toEqual({ kind: 'search', query: 'fixturo', types: ['urn:entity:brand'] });
+  });
+
+  it('does not search a brand without corroboration (Spalding / Honda Civic guessed from shape)', () => {
+    expect(planLookup(cand({ name: 'Fixturo Civic', type: 'brand', relation: 'depicted', certainty: 0.9 }))).toEqual({ kind: 'none', reason: 'brand_not_corroborated' });
+    expect(planLookup(cand({ name: 'Fixturo Civic', type: 'brand', corroborated: false }))).toEqual({ kind: 'none', reason: 'brand_not_corroborated' });
+    expect(planLookup(cand({ name: 'Fixturedale', type: 'brand', corroborated: true }))).toEqual({ kind: 'search', query: 'Fixturedale', types: ['urn:entity:brand'] });
+  });
+
+  it('allows only the entity types of the candidate type', () => {
+    expect(searchPlan(cand({ name: 'Fixture Director', type: 'creator' })).types).toEqual(['urn:entity:artist', 'urn:entity:director', 'urn:entity:person', 'urn:entity:author']);
+    expect(searchPlan(cand({ name: 'Fixture Album', type: 'work' })).types).toEqual(['urn:entity:movie', 'urn:entity:album', 'urn:entity:book', 'urn:entity:tv_show']);
+    expect(searchPlan(cand({ name: 'Fixture City', type: 'place', certainty: 0.7 })).types).toEqual(['urn:entity:destination', 'urn:entity:locality', 'urn:entity:place']);
+  });
+
+  it('needs evidence before a place lookup: read text, depicted, or certainty >= 0.5', () => {
+    expect(planLookup(cand({ name: 'Fixture Lahore', type: 'place', certainty: 0.3 }))).toEqual({ kind: 'none', reason: 'place_without_evidence' });
+    expect(planLookup(cand({ name: 'Fixture Lahore', type: 'place', certainty: 0.49 })).kind).toBe('none');
+    expect(planLookup(cand({ name: 'Fixture Lahore', type: 'place', certainty: 0.5 })).kind).toBe('search');
+    expect(planLookup(cand({ name: 'Fixture Palais', type: 'place', certainty: 0.2, relation: 'depicted' })).kind).toBe('search');
+    expect(planLookup(cand({ name: 'Fixture Palais', type: 'place', certainty: 0.2, evidence: 'read_text', evidence_text: 'FIXTURE PALAIS' })).kind).toBe('search');
+  });
+
+  it('needs a depicted dish or certainty >= 0.5 before a cuisine lookup, and strips "cuisine"/"food"', () => {
+    expect(planLookup(cand({ name: 'Spanish cuisine', type: 'cuisine', certainty: 0.3 }))).toEqual({ kind: 'none', reason: 'cuisine_without_evidence' });
+    expect(planLookup(cand({ name: 'Spanish cuisine', type: 'cuisine', certainty: 0.6 }))).toEqual({ kind: 'tags', query: 'Spanish', tagTypes: [...CUISINE_TAG_TYPES] });
+    expect(planLookup(cand({ name: 'Fixture noodles', type: 'cuisine', relation: 'depicted', certainty: 0.3, tag_queries: ['fixture noodle food'] }))).toEqual({ kind: 'tags', query: 'fixture noodle', tagTypes: [...CUISINE_TAG_TYPES] });
+  });
+
+  it('every tag lookup carries tag types: style families, plus music or media genres only for that domain', () => {
+    expect(tagsPlan(cand({ name: 'Mughal architecture', type: 'style' })).tagTypes).toEqual([...STYLE_TAG_TYPES]);
+    expect(tagsPlan(cand({ name: 'Bossa nova', type: 'tradition', domain: 'music' })).tagTypes).toEqual([...MUSIC_TAG_TYPES, ...STYLE_TAG_TYPES]);
+    expect(tagsPlan(cand({ name: 'Film noir', type: 'style', domain: 'film' })).tagTypes).toEqual([...MEDIA_TAG_TYPES, ...STYLE_TAG_TYPES]);
+    expect(tagsPlan(cand({ name: 'Neoclassicism', type: 'style', domain: 'architecture', suggested_categories: ['play'] })).tagTypes).toEqual([...STYLE_TAG_TYPES]);
+    // Legacy readings without a domain: a single derived category stands in for it.
+    expect(tagsPlan(cand({ name: 'Bossa nova', type: 'style', suggested_categories: ['play'] })).tagTypes).toEqual([...MUSIC_TAG_TYPES, ...STYLE_TAG_TYPES]);
+    expect(tagsPlan(cand({ name: 'Neoclassicism', type: 'style', suggested_categories: ['wear', 'watch'] })).tagTypes).toEqual([...STYLE_TAG_TYPES]);
+    // The tag query is the model's tag_query when present.
+    expect(tagsPlan(cand({ name: 'Victorian terraced houses', type: 'style', tag_queries: ['Victorian architecture'] })).query).toBe('Victorian architecture');
+    expect(tagsPlan(cand({ name: 'Victorian terraced houses', type: 'style', tag_query: 'Victorian' })).query).toBe('Victorian');
+    for (const type of ['style', 'tradition', 'cuisine']) {
+      const plan = planLookup(cand({ name: 'Fixture', type, certainty: 0.9 }));
+      expect(plan.kind === 'tags' && plan.tagTypes.length > 0).toBe(true);
+    }
+  });
+
+  it('never looks up medium words (still life, painting) unless a labelled work names them', () => {
+    expect(planLookup(cand({ name: 'Still life painting', type: 'style', tag_queries: ['still life'] }))).toEqual({ kind: 'none', reason: 'medium_word' });
+    expect(planLookup(cand({ name: 'Fixture citrus', type: 'style', tag_queries: ['citrus still life'] }))).toEqual({ kind: 'none', reason: 'medium_word' });
+    expect(planLookup(cand({ name: 'Fixture Painting No. 5', type: 'work', evidence: 'read_text', evidence_text: 'Fixture Painting No. 5' })).kind).toBe('search');
+  });
+
+  it('a reference the user named is searched without evidence; an untyped one across every type', () => {
+    expect(planLookup(cand({ name: 'Fixturo Civic', type: 'brand', userSelected: true }))).toEqual({ kind: 'search', query: 'Fixturo Civic', types: ['urn:entity:brand'] });
+    expect(planLookup(cand({ name: 'Fixture Wes', type: 'object', userSelected: true }))).toEqual({ kind: 'search', query: 'Fixture Wes', types: [] });
+    expect(planLookup(cand({ name: 'Fixture Lahore', type: 'place', certainty: 0.1, userSelected: true })).kind).toBe('search');
+  });
+});
+
+describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-DOUBT)', () => {
+  it('rejects the model-to-maker subset (Honda for "Honda Civic")', () => {
+    const c = cand({ name: 'Fixturo Civic', type: 'brand', corroborated: true });
+    const results = [ent('B1', 'Fixturo', 'urn:entity:brand'), ent('B2', 'Repsol Fixturo Team', 'urn:entity:brand')];
+    expect(acceptMatch(c, searchPlan(c), results)).toEqual({ match: null, rule: 'Q-SUBSET', reason: 'shorter_name' });
+  });
+
+  it('accepts a brand that adds only a corporate suffix (Cannondale -> Cannondale Bicycles)', () => {
+    const c = cand({ name: 'Fixturedale', type: 'brand', corroborated: true });
+    const results = [ent('B3', 'Fixturedale Bicycles', 'urn:entity:brand')];
+    expect(acceptMatch(c, searchPlan(c), results)).toMatchObject({ match: { name: 'Fixturedale Bicycles' }, rule: 'Q-NAME', reason: 'exact_brand' });
+    const longer = [ent('B4', 'Fixturedale Racing Club', 'urn:entity:brand')];
+    expect(acceptMatch(c, searchPlan(c), longer)).toMatchObject({ match: null, rule: 'Q-NAME' });
+  });
+
+  it('rejects two different brands of the same name (reject on doubt)', () => {
+    const c = cand({ name: 'Fixturedale', type: 'brand', corroborated: true });
+    const results = [ent('B5', 'Fixturedale', 'urn:entity:brand'), ent('B6', 'Fixturedale Group', 'urn:entity:brand')];
+    expect(acceptMatch(c, searchPlan(c), results)).toEqual({ match: null, rule: 'Q-DOUBT', reason: 'several_exact_matches' });
+  });
+
+  it('rejects containment supersets the old similarity accepted (a B&B hotel for "Musée du Louvre")', () => {
+    const c = cand({ name: 'Musée du Fixture', type: 'place', relation: 'depicted', certainty: 0.95 });
+    const hotel = ent('P1', 'B&B HOTEL Lens Musée du Fixture', 'urn:entity:place', { popularity: 0.88 });
+    expect(nameSimilarity(c.name, hotel.name)).toBeGreaterThanOrEqual(0.75); // what the old matcher accepted
+    expect(acceptMatch(c, searchPlan(c), [hotel])).toEqual({ match: null, rule: 'Q-NAME', reason: 'no_exact_name' });
+  });
+
+  it('rejects an exact-name place look-alike with no popularity (Yuyuan Garden in Xiamen)', () => {
+    const c = cand({ name: 'Fixture Garden', type: 'place', relation: 'depicted', certainty: 0.8 });
+    const results = [ent('P2', 'Fixture Garden', 'urn:entity:place', { properties: { geocode: { city: 'Fixtureville', country_code: 'CN' } } }), ent('P3', 'Fixture Garden Coffee Shop', 'urn:entity:place', { popularity: 0.9 })];
+    expect(acceptMatch(c, searchPlan(c), results)).toEqual({ match: null, rule: 'Q-PLACE', reason: 'no_popularity' });
+  });
+
+  it('rejects duplicate exact places in different localities (Palais Royal in Laval and Courbevoie)', () => {
+    const c = cand({ name: 'Fixture Palais', type: 'place', relation: 'depicted', certainty: 0.9 });
+    const results = [
+      ent('P4', 'Fixture Palais', 'urn:entity:place', { popularity: 0.68, properties: { geocode: { city: 'Laval', country_code: 'FR' } } }),
+      ent('P5', 'Fixture Palais', 'urn:entity:place', { popularity: 0.44, properties: { geocode: { city: 'Courbevoie', country_code: 'FR' } } }),
+    ];
+    expect(acceptMatch(c, searchPlan(c), results)).toEqual({ match: null, rule: 'Q-PLACE', reason: 'same_name_in_several_places' });
+    // Same name, same locality: one place listed twice is not a doubt.
+    const twice = [results[0]!, { ...results[0]!, entity_id: 'FIXTURE-P6', popularity: 0.5 }];
+    expect(acceptMatch(c, searchPlan(c), twice)).toMatchObject({ match: { entity_id: 'FIXTURE-P4' }, rule: 'Q-NAME' });
+  });
+
+  it('prefers a destination over same-named localities and venues (Madrid, London)', () => {
+    const c = cand({ name: 'Fixtureton', type: 'place', certainty: 0.55 });
+    const results = [
+      ent('L1', 'Fixtureton', 'urn:entity:locality', { popularity: 0.99, disambiguation: 'Fixtureton, Region A, Country A' }),
+      ent('L2', 'Fixtureton', 'urn:entity:locality', { popularity: 0.97, disambiguation: 'Fixtureton, Region B, Country B' }),
+      ent('D1', 'Fixtureton', 'urn:entity:destination', { popularity: 0.99 }),
+      ent('V1', 'Fixtureton', 'urn:entity:place', { popularity: 0.74, properties: { geocode: { city: 'Zurich', country_code: 'CH' } } }),
+    ];
+    expect(acceptMatch(c, searchPlan(c), results)).toMatchObject({ match: { entity_id: 'FIXTURE-D1' }, rule: 'Q-NAME', reason: 'exact_place' });
+    // Without the destination, two same-named localities are a doubt.
+    expect(acceptMatch(c, searchPlan(c), results.slice(0, 2))).toMatchObject({ match: null, rule: 'Q-PLACE' });
+  });
+
+  it('matches a place by one of its akas', () => {
+    const c = cand({ name: 'Fixture-Royal', type: 'place', relation: 'depicted', certainty: 0.9 });
+    const quartier = ent('L3', 'Quartier du Fixture Royal', 'urn:entity:locality', { popularity: 0.98, properties: { akas: [{ language: 'fr', value: 'Fixture Royal' }] } });
+    expect(acceptMatch(c, searchPlan(c), [quartier])).toMatchObject({ match: { entity_id: 'FIXTURE-L3' } });
+  });
+
+  it('rejects a result of a type the candidate does not allow (Basketball VR, an album for a jacket)', () => {
+    const c = cand({ name: 'Fixture Racing Jacket', type: 'work', certainty: 0.9 });
+    const results = [ent('X1', 'Fixture Racing Jacket', 'urn:entity:videogame'), ent('X2', 'Fixture Racing Jacket', 'urn:entity:place')];
+    expect(acceptMatch(c, searchPlan(c), results)).toEqual({ match: null, rule: 'Q-TYPE', reason: 'no_allowed_entity_type' });
+  });
+
+  it('rejects two exact works of different types instead of picking one (reject on doubt)', () => {
+    const c = cand({ name: 'Fixture Echo', type: 'work', certainty: 0.9 });
+    const results = [ent('W1', 'Fixture Echo', 'urn:entity:album'), ent('W2', 'Fixture Echo', 'urn:entity:movie')];
+    expect(acceptMatch(c, searchPlan(c), results)).toEqual({ match: null, rule: 'Q-DOUBT', reason: 'exact_matches_of_different_types' });
+    expect(acceptMatch(c, searchPlan(c), [results[0]!])).toMatchObject({ match: { entity_id: 'FIXTURE-W1' }, reason: 'exact_name' });
+  });
+
+  it('takes decor over a music genre ranked first for a non-music style (Neoclassical)', () => {
+    const c = cand({ name: 'Neoclassicism', type: 'style', tag_queries: ['neoclassical'], domain: 'architecture' });
+    const results = [
+      tag('urn:tag:genre:music', 'neoclassical', 'Neoclassical'),
+      tag('urn:tag:decor:qloo', 'neoclassical', 'Neoclassical'),
+      tag('urn:tag:setting:qloo', 'neoclassical_building', 'Neoclassical Building'),
+    ];
+    expect(acceptMatch(c, tagsPlan(c), results)).toMatchObject({ match: { id: 'urn:tag:decor:qloo:fixture_neoclassical' }, rule: 'Q-NAME', reason: 'exact_tag' });
+    // For a music candidate the genre is the right tag.
+    const music = cand({ name: 'Neoclassical', type: 'tradition', domain: 'music' });
+    expect(acceptMatch(music, tagsPlan(music), results)).toMatchObject({ match: { id: 'urn:tag:genre:music:fixture_neoclassical' } });
+  });
+
+  it('never accepts dishes, menu items, occupations or place categories (fruit salad, still life painter)', () => {
+    const c = cand({ name: 'Fruit salad', type: 'cuisine', relation: 'depicted', certainty: 0.9 });
+    const dishes = [tag('urn:tag:specialty_dish:place', 'fruit_salad', 'Fruit Salad'), tag('urn:tag:menu_highlight:qloo', 'fruit_salad', 'Fruit Salad')];
+    expect(acceptMatch(c, tagsPlan(c), dishes)).toEqual({ match: null, rule: 'Q-TAGTYPES', reason: 'no_allowed_tag_type' });
+    const s = cand({ name: 'Fixture ceramics', type: 'tradition' });
+    const forbidden = FORBIDDEN_TAG_FAMILIES.map((f, i) => tag(f, `x${i}`, 'Fixture Ceramics'));
+    // Even if Qloo ignored the requested tag types, a forbidden family never matches.
+    expect(acceptMatch(s, { kind: 'tags', query: 'fixture ceramics', tagTypes: [...FORBIDDEN_TAG_FAMILIES] }, forbidden)).toEqual({ match: null, rule: 'Q-TAGTYPES', reason: 'no_allowed_tag_type' });
+  });
+
+  it('accepts canonical-equal tags and rejects shorter ones (Mughal Architecture yes, Islamic for Islamic ceramics no)', () => {
+    const mughal = cand({ name: 'Mughal architecture', type: 'style', tag_queries: ['Mughal architecture'] });
+    const r1 = [tag('urn:tag:decor:qloo', 'mughal_architecture', 'Mughal Architecture'), tag('urn:tag:setting:qloo', 'mughal_architecture', 'Mughal Architecture')];
+    expect(acceptMatch(mughal, tagsPlan(mughal), r1)).toMatchObject({ match: { type: 'urn:tag:decor:qloo' }, rule: 'Q-NAME' });
+    const islamic = cand({ name: 'Islamic ceramic art', type: 'tradition', tag_queries: ['Islamic ceramics'] });
+    const r2 = [tag('urn:tag:decor:qloo', 'islamic', 'Islamic'), tag('urn:tag:decor:qloo', 'handmade_ceramics', 'Handmade Ceramics')];
+    expect(acceptMatch(islamic, tagsPlan(islamic), r2)).toEqual({ match: null, rule: 'Q-SUBSET', reason: 'shorter_name' });
+    // Neither a longer tag ("Mid-Century Modern Furniture Store") nor a fuzzy one.
+    const mcm = cand({ name: 'Mid-century modern', type: 'style', tag_queries: ['mid-century modern'] });
+    expect(acceptMatch(mcm, tagsPlan(mcm), [tag('urn:tag:setting:qloo', 'mcm_store', 'Mid-Century Modern Furniture Store')])).toMatchObject({ match: null, rule: 'Q-NAME' });
+    expect(acceptMatch(mcm, tagsPlan(mcm), [tag('urn:tag:decor:qloo', 'mcm', 'Mid Century Modern')])).toMatchObject({ match: { name: 'Mid Century Modern' } });
+  });
+
+  it('matches a cuisine tag on the stripped query (Shanghainese for "Shanghainese cuisine")', () => {
+    const c = cand({ name: 'Shanghainese cuisine', type: 'cuisine', relation: 'depicted', certainty: 0.8 });
+    const results = [tag('urn:tag:cuisine:qloo', 'shanghainese', 'Shanghainese'), tag('urn:tag:genre:place', 'shanghainese', 'Shanghainese restaurant')];
+    expect(acceptMatch(c, tagsPlan(c), results)).toMatchObject({ match: { id: 'urn:tag:cuisine:qloo:fixture_shanghainese' } });
+  });
+
+  it('a "none" plan never matches anything, and empty results are a plain miss', () => {
+    const c = cand({ name: 'Fixture bag', type: 'object' });
+    const plan: LookupPlan = planLookup(c);
+    expect(acceptMatch(c, plan, [ent('O1', 'Fixture bag', 'urn:entity:brand')])).toEqual({ match: null, rule: 'Q-EVIDENCE', reason: 'object_not_searched' });
+    const s = cand({ name: 'Fixture style', type: 'style' });
+    expect(acceptMatch(s, tagsPlan(s), [])).toEqual({ match: null, rule: 'Q-NAME', reason: 'no_results' });
+  });
+
+  it('a user-named untyped reference accepts any type, but still only one exact match', () => {
+    const c = cand({ name: 'Fixture Wes', type: 'object', userSelected: true });
+    expect(acceptMatch(c, searchPlan(c), [ent('U1', 'Fixture Wes', 'urn:entity:director')])).toMatchObject({ match: { entity_id: 'FIXTURE-U1' } });
+    expect(acceptMatch(c, searchPlan(c), [ent('U1', 'Fixture Wes', 'urn:entity:director'), ent('U2', 'Fixture Wes', 'urn:entity:album')])).toMatchObject({ match: null, rule: 'Q-DOUBT' });
+  });
+
+  it('compares non-Latin names verbatim instead of dropping them', () => {
+    const c = cand({ name: '愚园路', type: 'place', relation: 'depicted', certainty: 0.9 });
+    const results = [ent('C1', '愚园路', 'urn:entity:locality', { popularity: 0.8 }), ent('C2', '豫园', 'urn:entity:place', { popularity: 0.9 })];
+    expect(acceptMatch(c, searchPlan(c), results)).toMatchObject({ match: { entity_id: 'FIXTURE-C1' } });
+    expect(acceptMatch(c, searchPlan(c), [results[1]!])).toMatchObject({ match: null });
+  });
+
+  it('is versioned', () => {
+    expect(GROUNDING_VERSION).toBe('ground-v1');
+  });
+});
+
+describe('brand corroboration by read text (G-BRAND-CORROBORATE (a))', () => {
+  it('needs the head token as a whole word in a transcription, accent- and case-insensitively', () => {
+    expect(headToken('Fixturo NBA basketball')).toBe('fixturo');
+    expect(headToken('The Fixturedale CAAD8')).toBe('fixturedale');
+    expect(textCorroborates('Fixturedale', ['FIXTUREDALE'])).toBe(true);
+    expect(textCorroborates('Fixture Denim Co', ['FIXTURE DENIM'])).toBe(true);
+    expect(textCorroborates('Citroën Fixture', ['CITROEN'])).toBe(true);
+    expect(textCorroborates('Fixturo', ['NBA'])).toBe(false);
+    expect(textCorroborates('Fixturo', ['FIXTUROS'])).toBe(false);
+    expect(textCorroborates('Fixturo', [])).toBe(false);
+  });
+});

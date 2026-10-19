@@ -42,6 +42,70 @@ export function nameSimilarity(a: string, b: string): number {
   return Math.max(jaccard, contained);
 }
 
+/**
+ * Words that never decide whether two names denote the same thing
+ * (docs/quality-plan.md §5 Q-NAME): "Mughal architecture" and "Mughal
+ * Architecture" are one tag, "Art Deco" and "Deco" are one style, "Spanish
+ * cuisine" and "Spanish" are one cuisine.
+ */
+export const CANONICAL_STOP: ReadonlySet<string> = new Set([
+  'style', 'styles', 'architecture', 'cuisine', 'food', 'design', 'inspired', 'art', 'arts', 'culture',
+  'the', 'a', 'an', 'of', 'and', 'le', 'la', 'les', 'de', 'du', 'des',
+]);
+
+/**
+ * Raw name tokens with normalizeName's folding (case, accents, apostrophes,
+ * "&" -> "and"), but letters of every script are kept: CJK, Arabic or
+ * Cyrillic names are compared verbatim instead of vanishing.
+ */
+export function nameTokens(value: string): string[] {
+  return value
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[’'`]/g, '')
+    .replace(/&/g, ' and ')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+}
+
+/** Content tokens of a name for exact-identity checks (no fuzzy similarity). */
+export function canonicalTokens(name: string): Set<string> {
+  return new Set(nameTokens(name).filter((t) => !CANONICAL_STOP.has(t)));
+}
+
+export function sameTokens(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size || a.size === 0) return false;
+  for (const t of a) if (!b.has(t)) return false;
+  return true;
+}
+
+/** True when `a` is a proper, non-empty subset of `b` ("Honda" of "Honda Civic"). */
+export function strictSubset(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size === 0 || a.size >= b.size) return false;
+  for (const t of a) if (!b.has(t)) return false;
+  return true;
+}
+
+/** Plural-insensitive token: strips a final "s" (not "ss"), then a final "e" ("noodles"/"noodle", "dishes"/"dish"). */
+export function stemToken(token: string): string {
+  let t = token;
+  if (t.length > 3 && t.endsWith('s') && !t.endsWith('ss')) t = t.slice(0, -1);
+  if (t.length > 3 && t.endsWith('e')) t = t.slice(0, -1);
+  return t;
+}
+
+/**
+ * Spelling-insensitive identity key: stemmed canonical tokens joined without
+ * spaces, so "Dim Sum", "Dim Sums" and "Dimsum" share one key.
+ */
+export function stemmedKey(name: string): string {
+  return nameTokens(name)
+    .filter((t) => !CANONICAL_STOP.has(t))
+    .map(stemToken)
+    .join('');
+}
+
 export function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }

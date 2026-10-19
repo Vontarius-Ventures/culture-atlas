@@ -98,7 +98,7 @@ export class FakeResearch implements ResearchProvider {
 
 export interface FakeQlooHandlers {
   search?: (query: string, types?: string[]) => QlooEntity[] | Error;
-  tags?: (query: string) => QlooTag[] | Error;
+  tags?: (query: string, tagTypes?: string[]) => QlooTag[] | Error;
   insights?: (req: Parameters<QlooProvider['insights']>[0]) => QlooInsightsResult | Error;
   trending?: () => QlooTrendingResult | Error;
   entityTrends?: (entityId: string) => QlooEntityTrendsResult | Error;
@@ -139,7 +139,7 @@ export class FakeQloo implements QlooProvider {
     return this.wrap('search', '/search', req, this.handlers.search?.(req.query, req.types));
   }
   async lookupTags(req: Parameters<QlooProvider['lookupTags']>[0]) {
-    return this.wrap('tags', '/v2/tags', req, this.handlers.tags?.(req.query));
+    return this.wrap('tags', '/v2/tags', req, this.handlers.tags?.(req.query, req.tagTypes));
   }
   async insights(req: Parameters<QlooProvider['insights']>[0]) {
     return this.wrap('insights', '/v2/insights', req, this.handlers.insights?.(req));
