@@ -12,16 +12,19 @@
   },
   "expected": [
     {
-      "name": "Cannondale",
+      "name": "CAAD8",
+      "pattern": "caad ?8",
       "type": "brand",
-      "requires_text": "cannondale"
+      "requires_text": "CAAD",
+      "note": "the frame model decal on the top tube, legible at 768 px"
     }
   ],
   "acceptable": [
     {
-      "pattern": "caad",
+      "name": "Cannondale",
       "type": "brand",
-      "requires_text": "CAAD"
+      "requires_text": "cannondale",
+      "note": "the dog hides the maker's name except \"…ndale\"; good only if the full name was actually transcribed"
     },
     {
       "pattern": "road cycling"
@@ -48,7 +51,7 @@
   ],
   "allowed_categories": [],
   "must_read_text": [
-    "cannondale",
+    "ndale",
     "CAAD8"
   ],
   "must_not_read_text": [],
@@ -58,5 +61,13 @@
   "qloo": {
     "forbidden_entity_types": [],
     "forbidden_tag_families": []
-  }
+  },
+  "history": [
+    {
+      "date": "2026-10-19",
+      "change": "must_read_text \"cannondale\" became \"ndale\"; the expected \"Cannondale\" (requires_text \"cannondale\") moved to acceptable; the CAAD8 entry (pattern \"caad\", acceptable) became the expected reference, pattern \"caad ?8\"",
+      "reason": "At 768 px (the stage-2 image size) the dog hides the maker's name on the down tube except \"…ndale\", so the label demanded an unreadable word; \"CAAD8\" on the top tube is legible and stays must-read. A golden label describes the photo; it does not require a word nobody can read.",
+      "decision": "docs/requalification-plan.md decision 1 (docs/quality-plan.md §13.6 item 1)"
+    }
+  ]
 }

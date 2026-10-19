@@ -76,7 +76,7 @@ checked and what may happen after the blind run.
 
 | Event | Commit or run | Date | By |
 | --- | --- | --- | --- |
-| Labels written, freeze candidate | (the commit adding this file; hash recorded by the build lead) | 2026-10-19 | blind-set curator |
-| Freeze commit recorded | | | |
+| Labels written, freeze candidate | `9e24243e454725e2541e9901fd779bd133167ac2` (the commit adding this file) | 2026-10-19 | blind-set curator |
+| Freeze commit recorded | `9e24243e454725e2541e9901fd779bd133167ac2`; checked with step 2 (empty diff, freeze test passing) after the merge into the build branch | 2026-10-19 | build lead (tune step) |
 | Binding with golden-v2 | | | |
 | Blind run | | | |
