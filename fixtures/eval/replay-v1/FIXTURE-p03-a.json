@@ -1,0 +1,89 @@
+{
+  "quick": {
+    "title": "Sunroom with cane chairs",
+    "interpretation": "A bright sunroom that resembles mid-century modern design.",
+    "candidates": [
+      {
+        "name": "Mid-century modern",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.7,
+        "domain": "interior",
+        "evidence": "distinctive_form",
+        "evidence_text": null,
+        "tag_query": "mid-century modern"
+      },
+      {
+        "name": "Eames-style lounge chair",
+        "type": "object",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "domain": "design",
+        "evidence": "distinctive_form",
+        "evidence_text": null,
+        "tag_query": "mid-century modern"
+      },
+      {
+        "name": "Wicker furniture",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "domain": "interior",
+        "evidence": "distinctive_form",
+        "evidence_text": null,
+        "tag_query": "wicker"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "White cane-back armchairs",
+        "kind": "object"
+      },
+      {
+        "text": "Wood plank ceiling",
+        "kind": "setting"
+      }
+    ],
+    "visible_text": [],
+    "illegible_text_present": false,
+    "confirmed": [
+      {
+        "name": "Mid-century modern",
+        "rationale": "Tapered legs and teak dresser",
+        "verdict": "supported"
+      },
+      {
+        "name": "Wicker furniture",
+        "rationale": "Cane armchairs",
+        "verdict": "supported"
+      }
+    ],
+    "additional_candidates": [
+      {
+        "name": "Hollywood Regency",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.55,
+        "domain": "interior",
+        "evidence": "distinctive_form",
+        "evidence_text": null,
+        "tag_query": "hollywood regency",
+        "rationale": "Faux-bamboo cane chairs"
+      }
+    ],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2400,
+  "enrich_ms": 5000
+}

@@ -1,0 +1,59 @@
+{
+  "quick": {
+    "title": "Blurred car rear",
+    "interpretation": "A motion-blurred sedan with red tail lights.",
+    "candidates": [
+      {
+        "name": "Honda Civic",
+        "type": "object",
+        "relation": "resembles",
+        "certainty": 0.6,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Honda",
+        "type": "brand",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": "blurred"
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Red tail lights",
+        "kind": "object"
+      }
+    ],
+    "visible_text": [
+      "Licence plate characters are illegible due to blur"
+    ],
+    "confirmed": [
+      {
+        "name": "Honda Civic",
+        "rationale": "Tail lights look like a Civic",
+        "keep": true
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 1800,
+  "enrich_ms": 3900
+}

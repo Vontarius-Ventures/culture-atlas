@@ -1,0 +1,81 @@
+{
+  "id": "h09",
+  "split": "holdout",
+  "file": "h09-qwenvl_poster.jpeg",
+  "subject_domains": [
+    "film",
+    "art"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Rebecca",
+      "pattern": "^rebecca\\b",
+      "aliases": [
+        "Rebecca (1940 film)"
+      ],
+      "type": "work"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Alfred Hitchcock",
+      "type": "creator"
+    },
+    {
+      "name": "Daphne du Maurier",
+      "type": "creator"
+    },
+    {
+      "name": "Laurence Olivier",
+      "type": "creator"
+    },
+    {
+      "name": "Joan Fontaine",
+      "type": "creator"
+    },
+    {
+      "name": "David O. Selznick",
+      "type": "creator"
+    },
+    {
+      "pattern": "gothic (romance|fiction|film)|psychological thriller|film poster|movie poster|golden age of hollywood|classic hollywood|1940s"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "gone with the wind",
+      "why": "text echo: a credit line on the poster, not its subject"
+    },
+    {
+      "pattern": "film noir",
+      "why": "not evidenced by the poster"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "watch"
+  ],
+  "must_read_text": [
+    "Rebecca",
+    "HITCHCOCK"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Names are allowed only because they are printed on the poster. 'medium' is not listed: the subject is an illustrated poster."
+}

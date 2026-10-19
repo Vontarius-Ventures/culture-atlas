@@ -223,42 +223,91 @@ are assertions against profiles, never replacements.
 export CONCENTRATE_API_KEY_FILE=/secure/concentrate-key
 # 1. Catalog snapshot (GET /v1/models, paginated; no inference).
 pnpm qualify:concentrate --catalog --out-dir /secure/concentrate-qualification
-# 2. Pin a model/provider from the snapshot; set catalogSnapshotAt to its fetched_at.
-#    Dry run: prints the plan, sends nothing.
+# 2. Golden photos into a directory outside the repository (pinned raw URLs, sha256-checked).
+pnpm eval:fetch --dest /secure/golden-photos
+# 3. Pin a model/provider from the snapshot; set catalogSnapshotAt to its fetched_at.
+#    Dry run: hash-checks the golden photos, prints the plan, sends nothing.
 pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
-  --fixtures /secure/owned-fixtures/photos --out-dir /secure/concentrate-qualification \
-  --max-requests 12 --spend-cap-usd 2
-# 3. Same command plus --confirm-paid-requests sends real, billed requests.
+  --golden fixtures/eval/golden-v1 --photos /secure/golden-photos \
+  --out-dir /secure/concentrate-qualification --max-requests 30 --spend-cap-usd 2
+# 4. Same command plus --confirm-paid-requests sends real, billed requests.
 # Two-stage reading: qualify the quick read first, then stage 2. Stage 2 needs the
 # vision_photo profile in the same file and sends a real quick read per photo as
 # its input (two requests per photo, both under --max-requests and the spend cap).
 pnpm qualify:concentrate --profile-file profiles.json --role vision_photo_enrich \
-  --fixtures /secure/owned-fixtures/photos --out-dir /secure/concentrate-qualification \
-  --max-requests 24 --spend-cap-usd 2
+  --golden fixtures/eval/golden-v1 --photos /secure/golden-photos \
+  --out-dir /secure/concentrate-qualification --max-requests 60 --spend-cap-usd 2
+# Text roles: prompts with content checks (fixtures/eval/text-v1, quality plan §8).
+pnpm qualify:concentrate --profile-file profiles.json --role composer \
+  --fixtures fixtures/eval/text-v1 --out-dir /secure/concentrate-qualification \
+  --max-requests 12 --spend-cap-usd 1
 ```
 
-The artifact notes record the reading (prompt and schema versions) and the
-reasoning effort the run sent; for `vision_photo_enrich` they also name the
-stage-1 profile whose readings were the input (its requests count in
-`requests_sent`; latency and usage are the enrichment call's own).
+**A role qualifies on quality, not only on transport** (docs/quality-plan.md §7.5):
 
-Fixture layout: photos as image files (≥ 10, owned and varied); videos as one
-directory per video containing `<timestamp_ms>.jpg` frames (≥ 3 videos, ≤ 8
-frames each); text roles as `{system, prompt, schema: reference_notes|plan_prose}`
-JSON files (≥ 3). A persistent request counter in the out dir is reserved
-before every request and survives re-runs; the worst-case reservation must fit
-the spend cap; there are no retries; the run stops at 401/402/404/422/429. The
-artifact `<qualificationArtifactId>.json` holds aggregates only (counts,
-outcomes, p50/p95 latency, token usage, profile hash) — no media, prompts,
+- **Photo roles** (`vision_photo`, `vision_photo_enrich`) qualify only on the
+  golden set `golden-v1` (both splits, every photo checked against its pinned
+  sha256 before any request), never on a loose fixture directory. Each reading
+  goes through the runtime guardrails (`vlm/guardrails.ts`) and is scored in
+  memory by `scripts/eval/scorer.ts` against the **live** gates in
+  `fixtures/eval/thresholds.json`. The outputs are never written. Without the
+  guardrails module the script refuses to run (fail closed). `vision_photo`
+  must be a quick-read profile.
+- **Text roles** (`research_text`, `composer`) take `--fixtures` with
+  `<name>.json` prompts and `<name>.expect.json` content checks (the
+  `*.expect.json` files are not prompts). Every output is checked in memory by
+  `scoreTextFixture` (`scripts/eval/text-scorer.ts`), and at least 5 fixtures
+  are required. Without the checks module the script refuses to run.
+- `vision_video_frame` keeps transport-only qualification until it has a golden set.
+
+The artifact `result` is `pass` only when the transport run **and** the
+evaluation pass. The artifact carries an aggregate `eval` block:
+`{ golden_set, golden_sha256, thresholds_sha256, guardrail_version,
+grounding_version, scorer_version, metrics, pass }` (metric values only; no
+media, prompts or outputs). `qualificationState()` treats a role listed in
+`REQUIRED_GOLDEN_SET` as `qualified` only with `eval.pass === true` on the
+required golden set (`golden-v1` for photo roles, `text-v1` for text roles)
+and, for photo roles, `eval.guardrail_version === REQUIRED_GUARDRAIL_VERSION`.
+A missing or stale eval block leaves the role `catalog-compatible`. Changing a
+guard rule (and bumping `GUARDRAIL_VERSION`) un-qualifies both photo roles until
+they are re-evaluated, exactly as a profile edit does. The two phase-4
+artifacts have no eval block and are therefore `catalog-compatible`; schema v2
+changes the profile hash anyway.
+
+The artifact notes record the reading (prompt and schema versions), the
+reasoning effort the run sent and the evaluation summary; for
+`vision_photo_enrich` they also name the stage-1 profile whose readings were
+the input (its requests count in `requests_sent`; latency and usage are the
+enrichment call's own).
+
+Fixture layout: golden photos as described in `fixtures/eval/README.md`;
+videos as one directory per video containing `<timestamp_ms>.jpg` frames (≥ 3
+videos, ≤ 8 frames each); text roles as `{system, prompt, schema:
+reference_notes|plan_prose}` JSON files plus their `.expect.json`. A persistent
+request counter in the out dir is reserved before every request and survives
+re-runs; the worst-case reservation must fit the spend cap; there are no
+retries; the run stops at 401/402/403/404/422/429. The artifact
+`<qualificationArtifactId>.json` holds aggregates only (counts, outcomes,
+p50/p95 latency, token usage, profile hash, eval block) — no media, prompts,
 outputs or keys. Ship the out dir with the deployment as
 `CONCENTRATE_QUALIFICATION_DIR`; a role becomes dispatchable only when its
 artifact passes and matches the profile hash exactly (any profile edit requires
 re-qualification).
 
-What a passing run still does not prove: cultural-label quality judged by a
-person, billing reconciliation, and the ZDR/logging settings on the key, which
-the operator verifies in the Concentrate dashboard and records in
-`privacyVerifiedAt`.
+**Evaluating without qualifying.** `pnpm eval:replay --recordings <dir>`
+re-scores recorded readings offline (the replay format written by
+`eval:live`, or the phase-4 `stage1/` + `enrich/` layout) through the guarded
+and unguarded pipelines. `pnpm eval:live` runs the readings live under the same
+rails (dry run by default, `--max-requests`, `--spend-cap-usd`, an optional
+`--qloo` grounding sample with its own request cap and at least 700 ms
+spacing) and writes raw outputs and `scorecard.json` only to `--out-dir`
+outside the repository. Every call can be logged with `--ledger <file>`.
+
+What a passing run still does not prove: billing reconciliation, and the
+ZDR/logging settings on the key, which the operator verifies in the Concentrate
+dashboard and records in `privacyVerifiedAt`. New profiles on the same route
+carry the owner-accepted `privacyVerifiedAt` value over unchanged; a new route
+needs the operator.
 
 ## Live qualification attempts (2026-10-17)
 

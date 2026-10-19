@@ -1,0 +1,61 @@
+{
+  "quick": {
+    "title": "Two men in dark suits",
+    "interpretation": "Two men in suits stand in front of a blurred crowd.",
+    "candidates": [
+      {
+        "name": "Formal menswear",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.7,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": "formal menswear"
+      },
+      {
+        "name": "Football coaching",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.4,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Dark suits with white shirts and ties",
+        "kind": "garment"
+      },
+      {
+        "text": "One man has a shaved head and a serious expression",
+        "kind": "person_style"
+      }
+    ],
+    "visible_text": [],
+    "confirmed": [
+      {
+        "name": "Formal menswear",
+        "rationale": "Dark tailored suits",
+        "keep": true
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2100,
+  "enrich_ms": 4200
+}

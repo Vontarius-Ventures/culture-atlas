@@ -24,6 +24,9 @@
     "qloo:probe": "tsx scripts/qloo-probe.ts",
     "onboarding:catalog": "tsx scripts/build-onboarding-catalog.ts",
     "qualify:concentrate": "tsx scripts/qualify-concentrate.ts",
+    "eval:fetch": "tsx scripts/eval-fetch.ts",
+    "eval:replay": "tsx scripts/eval-replay.ts",
+    "eval:live": "tsx scripts/eval-live.ts",
     "mock-relay": "pnpm --filter @culture-atlas/sensor-bridge mock-relay",
     "ops:kill": "tsx scripts/feature-kill.ts",
     "ops:metrics": "tsx scripts/ops-metrics.ts",
@@ -43,6 +46,7 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
     "vitest": "5.0.2",
-    "yaml": "2.8.1"
+    "yaml": "2.8.1",
+    "zod": "4.6.5"
   }
 }

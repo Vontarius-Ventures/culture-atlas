@@ -1,0 +1,90 @@
+{
+  "quick": {
+    "title": "Road bike on a porch",
+    "interpretation": "A red road bike leans on a porch beside a dog.",
+    "candidates": [
+      {
+        "name": "Cannondale",
+        "type": "brand",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Road bicycle",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.9,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Road cycling",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.6,
+        "categories": [],
+        "tag_query": "road cycling"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Red aluminium road frame",
+        "kind": "object"
+      }
+    ],
+    "visible_text": [
+      "cannondale",
+      "CAAD8"
+    ],
+    "confirmed": [
+      {
+        "name": "Cannondale",
+        "rationale": "The down tube reads cannondale",
+        "keep": true
+      },
+      {
+        "name": "Road bicycle",
+        "rationale": "Drop handlebars",
+        "keep": true
+      },
+      {
+        "name": "Road cycling",
+        "rationale": "Road bike",
+        "keep": true
+      }
+    ],
+    "additional_candidates": [
+      {
+        "name": "Cannondale CAAD8",
+        "type": "brand",
+        "relation": "depicted",
+        "certainty": 0.85,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null,
+        "rationale": "CAAD8 on the top tube"
+      }
+    ],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2000,
+  "enrich_ms": 4100
+}

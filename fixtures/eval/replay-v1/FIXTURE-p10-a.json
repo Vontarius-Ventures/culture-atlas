@@ -1,0 +1,95 @@
+{
+  "quick": {
+    "title": "Electric minibus in Madrid",
+    "interpretation": "A blue electric minibus passes pedestrians on a city street.",
+    "candidates": [
+      {
+        "name": "EMT Madrid",
+        "type": "brand",
+        "relation": "depicted",
+        "certainty": 0.8,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Madrid",
+        "type": "place",
+        "relation": "depicted",
+        "certainty": 0.7,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Shearling coat",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": "shearling coat"
+      },
+      {
+        "name": "Spanish cuisine",
+        "type": "cuisine",
+        "relation": "resembles",
+        "certainty": 0.3,
+        "categories": [
+          "eat"
+        ],
+        "tag_query": "spanish"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Cream teddy coat over jeans",
+        "kind": "garment"
+      },
+      {
+        "text": "A young woman with long dark hair",
+        "kind": "person_style"
+      }
+    ],
+    "visible_text": [
+      "EMT MADRID",
+      "M1 SOL/SEVILLA",
+      "cero emisiones"
+    ],
+    "confirmed": [
+      {
+        "name": "EMT Madrid",
+        "rationale": "EMT MADRID on the bus side",
+        "keep": true
+      },
+      {
+        "name": "Madrid",
+        "rationale": "MADRID on the bus",
+        "keep": true
+      },
+      {
+        "name": "Shearling coat",
+        "rationale": "Teddy texture",
+        "keep": true
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2600,
+  "enrich_ms": 5600
+}

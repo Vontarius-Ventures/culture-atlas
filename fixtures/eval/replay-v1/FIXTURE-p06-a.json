@@ -1,0 +1,33 @@
+{
+  "quick": {
+    "title": "Palace facade with domes",
+    "interpretation": "A pale palace that resembles Indo-Saracenic architecture.",
+    "candidates": [
+      {
+        "name": "Indo-Saracenic architecture",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.7,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": "indo-saracenic architecture"
+      },
+      {
+        "name": "Lahore",
+        "type": "place",
+        "relation": "resembles",
+        "certainty": 0.4,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "quick_ms": 2000
+}

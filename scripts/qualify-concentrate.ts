@@ -6,10 +6,18 @@
  *   pnpm qualify:concentrate --catalog --out-dir /secure/concentrate-qualification
  *
  *   # 2. Pin a model/provider from the snapshot in the profile; set catalogSnapshotAt
- *   #    to the snapshot's fetched_at. Dry run (prints the plan, sends nothing):
+ *   #    to the snapshot's fetched_at. Dry run (hash-checks the golden photos,
+ *   #    prints the plan, sends nothing):
  *   pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
- *     --fixtures /secure/owned-fixtures/photos --out-dir /secure/concentrate-qualification \
- *     --max-requests 12 --spend-cap-usd 2
+ *     --golden fixtures/eval/golden-v1 --photos /secure/golden-photos \
+ *     --out-dir /secure/concentrate-qualification --max-requests 30 --spend-cap-usd 2
+ *
+ *   # Photo roles qualify only on the golden set (both splits, sha256-pinned),
+ *   # scored in memory through the runtime guardrails against the live gates in
+ *   # fixtures/eval/thresholds.json; the artifact passes only when the scorer
+ *   # passes, and carries an aggregate eval block. Text roles take --fixtures
+ *   # fixtures/eval/text-v1 (<name>.json prompts with <name>.expect.json checks).
+ *   # vision_video_frame keeps --fixtures <dir of frame folders>.
  *
  *   # 3. The same command plus --confirm-paid-requests sends real, billed requests.
  *
@@ -26,6 +34,8 @@
  */
 import { fetchCatalog, qualifyProfile, readApiKey } from './qualify-concentrate-lib';
 import { loadModelProfiles } from '../packages/providers/src/concentrate/profiles';
+import { loadTextScorer } from './eval/golden-photos';
+import { guardedPipeline, loadGuardModule } from './eval/pipeline';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -61,8 +71,26 @@ if (flag('catalog')) {
 const profileFile = arg('profile-file');
 const role = arg('role');
 const fixturesDir = arg('fixtures');
-if (!profileFile || !role || !fixturesDir) {
-  console.error('--profile-file, --role and --fixtures are required (or use --catalog).');
+const goldenDir = arg('golden');
+const photosDir = arg('photos');
+const photoRole = role === 'vision_photo' || role === 'vision_photo_enrich';
+if (!profileFile || !role || (photoRole ? !goldenDir || !photosDir : !fixturesDir)) {
+  console.error(
+    '--profile-file and --role are required, plus --golden and --photos for photo roles or --fixtures otherwise (or use --catalog).',
+  );
+  process.exit(2);
+}
+// Photo roles are scored through the runtime guardrails; text roles through the content checks.
+// Both fail closed: without the module, nothing is qualified.
+const pipeline = photoRole ? await loadGuardModule().then((g) => (g ? guardedPipeline(g) : undefined)) : undefined;
+if (photoRole && !pipeline) {
+  console.error('The runtime guardrails (packages/providers/src/vlm/guardrails.ts) are not present; photo roles cannot be qualified.');
+  process.exit(2);
+}
+const textRole = role === 'research_text' || role === 'composer';
+const textScorer = textRole ? ((await loadTextScorer()) ?? undefined) : undefined;
+if (textRole && !textScorer) {
+  console.error('The text content checks (scripts/eval/text-scorer.ts) are not present; text roles cannot be qualified.');
   process.exit(2);
 }
 const profiles = loadModelProfiles(profileFile);
@@ -88,7 +116,11 @@ const run = await qualifyProfile({
   apiKey,
   outDir,
   profile,
-  fixturesDir,
+  fixturesDir: photoRole ? undefined : fixturesDir,
+  golden: photoRole ? { dir: goldenDir!, photosDir: photosDir! } : undefined,
+  pipeline,
+  textScorer,
+  thresholdsFile: arg('thresholds'),
   maxRequests,
   spendCapMicros: Math.floor(spendCapUsd * 1_000_000),
   confirmPaidRequests: flag('confirm-paid-requests'),

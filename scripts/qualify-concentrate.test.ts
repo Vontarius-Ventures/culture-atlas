@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
@@ -7,12 +7,16 @@ import {
   qualificationState,
   type ModelProfile,
 } from '../packages/providers/src/index';
-import { solidJpeg } from '../packages/providers/src/testing/images';
-import { fetchCatalog, qualifyProfile, readApiKey } from './qualify-concentrate-lib';
+import type { TextScorer } from './eval/golden-photos';
+import { unguardedPipeline } from './eval/pipeline';
+import { syntheticGolden, versionedTestPipeline } from './eval/test-golden';
+import { discoverFixtures, fetchCatalog, qualifyProfile, readApiKey } from './qualify-concentrate-lib';
 
 /**
  * Offline tests of the operator qualification harness (fake fetch only). They
- * prove the safety rails; they are NOT a qualification of any live model.
+ * prove the safety rails and the evaluation gating; they are NOT a
+ * qualification of any live model. The photos are synthetic solid colours and
+ * the guarded pipeline is a versioned test double (docs/quality-plan.md §7.5).
  */
 const KEY = 'synthetic-operator-key-never-written';
 const dirs: string[] = [];
@@ -32,34 +36,54 @@ const profile: ModelProfile = {
   model: 'fixture/vision-1',
   provider: 'fixture',
   allowedFallbackProviders: [],
-  maxOutputTokens: 2000,
+  maxOutputTokens: 600,
+  reasoningEffort: 'none',
   maxInputTokens: 200_000,
   maxInputBytes: 200_000,
   image: { maxBytes: 80_000, maxPixels: 300_000, maxDimension: 512, maxCount: 1 },
-  timeoutMs: 30_000,
+  timeoutMs: 10_000,
   structuredOutput: true,
   requireZdr: true,
   providerZdrEligible: true,
   contentLoggingEnabled: false,
   privacyVerifiedAt: '2026-10-15T00:00:00Z',
-  promptVersion: 'vlm-p1',
-  schemaVersion: 'atlas_observations_v2',
+  promptVersion: 'vlm-quick-v1',
+  schemaVersion: 'atlas_quick_read_v1',
   catalogSnapshotAt: '2026-10-16T12:00:00.000Z',
   qualificationArtifactId: 'vision-photo-2026-10-16',
   pricingSnapshotVersion: 'price-1',
   reservationMicros: 20_000,
 };
-const vision = {
-  title: 'Table',
-  interpretation: 'A table that resembles mid-century design.',
-  observations: [{ id: 'o1', text: 'Round table', kind: 'object', region_ids: [] }],
-  visible_text: [],
-  candidates: [],
-  regions: [],
-  uncertainty: { overall: 'medium', notes: [] },
-  competing_subjects: [],
-  quality: { usable: true, issue: null },
+const enrich: ModelProfile = {
+  ...profile,
+  role: 'vision_photo_enrich',
+  promptVersion: 'vlm-enrich-v1',
+  schemaVersion: 'atlas_enrichment_v1',
+  maxOutputTokens: 1200,
+  timeoutMs: 20_000,
+  image: { maxBytes: 150_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
+  qualificationArtifactId: 'vision-photo-enrich-2026-10-18',
 };
+
+/** A reading in the shape the request's schema name asks for (v1 or v2). */
+function reading(name: string, candidate = 'Mid-century modern') {
+  const v2 = name.endsWith('_v2');
+  if (name.includes('enrich'))
+    return {
+      observations: [{ text: 'Round table', kind: 'object' }],
+      visible_text: [],
+      ...(v2 ? { illegible_text_present: false } : {}),
+      confirmed: [v2 ? { name: candidate, rationale: 'Tapered legs', verdict: 'supported' } : { name: candidate, rationale: 'Tapered legs', keep: true }],
+      additional_candidates: [],
+      regions: [],
+      uncertainty: { overall: 'low', notes: [] },
+      competing_subjects: [],
+    };
+  const c = v2
+    ? { name: candidate, type: 'style', relation: 'resembles', certainty: 0.7, domain: 'interior', evidence: 'distinctive_form', evidence_text: null, tag_query: 'mid-century modern' }
+    : { name: candidate, type: 'style', relation: 'resembles', certainty: 0.7, categories: [], tag_query: 'mid-century modern' };
+  return { title: 'Round table', interpretation: 'A table that resembles mid-century design.', candidates: [c], quality: { usable: true, issue: null } };
+}
 function catalogPages() {
   return vi.fn(async (url: string, init: RequestInit) => {
     expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${KEY}`);
@@ -70,31 +94,21 @@ function catalogPages() {
     return new Response(JSON.stringify(body));
   });
 }
-async function photos(n: number) {
-  const dir = await tmp('ca-qfix-');
-  for (let i = 0; i < n; i++)
-    await writeFile(
-      path.join(dir, `photo-${String(i).padStart(2, '0')}.jpg`),
-      await solidJpeg(900, 700, `#${(i * 20).toString(16).padStart(2, '0')}5050`),
+const ids = (n: number) => Array.from({ length: n }, (_, i) => `p${String(i + 1).padStart(2, '0')}`);
+function responses(status = 200, candidate?: string) {
+  return vi.fn(async (_url: string, init: RequestInit) => {
+    if (status !== 200) return new Response('{"error":{"message":"PRIVATE"}}', { status });
+    const body = JSON.parse(init.body as string);
+    return new Response(
+      JSON.stringify({
+        id: 'resp',
+        model: 'fixture/vision-1',
+        status: 'completed',
+        output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(reading(body.text.format.name, candidate)) }] }],
+        usage: { input_tokens: 1000, output_tokens: 120 },
+      }),
     );
-  return dir;
-}
-function responses(status = 200) {
-  return vi.fn(async () =>
-    status === 200
-      ? new Response(
-          JSON.stringify({
-            id: 'resp',
-            model: 'fixture/vision-1',
-            status: 'completed',
-            output: [
-              { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(vision) }] },
-            ],
-            usage: { input_tokens: 1000, output_tokens: 120 },
-          }),
-        )
-      : new Response('{"error":{"message":"PRIVATE"}}', { status }),
-  );
+  });
 }
 async function preparedOutDir() {
   const outDir = await tmp('ca-qout-');
@@ -141,58 +155,79 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     await expect(readApiKey({})).rejects.toThrow('CONCENTRATE_API_KEY');
   });
 
-  it('dry run plans and sends nothing; refuses fewer than 10 owned photos or a plan above the caps', async () => {
+  it('dry run hash-checks the golden photos, plans and sends nothing; refuses fewer than 10 photos or a plan above the caps', async () => {
     const outDir = await preparedOutDir();
     const fetchImpl = responses();
     const base = {
       apiKey: KEY,
       outDir,
       profile,
+      pipeline: versionedTestPipeline,
       maxRequests: 12,
       spendCapMicros: 2_000_000,
       fetch: fetchImpl as unknown as typeof fetch,
     };
+    const ten = await syntheticGolden(ids(10));
+    await expect(qualifyProfile({ ...base, golden: { dir: ten.dir, photosDir: ten.photosDir }, confirmPaidRequests: false })).resolves.toEqual({
+      dryRun: true,
+      plannedRequests: 10,
+    });
+    const nine = await syntheticGolden(ids(9));
     await expect(
-      qualifyProfile({ ...base, fixturesDir: await photos(10), confirmPaidRequests: false }),
-    ).resolves.toEqual({ dryRun: true, plannedRequests: 10 });
-    await expect(
-      qualifyProfile({ ...base, fixturesDir: await photos(9), confirmPaidRequests: true }),
+      qualifyProfile({ ...base, golden: { dir: nine.dir, photosDir: nine.photosDir }, confirmPaidRequests: true }),
     ).rejects.toThrow('at least 10');
     await expect(
-      qualifyProfile({
-        ...base,
-        maxRequests: 5,
-        fixturesDir: await photos(10),
-        confirmPaidRequests: true,
-      }),
+      qualifyProfile({ ...base, golden: { dir: ten.dir, photosDir: ten.photosDir }, maxRequests: 5, confirmPaidRequests: true }),
     ).rejects.toThrow('--max-requests');
     await expect(
-      qualifyProfile({
-        ...base,
-        spendCapMicros: 100_000,
-        fixturesDir: await photos(10),
-        confirmPaidRequests: true,
-      }),
+      qualifyProfile({ ...base, golden: { dir: ten.dir, photosDir: ten.photosDir }, spendCapMicros: 100_000, confirmPaidRequests: true }),
     ).rejects.toThrow('spend cap');
     await expect(
       qualifyProfile({
         ...base,
         profile: { ...profile, model: 'fixture/not-in-catalog' },
-        fixturesDir: await photos(10),
+        golden: { dir: ten.dir, photosDir: ten.photosDir },
         confirmPaidRequests: false,
       }),
     ).rejects.toThrow('catalog-compatible');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('a confirmed passing run writes an aggregate-only artifact that makes the profile qualified', async () => {
+  it('photo roles fail closed: golden set, guarded pipeline and untampered photos are required before any request', async () => {
     const outDir = await preparedOutDir();
     const fetchImpl = responses();
+    const g = await syntheticGolden(ids(10));
+    const base = { apiKey: KEY, outDir, profile, maxRequests: 12, spendCapMicros: 2_000_000, confirmPaidRequests: true, fetch: fetchImpl as unknown as typeof fetch };
+    await expect(qualifyProfile({ ...base, pipeline: versionedTestPipeline, fixturesDir: g.photosDir })).rejects.toThrow('golden set');
+    await expect(qualifyProfile({ ...base, golden: { dir: g.dir, photosDir: g.photosDir } })).rejects.toThrow('guarded reading pipeline');
+    await expect(
+      qualifyProfile({ ...base, golden: { dir: g.dir, photosDir: g.photosDir }, pipeline: unguardedPipeline }),
+    ).rejects.toThrow('guarded reading pipeline');
+    await writeFile(path.join(g.photosDir, 'p03.jpg'), 'tampered');
+    await expect(
+      qualifyProfile({ ...base, golden: { dir: g.dir, photosDir: g.photosDir }, pipeline: versionedTestPipeline }),
+    ).rejects.toThrow('p03: sha256 differs');
+    await expect(
+      qualifyProfile({
+        ...base,
+        profile: { ...profile, schemaVersion: 'atlas_observations_v2' },
+        golden: { dir: g.dir, photosDir: g.photosDir },
+        pipeline: versionedTestPipeline,
+      }),
+    ).rejects.toThrow('quick-read profile');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('a confirmed passing run writes an aggregate-only artifact with a passing eval block that makes the profile qualified', async () => {
+    const outDir = await preparedOutDir();
+    const fetchImpl = responses();
+    const g = await syntheticGolden(ids(10));
     const run = await qualifyProfile({
       apiKey: KEY,
       outDir,
       profile,
-      fixturesDir: await photos(10),
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
       maxRequests: 12,
       spendCapMicros: 2_000_000,
       confirmPaidRequests: true,
@@ -205,14 +240,14 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
+      eval: { golden_set: 'golden-v1', guardrail_version: 'guard-v1', scorer_version: 'score-v1', pass: true },
     });
+    expect(run.artifact!.eval!.metrics).toMatchObject({ tune_M1: 0, tune_M3: 1, tune_M13: 1, failed_calls: 0 });
     expect(qualificationState(profile, outDir)).toBe('qualified');
-    const artifact = await readFile(
-      path.join(outDir, `${profile.qualificationArtifactId}.json`),
-      'utf8',
-    );
+    const artifact = await readFile(path.join(outDir, `${profile.qualificationArtifactId}.json`), 'utf8');
     expect(artifact).not.toContain(KEY);
     expect(artifact).not.toContain('Round table');
+    expect(artifact).not.toContain('Mid-century modern');
     expect(artifact).not.toMatch(/base64|\/9j\//);
     // The persistent counter survives re-runs: only 2 more requests fit under a cap of 12.
     const again = responses();
@@ -220,80 +255,76 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       apiKey: KEY,
       outDir,
       profile,
-      fixturesDir: await photos(10),
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
       maxRequests: 12,
       spendCapMicros: 2_000_000,
       confirmPaidRequests: true,
       fetch: again as unknown as typeof fetch,
     });
     expect(again).toHaveBeenCalledTimes(2);
-    expect(rerun).toMatchObject({ stoppedBy: 'request_cap', artifact: { result: 'fail' } });
+    expect(rerun).toMatchObject({ stoppedBy: 'request_cap', artifact: { result: 'fail', eval: { pass: false } } });
+    expect(qualificationState(profile, outDir)).toBe('catalog-compatible');
+  });
+
+  it('a clean transport run with readings that fail the scorer is a failing artifact', async () => {
+    const outDir = await preparedOutDir();
+    // Every reading names a designer the labels forbid (M2) and nothing expected (M5).
+    const fetchImpl = responses(200, 'Eames lounge chair');
+    const g = await syntheticGolden(ids(10));
+    const run = await qualifyProfile({
+      apiKey: KEY,
+      outDir,
+      profile,
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
+      maxRequests: 12,
+      spendCapMicros: 2_000_000,
+      confirmPaidRequests: true,
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
+    expect(run.artifact).toMatchObject({ result: 'fail', fixtures: { passed: 10, failed: 0 }, eval: { pass: false } });
+    expect(run.artifact!.eval!.metrics.tune_M2).toBe(1);
+    expect(run.artifact!.notes.some((n) => /Evaluation golden-v1 .*: fail/.test(n))).toBe(true);
     expect(qualificationState(profile, outDir)).toBe('catalog-compatible');
   });
 
   it('two-stage: qualifies the quick read with its reasoning effort, then enrichment on real stage-1 readings', async () => {
-    const quick: ModelProfile = {
-      ...profile,
-      promptVersion: 'vlm-quick-v1',
-      schemaVersion: 'atlas_quick_read_v1',
-      reasoningEffort: 'none',
-      maxOutputTokens: 600,
-      qualificationArtifactId: 'vision-photo-quick-2026-10-18',
-    };
-    const enrich: ModelProfile = {
-      ...profile,
-      role: 'vision_photo_enrich',
-      promptVersion: 'vlm-enrich-v1',
-      schemaVersion: 'atlas_enrichment_v1',
-      reasoningEffort: 'none',
-      maxOutputTokens: 1200,
-      timeoutMs: 20_000,
-      image: { maxBytes: 150_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
-      qualificationArtifactId: 'vision-photo-enrich-2026-10-18',
-    };
-    const quickRead = {
-      title: 'Round table',
-      interpretation: 'A table that resembles mid-century design.',
-      candidates: [{ name: 'Mid-century modern', type: 'style', relation: 'resembles', certainty: 0.7, categories: ['wear'], tag_query: 'mid-century modern' }],
-      quality: { usable: true, issue: null },
-    };
-    const enrichment = {
-      observations: [{ text: 'Round table', kind: 'object' }],
-      visible_text: [],
-      confirmed: [{ name: 'Mid-century modern', rationale: 'Tapered legs', keep: true }],
-      additional_candidates: [],
-      regions: [],
-      uncertainty: { overall: 'low', notes: [] },
-      competing_subjects: [],
-    };
+    const quick: ModelProfile = { ...profile, qualificationArtifactId: 'vision-photo-quick-2026-10-18' };
     const bodies: Array<Record<string, unknown> & { text: { format: { name: string } } }> = [];
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(init.body as string);
       bodies.push(body);
-      const text = JSON.stringify(body.text.format.name === 'atlas_enrichment_v1' ? enrichment : quickRead);
       return new Response(
         JSON.stringify({
           id: 'resp',
           model: 'fixture/vision-1',
           status: 'completed',
-          output: [{ type: 'message', content: [{ type: 'output_text', text }] }],
+          output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(reading(body.text.format.name)) }] }],
           usage: { input_tokens: 1600, output_tokens: 300 },
         }),
       );
     });
     const outDir = await preparedOutDir();
-    const fixturesDir = await photos(10);
-    const common = { apiKey: KEY, outDir, fixturesDir, spendCapMicros: 2_000_000, fetch: fetchImpl as unknown as typeof fetch };
+    const g = await syntheticGolden(ids(10));
+    const common = {
+      apiKey: KEY,
+      outDir,
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
+      spendCapMicros: 2_000_000,
+      fetch: fetchImpl as unknown as typeof fetch,
+    };
 
     const q = await qualifyProfile({ ...common, profile: quick, maxRequests: 10, confirmPaidRequests: true });
     expect(q.artifact).toMatchObject({ result: 'pass', role: 'vision_photo', requests_sent: 10 });
     expect(q.artifact!.notes).toEqual(
       expect.arrayContaining([
-        'Reading: quick (prompt vlm-quick-v1, schema atlas_quick_read_v1).',
+        `Reading: quick (prompt ${quick.promptVersion}, schema ${quick.schemaVersion}).`,
         'Reasoning effort: none (sent as reasoning.effort on every request).',
       ]),
     );
-    expect(bodies.every((b) => b.text.format.name === 'atlas_quick_read_v1')).toBe(true);
+    expect(bodies.every((b) => b.text.format.name === quick.schemaVersion)).toBe(true);
     expect(bodies.every((b) => JSON.stringify(b.reasoning) === '{"effort":"none"}')).toBe(true);
     expect(qualificationState(quick, outDir)).toBe('qualified');
     // The same profile without the effort is a different, unqualified profile.
@@ -305,7 +336,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       qualifyProfile({ ...common, profile: enrich, maxRequests: 40, confirmPaidRequests: false }),
     ).rejects.toThrow('stage-1');
     await expect(
-      qualifyProfile({ ...common, profile: enrich, stage1Profile: { ...profile }, maxRequests: 40, confirmPaidRequests: false }),
+      qualifyProfile({ ...common, profile: enrich, stage1Profile: { ...profile, schemaVersion: 'atlas_observations_v2' }, maxRequests: 40, confirmPaidRequests: false }),
     ).rejects.toThrow('stage-1');
     await expect(
       qualifyProfile({ ...common, profile: quick, stage1Profile: quick, maxRequests: 40, confirmPaidRequests: false }),
@@ -320,7 +351,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     bodies.length = 0;
     const e = await qualifyProfile({ ...common, profile: enrich, stage1Profile: quick, maxRequests: 30, confirmPaidRequests: true });
     expect(bodies.map((b) => b.text.format.name)).toEqual(
-      Array.from({ length: 10 }, () => ['atlas_quick_read_v1', 'atlas_enrichment_v1']).flat(),
+      Array.from({ length: 10 }, () => [quick.schemaVersion, enrich.schemaVersion]).flat(),
     );
     // The enrichment request carries the real stage-1 reading as DATA.
     expect(JSON.stringify(bodies[1]!.input)).toContain('Mid-century modern');
@@ -331,6 +362,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       requests_sent: 20,
       fixtures: { total: 10, passed: 10, failed: 0 },
       usage: { input_tokens: 16_000, output_tokens: 3000 },
+      eval: { golden_set: 'golden-v1', pass: true },
     });
     expect(e.artifact!.notes.some((n) => n.startsWith('Stage-1 input from fixture/vision-1 quick read'))).toBe(true);
     expect(qualificationState(enrich, outDir)).toBe('qualified');
@@ -342,11 +374,13 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
   it('stops at the first 402 (no retry, no further spend) and records a failing artifact', async () => {
     const outDir = await preparedOutDir();
     const fetchImpl = responses(402);
+    const g = await syntheticGolden(ids(10));
     const run = await qualifyProfile({
       apiKey: KEY,
       outDir,
       profile,
-      fixturesDir: await photos(10),
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
       maxRequests: 12,
       spendCapMicros: 2_000_000,
       confirmPaidRequests: true,
@@ -355,8 +389,80 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(run).toMatchObject({
       stoppedBy: 'http_402',
-      artifact: { result: 'fail', fixtures: { outcomes: { http_402: 1 } } },
+      artifact: { result: 'fail', fixtures: { outcomes: { http_402: 1 } }, eval: { pass: false } },
     });
     expect(JSON.stringify(run.artifact)).not.toContain('PRIVATE');
+  });
+});
+
+describe('text roles: content checks gate qualification (plan §8)', () => {
+  const textProfile: ModelProfile = {
+    ...profile,
+    role: 'composer',
+    image: { maxBytes: 0, maxPixels: 0, maxDimension: 0, maxCount: 0 },
+    timeoutMs: 15_000,
+    promptVersion: 'composer-v1',
+    schemaVersion: 'plan_prose',
+    qualificationArtifactId: 'composer-2026-10-19',
+  };
+  const prose = { title: 'An evening plan', summary: 'A short plan for the evening.', rationale: null };
+  async function textFixtures(n: number, withExpect = true) {
+    const dir = path.join(await tmp('ca-text-'), 'text-v1');
+    await mkdir(dir);
+    for (let i = 0; i < n; i++) {
+      await writeFile(path.join(dir, `plan-${i}.json`), JSON.stringify({ system: 'S', prompt: `P${i}`, schema: 'plan_prose' }));
+      if (withExpect) await writeFile(path.join(dir, `plan-${i}.expect.json`), JSON.stringify({ word_limits: { overview: 150 } }));
+    }
+    return dir;
+  }
+  function textResponses() {
+    return vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          id: 'resp',
+          model: 'fixture/vision-1',
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(prose) }] }],
+          usage: { input_tokens: 500, output_tokens: 80 },
+        }),
+      ),
+    );
+  }
+  /** A content-check double; the real checks are P4's scoreTextFixture. */
+  const scorer = (pass: boolean): TextScorer =>
+    Object.assign(
+      vi.fn(() => ({ pass, metrics: { t6_word_limits_met: pass ? 1 : 0 }, reasons: pass ? [] : ['over the word limit'] })),
+      { version: 'text-double' },
+    );
+
+  it('discovers prompts and skips their *.expect.json siblings', async () => {
+    const dir = await textFixtures(2);
+    expect((await discoverFixtures(dir, 'composer')).map((f) => f.name)).toEqual(['plan-0.json', 'plan-1.json']);
+  });
+
+  it('refuses without the content checks or without an expect file for every prompt', async () => {
+    const outDir = await preparedOutDir();
+    const base = { apiKey: KEY, outDir, profile: textProfile, maxRequests: 10, spendCapMicros: 2_000_000, confirmPaidRequests: false };
+    await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(5) })).rejects.toThrow('content checks');
+    await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(5, false), textScorer: scorer(true) })).rejects.toThrow('expect.json');
+    await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(4), textScorer: scorer(true) })).rejects.toThrow('at least 5');
+  });
+
+  it('passes only when every fixture passes its content checks; the artifact keeps aggregates only', async () => {
+    const fixturesDir = await textFixtures(5);
+    const outDir = await preparedOutDir();
+    const base = { apiKey: KEY, outDir, profile: textProfile, fixturesDir, maxRequests: 20, spendCapMicros: 2_000_000, confirmPaidRequests: true };
+    const good = scorer(true);
+    const ok = await qualifyProfile({ ...base, textScorer: good, fetch: textResponses() as unknown as typeof fetch });
+    expect(good).toHaveBeenCalledTimes(5);
+    expect(ok.artifact).toMatchObject({
+      result: 'pass',
+      eval: { golden_set: 'text-v1', guardrail_version: null, scorer_version: 'text-double', pass: true, metrics: { fixtures_content_passed: 5 } },
+    });
+    expect(qualificationState(textProfile, outDir)).toBe('qualified');
+    expect(await readFile(path.join(outDir, `${textProfile.qualificationArtifactId}.json`), 'utf8')).not.toContain('An evening plan');
+    const bad = await qualifyProfile({ ...base, textScorer: scorer(false), fetch: textResponses() as unknown as typeof fetch });
+    expect(bad.artifact).toMatchObject({ result: 'fail', fixtures: { passed: 5 }, eval: { pass: false } });
+    expect(qualificationState(textProfile, outDir)).toBe('catalog-compatible');
   });
 });

@@ -128,6 +128,58 @@ export const CatalogSnapshotSchema = z
   .strict();
 export type CatalogSnapshot = z.infer<typeof CatalogSnapshotSchema>;
 
+/**
+ * Golden set a role must be evaluated on before it can be qualified
+ * (docs/quality-plan.md §7.5). Roles not listed (vision_video_frame) keep the
+ * transport-only qualification until a golden set exists for them.
+ */
+export const REQUIRED_GOLDEN_SET: Partial<Record<ModelRole, string>> = {
+  vision_photo: 'golden-v1',
+  vision_photo_enrich: 'golden-v1',
+  research_text: 'text-v1',
+  composer: 'text-v1',
+};
+
+/**
+ * Guardrail version a photo role's evaluation must have run with. It must
+ * equal GUARDRAIL_VERSION in vlm/guardrails.ts (asserted by
+ * scripts/eval/replay.test.ts). Changing a guard rule bumps that version and
+ * un-qualifies both photo roles until they are re-evaluated.
+ */
+export const REQUIRED_GUARDRAIL_VERSION = 'guard-v1';
+
+const PHOTO_EVAL_ROLES: readonly ModelRole[] = ['vision_photo', 'vision_photo_enrich'];
+
+/**
+ * Aggregate evaluation evidence bound into an artifact: versions, hashes and
+ * metric values only (no media, prompts or outputs), so the artifact rule holds.
+ */
+export const EvalBlockSchema = z
+  .object({
+    golden_set: z.string().regex(/^(golden|text)-v\d+$/),
+    golden_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    thresholds_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    guardrail_version: z.string().min(1).nullable(),
+    grounding_version: z.string().min(1).nullable(),
+    scorer_version: z.string().min(1),
+    metrics: z.record(z.string().regex(/^[A-Za-z0-9_]{1,40}$/), z.number().finite()),
+    pass: z.boolean(),
+  })
+  .strict();
+export type EvalBlock = z.infer<typeof EvalBlockSchema>;
+
+/** Why an artifact's eval block does not qualify its role, or null when it does (or none is required). */
+export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined): string | null {
+  const required = REQUIRED_GOLDEN_SET[role];
+  if (!required) return null;
+  if (!block) return 'missing_eval';
+  if (block.golden_set !== required) return 'wrong_golden_set';
+  if (PHOTO_EVAL_ROLES.includes(role) && block.guardrail_version !== REQUIRED_GUARDRAIL_VERSION)
+    return 'stale_guardrail_version';
+  if (!block.pass) return 'eval_failed';
+  return null;
+}
+
 /** Safe aggregate qualification evidence. Never media, prompts, outputs or keys. */
 export const QualificationArtifactSchema = z
   .object({
@@ -164,6 +216,8 @@ export const QualificationArtifactSchema = z
       })
       .strict(),
     notes: z.array(z.string().max(300)).max(20),
+    /** Golden-set evaluation of the outputs (scored in memory, never stored). Required for REQUIRED_GOLDEN_SET roles. */
+    eval: EvalBlockSchema.optional(),
   })
   .strict();
 export type QualificationArtifact = z.infer<typeof QualificationArtifactSchema>;
@@ -216,7 +270,10 @@ export const CATALOG_SNAPSHOT_FILE = 'catalog-snapshot.json';
 /**
  * Reads `<dir>/catalog-snapshot.json` and `<dir>/<qualificationArtifactId>.json`.
  * Qualified only with a passing artifact for this exact profile hash and enough
- * fixtures. Read-only: never contacts the gateway.
+ * fixtures, and, for roles with a REQUIRED_GOLDEN_SET, a passing eval block on
+ * that golden set (photo roles: with the current guardrail version). Missing or
+ * stale eval data leaves the role catalog-compatible. Read-only: never
+ * contacts the gateway.
  */
 export function qualificationState(
   profile: ModelProfile,
@@ -238,7 +295,8 @@ export function qualificationState(
     artifact.data.model === profile.model &&
     artifact.data.provider === profile.provider &&
     artifact.data.fixtures.failed === 0 &&
-    artifact.data.fixtures.passed >= QUALIFICATION_MINIMUM_FIXTURES[profile.role]
+    artifact.data.fixtures.passed >= QUALIFICATION_MINIMUM_FIXTURES[profile.role] &&
+    evalGateFailure(profile.role, artifact.data.eval) === null
   )
     return 'qualified';
   return compatible ? 'catalog-compatible' : 'configured';
