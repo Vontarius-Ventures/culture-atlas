@@ -4,7 +4,13 @@
  *
  *   pnpm eval:replay --recordings <dir> [--golden fixtures/eval/golden-v1] \
  *     [--thresholds fixtures/eval/thresholds.json] [--pipeline guarded|unguarded|both] \
- *     [--mode replay|live] [--out <file outside git>]
+ *     [--mode replay|live] [--verifier on|off|both] [--out <file outside git>]
+ *
+ * --verifier both scores the guarded readings twice: with the recorded
+ * verifier replies applied (eval:live --roles ...,vision_verify) and as if the
+ * verifier were off, for the tune-split decision (docs/requalification-plan.md
+ * step 3: forbidden_uncontested and M5_uncontested against M2's count and the
+ * M5 gate).
  *
  * <dir> is either the replay format (manifest.json, as written by eval:live and
  * fixtures/eval/replay-v1) or the phase-4 layout (stage1/ and enrich/).
@@ -12,7 +18,7 @@
 import { access, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadGoldenSet, loadThresholds } from './eval/labels';
-import { runtimeGuardedPipeline, unguardedPipeline, type ReadingPipeline } from './eval/pipeline';
+import { runtimeGuardedPipeline, runtimeGuardedPipelineWithoutVerifier, unguardedPipeline, type ReadingPipeline } from './eval/pipeline';
 import { loadPhase4Recordings, loadReplayFixtures, runReplay, summarize } from './eval/replay';
 import { scorerTeeth } from './eval/scorer';
 
@@ -42,8 +48,10 @@ const residual = loaded.filter((r) => 'gate' in r && !(r as { gate: boolean }).g
 
 const pipelines: ReadingPipeline[] = [];
 if (which === 'unguarded' || which === 'both') pipelines.push(unguardedPipeline);
+const verifier = arg('verifier', 'on');
 if (which === 'guarded' || which === 'both') {
-  pipelines.push(runtimeGuardedPipeline);
+  if (verifier !== 'off') pipelines.push(runtimeGuardedPipeline);
+  if (verifier === 'off' || verifier === 'both') pipelines.push(runtimeGuardedPipelineWithoutVerifier);
 }
 const results = pipelines.map((p) => runReplay(golden, recordings, p, thresholds, mode));
 console.log(`[eval-replay] ${recordings.length} recording(s), thresholds ${thresholds.version} (${sha256.slice(0, 12)})`);
@@ -60,5 +68,5 @@ if (out) {
   await writeFile(out, JSON.stringify(results.map((r) => ({ pipeline: r.pipeline, guardrail_version: r.guardrail_version, scorecard: r.scorecard })), null, 2), { mode: 0o600 });
   console.log(`[eval-replay] scorecards written to ${out}`);
 }
-const guarded = results.find((r) => r.pipeline === 'guarded');
+const guarded = results.find((r) => r.pipeline === 'guarded') ?? results.find((r) => r.pipeline === 'guarded-without-verifier');
 process.exit(guarded ? (guarded.scorecard.pass ? 0 : 1) : 0);

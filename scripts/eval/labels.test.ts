@@ -128,7 +128,7 @@ describe('label and manifest schemas', () => {
 
   it('thresholds parse, are versioned and carry the replay and live gates of §7.2', async () => {
     const { thresholds, sha256 } = await loadThresholds(path.join(root, 'fixtures/eval/thresholds.json'));
-    expect(thresholds.version).toBe('thr-v1');
+    expect(thresholds.version).toBe('thr-v2');
     expect(sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(thresholds.replay.M1).toEqual({ op: '==', value: 0 });
     expect(thresholds.replay.M3).toEqual({ op: '>=', value: 0.85 });
@@ -136,6 +136,32 @@ describe('label and manifest schemas', () => {
     expect(thresholds.live.M14_stage1_p95).toEqual({ op: '<=', value: 6000 });
     expect(thresholds.live_tune.M5).toEqual({ op: '>=', value: 0.8 });
     expect(ThresholdsSchema.safeParse({ ...thresholds, replay: { X1: { op: '==', value: 0 } } }).success).toBe(false);
+    expect(ThresholdsSchema.safeParse({ ...thresholds, two_stage_only: ['coverage'] }).success).toBe(false);
+  });
+
+  it('thr-v2 changes only what the requalification decisions allow (docs/requalification-plan.md 3 and 4)', async () => {
+    const { thresholds } = await loadThresholds(path.join(root, 'fixtures/eval/thresholds.json'));
+    // Decision 3: which run M5 and M9 gate, not their values (M5 0.80 tune / 0.70, M9 0.90; stage-1 coverage M15 0.60).
+    expect(thresholds.two_stage_only).toEqual(['M5', 'M9']);
+    expect([thresholds.replay.M5, thresholds.live.M5, thresholds.live_tune.M5].map((g) => g?.value)).toEqual([0.8, 0.7, 0.8]);
+    expect([thresholds.replay.M9, thresholds.live.M9].map((g) => g?.value)).toEqual([0.9, 0.9]);
+    expect([thresholds.replay.M15, thresholds.live.M15].map((g) => g?.value)).toEqual([0.6, 0.6]);
+    // Decision 4: recall 0.60 -> 0.50, and zero wrong matches is the hard gate (precision 0.95 -> 1.0).
+    expect(thresholds.grounding.recall_min).toBe(0.5);
+    expect(thresholds.grounding.grounding_precision_min).toBe(1);
+    expect(thresholds.grounding.forbidden_accepts_max).toBe(0);
+    expect(thresholds.grounding.doubtful_name_published_max).toBe(0);
+    expect(thresholds.grounding.end_to_end_precision_min).toBe(0.9);
+  });
+
+  it('a label records every later change with its reason (p14, decision 1)', async () => {
+    const golden = await loadGoldenSet(path.join(root, 'fixtures/eval/golden-v1'));
+    const p14 = golden.labels.get('p14')!;
+    expect(p14.history?.[0]).toMatchObject({ date: '2026-10-19', decision: expect.stringMatching(/decision 1/) });
+    expect(p14.must_read_text).toEqual(['ndale', 'CAAD8']);
+    expect(p14.expected.map((e) => e.name)).toEqual(['CAAD8']);
+    expect(p14.acceptable.find((e) => e.name === 'Cannondale')?.requires_text).toBe('cannondale');
+    expect(PhotoLabelSchema.safeParse({ ...p14, history: [{ date: 'yesterday', change: 'x', reason: 'y' }] }).success).toBe(false);
   });
 });
 

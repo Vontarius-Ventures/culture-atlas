@@ -12,12 +12,12 @@
  * catalog-compatible until they are re-qualified.
  */
 export const EVAL_BINDING = {
-  thresholds_sha256: 'ebd1e277050b4b7dc49a5ae91979c17a0eafaf47f691bada1d654bdaaaeea236',
+  thresholds_sha256: '9d43471b818b960d258090ea16bc712aa33f63b699ddb3e118a007cbd8c6b81b',
   sets: {
     'golden-v1': {
-      golden_sha256: '2e119d58d1da7fe581d9a736b23305b5541590bcca7162708a57b98255c5264f',
-      scorer_version: 'score-v3',
-      code_sha256: '5f31fcd160561000bb7ac1ac68bb40e9eed45ddd953215968aa75fec63374645',
+      golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
+      scorer_version: 'score-v4',
+      code_sha256: '5aa8780475dac3364ba9300d433a7dc2fca86ae54bf8c18a00d3af6c27654d10',
     },
     'text-v1': {
       golden_sha256: '8d171b14201054d1b2ef175c7f8606d2ac07c1726ca64df76e667c0216e917dc',

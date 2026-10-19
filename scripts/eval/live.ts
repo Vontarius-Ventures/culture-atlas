@@ -5,6 +5,7 @@ import {
   CatalogSnapshotSchema,
   ConcentrateVlm,
   ConcentrateVlmEnricher,
+  ConcentrateVlmVerifier,
   MemorySpendStore,
   ModelSpendLedger,
   ProviderError,
@@ -26,6 +27,7 @@ import {
   VlmEnrichmentV2,
   VlmQuickReadV1,
   VlmQuickReadV2,
+  VlmVerification,
 } from '../../packages/providers/src/index';
 import { structuredOutputContract } from '../../packages/providers/src/model-gateway/schema';
 import { RequestCounter } from '../qualify-concentrate-lib';
@@ -77,8 +79,12 @@ export interface LiveEvalOptions {
   /** Restrict to these photo ids (smoke runs); every listed id must exist in the split. */
   only?: readonly string[];
   profiles: ModelProfiles;
-  /** vision_photo alone (stage 1) or with vision_photo_enrich (both stages). */
-  roles: readonly ('vision_photo' | 'vision_photo_enrich')[];
+  /**
+   * vision_photo alone (stage 1), with vision_photo_enrich (both stages), and
+   * optionally vision_verify (the verifier after stage 2, on the compiler's own
+   * target selection; requires both stages).
+   */
+  roles: readonly ('vision_photo' | 'vision_photo_enrich' | 'vision_verify')[];
   /** Holds the catalog snapshot the profiles name; raw outputs and the scorecard are written here. */
   outDir: string;
   /** Repository root: --out-dir must be outside it. */
@@ -142,7 +148,7 @@ export function diagnoseInvalidOutput(
   stage: CallRecord['stage'],
   v1: boolean,
 ): { issues: { path: string; message: string }[]; output: unknown } {
-  const schema = stage === 'quick' ? (v1 ? VlmQuickReadV1 : VlmQuickReadV2) : v1 ? VlmEnrichmentV1 : VlmEnrichmentV2;
+  const schema = stage === 'verify' ? VlmVerification : stage === 'quick' ? (v1 ? VlmQuickReadV1 : VlmQuickReadV2) : v1 ? VlmEnrichmentV1 : VlmEnrichmentV2;
   try {
     const envelope = JSON.parse(body) as { output?: { type?: string; content?: { type?: string; text?: string }[] }[] };
     const text = (envelope.output ?? [])
@@ -172,10 +178,13 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   if (!stage1 || readingForProfile(stage1) !== 'quick') throw new Error('Need a quick-read vision_photo profile.');
   const enrichProfile = opts.roles.includes('vision_photo_enrich') ? opts.profiles.vision_photo_enrich : undefined;
   if (opts.roles.includes('vision_photo_enrich') && !enrichProfile) throw new Error('Need the vision_photo_enrich profile.');
+  const verifyProfile = opts.roles.includes('vision_verify') ? opts.profiles.vision_verify : undefined;
+  if (opts.roles.includes('vision_verify') && (!verifyProfile || !enrichProfile))
+    throw new Error('vision_verify needs its profile and both photo stages (it runs only after stage 2).');
   if (opts.pipeline.guardrailVersion === null) throw new Error('eval:live scores through the guarded pipeline only.');
 
   const snapshot = CatalogSnapshotSchema.parse(JSON.parse(await readFile(path.join(opts.outDir, CATALOG_SNAPSHOT_FILE), 'utf8')));
-  for (const p of [stage1, enrichProfile].filter((x): x is ModelProfile => !!x))
+  for (const p of [stage1, enrichProfile, verifyProfile].filter((x): x is ModelProfile => !!x))
     if (!catalogCompatible(p, snapshot)) throw new Error(`${p.role} profile is not catalog-compatible with the snapshot in --out-dir.`);
 
   // Hash check before anything is planned or sent.
@@ -186,9 +195,10 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     golden = { ...golden, manifest: { ...golden.manifest, photos: golden.manifest.photos.filter((p) => opts.only!.includes(p.id)) } };
   }
   const photos = await verifiedGoldenPhotos(golden, opts.photosDir, opts.split);
-  const perPhoto = enrichProfile ? 2 : 1;
+  // The verifier is called only when a reading has targets; the plan reserves it for every photo (worst case).
+  const perPhoto = 1 + (enrichProfile ? 1 : 0) + (verifyProfile ? 1 : 0);
   const plannedRequests = photos.length * perPhoto;
-  const worstCase = photos.length * (stage1.reservationMicros + (enrichProfile?.reservationMicros ?? 0));
+  const worstCase = photos.length * (stage1.reservationMicros + (enrichProfile?.reservationMicros ?? 0) + (verifyProfile?.reservationMicros ?? 0));
   if (plannedRequests > opts.maxRequests)
     throw new Error(`The run needs ${plannedRequests} requests; --max-requests is ${opts.maxRequests}.`);
   if (worstCase > opts.spendCapMicros) throw new Error('Worst-case reservation exceeds --spend-cap-usd.');
@@ -240,6 +250,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   });
   const quickVlm = new ConcentrateVlm(runnerFor(stage1));
   const enricher = enrichProfile ? new ConcentrateVlmEnricher(runnerFor(enrichProfile)) : undefined;
+  const verifier = verifyProfile ? new ConcentrateVlmVerifier(runnerFor(verifyProfile)) : undefined;
 
   const recordings: Recording[] = [];
   const failed: { photoId: string; call: CallRecord }[] = [];
@@ -249,7 +260,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     const incomplete = error instanceof Error && /incomplete|max_output_tokens/i.test(error.message);
     failed.push({ photoId, call: { stage, ms, valid: false, incomplete } });
     if (error instanceof ProviderError && error.kind === 'invalid_response' && lastBody) {
-      const profile = stage === 'quick' ? stage1 : enrichProfile!;
+      const profile = stage === 'quick' ? stage1 : stage === 'enrich' ? enrichProfile! : verifyProfile!;
       failures.push({ photoId, stage, ...diagnoseInvalidOutput(lastBody, stage, profile.schemaVersion.endsWith('_v1')) });
     }
     if (error instanceof Error && /Request cap reached/.test(error.message)) stoppedBy = 'request_cap';
@@ -294,6 +305,28 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
         fail(photo.id, 'enrich', error, Date.now() - started);
       }
     }
+    // The verifier, after stage 2, on exactly the claims the compiler would send it.
+    if (verifier && verifyProfile && rec.enrichment !== undefined && !stoppedBy) {
+      const pre = opts.pipeline.run(rec);
+      if (pre.verifyTargets.length) {
+        started = Date.now();
+        try {
+          const bounded = await boundJpegForProfile(bytes, verifyProfile.image);
+          const res = await verifier.verifyImage(
+            {
+              image: { bytes: bounded.bytes, mediaType: 'image/jpeg' },
+              claims: pre.verifyTargets.map((t) => ({ name: t.name, type: t.type })),
+              visibleText: [...pre.final.visible_text],
+            },
+            { maxRetries: 0, ...identity(photo.id, 'verify') },
+          );
+          rec.verification = res.verification;
+          rec.verifyMs = Date.now() - started;
+        } catch (error) {
+          fail(photo.id, 'verify', error, Date.now() - started);
+        }
+      }
+    }
     recordings.push(rec);
   }
 
@@ -325,7 +358,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   for (const r of recordings)
     await writeFile(
       path.join(opts.outDir, 'recordings', `${r.runId}.json`),
-      JSON.stringify({ quick: r.quick, enrichment: r.enrichment, quick_ms: r.quickMs, enrich_ms: r.enrichMs }, null, 2),
+      JSON.stringify({ quick: r.quick, enrichment: r.enrichment, quick_ms: r.quickMs, enrich_ms: r.enrichMs, verification: r.verification, verify_ms: r.verifyMs }, null, 2),
       { mode: 0o600 },
     );
 
@@ -333,7 +366,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   // Each final candidate carries its G-BRAND-CORROBORATE result, as the compiler passes it to grounding.
   const finals = new Map<string, (VlmAnalysis['candidates'][number] & { corroborated: boolean })[]>();
   for (const r of recordings) {
-    const { decisions, finalCandidates, ...run } = opts.pipeline.run(r);
+    const { decisions, finalCandidates, verifyTargets: _t, ...run } = opts.pipeline.run(r);
     runs.push(run);
     const corroborated = brandCorroboratedIds(decisions);
     finals.set(
@@ -361,7 +394,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
       for (const c of finals.get(run.photoId) ?? []) {
         const plan = q.grounding.planLookup(c);
         if (plan.kind === 'none') {
-          records.push({ candidate: c.name, accepted: false, plan: 'none', reason: plan.reason, candidateType: c.type, corroborated: c.corroborated });
+          records.push({ candidate: c.name, accepted: false, plan: 'none', reason: plan.reason, candidateType: c.type, corroborated: c.corroborated, textOnly: c.text_only === true });
           continue;
         }
         if ((await qCounter.used()) >= q.maxRequests) {
@@ -380,6 +413,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
             candidate: c.name,
             candidateType: c.type,
             corroborated: c.corroborated,
+            textOnly: c.text_only === true,
             accepted: !!m,
             entityType: m && 'entity_id' in m ? (m.types[0] ?? null) : null,
             tagFamily: m && 'type' in m && !('entity_id' in m) ? tagFamily(m.type) : null,
@@ -396,7 +430,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
             stoppedBy = `qloo_http_${error.status}`;
             break outer;
           }
-          records.push({ candidate: c.name, accepted: false, plan: plan.kind, query: plan.query, reason: 'request_failed', candidateType: c.type, corroborated: c.corroborated });
+          records.push({ candidate: c.name, accepted: false, plan: plan.kind, query: plan.query, reason: 'request_failed', candidateType: c.type, corroborated: c.corroborated, textOnly: c.text_only === true });
         }
         await sleep(q.spacingMs);
       }

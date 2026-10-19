@@ -95,5 +95,39 @@ describe('InspectorView', () => {
     expect(screen.getByText('No provider queries were made.')).toBeTruthy();
     expect(screen.getByText('No connected agent called the service for this job.')).toBeTruthy();
     expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.queryByRole('region', { name: /Reading decisions/ })).toBeNull();
+  });
+
+  it('lists guard and verifier decisions with their reason codes (text-only references, verifier answers)', () => {
+    const events: TraceResponse['events'] = [
+      {
+        at: '2026-10-13T10:00:01.000Z',
+        kind: 'stage',
+        name: 'guard',
+        data: {
+          stage: 2,
+          version: 'guard-v4',
+          decisions: [
+            { candidateId: 'c3', name: 'NBA', action: 'publish', rules: ['G-BRAND-CORROBORATE', 'G-TEXT-ONLY'], note: 'single_read_text_only' },
+            { candidateId: 'c4', name: '[withheld]', action: 'drop', rules: ['G-IDENTITY'], note: 'not_read_at_stage_2' },
+          ],
+        },
+        duration_ms: 0,
+      },
+      {
+        at: '2026-10-13T10:00:02.000Z',
+        kind: 'stage',
+        name: 'verify',
+        data: { status: 'complete', checks: [{ candidateId: 'c2', name: 'Fixture lustreware', answer: 'no', action: 'lower' }] },
+        duration_ms: 900,
+      },
+    ];
+    render(<InspectorView trace={{ ...trace, events }} />);
+    const region = screen.getByRole('region', { name: /Reading decisions/ });
+    expect(within(region).getByText(/Text-only reference: the name was read only in the second reading/)).toBeTruthy();
+    expect(within(region).getByText(/G-TEXT-ONLY/)).toBeTruthy();
+    expect(within(region).getByText('[withheld]')).toBeTruthy();
+    expect(within(region).getByText(/Verifier: not supported by the photo/)).toBeTruthy();
+    expect(within(region).getByText(/V-CHECK/)).toBeTruthy();
   });
 });

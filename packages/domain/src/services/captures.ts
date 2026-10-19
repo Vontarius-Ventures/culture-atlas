@@ -509,9 +509,13 @@ export async function loadAnalysisReferences(db: Queryable, analysisId: string):
     certainty: number | null;
     resolution_status: string;
     has_page: boolean;
+    text_only: boolean;
+    read_text: string | null;
+    verifier_check: string | null;
   }>(
     `SELECT r.id, r.canonical_name AS name, r.type, cr.relation, cr.certainty, cr.resolution_status,
-            (r.research_status = 'complete' AND r.overview IS NOT NULL) AS has_page
+            (r.research_status = 'complete' AND r.overview IS NOT NULL) AS has_page,
+            cr.text_only, cr.read_text, cr.verifier_check
        FROM capture_references cr JOIN cultural_references r ON r.id = cr.reference_id
       WHERE cr.analysis_id = $1 AND cr.resolution_status <> 'rejected'
       ORDER BY cr.enrichment_added, cr.is_anchor DESC, (cr.relation = 'user_selected') DESC,
@@ -523,9 +527,18 @@ export async function loadAnalysisReferences(db: Queryable, analysisId: string):
   for (const r of rows) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
+    // The verifier (vision_verify) can only mark a reference qualified ("no" or "unsure"), never remove it.
     const qualified =
-      r.relation === 'resembles' || r.resolution_status === 'unmatched' || r.resolution_status === 'ambiguous' || (r.certainty ?? 0) < 0.7;
-    out.push({ id: r.id, name: r.name, type: r.type, relation: r.relation, qualified: r.relation === 'user_selected' ? false : qualified, has_page: r.has_page });
+      r.relation === 'resembles' ||
+      r.resolution_status === 'unmatched' ||
+      r.resolution_status === 'ambiguous' ||
+      (r.certainty ?? 0) < 0.7 ||
+      r.verifier_check === 'no' ||
+      r.verifier_check === 'unsure';
+    const summary: ReferenceSummary = { id: r.id, name: r.name, type: r.type, relation: r.relation, qualified: r.relation === 'user_selected' ? false : qualified, has_page: r.has_page };
+    // A text-only reference (decision 2) is never a page or a confirmed match: it carries the text it was read from.
+    if (r.text_only && r.read_text) out.push({ ...summary, qualified: true, has_page: false, read_text: r.read_text });
+    else out.push(summary);
   }
   return out;
 }

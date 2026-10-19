@@ -73,10 +73,17 @@ export function deriveCaptureState(
 }
 
 export function referencePhrase(
-  ref: Pick<ReferenceSummary, 'name' | 'qualified' | 'relation'>,
+  ref: Pick<ReferenceSummary, 'name' | 'qualified' | 'relation'> & Pick<Partial<ReferenceSummary>, 'read_text'>,
 ): string {
+  // A text-only reference is a name read in the photo, not a match or a resemblance.
+  if (ref.read_text) return ref.name;
   if (ref.qualified || ref.relation === 'resembles') return `Resembles ${ref.name}`;
   return ref.name;
+}
+
+/** Attribution line for a text-only reference: the words it was read from, quoted as written. */
+export function readTextAttribution(ref: Pick<Partial<ReferenceSummary>, 'read_text'>): string | null {
+  return ref.read_text ? `Read in the photo: “${ref.read_text}”` : null;
 }
 
 export function CaptureResultView({ captureId }: { captureId: string }) {
@@ -411,7 +418,12 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
                     <Icon name="arrowRight" size={16} />
                   </Link>
                 ) : (
-                  <span className="reference-plain">{referencePhrase(ref)}</span>
+                  <span className="reference-plain">
+                    {referencePhrase(ref)}
+                    {readTextAttribution(ref) ? (
+                      <span className="reference-source">{readTextAttribution(ref)}</span>
+                    ) : null}
+                  </span>
                 )}
               </li>
             ))}

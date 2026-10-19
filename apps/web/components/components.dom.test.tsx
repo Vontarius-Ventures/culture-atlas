@@ -22,7 +22,7 @@ import { DiscoveryCard } from './DiscoveryCard';
 import { FilterRow } from './FilterRow';
 import { initialDestination, recentFirst } from './SavePicker';
 import { ToastProvider, useToast } from './Toast';
-import { deriveCaptureState, referencePhrase } from './views/CaptureResultView';
+import { deriveCaptureState, readTextAttribution, referencePhrase } from './views/CaptureResultView';
 import { defaultSelection, moveMembership } from './views/CollectionDetailView';
 import { backTarget } from './views/ItemView';
 import { addExclusions } from './views/PlanFormView';
@@ -308,6 +308,14 @@ describe('view logic', () => {
     expect(referencePhrase({ name: 'Eames chair', qualified: false, relation: 'depicted' })).toBe(
       'Eames chair',
     );
+  });
+
+  it('shows a text-only reference by name with the text it was read from, never as a resemblance', () => {
+    const nba = { name: 'NBA', qualified: true, relation: 'depicted' as const, read_text: 'NBA' };
+    expect(referencePhrase(nba)).toBe('NBA');
+    expect(readTextAttribution(nba)).toBe('Read in the photo: “NBA”');
+    expect(readTextAttribution({ read_text: null })).toBeNull();
+    expect(readTextAttribution({})).toBeNull();
   });
 
   it('builds Back targets from where the item was opened', () => {

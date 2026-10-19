@@ -7,8 +7,8 @@ import { fetchGoldenPhotos, verifiedGoldenPhotos } from './golden-photos';
 import { loadGoldenSet, loadThresholds } from './labels';
 import * as grounding from '../../packages/domain/src/compiler/grounding';
 import { runLiveEval } from './live';
-import { unguardedPipeline } from './pipeline';
-import { loadReplayFixtures } from './replay';
+import { runtimeGuardedPipeline, runtimeGuardedPipelineWithoutVerifier, unguardedPipeline } from './pipeline';
+import { loadReplayFixtures, runReplay } from './replay';
 import { syntheticGolden, versionedTestPipeline } from './test-golden';
 
 /**
@@ -258,6 +258,74 @@ describe('eval:live (offline rails)', () => {
     expect(result.grounding).toMatchObject({ pass: false, metrics: { lookups: 1, accepted: 1, forbidden_accepts: 0, grounding_precision: null } });
     expect(result.grounding!.gates.find((g) => g.metric === 'labelled_candidates')).toMatchObject({ value: 1, pass: false });
     expect(JSON.parse(await readFile(path.join(out, 'scorecard.json'), 'utf8')).grounding_gate).toMatchObject({ pass: false });
+  });
+
+  it('with vision_verify, checks the compiler\'s verifier targets after stage 2 and re-scores with and without the verifier', async () => {
+    const { g, golden, thresholds } = await setup(['p01']);
+    const quickV2 = { ...quickProfile, promptVersion: 'vlm-quick-v2', schemaVersion: 'atlas_quick_read_v2' } as ModelProfile;
+    const enrichV2 = { ...enrichProfile, promptVersion: 'vlm-enrich-v2', schemaVersion: 'atlas_enrichment_v2', maxOutputTokens: 1600 } as ModelProfile;
+    const verifyP = { ...enrichProfile, role: 'vision_verify', promptVersion: 'vlm-verify-v1', schemaVersion: 'atlas_verify_v1', maxOutputTokens: 600 } as ModelProfile;
+    // FIXTURE replies: stage 2 hedges the style (weak), so it is a verifier target; the verifier answers "no".
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const name: string = JSON.parse(init.body as string).text.format.name;
+      const body =
+        name === 'atlas_verify_v1'
+          ? { checks: [{ name: 'Fixture lustreware', answer: 'no', reason: 'The label names another origin' }] }
+          : name.includes('enrich')
+            ? {
+                observations: [],
+                visible_text: [],
+                illegible_text_present: false,
+                confirmed: [{ name: 'Fixture lustreware', rationale: 'Could be several glazes', verdict: 'weak' }],
+                additional_candidates: [],
+                regions: [],
+                uncertainty: { overall: 'medium', notes: [] },
+                competing_subjects: [],
+              }
+            : {
+                title: 'Glazed bowls',
+                interpretation: 'Bowls that resemble a lustre glaze.',
+                candidates: [{ name: 'Fixture lustreware', type: 'style', relation: 'resembles', certainty: 0.6, domain: 'craft', evidence: 'distinctive_form', evidence_text: null, tag_query: 'lustreware' }],
+                quality: { usable: true, issue: null },
+              };
+      return new Response(
+        JSON.stringify({ id: 'resp', model: 'fixture/vision-1', status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(body) }] }], usage: { input_tokens: 1000, output_tokens: 100 } }),
+      );
+    });
+    const out = await outDir();
+    const common = {
+      golden,
+      photosDir: g.photosDir,
+      split: 'all' as const,
+      profiles: { vision_photo: quickV2, vision_photo_enrich: enrichV2, vision_verify: verifyP },
+      roles: ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const,
+      outDir: out,
+      repoRoot: root,
+      spendCapMicros: 500_000,
+      pipeline: runtimeGuardedPipeline,
+      thresholds,
+      fetch: fetchImpl as unknown as typeof fetch,
+    };
+    // The plan reserves the verifier for every photo; it needs both stages.
+    await expect(runLiveEval({ ...common, maxRequests: 3, confirmPaidRequests: false })).resolves.toMatchObject({ plannedRequests: 3 });
+    await expect(
+      runLiveEval({ ...common, roles: ['vision_photo', 'vision_verify'], maxRequests: 3, confirmPaidRequests: false }),
+    ).rejects.toThrow('both photo stages');
+    const result = await runLiveEval({ ...common, maxRequests: 3, confirmPaidRequests: true, apiKey: KEY });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    const sent = JSON.parse(fetchImpl.mock.calls[2]![1].body as string) as { text: { format: { name: string } }; input: { content: { type: string; text?: string }[] }[] };
+    expect(sent.text.format.name).toBe('atlas_verify_v1');
+    expect(sent.input[0]!.content.find((c) => c.type === 'input_text')!.text).toContain('Fixture lustreware');
+    expect(result.scorecard!.splits.tune!.metrics).toMatchObject({ verifier_checked: 1, published: 1 });
+    // The recording keeps the verifier reply, so the same readings re-score with and without it, offline.
+    const { recordings } = await loadReplayFixtures(path.join(out, 'recordings'));
+    expect(recordings[0]!.verification).toEqual({ checks: [{ name: 'Fixture lustreware', answer: 'no', reason: 'The label names another origin' }] });
+    const withV = runReplay(golden, recordings, runtimeGuardedPipeline, thresholds, 'live');
+    const without = runReplay(golden, recordings, runtimeGuardedPipelineWithoutVerifier, thresholds, 'live');
+    expect(withV.runs[0]!.final.candidates.map((c) => [c.name, c.verifier, c.certainty])).toEqual([['Fixture lustreware', 'no', 0.3]]);
+    expect(without.runs[0]!.final.candidates.map((c) => [c.name, c.verifier ?? null, c.certainty])).toEqual([['Fixture lustreware', null, 0.6]]);
+    // Nothing is ever removed by the verifier.
+    expect(withV.scorecard.splits.tune!.metrics.published).toBe(without.scorecard.splits.tune!.metrics.published);
   });
 
   it('stops at the first 429 without retrying and counts the failure against M13', async () => {

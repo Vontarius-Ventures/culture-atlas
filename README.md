@@ -106,6 +106,7 @@ All names are in [.env.example](.env.example) with defaults in comments. The one
 | `FEATURE_KILL_SWITCHES`, `META_GLASSES_*` | v2 feature flags | Server-side flags; kill switches can only turn features off (`pnpm ops:kill`) |
 | `QLOO_API_KEY`, `QLOO_API_URL`, `QLOO_MAX_CONCURRENCY` | related discoveries, onboarding search, taste seed | Default URL `https://hackathon.api.qloo.com`; at most `QLOO_MAX_CONCURRENCY` (default 3) requests in flight per process, shared by every Qloo caller |
 | `ONBOARDING_REQUIRED`, `TASTE_SEED_ENABLED`, `WHILE_WE_LOOK_ENABLED` | amendment 2.2 | Default on; killable like other flags. `fast_analysis_two_stage` turns on only with a qualified `vision_photo_enrich` profile |
+| `ANALYSIS_VERIFIER_ENABLED` | photo-role requalification | Default off. The verifier (`vision_verify`) runs only when this is `true`, the two-stage reading runs and the role is qualified; kill switch `analysis_verifier_enabled` (docs/requalification-plan.md) |
 | `WIKIMEDIA_USER_AGENT` | reference research | Descriptive User-Agent with contact info |
 | `STORAGE_DRIVER` | media | `local` (default, `.data/objects`, needs `STORAGE_SIGNING_SECRET`), `s3` (deployments) or `memory` (tests) |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `s3` storage | Any S3-compatible private bucket |

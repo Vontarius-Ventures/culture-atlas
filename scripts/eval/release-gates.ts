@@ -66,11 +66,13 @@ export interface GroundingJudgement {
   findable?: boolean;
 }
 
-export type GroundingRecord = QlooAcceptRecord & { candidateType?: string; corroborated?: boolean };
+export type GroundingRecord = QlooAcceptRecord & { candidateType?: string; corroborated?: boolean; textOnly?: boolean };
 
 /** Why an accepted record breaks a grounding rule, or null. */
 export function forbiddenAccept(r: GroundingRecord, label?: PhotoLabel): string | null {
   if (!r.accepted) return null;
+  // Decision 2: a text-only reference is never searched, so it can never be accepted.
+  if (r.textOnly === true) return 'text_only_searched';
   if (r.plan === 'search' && r.candidateType === 'object' && r.corroborated === false) return 'object_searched';
   if (r.plan === 'search' && (r.candidateType === 'brand' || r.entityType === 'urn:entity:brand') && r.corroborated === false) return 'brand_without_corroboration';
   if (r.tagFamily && FORBIDDEN_TAG_FAMILIES.some((f) => r.tagFamily === f || r.tagFamily!.startsWith(`${f}:`))) return 'forbidden_tag_family';
@@ -91,9 +93,11 @@ export function scoreGrounding(
   const judged = new Map(judgements.map((j) => [`${j.photo}|${j.candidate}`, j]));
   const lookups = rows.flatMap((r) => r.records.filter((x) => x.plan && x.plan !== 'none').map((x) => ({ photo: r.photo, r: x })));
   const accepted = lookups.filter((l) => l.r.accepted);
-  const forbidden = accepted
-    .map((l) => ({ photo: l.photo, candidate: l.r.candidate, why: forbiddenAccept(l.r, labels.get(l.photo)) }))
-    .filter((f): f is { photo: string; candidate: string; why: string } => f.why !== null);
+  const forbidden = [
+    ...accepted.map((l) => ({ photo: l.photo, candidate: l.r.candidate, why: forbiddenAccept(l.r, labels.get(l.photo)) })),
+    // A text-only reference must never reach Qloo at all: even a rejected lookup is a forbidden search.
+    ...lookups.filter((l) => l.r.textOnly === true && !l.r.accepted).map((l) => ({ photo: l.photo, candidate: l.r.candidate, why: 'text_only_searched' })),
+  ].filter((f): f is { photo: string; candidate: string; why: string } => f.why !== null);
   const verdict = (l: (typeof lookups)[number]) => judged.get(`${l.photo}|${l.r.candidate}`);
   const allAcceptedJudged = accepted.every((l) => typeof verdict(l)?.correct_match === 'boolean');
   const allE2eJudged = accepted.every((l) => typeof verdict(l)?.correct_match === 'boolean' && typeof verdict(l)?.good_candidate === 'boolean');
@@ -104,6 +108,8 @@ export function scoreGrounding(
     labelled_candidates: lookups.length,
     holdout_candidates: lookups.filter((l) => labels.get(l.photo)?.split === 'holdout').length,
     forbidden_accepts: forbidden.length,
+    // Lookups planned for a text-only reference (decision 2): must be 0, accepted or not.
+    text_only_searched: lookups.filter((l) => l.r.textOnly === true).length,
     doubtful_name_published: accepted.filter((l) => l.r.rule === 'Q-DOUBT').length,
     // Accepted brand or object searches whose record does not say whether the brand was read
     // (records written before eval:live stored it): reported, they cannot be checked here.

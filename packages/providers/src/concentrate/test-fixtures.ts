@@ -68,6 +68,17 @@ export const enrichProfileV2: ModelProfile = {
   schemaVersion: 'atlas_enrichment_v2',
   maxOutputTokens: 1600,
 };
+/** The independent verifier (vision_verify): one batched check at 768 px, effort none. */
+export const verifyProfile: ModelProfile = {
+  ...profile,
+  role: 'vision_verify',
+  promptVersion: 'vlm-verify-v1',
+  schemaVersion: 'atlas_verify_v1',
+  reasoningEffort: 'none',
+  maxOutputTokens: 600,
+  timeoutMs: 20_000,
+  image: { maxBytes: 120_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
+};
 export const validQuickReadV2 = {
   title: 'Sesame noodle supper',
   interpretation: 'A bowl of noodles that resembles a Sichuan street-food supper.',

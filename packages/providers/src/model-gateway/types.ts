@@ -7,7 +7,9 @@ export type ModelRole =
   | 'research_text'
   | 'composer'
   /** Stage-2 background photo enrichment (spec amendment 2.2). */
-  | 'vision_photo_enrich';
+  | 'vision_photo_enrich'
+  /** Independent background verifier after stage 2 (docs/requalification-plan.md); off by default. */
+  | 'vision_verify';
 export interface ModelIdentity {
   accountId: string;
   jobId: string;

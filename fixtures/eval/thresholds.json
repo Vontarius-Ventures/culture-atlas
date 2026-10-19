@@ -1,5 +1,6 @@
 {
-  "version": "thr-v1",
+  "version": "thr-v2",
+  "two_stage_only": ["M5", "M9"],
   "replay": {
     "M1": { "op": "==", "value": 0 },
     "M2": { "op": "<=", "value": 0.03 },
@@ -40,9 +41,9 @@
     "M5": { "op": ">=", "value": 0.8 }
   },
   "grounding": {
-    "grounding_precision_min": 0.95,
+    "grounding_precision_min": 1,
     "end_to_end_precision_min": 0.9,
-    "recall_min": 0.6,
+    "recall_min": 0.5,
     "forbidden_accepts_max": 0,
     "doubtful_name_published_max": 0,
     "labelled_candidates_min": 40,

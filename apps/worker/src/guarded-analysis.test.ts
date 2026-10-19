@@ -174,8 +174,8 @@ describe('reading guardrails in the compiler', () => {
 
     const trace = await guardTrace(job_id);
     expect(trace.map((t) => [t.stage, t.version])).toEqual([
-      [1, 'guard-v3'],
-      [2, 'guard-v3'],
+      [1, 'guard-v4'],
+      [2, 'guard-v4'],
     ]);
     expect(trace[0]!.decisions.map((d) => [d.name, d.action])).toEqual([
       ['Vintage Racing', 'publish'],
@@ -207,6 +207,66 @@ describe('reading guardrails in the compiler', () => {
       ['Fixture Denim Co', 'drop', 'stage_2_timeout'],
       ['Fixturo X-Trail', 'drop', 'stage_2_timeout'],
     ]);
+  });
+
+  it('lists a name read only at stage 2 as a text-only reference: never searched, anchored, researched or a subject choice', async () => {
+    const court = VlmQuickRead.parse({
+      title: 'An outdoor basketball hoop',
+      interpretation: 'A hoop against a clear sky.',
+      candidates: [{ name: 'Streetball', type: 'tradition', relation: 'resembles', certainty: 0.7, domain: 'sport', evidence: 'distinctive_form', evidence_text: null, tag_query: 'streetball' }],
+      quality: { usable: true, issue: null },
+    });
+    const enrichment = VlmEnrichment.parse({
+      observations: [{ text: 'A metal hoop with a net', kind: 'object' }],
+      visible_text: ['NBA', 'FIXTURE LEBROOK 23'],
+      illegible_text_present: false,
+      confirmed: [{ name: 'Streetball', rationale: 'Outdoor court hoop', verdict: 'supported' }],
+      additional_candidates: [
+        { name: 'NBA', type: 'brand', relation: 'depicted', certainty: 0.8, domain: 'sport', evidence: 'logo', evidence_text: 'NBA', tag_query: null, rationale: 'Logo on the backboard' },
+        { name: 'Fixture Lebrook', type: 'creator', relation: 'depicted', certainty: 0.8, domain: 'people', evidence: 'read_text', evidence_text: 'FIXTURE LEBROOK', tag_query: null, rationale: 'Jersey lettering' },
+      ],
+      regions: [],
+      uncertainty: { overall: 'medium', notes: [] },
+      competing_subjects: ['The hoop', 'Fixture Lebrook'],
+    });
+    const qloo = fakeQloo();
+    const { providers } = world({ overrides: { vlm: new QuickVlm(court), vlmEnrich: new ScriptedEnricher(async () => enrichment), qloo } });
+    const ctx = await accountCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+
+    // Listed under "Explore the references" with the text each was read from, after the stage-1 reference.
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    const listed = view.references.map((r) => [r.name, r.read_text ?? null, r.has_page]);
+    expect(listed[0]![0]).toBe('Streetball');
+    expect(listed.slice(1)).toEqual(
+      expect.arrayContaining([
+        ['NBA', 'NBA', false],
+        ['Fixture Lebrook', 'FIXTURE LEBROOK 23', false],
+      ]),
+    );
+    expect(view.references.filter((r) => r.read_text).every((r) => r.qualified)).toBe(true);
+    // Never searched in Qloo, never an anchor or a research target, never a "What caught your eye?" choice.
+    const q = lookups(qloo);
+    expect(q).not.toContain('NBA');
+    expect(q).not.toContain('nba');
+    expect(q).not.toContain('Fixture Lebrook');
+    const rows = await db.query<{ name: string; is_anchor: boolean; text_only: boolean; read_text: string | null; research_status: string }>(
+      `SELECT r.canonical_name AS name, cr.is_anchor, cr.text_only, cr.read_text, r.research_status
+         FROM capture_references cr JOIN cultural_references r ON r.id = cr.reference_id JOIN analyses a ON a.id = cr.analysis_id
+        WHERE a.capture_id = $1 AND cr.text_only ORDER BY r.canonical_name`,
+      [capture_id],
+    );
+    expect(rows.rows.map((r) => [r.name, r.is_anchor, r.read_text])).toEqual([
+      ['Fixture Lebrook', false, 'FIXTURE LEBROOK 23'],
+      ['NBA', false, 'NBA'],
+    ]);
+    expect(rows.rows.every((r) => r.research_status !== 'complete')).toBe(true);
+    const question = view.analysis!.question;
+    expect((question?.choices ?? []).map((c) => c.label)).not.toContain('Fixture Lebrook');
+    // The inspector's reason code is in the trace.
+    const trace = await guardTrace(job_id);
+    expect(trace[1]!.decisions.filter((d) => d.note === 'single_read_text_only').map((d) => d.name).sort()).toEqual(['Fixture Lebrook', 'NBA']);
   });
 
   it('a photo the model calls blurred publishes no candidate and asks for a clearer photo', async () => {

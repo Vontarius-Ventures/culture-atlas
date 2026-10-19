@@ -75,6 +75,23 @@ export type ForbiddenEntry = z.infer<typeof ForbiddenEntrySchema>;
 
 export const PHOTO_ID = /^(p|h)\d{2}$/;
 
+/**
+ * One recorded change to a label after it was first written: when, what
+ * changed, and why (an owner decision or a labelling error). A label is never
+ * edited silently; every edit also changes EVAL_BINDING, which un-qualifies
+ * every role scored on the old label.
+ */
+export const LabelHistoryEntrySchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    change: z.string().min(1),
+    reason: z.string().min(1),
+    /** The decision that allowed the change (e.g. "docs/requalification-plan.md decision 1"). */
+    decision: z.string().min(1).optional(),
+  })
+  .strict();
+export type LabelHistoryEntry = z.infer<typeof LabelHistoryEntrySchema>;
+
 export const PhotoLabelSchema = z
   .object({
     id: z.string().regex(PHOTO_ID),
@@ -111,6 +128,8 @@ export const PhotoLabelSchema = z
       .strict()
       .default({ forbidden_entity_types: [], forbidden_tag_families: [] }),
     notes: z.string().optional(),
+    /** Changes made to this label after it was first written, oldest first. */
+    history: z.array(LabelHistoryEntrySchema).optional(),
   })
   .strict()
   .superRefine((l, ctx) => {
@@ -183,11 +202,19 @@ export type GoldenManifest = z.infer<typeof GoldenManifestSchema>;
 
 export const GateSchema = z.object({ op: z.enum(['<=', '>=', '==']), value: z.number().min(0) }).strict();
 export type Gate = z.infer<typeof GateSchema>;
-const gates = z.record(z.string().regex(/^M\d+(_[a-z0-9]+)*$/), GateSchema);
+const METRIC = /^M\d+(_[a-z0-9]+)*$/;
+const gates = z.record(z.string().regex(METRIC), GateSchema);
 /** Versioned pass thresholds (fixtures/eval/thresholds.json). Changing them needs the owner and a version bump. */
 export const ThresholdsSchema = z
   .object({
     version: z.string().regex(/^thr-v\d+$/),
+    /**
+     * thr-v2 (docs/requalification-plan.md decision 3): metrics gated only on
+     * a two-stage scorecard (quick read + enrichment + guards). A stage-1-only
+     * scorecard reports them but is not gated on them; its own coverage gate
+     * is M15 (stage-1 publishable share). No gate value differs by run kind.
+     */
+    two_stage_only: z.array(z.string().regex(METRIC)).default([]),
     /** Hermetic and local replays (tune split). */
     replay: gates,
     /** Live evaluation and re-qualification, every split. */

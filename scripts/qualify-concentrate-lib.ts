@@ -291,6 +291,11 @@ export async function qualifyProfile(
     throw new Error(
       'Profile is not catalog-compatible: pin a model/provider from the snapshot and set catalogSnapshotAt to its fetched_at.',
     );
+  // The verifier is scored on the two-stage readings it checks (eval:live --roles ...,vision_verify);
+  // its qualification run is added only if the tune-split evaluation enables it. Until then it stays
+  // unqualified (qualificationState requires a golden-v1 eval block), so production never dispatches it.
+  if (profile.role === 'vision_verify')
+    throw new Error('vision_verify is not qualified by this script yet: it stays off until the tune-split evaluation enables it (docs/requalification-plan.md).');
   const enrich = profile.role === 'vision_photo_enrich';
   const stage1 = enrich ? opts.stage1Profile : undefined;
   if (enrich) {

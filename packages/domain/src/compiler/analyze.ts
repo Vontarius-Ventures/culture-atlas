@@ -15,6 +15,10 @@ import {
   type Stage1Guard,
   type VlmCandidate,
   type VlmEnrichment,
+  type VlmVerdict,
+  type VlmVerification,
+  type VerifyTarget,
+  applyVerification,
   brandCorroboratedIds,
   candidateNameKey,
   confirmationVerdict,
@@ -23,6 +27,8 @@ import {
   mergeEnrichmentContext,
   stage2Request,
   validateVision,
+  verifiedCertainty,
+  verifierTargets,
 } from '@culture-atlas/providers';
 import { activeKills } from '../flags/feature-flags';
 import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionStatus, type SectionStatus } from '../enums';
@@ -112,6 +118,13 @@ export interface ResolvedRef {
   boxes: { x: number; y: number; w: number; h: number }[];
   /** Qloo grounding decision (docs/quality-plan.md §5); absent for a reference confirmed in an earlier correction. */
   grounding?: { lookup: 'none' | 'tags' | 'search'; rule: string; reason: string; doubt: boolean };
+  /**
+   * A text-only reference (G-TEXT-ONLY, requalification decision 2): listed
+   * with the text it was read from (readText), never resolved, anchored,
+   * researched or used as a discovery signal.
+   */
+  textOnly?: boolean;
+  readText?: string | null;
 }
 
 interface ObserveOutput {
@@ -121,6 +134,24 @@ interface ObserveOutput {
   quickRead?: boolean;
   /** A reviewed example replay, not a model reading. */
   example?: boolean;
+}
+
+/** Verifier output, cached by runStage so a retried attempt never dispatches it twice. */
+interface VerifyOutput {
+  verification: VlmVerification | null;
+  model: string | null;
+  errorCode: string | null;
+}
+
+interface VerifySummary {
+  status: 'complete' | 'skipped' | 'failed';
+  reason?: string | null;
+  model?: string | null;
+  targets?: number;
+  lowered?: number;
+  qualified?: number;
+  /** One per checked claim (style, place and tradition names only; never a person). */
+  checks?: { candidateId: string; name: string; answer: string; action: string; reason: string }[];
 }
 
 /** Stage-2 model output, cached by runStage so a retried attempt never dispatches it twice. */
@@ -141,6 +172,8 @@ interface EnrichSummary {
   /** Held stage-1 claims that stage 2 confirmed (published through the append path). */
   heldPublished?: number;
   resolvedAdditions?: number;
+  /** Text-only references listed (G-TEXT-ONLY): never resolved, anchored or researched. */
+  textOnly?: number;
   appended?: Record<string, number>;
 }
 
@@ -227,6 +260,10 @@ export class CaptureCompiler {
   private example: ExampleReplay | null = null;
   /** Two-stage plan, decided before stage 1 (both calls reserved together). */
   private twoStage: { enabled: boolean; reason: string | null } = { enabled: false, reason: 'not_planned' };
+  /** Verifier plan (vision_verify), decided with the two-stage plan; its call is reserved up front too. */
+  private verifierPlan: { enabled: boolean; reason: string | null } = { enabled: false, reason: 'not_planned' };
+  /** The guarded stage-2 reading and its verdicts, kept for the verifier's target selection. */
+  private stage2Final: { analysis: VlmAnalysis; verdicts: Readonly<Record<string, VlmVerdict>> } | null = null;
   constructor(private readonly ctx: JobContext<'analyze_capture'>) {
     this.softDeadlineAt = this.startedAt + Math.floor(ctx.budget.deadlineMs * 0.75);
     this.traceId = ctx.job.trace_id;
@@ -324,6 +361,7 @@ export class CaptureCompiler {
     const rejectedIds = new Set(correction?.reject_reference_ids ?? []);
     // Two-stage reading (amendment 2.2): decide up front and reserve both calls.
     this.twoStage = await this.planTwoStage(!!ctx.payload.media_analysis_id);
+    this.verifierPlan = await this.planVerifier(!!ctx.payload.media_analysis_id);
     const observed = await ctx.runStage<ObserveOutput>('observe', () => this.observe(rejectedNames, confirmed));
     // Guardrails (docs/quality-plan.md §4): pure and deterministic, so a retried
     // attempt recomputes the same decisions from the cached reading. Only the
@@ -394,6 +432,13 @@ export class CaptureCompiler {
     if (enriched.status !== 'complete' && guarded.held.length)
       await this.traceGuardDecisions(2, guarded.held.map((c) => ({ candidateId: c.id, name: c.name, action: 'drop' as const, rules: ['G-VERDICT'], note: `stage_2_${enriched.reason ?? enriched.status}` })));
 
+    // ---- verify (background, after stage 2; lowers or qualifies only) -------
+    if (enriched.status === 'complete') {
+      t0 = Date.now();
+      const verified = await this.verifyStage(resolved);
+      await this.traceStage('verify', t0, { ...verified });
+    }
+
     // ---- research ----------------------------------------------------------
     await ctx.setStage('researching');
     t0 = Date.now();
@@ -402,7 +447,8 @@ export class CaptureCompiler {
     } else {
       await this.section('research', 'running');
       const targets = [...resolved.refs]
-        .filter((r) => r.resolution !== 'ambiguous')
+        // A text-only reference is shown with its read text only: no sourced page about a name read once.
+        .filter((r) => r.resolution !== 'ambiguous' && !r.textOnly)
         .sort((a, b) => Number(b.isAnchor) - Number(a.isAnchor) || b.certainty - a.certainty)
         .map((r) => ({ referenceId: r.referenceId, name: r.name, type: r.type }));
       const research = await researchReferences({
@@ -1004,6 +1050,152 @@ export class CaptureCompiler {
     return { enabled: true, reason: null };
   }
 
+  /** Operator kills that turn the verifier off: its own, or two-stage reading, or analysis as a whole. */
+  private async verifierKilled(): Promise<boolean> {
+    const killed = await activeKills(this.ctx.db, this.ctx.job.owner_account_id ?? NIL_UUID, this.ctx.config);
+    return killed.has('analysis_verifier_enabled') || killed.has('fast_analysis_two_stage') || killed.has('concentrate_analysis_enabled');
+  }
+
+  /**
+   * analysis_verifier_enabled for this job (docs/requalification-plan.md):
+   * default off. On only with ANALYSIS_VERIFIER_ENABLED, a two-stage plan, a
+   * usable (qualified) vision_verify role, no kill, and room for its call:
+   * reserved now, before stage 1, together with both photo stages in the spend
+   * ledger and in the job's vision-call budget. When it cannot be reserved the
+   * two-stage reading still runs, without the verifier.
+   */
+  private async planVerifier(fromMedia: boolean): Promise<{ enabled: boolean; reason: string | null }> {
+    const { ctx } = this;
+    const off = (reason: string) => ({ enabled: false, reason });
+    if (!this.twoStage.enabled) return off('two_stage_off');
+    const opted = ctx.config.ANALYSIS_VERIFIER_ENABLED;
+    if (opted !== 'true' && opted !== '1') return off('not_enabled');
+    if (!isUsable(ctx.providers.vlmVerify.capability())) return off('verify_unavailable');
+    if (await this.verifierKilled()) return off('killed');
+    const gateway = ctx.providers.modelGateway;
+    const verifyRunner = gateway?.runners.vision_verify;
+    if (verifyRunner && gateway?.ledger) {
+      const accountId = ctx.job.owner_account_id;
+      if (!accountId) return off('no_account');
+      const stage1 = fromMedia ? undefined : gateway.runners.vision_photo?.profile;
+      const enrich = gateway.runners.vision_photo_enrich?.profile;
+      const profiles = [...(stage1 ? [stage1] : []), ...(enrich ? [enrich] : []), verifyRunner.profile];
+      if (!(await gateway.ledger.canReserveAll({ accountId, jobId: ctx.job.id }, profiles))) return off('budget');
+    }
+    if (!this.budget.reserveVisionCalls(1)) return off('budget');
+    return { enabled: true, reason: null };
+  }
+
+  /**
+   * The verifier, in the background after stage 2 published. It checks only
+   * published, non-anchor style, place and tradition claims that stage 2
+   * hedged or that the read text does not bear out (verifierTargets), and can
+   * only lower a reference's certainty ("no") or mark it qualified ("no",
+   * "unsure"): no row is removed, no card is touched, an anchor never changes.
+   * A failed call changes nothing.
+   */
+  private async verifyStage(resolved: ResolveOutput): Promise<VerifySummary> {
+    const { ctx } = this;
+    if (!this.verifierPlan.enabled) return { status: 'skipped', reason: this.verifierPlan.reason };
+    const final = this.stage2Final;
+    if (!final) return { status: 'skipped', reason: 'no_stage_2' };
+    if (this.pastSoftDeadline()) return { status: 'skipped', reason: 'deadline' };
+    if (await this.verifierKilled()) return { status: 'skipped', reason: 'killed' };
+    const anchors = new Set(resolved.refs.filter((r) => r.isAnchor).map((r) => candidateNameKey(r.candidateName)));
+    const targets = verifierTargets({
+      candidates: final.analysis.candidates,
+      verdicts: final.verdicts,
+      texts: final.analysis.visible_text.map((t) => t.text),
+      anchors,
+    });
+    if (!targets.length) return { status: 'skipped', reason: 'no_targets' };
+    const out = await ctx.runStage<VerifyOutput>('verify', () => this.verify(targets, final.analysis));
+    if (!out.verification) return { status: 'failed', reason: out.errorCode, model: out.model, targets: targets.length };
+    const checks = applyVerification(targets, out.verification);
+    let lowered = 0;
+    let qualified = 0;
+    await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
+      for (const check of checks) {
+        const key = candidateNameKey(check.name);
+        const refs = resolved.refs.filter(
+          (r) => !r.isAnchor && !r.textOnly && r.relation !== 'user_selected' && r.resolution !== 'rejected' && candidateNameKey(r.candidateName) === key,
+        );
+        for (const r of refs) {
+          r.certainty = verifiedCertainty(r.certainty, check);
+          // Only ever lowers (LEAST) and records the answer; the published order stays (published_certainty).
+          await tx.query(
+            `UPDATE capture_references SET published_certainty = COALESCE(published_certainty, certainty),
+                    certainty = LEAST(certainty, $4), verifier_check = $5
+              WHERE analysis_id = $1 AND reference_id = $2 AND relation = $3 AND NOT is_anchor AND NOT text_only`,
+            [this.analysisId, r.referenceId, r.relation, r.certainty, check.answer],
+          );
+          if (check.action === 'lower') lowered++;
+          if (check.action !== 'keep') qualified++;
+        }
+      }
+    });
+    return {
+      status: 'complete',
+      model: out.model,
+      targets: targets.length,
+      lowered,
+      qualified,
+      checks: checks.map((c) => ({ candidateId: c.candidateId, name: c.name, answer: c.answer, action: c.action, reason: c.reason })),
+    };
+  }
+
+  /** One verifier call on the analysis image (the same image stage 2 read). */
+  private async verify(targets: readonly VerifyTarget[], analysis: VlmAnalysis): Promise<VerifyOutput> {
+    const { ctx } = this;
+    const object = this.capture.private_object_key ? await ctx.providers.storage.get(this.capture.private_object_key) : null;
+    if (!object) return { verification: null, model: null, errorCode: 'image_missing' };
+    const counter = attemptCounter();
+    const started = Date.now();
+    const request = { model_capability: ctx.providers.vlmVerify.id, claims: targets.length, reasons: targets.map((t) => t.reason) };
+    try {
+      const res = await ctx.providers.vlmVerify.verifyImage(
+        {
+          image: { bytes: object.body, mediaType: 'image/jpeg' },
+          claims: targets.map((t) => ({ name: t.name, type: t.type })),
+          visibleText: analysis.visible_text.map((t) => t.text),
+        },
+        {
+          ...this.callOptions('verify'),
+          timeoutMs: Math.max(1, Math.min(ENRICH_TIMEOUT_MS, this.softDeadlineAt - Date.now())),
+          onAttempt: counter.observer,
+        },
+      );
+      await recordProviderQuery(ctx.db, {
+        parent: { analysisId: this.analysisId },
+        provider: 'vlm',
+        operation: 'verify_image',
+        request,
+        results: { model: res.model, checks: res.verification.checks.map((c) => ({ name: c.name, answer: c.answer })) },
+        status: 'ok',
+        durationMs: Date.now() - started,
+        queryContext: { stage: 'verify', attempts: counter.count() },
+        traceId: this.traceId,
+      });
+      return { verification: res.verification, model: res.model, errorCode: null };
+    } catch (err) {
+      if (ctx.signal.aborted || (isProviderError(err) && err.kind === 'aborted')) throw err;
+      const e = errorSummary(err);
+      await recordProviderQuery(ctx.db, {
+        parent: { analysisId: this.analysisId },
+        provider: 'vlm',
+        operation: 'verify_image',
+        request,
+        status: 'error',
+        errorCode: e.code,
+        httpStatus: e.status,
+        durationMs: Date.now() - started,
+        queryContext: { stage: 'verify', attempts: counter.count() },
+        traceId: this.traceId,
+      });
+      return { verification: null, model: null, errorCode: e.code };
+    }
+  }
+
   private async enrichStage(
     observed: ObserveOutput,
     guarded: Stage1Guard,
@@ -1113,20 +1305,27 @@ export class CaptureCompiler {
     const enrichment = out.enrichment!;
     let merged: VlmAnalysis;
     let stage2: ReturnType<typeof guardEnrichment>;
+    let verdicts: Readonly<Record<string, VlmVerdict>>;
     try {
       const raw = mergeEnrichmentContext(base, enrichment, guarded.held);
       validateVision(raw.analysis, MERGED_CANDIDATES_MAX);
       stage2 = guardEnrichment({ published: base, held: guarded.held, merged: raw.analysis, merge: raw.merge });
       merged = stage2.analysis;
+      verdicts = raw.merge.verdicts;
       validateVision(merged, MERGED_CANDIDATES_MAX);
     } catch {
       return { status: 'failed', reason: 'invalid_enrichment', model: out.model };
     }
+    this.stage2Final = { analysis: merged, verdicts };
     await this.traceGuard(2, stage2, { advisory_vetoes: stage2.advisoryVetoes.length, published: stage2.publishNow.length });
     const rejectedKeys = new Set(rejected.rejectedNames.map(normalizeName));
     const vetoed = new Set(stage2.advisoryVetoes.map(candidateNameKey));
     const heldIds = new Set(guarded.held.map((c) => c.id));
-    const additions = stage2.publishNow.filter((c) => !rejectedKeys.has(normalizeName(c.name)));
+    const published = stage2.publishNow.filter((c) => !rejectedKeys.has(normalizeName(c.name)));
+    // Text-only references (G-TEXT-ONLY) are listed with their read text and never reach Qloo.
+    const textOnlyIds = new Set(stage2.textOnlyIds);
+    const textOnly = published.filter((c) => textOnlyIds.has(c.id) && c.text_only === true && !!c.evidence_text);
+    const additions = published.filter((c) => !textOnlyIds.has(c.id));
     // Only a brand claim whose own word was read at stage 2 (G-BRAND-CORROBORATE) is searched as a brand.
     const corroborated = brandCorroboratedIds(stage2.decisions);
     const nonAnchor = new Set(stage2.publishNow.filter((c) => stage2.nonAnchorIds.includes(c.id)).map((c) => candidateNameKey(c.name)));
@@ -1152,6 +1351,33 @@ export class CaptureCompiler {
       if (resolved.refs.some((x) => x.referenceId === r.referenceId) || newRefs.some((x) => x.referenceId === r.referenceId)) continue;
       if (rejected.rejectedIds.has(r.referenceId)) r.resolution = 'rejected';
       newRefs.push(r);
+    }
+    // Text-only references: stored under their own name with a key no resolved or researched
+    // reference shares, so they never gain a Qloo id or a sourced page.
+    const textRefs: ResolvedRef[] = [];
+    for (const c of textOnly) {
+      const type = toRefType(c.type);
+      const referenceId = await upsertReference(ctx.db, { canonicalKey: `text:${type}:${slugify(c.name)}`, name: c.name, type, externalIds: {} });
+      if ([...resolved.refs, ...newRefs, ...textRefs].some((x) => x.referenceId === referenceId)) continue;
+      textRefs.push({
+        referenceId,
+        name: c.name,
+        candidateName: c.name,
+        type,
+        relation: c.relation,
+        certainty: c.certainty,
+        resolution: rejected.rejectedIds.has(referenceId) ? 'rejected' : 'unmatched',
+        qloo: null,
+        providerQueryId: null,
+        isReplay: false,
+        isAnchor: false,
+        suggestedCategories: [],
+        regionIds: c.region_ids,
+        boxes: boxesFor(c.region_ids, merged),
+        grounding: { lookup: 'none', rule: 'Q-EVIDENCE', reason: 'text_only_reference', doubt: false },
+        textOnly: true,
+        readText: c.evidence_text!.slice(0, 60),
+      });
     }
     const vetoedRefs = resolved.refs.filter((r) => r.relation !== 'user_selected' && vetoed.has(candidateNameKey(r.candidateName)));
     const evidence = resolved.refs
@@ -1208,8 +1434,16 @@ export class CaptureCompiler {
           [this.analysisId, r.referenceId, r.relation, JSON.stringify({ region_ids: r.regionIds, boxes: r.boxes }), Math.min(1, Math.max(0, r.certainty)), r.resolution],
         );
       }
+      for (const r of textRefs) {
+        await tx.query(
+          `INSERT INTO capture_references (analysis_id, reference_id, relation, evidence_region, certainty, resolution_status, is_anchor, enrichment_added, text_only, read_text)
+           VALUES ($1, $2, $3, $4::jsonb, $5, $6, false, true, true, $7)
+           ON CONFLICT (analysis_id, reference_id, relation) DO NOTHING`,
+          [this.analysisId, r.referenceId, r.relation, JSON.stringify({ region_ids: r.regionIds, boxes: r.boxes }), Math.min(1, Math.max(0, r.certainty)), r.resolution, r.readText],
+        );
+      }
     });
-    resolved.refs.push(...newRefs);
+    resolved.refs.push(...newRefs, ...textRefs);
 
     // Fill thin Qloo categories from the new references only, after published cards.
     // A weak-verdict style publishes as a reference but never signals (non-anchor).
@@ -1243,6 +1477,7 @@ export class CaptureCompiler {
       additions: additions.length,
       heldPublished: additions.filter((c) => heldIds.has(c.id)).length,
       resolvedAdditions: newRefs.filter((r) => r.qloo).length,
+      textOnly: textRefs.length,
       appended,
     };
   }
@@ -1561,7 +1796,7 @@ export class CaptureCompiler {
    */
   private async supportedFoodReferences(refs: readonly ResolvedRef[]): Promise<{ id: string; name: string; type: string }[]> {
     // Ambiguous (legacy) and doubtful groundings never support dish ideas.
-    const foodish = refs.filter((r) => isEatReference(r) && r.resolution !== 'ambiguous' && !r.grounding?.doubt);
+    const foodish = refs.filter((r) => isEatReference(r) && r.resolution !== 'ambiguous' && !r.grounding?.doubt && !r.textOnly);
     if (foodish.length === 0) return [];
     const { rows } = await this.ctx.db.query<{ id: string }>(
       `SELECT id FROM cultural_references WHERE id = ANY($1::uuid[]) AND research_status = 'complete'`,

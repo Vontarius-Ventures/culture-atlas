@@ -86,6 +86,14 @@ export const VlmCandidate = z.object({
   evidence: z.enum(VLM_EVIDENCE).nullish(),
   /** Verbatim text or logo wording the claim rests on (read_text/logo only). */
   evidence_text: z.string().nullish(),
+  /**
+   * Set by the guardrails only (G-TEXT-ONLY, docs/requalification-plan.md
+   * decision 2): a brand or person name read only in the stage-2 reply,
+   * published as a text-only reference with the text it was read from
+   * (evidence_text). Never an anchor, never searched in Qloo, never an
+   * identity confirmation, never a "What caught your eye?" choice.
+   */
+  text_only: z.boolean().nullish(),
 });
 
 function analysisShape<C extends z.ZodType>(candidate: C) {

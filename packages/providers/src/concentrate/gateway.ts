@@ -7,8 +7,9 @@ import {
   type ReadinessDetail,
 } from '../model-gateway/runner';
 import type { ModelIdentity, ModelRole, StructuredTransport } from '../model-gateway/types';
-import { UnavailableTextModel, UnavailableVlm, UnavailableVlmEnricher } from '../unavailable';
+import { UnavailableTextModel, UnavailableVlm, UnavailableVlmEnricher, UnavailableVlmVerifier } from '../unavailable';
 import type { VlmEnricher, VlmProvider } from '../vlm/types';
+import type { VlmVerifier } from '../vlm/verify';
 import type { TextModelProvider } from '../text/types';
 import {
   loadModelProfiles,
@@ -18,7 +19,7 @@ import {
   type ModelProfiles,
   type QualificationState,
 } from './profiles';
-import { ConcentrateTextModel, ConcentrateVlm, ConcentrateVlmEnricher } from './providers';
+import { ConcentrateTextModel, ConcentrateVlm, ConcentrateVlmEnricher, ConcentrateVlmVerifier } from './providers';
 import { createConcentrateTransport } from './transport';
 
 export const MODEL_ROLES = [
@@ -27,6 +28,7 @@ export const MODEL_ROLES = [
   'research_text',
   'composer',
   'vision_photo_enrich',
+  'vision_verify',
 ] as const satisfies readonly ModelRole[];
 
 export interface ModelGatewayOptions {
@@ -53,6 +55,8 @@ export interface ModelGateway {
   vlm: VlmProvider;
   /** Stage-2 enrichment (vision_photo_enrich); unavailable unless that role is qualified. */
   vlmEnrich: VlmEnricher;
+  /** Independent verifier (vision_verify); unavailable unless that role is qualified. */
+  vlmVerify: VlmVerifier;
   videoFrames: VlmProvider;
   text: TextModelProvider;
   composer: TextModelProvider;
@@ -105,6 +109,7 @@ export function createModelGateway(
   const unavailable = (): ModelGateway => ({
     vlm: new UnavailableVlm('not_configured'),
     vlmEnrich: new UnavailableVlmEnricher('not_configured'),
+    vlmVerify: new UnavailableVlmVerifier('not_configured'),
     videoFrames: new UnavailableVlm('not_configured'),
     text: new UnavailableTextModel('not_configured'),
     composer: new UnavailableTextModel('not_configured'),
@@ -138,6 +143,8 @@ export function createModelGateway(
     // model); its profile is the only source of truth until a dedicated
     // environment assertion exists.
     vision_photo_enrich: undefined,
+    // The verifier should be a different model family from the reader (quality plan §7.6); its profile pins it.
+    vision_verify: undefined,
   } satisfies Record<ModelRole, string | undefined>;
   const transport =
     options.transport ??
@@ -166,6 +173,9 @@ export function createModelGateway(
     vlmEnrich: runners.vision_photo_enrich
       ? new ConcentrateVlmEnricher(runners.vision_photo_enrich)
       : new UnavailableVlmEnricher('not_configured'),
+    vlmVerify: runners.vision_verify
+      ? new ConcentrateVlmVerifier(runners.vision_verify)
+      : new UnavailableVlmVerifier('not_configured'),
     videoFrames: runners.vision_video_frame
       ? new ConcentrateVlm(runners.vision_video_frame)
       : new UnavailableVlm('not_configured'),

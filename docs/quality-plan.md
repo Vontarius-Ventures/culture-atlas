@@ -130,7 +130,7 @@ Add these rules to both prompts. The security rules stay word for word, and so d
 
 ### 4.1 Module and API
 
-`packages/providers/src/vlm/guardrails.ts` (pure, no I/O), `vlm/lexicons.ts`, `GUARDRAIL_VERSION = 'guard-v1'` (now `guard-v3`, see §13.3 and §14).
+`packages/providers/src/vlm/guardrails.ts` (pure, no I/O), `vlm/lexicons.ts`, `GUARDRAIL_VERSION = 'guard-v1'` (now `guard-v4`, see §13.3, §14 and [the requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built)).
 
 ```ts
 export type GuardAction = 'publish' | 'hold' | 'demote' | 'drop';
@@ -218,7 +218,7 @@ These are offline replays of prototypes, one per diagnose report. Each prototype
 
 ## 5. Qloo acceptance rules (P3, exact)
 
-This is a new pure module, `packages/domain/src/compiler/grounding.ts` with `GROUNDING_VERSION = 'ground-v1'` (now `ground-v3`, see §13.3 and §14). It replaces `bestMatch` and `nameSimilarity` thresholds in `resolveCandidate`. `nameSimilarity` stays for other callers.
+This is a new pure module, `packages/domain/src/compiler/grounding.ts` with `GROUNDING_VERSION = 'ground-v1'` (now `ground-v4`, see §13.3, §14 and the requalification plan). It replaces `bestMatch` and `nameSimilarity` thresholds in `resolveCandidate`. `nameSimilarity` stays for other callers.
 
 ```ts
 export function planLookup(c: GuardedCandidate): { kind: 'none'; reason: string }
@@ -329,7 +329,7 @@ fixtures/eval/
 
 ### 7.2 Scorer and thresholds
 
-`scripts/eval/scorer.ts` is pure and has `SCORER_VERSION = 'score-v1'` (now `score-v3`, see §13.3 and §14).
+`scripts/eval/scorer.ts` is pure and has `SCORER_VERSION = 'score-v1'` (now `score-v4`, see §13.3, §14 and the requalification plan).
 
 Input:
 - labels;
@@ -419,6 +419,8 @@ pnpm eval:live --golden fixtures/eval/golden-v1 --photos $EVAL_PHOTOS_DIR --spli
 - **Privacy.** The owner accepted the earlier `privacyVerifiedAt` exception. New profiles on the **same route** (`anthropic/claude-haiku-5-5`) carry that accepted value over unchanged. No agent sets a new value. Any new route needs the operator. The dashboard ZDR confirmation remains a deploy gate, as `concentrate.md` says.
 
 ### 7.6 Verifier decision: not built this round
+
+> Superseded: the verifier is built as role `vision_verify`, off by default, and can only lower certainty or mark a reference qualified (docs/requalification-plan.md, "Step 1 record"). The text below is the original decision.
 
 A second model checking each claim (batched yes/no/unsure per photo) was measured on 15 photos:
 

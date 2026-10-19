@@ -40,7 +40,7 @@ const snapshot = {
 };
 /** A passing aggregate eval block on the role's required golden set (docs/quality-plan.md §7.5). */
 function evalBlock(role: QualificationArtifact['role'], overrides: Partial<EvalBlock> = {}): EvalBlock {
-  const photo = role === 'vision_photo' || role === 'vision_photo_enrich';
+  const photo = role === 'vision_photo' || role === 'vision_photo_enrich' || role === 'vision_verify';
   const set = REQUIRED_GOLDEN_SET[role] ?? 'golden-v1';
   // Scored on exactly the committed inputs (EVAL_BINDING), as a fresh qualification would be.
   const bound = EVAL_BINDING.sets[set as keyof typeof EVAL_BINDING.sets];
@@ -183,6 +183,12 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
         state: 'unavailable',
         reason: 'not_configured',
       },
+      vision_verify: {
+        role: 'vision_verify',
+        model: null,
+        state: 'unavailable',
+        reason: 'not_configured',
+      },
     });
     expect(transport).not.toHaveBeenCalled();
   });
@@ -205,7 +211,8 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
 
 describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
   it('photo roles need a passing golden-v1 evaluation with the current guardrail version', async () => {
-    for (const role of ['vision_photo', 'vision_photo_enrich'] as const) {
+    // The verifier (vision_verify) is gated exactly like the photo roles it checks.
+    for (const role of ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const) {
       expect(evalGateFailure(role, undefined)).toBe('missing_eval');
       expect(evalGateFailure(role, evalBlock(role))).toBeNull();
       expect(evalGateFailure(role, evalBlock(role, { guardrail_version: 'guard-v0' }))).toBe('stale_guardrail_version');

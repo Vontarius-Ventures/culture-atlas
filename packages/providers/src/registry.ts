@@ -10,8 +10,9 @@ import type { ResearchProvider } from './research/types';
 import { createObjectStorage } from './storage';
 import type { ObjectStorage } from './storage/types';
 import type { TextModelProvider } from './text/types';
-import { UnavailableVlmEnricher } from './unavailable';
+import { UnavailableVlmEnricher, UnavailableVlmVerifier } from './unavailable';
 import type { VlmEnricher, VlmProvider } from './vlm/types';
+import type { VlmVerifier } from './vlm/verify';
 
 /** Every provider the domain uses, selected from environment configuration. */
 export interface ProviderRegistry {
@@ -22,6 +23,11 @@ export interface ProviderRegistry {
    * Concentrate gateway serves it; there is no Elorian or rollback fallback.
    */
   readonly vlmEnrich: VlmEnricher;
+  /**
+   * Independent verifier after stage 2 (vision_verify). Only the Concentrate
+   * gateway serves it; the compiler also needs ANALYSIS_VERIFIER_ENABLED.
+   */
+  readonly vlmVerify: VlmVerifier;
   /** Claim extraction / research model (RESEARCH_MODEL). */
   readonly text: TextModelProvider;
   /** Plan composer model (COMPOSER_MODEL, defaults to RESEARCH_MODEL). */
@@ -60,6 +66,8 @@ export function createProviderRegistry(
   const vlm = overrides.vlm ?? fallback.vlm;
   const vlmEnrich =
     overrides.vlmEnrich ?? modelGateway?.vlmEnrich ?? new UnavailableVlmEnricher('not_configured');
+  const vlmVerify =
+    overrides.vlmVerify ?? modelGateway?.vlmVerify ?? new UnavailableVlmVerifier('not_configured');
   const text = overrides.text ?? fallback.text;
   const composer = overrides.composer ?? fallback.composer;
   const fallbackVlm = elorianEnabled(config) ? createElorianVlm(config) : undefined;
@@ -71,6 +79,7 @@ export function createProviderRegistry(
     config,
     vlm,
     vlmEnrich,
+    vlmVerify,
     text,
     composer,
     research,

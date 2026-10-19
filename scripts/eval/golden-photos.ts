@@ -130,7 +130,7 @@ export function evaluatePhotoRecordings(input: {
   codeSha256: string;
 }): PhotoEval {
   const runs = input.recordings.map((r) => {
-    const { decisions: _d, finalCandidates: _f, ...run } = input.pipeline.run(r);
+    const { decisions: _d, finalCandidates: _f, verifyTargets: _t, ...run } = input.pipeline.run(r);
     return run;
   });
   const scorecard = scoreRuns(input.golden.labels, runs, input.thresholds, 'live');

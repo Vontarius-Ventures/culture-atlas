@@ -2,7 +2,7 @@
  * Budgeted live photo evaluation (docs/quality-plan.md §7.4). Dry run by default.
  *
  *   pnpm eval:live --golden fixtures/eval/golden-v1 --photos $EVAL_PHOTOS_DIR --split all \
- *     --profile-file <operator>/profiles.json --roles vision_photo,vision_photo_enrich \
+ *     --profile-file <operator>/profiles.json --roles vision_photo,vision_photo_enrich[,vision_verify] \
  *     --out-dir <outside git, holding catalog-snapshot.json> --max-requests 60 --spend-cap-usd 0.5 \
  *     [--qloo --max-qloo-requests 40 --qloo-concurrency 2 --qloo-spacing-ms 700 [--grounding-judgements <file>]] \
  *     [--only p13,h01] [--ledger <file>] [--confirm-paid-requests]
@@ -44,8 +44,8 @@ if (!photosDir || !profileFile || !outDir || !Number.isSafeInteger(maxRequests) 
   process.exit(2);
 }
 const roles = (arg('roles', 'vision_photo,vision_photo_enrich') ?? '').split(',').filter(Boolean);
-if (roles.some((r) => r !== 'vision_photo' && r !== 'vision_photo_enrich')) {
-  console.error('--roles takes vision_photo and vision_photo_enrich only.');
+if (roles.some((r) => r !== 'vision_photo' && r !== 'vision_photo_enrich' && r !== 'vision_verify')) {
+  console.error('--roles takes vision_photo, vision_photo_enrich and vision_verify only.');
   process.exit(2);
 }
 const golden = await loadGoldenSet(arg('golden', path.join(root, 'fixtures/eval/golden-v1'))!);
@@ -88,7 +88,7 @@ const result = await runLiveEval({
   split: (arg('split', 'all') ?? 'all') as 'all' | 'tune' | 'holdout',
   only: arg('only')?.split(',').filter(Boolean),
   profiles: loadModelProfiles(profileFile),
-  roles: roles as ('vision_photo' | 'vision_photo_enrich')[],
+  roles: roles as ('vision_photo' | 'vision_photo_enrich' | 'vision_verify')[],
   outDir,
   repoRoot: root,
   maxRequests,

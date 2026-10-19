@@ -24,6 +24,7 @@ import {
   type VlmProvider,
   type VlmResult,
 } from '../vlm/types';
+import { VlmVerification, type VlmVerifier, type VlmVerifyInput, type VlmVerifyResult } from '../vlm/verify';
 
 /**
  * Deterministic fakes for unit/integration tests. They never pretend to be live:
@@ -61,6 +62,22 @@ export class FakeVlmEnricher implements VlmEnricher {
     const out = this.respond(input);
     if (out instanceof Error) throw out;
     return { enrichment: VlmEnrichment.parse(out), model: 'fake-vlm-enrich', durationMs: 1 };
+  }
+}
+
+/** Deterministic verifier fake (schema-validated like the real adapter). */
+export class FakeVlmVerifier implements VlmVerifier {
+  readonly id = 'vlm-verify:fake';
+  readonly calls: VlmVerifyInput[] = [];
+  constructor(private readonly respond: (input: VlmVerifyInput) => VlmVerification | Error) {}
+  capability(): CapabilityEntry {
+    return AVAILABLE;
+  }
+  async verifyImage(input: VlmVerifyInput): Promise<VlmVerifyResult> {
+    this.calls.push(input);
+    const out = this.respond(input);
+    if (out instanceof Error) throw out;
+    return { verification: VlmVerification.parse(out), model: 'fake-vlm-verify', durationMs: 1 };
   }
 }
 

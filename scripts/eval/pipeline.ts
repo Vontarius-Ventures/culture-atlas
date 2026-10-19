@@ -6,6 +6,14 @@ import {
   type VlmEnrichment,
   type VlmQuickRead,
 } from '../../packages/providers/src/vlm/types';
+import {
+  VlmVerification,
+  applyVerification,
+  verifiedCertainty,
+  verifierTargets,
+  type VerifyTarget,
+} from '../../packages/providers/src/vlm/verify';
+import type { VlmVerdict } from '../../packages/providers/src/vlm/types';
 import type { CallRecord, CandidateView, ReadingView, ScoredRun } from './scorer';
 
 /**
@@ -27,6 +35,9 @@ export interface Recording {
   enrichment?: unknown;
   quickMs?: number;
   enrichMs?: number;
+  /** The verifier's reply (vision_verify) for this reading's verifier targets, when it ran. */
+  verification?: unknown;
+  verifyMs?: number;
 }
 
 export interface GuardDecisionLike {
@@ -60,10 +71,20 @@ export interface GuardModule {
 }
 
 export interface ReadingPipeline {
-  name: 'guarded' | 'unguarded';
+  name: 'guarded' | 'guarded-without-verifier' | 'unguarded';
   /** GUARDRAIL_VERSION of the guards, null when unguarded. */
   guardrailVersion: string | null;
-  run(rec: Recording): ScoredRun & { decisions: GuardDecisionLike[]; finalCandidates: VlmAnalysis['candidates'] };
+  run(rec: Recording): ScoredRun & {
+    decisions: GuardDecisionLike[];
+    finalCandidates: VlmAnalysis['candidates'];
+    /**
+     * What the verifier checks on this reading (verifierTargets, the
+     * compiler's own selection). Offline there is no Qloo grounding, so no
+     * claim is known to anchor: every eligible claim is a target (stricter
+     * than production, which never checks an anchor).
+     */
+    verifyTargets: VerifyTarget[];
+  };
 }
 
 export function candidateView(c: VlmAnalysis['candidates'][number]): CandidateView {
@@ -77,6 +98,7 @@ export function candidateView(c: VlmAnalysis['candidates'][number]): CandidateVi
     domain: extra.domain ?? null,
     evidence: extra.evidence ?? null,
     evidence_text: extra.evidence_text ?? null,
+    text_only: c.text_only ?? null,
   };
 }
 
@@ -97,6 +119,7 @@ function calls(rec: Recording): CallRecord[] {
   if (rec.quickMs !== undefined) out.push({ stage: 'quick', ms: rec.quickMs, valid: true });
   if (rec.enrichment !== undefined && rec.enrichMs !== undefined)
     out.push({ stage: 'enrich', ms: rec.enrichMs, valid: true });
+  if (rec.verification !== undefined && rec.verifyMs !== undefined) out.push({ stage: 'verify', ms: rec.verifyMs, valid: true });
   return out;
 }
 
@@ -118,6 +141,7 @@ export const unguardedPipeline: ReadingPipeline = {
       calls: calls(rec),
       decisions: [],
       finalCandidates: final.candidates,
+      verifyTargets: [],
     };
   },
 };
@@ -127,9 +151,10 @@ export const unguardedPipeline: ReadingPipeline = {
  * run (claims are held, not dropped); a quick-only recording therefore shows
  * what the first sections publish, and held claims never appear.
  */
-export function guardedPipeline(guards: GuardModule): ReadingPipeline {
+export function guardedPipeline(guards: GuardModule, options: { verifier?: boolean } = {}): ReadingPipeline {
+  const useVerifier = options.verifier !== false;
   return {
-    name: 'guarded',
+    name: useVerifier ? 'guarded' : 'guarded-without-verifier',
     guardrailVersion: guards.GUARDRAIL_VERSION,
     run(rec) {
       const quick = rec.quick as VlmQuickRead;
@@ -138,6 +163,7 @@ export function guardedPipeline(guards: GuardModule): ReadingPipeline {
       const decisions = [...g1.decisions];
       let final = g1.analysis;
       let emitted = raw1.candidates;
+      let verifyTargets: VerifyTarget[] = [];
       if (rec.enrichment !== undefined) {
         const enrichment = rec.enrichment as VlmEnrichment;
         emitted = toVlmAnalysis(quick, enrichment).candidates;
@@ -145,6 +171,22 @@ export function guardedPipeline(guards: GuardModule): ReadingPipeline {
         const g2 = guards.guardEnrichment({ published: g1.analysis, held: g1.held, merged, merge });
         decisions.push(...g2.decisions);
         final = g2.analysis;
+        // The verifier runs only after a stage 2, on the compiler's own selection.
+        verifyTargets = verifierTargets({
+          candidates: final.candidates,
+          verdicts: (merge as { verdicts?: Record<string, VlmVerdict> }).verdicts ?? {},
+          texts: final.visible_text.map((t) => t.text),
+        });
+      }
+      const view = readingView(final);
+      // A recorded verifier reply can only lower certainty and mark claims checked; nothing is removed.
+      if (useVerifier && rec.verification !== undefined && verifyTargets.length) {
+        const checks = new Map(applyVerification(verifyTargets, VlmVerification.parse(rec.verification)).map((c) => [c.candidateId, c]));
+        view.candidates = final.candidates.map((c) => {
+          const v = candidateView(c);
+          const check = checks.get(c.id);
+          return check ? { ...v, verifier: check.answer, certainty: verifiedCertainty(v.certainty, check) } : v;
+        });
       }
       return {
         photoId: rec.photoId,
@@ -152,10 +194,11 @@ export function guardedPipeline(guards: GuardModule): ReadingPipeline {
         twoStage: rec.enrichment !== undefined,
         emitted: emitted.map(candidateView),
         stage1Published: g1.analysis.candidates.map(candidateView),
-        final: readingView(final),
-        calls: calls(rec),
+        final: view,
+        calls: useVerifier ? calls(rec) : calls({ ...rec, verification: undefined }),
         decisions,
         finalCandidates: final.candidates,
+        verifyTargets,
       };
     },
   };
@@ -174,5 +217,7 @@ export const RUNTIME_GUARDS: GuardModule = {
   mergeEnrichmentContext,
 };
 
-/** The guarded pipeline over the runtime guardrails (what production publishes). */
+/** The guarded pipeline over the runtime guardrails (what production publishes), with any recorded verifier reply applied. */
 export const runtimeGuardedPipeline: ReadingPipeline = guardedPipeline(RUNTIME_GUARDS);
+/** The same readings scored as if the verifier were off (the tune-split comparison, requalification plan step 3). */
+export const runtimeGuardedPipelineWithoutVerifier: ReadingPipeline = guardedPipeline(RUNTIME_GUARDS, { verifier: false });

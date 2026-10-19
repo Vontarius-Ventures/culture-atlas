@@ -8,7 +8,7 @@ this set (`docs/concentrate.md`, "Qualification").
 ```
 fixtures/eval/
   README.md          this file
-  thresholds.json    versioned pass gates (thr-v1); its sha256 is bound into artifacts
+  thresholds.json    versioned pass gates (thr-v2); its sha256 is bound into artifacts
   golden-v1/
     manifest.json    { version, photos: [{ id, split, file, sha256, width, height, source }] }
     labels/<id>.json one hand-written label per photo (schema: scripts/eval/labels.ts)
@@ -59,6 +59,17 @@ fixtures/eval/
   the owner's approval and a new `thr-v*` version; thresholds are never
   relaxed to make a run pass. A new photo or relabelled split is a new
   `golden-v*`.
+- **Label history.** A label edited after it was first written records the
+  change in its `history` (date, change, reason, and the decision that
+  allowed it). p14 is the first: its must-read text and expected reference
+  were changed to what is legible at 768 px (docs/requalification-plan.md
+  decision 1).
+- **thr-v2** (docs/requalification-plan.md decisions 3 and 4). `two_stage_only`
+  lists the metrics gated only on a two-stage scorecard (M5, M9): a split
+  scored on stage 1 alone reports them but is gated on M15 ≥ 0.60 for
+  coverage; a split mixing two-stage and stage-1-only readings is gated as
+  strictly as two-stage. No gate value changed. The grounding block's recall
+  gate is 0.50 and its precision gate 1.0 (zero wrong matches).
 - **Grounding and seed gates.** The `grounding` and `seed` blocks of
   `thresholds.json` are applied by `scripts/eval/release-gates.ts`
   (`eval:live --qloo`, `measure-taste-seed.ts`). Gates that need a person
@@ -103,11 +114,20 @@ fixtures/eval/
 
 ## Metrics and gates
 
-`scripts/eval/scorer.ts` (`score-v2`) computes M1–M16 per split; M17 ("scorer
+`scripts/eval/scorer.ts` (`score-v4`) computes M1–M16 per split; M17 ("scorer
 teeth") requires that the same recordings without guardrails fail M1. The
 replay gates apply to the tune split of `replay-v1` in CI; the live gates apply
 to every split of a live run, with stricter M3/M5 on the tune split
-(`live_tune`). A gated metric without data (for example M9 on stage-1-only
-runs) is reported as not applicable. M12 above its gate fails with "labels
-stale": too many published candidates match no label entry, so the labels need
-review before the numbers mean anything.
+(`live_tune`), minus `two_stage_only` on a stage-1-only split (`runKind`,
+`scopedOut` in the scorecard). A gated metric without data (for example M9 on
+stage-1-only runs) is reported as not applicable. M12 above its gate fails
+with "labels stale": too many published candidates match no label entry, so
+the labels need review before the numbers mean anything.
+
+score-v4 also reports, without gates: `text_only` (references published only
+as text-only, decision 2) and the verifier measures `verifier_checked`,
+`forbidden_published`, `forbidden_uncontested` and `M5_uncontested` (the
+verifier can only contest a claim, never remove it; how Tune uses them is in
+docs/requalification-plan.md). `eval:live --roles ...,vision_verify` stores
+the verifier's reply with each recording, and `eval:replay --verifier both`
+scores the same readings with and without it.
