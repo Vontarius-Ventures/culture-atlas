@@ -1,0 +1,28 @@
+{
+  "fixture": "plan-prose-weak-inputs",
+  "schema": "plan_prose",
+  "source_urls": [],
+  "sources": [],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [],
+  "input_text": "<data>{\"items\":[{\"id\":\"i1\",\"kind\":\"capture\",\"title\":\"Rainy street with neon signs\",\"detail\":\"Wet asphalt reflecting neon signs, a look that resembles cyberpunk film.\",\"year\":null,\"references\":[\"Cyberpunk\"]},{\"id\":\"i2\",\"kind\":\"capture\",\"title\":\"Shelf of vinyl records\",\"detail\":\"Records with pastel sleeves that resemble city pop.\",\"year\":null,\"references\":[\"City pop\"]},{\"id\":\"i3\",\"kind\":\"capture\",\"title\":\"Houseplant on a windowsill\",\"detail\":\"A potted plant in daylight.\",\"year\":null,\"references\":[]},{\"id\":\"i4\",\"kind\":\"film\",\"title\":\"Blade Runner\",\"detail\":null,\"year\":1982,\"references\":[]}],\"collection\":null,\"instruction\":null,\"dietary_exclusions\":[],\"exploration\":\"adventurous\",\"film\":\"Blade Runner\",\"dishes\":[\"Udon with tempura flakes\"],\"artists\":[\"Mariya Takeuchi\"],\"weak_inputs\":[\"i3\"]}</data>",
+  "exclusions": [],
+  "word_limits": {
+    "title_words": 6,
+    "summary_words": 45,
+    "summary_sentences": 1,
+    "rationale_words": 70,
+    "rationale_sentences": 2
+  },
+  "forbidden_strings": [],
+  "input_ids": [
+    "i1",
+    "i2",
+    "i3",
+    "i4"
+  ],
+  "reference_names": [],
+  "avoid": [],
+  "min_items": 1
+}

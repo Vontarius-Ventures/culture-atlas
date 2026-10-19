@@ -82,25 +82,99 @@ const EXPLORATION_HINT: Record<string, string> = {
   adventurous: 'Reach for less obvious choices, but keep at least one clearly connected to the items.',
 };
 
+/*
+ * Request builders: the exact structured requests the composer role receives.
+ * Exported so the text-role qualification fixtures (fixtures/eval/text-v1) are
+ * generated from the production prompts, never a copy of them.
+ */
+
+export function filmIdeasRequest(snapshot: PlanSnapshot, input: { count: number; avoidTitles: string[]; extraInstruction?: string | null }) {
+  return {
+    system: COMPOSER_SYSTEM,
+    schemaName: 'film_ideas',
+    schema: FilmIdeas,
+    maxTokens: 800,
+    prompt: [
+      `Suggest ${input.count} real, released feature films for this movie night. ${EXPLORATION_HINT[snapshot.exploration]}`,
+      'For each, list the item ids it draws from in "inputs" and give a one-sentence reason that names those items.',
+      dataBlock(snapshot, { avoid_titles: input.avoidTitles, replacement_request: input.extraInstruction ?? null }),
+    ].join('\n'),
+  };
+}
+
+export function artistIdeasRequest(
+  snapshot: PlanSnapshot,
+  input: { count: number; avoidNames: string[]; film: string | null; extraInstruction?: string | null },
+) {
+  return {
+    system: COMPOSER_SYSTEM,
+    schemaName: 'artist_ideas',
+    schema: ArtistIdeas,
+    maxTokens: 800,
+    prompt: [
+      `Suggest ${input.count} real recording artists to play before and after the film. ${EXPLORATION_HINT[snapshot.exploration]}`,
+      'Artists only (no specific tracks). For each, cite the item ids it draws from and give a one-sentence reason.',
+      dataBlock(snapshot, { film: input.film, avoid_names: input.avoidNames, replacement_request: input.extraInstruction ?? null }),
+    ].join('\n'),
+  };
+}
+
+export function dishIdeasRequest(
+  snapshot: PlanSnapshot,
+  input: {
+    count: number;
+    cuisineHints: string[];
+    selectedDishes: string[];
+    avoidTitles: string[];
+    film: string | null;
+    extraInstruction?: string | null;
+  },
+) {
+  return {
+    system: COMPOSER_SYSTEM,
+    schemaName: 'dish_ideas',
+    schema: DishIdeas,
+    maxTokens: 1000,
+    prompt: [
+      `Suggest ${input.count} dish ideas for this movie night (ideas, not recipes; no nutrition claims).`,
+      'Respect every dietary exclusion: list the main ingredients of each dish so they can be checked.',
+      'Cuisine hints are suggestions only. Selected dishes may be included if compatible.',
+      'For each dish cite the item ids it draws from and give a one-sentence reason.',
+      dataBlock(snapshot, {
+        film: input.film,
+        cuisine_hints: input.cuisineHints,
+        selected_dishes: input.selectedDishes,
+        avoid_titles: input.avoidTitles,
+        replacement_request: input.extraInstruction ?? null,
+      }),
+    ].join('\n'),
+  };
+}
+
+export function proseRequest(
+  snapshot: PlanSnapshot,
+  input: { film: string | null; dishes: string[]; artists: string[]; weakInputs: string[] },
+) {
+  return {
+    system: COMPOSER_SYSTEM,
+    schemaName: 'plan_prose',
+    schema: PlanProse,
+    maxTokens: 400,
+    prompt: [
+      'Write a short title of at most six words (count them) and one sentence about how this movie night combines the items.',
+      'Optionally add a one- or two-sentence rationale; if any items in "weak_inputs" contributed little, say so briefly.',
+      'Use only names and titles that appear in the data; do not add any other person, such as a director or an actor.',
+      dataBlock(snapshot, { film: input.film, dishes: input.dishes, artists: input.artists, weak_inputs: input.weakInputs }),
+    ].join('\n'),
+  };
+}
+
 export async function suggestFilms(
   model: TextModelProvider,
   snapshot: PlanSnapshot,
   input: { count: number; avoidTitles: string[]; extraInstruction?: string | null; signal?: AbortSignal },
 ) {
-  return model.generateStructured(
-    {
-      system: COMPOSER_SYSTEM,
-      schemaName: 'film_ideas',
-      schema: FilmIdeas,
-      maxTokens: 800,
-      prompt: [
-        `Suggest ${input.count} real, released feature films for this movie night. ${EXPLORATION_HINT[snapshot.exploration]}`,
-        'For each, list the item ids it draws from in "inputs" and give a one-sentence reason that names those items.',
-        dataBlock(snapshot, { avoid_titles: input.avoidTitles, replacement_request: input.extraInstruction ?? null }),
-      ].join('\n'),
-    },
-    { signal: input.signal },
-  );
+  return model.generateStructured(filmIdeasRequest(snapshot, input), { signal: input.signal });
 }
 
 export async function suggestArtists(
@@ -108,20 +182,7 @@ export async function suggestArtists(
   snapshot: PlanSnapshot,
   input: { count: number; avoidNames: string[]; film: string | null; extraInstruction?: string | null; signal?: AbortSignal },
 ) {
-  return model.generateStructured(
-    {
-      system: COMPOSER_SYSTEM,
-      schemaName: 'artist_ideas',
-      schema: ArtistIdeas,
-      maxTokens: 800,
-      prompt: [
-        `Suggest ${input.count} real recording artists to play before and after the film. ${EXPLORATION_HINT[snapshot.exploration]}`,
-        'Artists only (no specific tracks). For each, cite the item ids it draws from and give a one-sentence reason.',
-        dataBlock(snapshot, { film: input.film, avoid_names: input.avoidNames, replacement_request: input.extraInstruction ?? null }),
-      ].join('\n'),
-    },
-    { signal: input.signal },
-  );
+  return model.generateStructured(artistIdeasRequest(snapshot, input), { signal: input.signal });
 }
 
 export async function suggestDishes(
@@ -137,28 +198,7 @@ export async function suggestDishes(
     signal?: AbortSignal;
   },
 ) {
-  return model.generateStructured(
-    {
-      system: COMPOSER_SYSTEM,
-      schemaName: 'dish_ideas',
-      schema: DishIdeas,
-      maxTokens: 1000,
-      prompt: [
-        `Suggest ${input.count} dish ideas for this movie night (ideas, not recipes; no nutrition claims).`,
-        'Respect every dietary exclusion: list the main ingredients of each dish so they can be checked.',
-        'Cuisine hints are suggestions only. Selected dishes may be included if compatible.',
-        'For each dish cite the item ids it draws from and give a one-sentence reason.',
-        dataBlock(snapshot, {
-          film: input.film,
-          cuisine_hints: input.cuisineHints,
-          selected_dishes: input.selectedDishes,
-          avoid_titles: input.avoidTitles,
-          replacement_request: input.extraInstruction ?? null,
-        }),
-      ].join('\n'),
-    },
-    { signal: input.signal },
-  );
+  return model.generateStructured(dishIdeasRequest(snapshot, input), { signal: input.signal });
 }
 
 export async function writeProse(
@@ -166,18 +206,5 @@ export async function writeProse(
   snapshot: PlanSnapshot,
   input: { film: string | null; dishes: string[]; artists: string[]; weakInputs: string[]; signal?: AbortSignal },
 ) {
-  return model.generateStructured(
-    {
-      system: COMPOSER_SYSTEM,
-      schemaName: 'plan_prose',
-      schema: PlanProse,
-      maxTokens: 400,
-      prompt: [
-        'Write a short title (max 6 words) and one sentence about how this movie night combines the items.',
-        'Optionally add a one- or two-sentence rationale; if any items in "weak_inputs" contributed little, say so briefly.',
-        dataBlock(snapshot, { film: input.film, dishes: input.dishes, artists: input.artists, weak_inputs: input.weakInputs }),
-      ].join('\n'),
-    },
-    { signal: input.signal },
-  );
+  return model.generateStructured(proseRequest(snapshot, input), { signal: input.signal });
 }

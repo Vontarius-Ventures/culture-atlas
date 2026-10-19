@@ -248,8 +248,9 @@ stage-1 profile whose readings were the input (its requests count in
 
 Fixture layout: photos as image files (≥ 10, owned and varied); videos as one
 directory per video containing `<timestamp_ms>.jpg` frames (≥ 3 videos, ≤ 8
-frames each); text roles as `{system, prompt, schema: reference_notes|plan_prose}`
-JSON files (≥ 3). A persistent request counter in the out dir is reserved
+frames each); text roles as `{system, prompt, schema}` JSON files (≥ 3; the
+schema keys and the role each belongs to are in `scripts/eval/text-schemas.ts`;
+`*.expect.json` siblings are skipped; see "Text-role qualification"). A persistent request counter in the out dir is reserved
 before every request and survives re-runs; the worst-case reservation must fit
 the spend cap; there are no retries; the run stops at 401/402/404/422/429. The
 artifact `<qualificationArtifactId>.json` holds aggregates only (counts,
@@ -419,6 +420,116 @@ kB per frame), so model traffic is not a meaningful AWS data-transfer cost
 compared with video playback. Whether the deployment fits AWS's free offer has
 not been verified here (no AWS access); Concentrate usage is billed by
 Concentrate against the operator's credits, independently of AWS.
+
+## Text-role qualification (`research_text`, `composer`)
+
+Until both text roles are qualified, every real upload ends `partial`: the
+research section needs `research_text` and the Eat section needs `composer`.
+The owner chose `anthropic/claude-haiku-5-5` with `reasoningEffort: "none"`
+for both (quality plan §8). No independent verifier model is built in this
+round (quality plan §7.6); this section covers the text roles only.
+
+**What is checked.** A transport pass only proves that a reply arrived and
+parsed. The text golden set `fixtures/eval/text-v1` (see its README) adds
+content checks, scored by `scoreTextFixture` in `scripts/eval/text-scorer.ts`:
+
+| Check | Role | Gate |
+| --- | --- | --- |
+| T1 schema-valid reply | both | every fixture |
+| T2 cited URL that was not supplied | research | 0 |
+| T3 factual claims citing no supplied URL (before enforcement) | research | ≤ 20 % |
+| T4 claims kept after `enforceExtraction` | research | ≥ 2 |
+| T5 overview present, ≤ 150 words | research | every fixture |
+| T6 word and sentence limits (prose title ≤ 6 words, one-sentence summary; idea reasons) | composer | every fixture |
+| T7 proper names in the prose that are not in the input | composer | 0 |
+| T8 dietary exclusions, judged on what is shown: prose mentions none; ≥ half of the requested movie-night dishes survive the production filter; Eat reasons (shown unfiltered) make no safety claim | composer | every fixture |
+| T9 p95 latency under the profile timeout, no timeouts | both | `summarizeTextRun` |
+| T10 every fixture passes, ≥ 5 fixtures | both | `summarizeTextRun` |
+| T11 kept claims stating a number or name their source does not contain (text invented under a real URL, or a fact relabelled "interpretive") | research | ≤ 20 % |
+| T12 forbidden strings (echoes of the injection cases) | both | 0 |
+| T13 ideas cite real input ids, honour avoid lists and counts; Eat ideas cite a supplied reference | composer | every fixture |
+
+The composer fixtures include the Eat call that every photo analysis makes
+(`eat_dish_ideas`), not only plan prose: a composer qualified on prose alone
+would not have exercised the call that decides whether an upload is complete.
+A fixture names its schema, and `parseTextFixture` refuses a fixture whose
+schema belongs to another role before any request is sent. Each request uses
+the production wire schema name and output cap.
+
+**Profiles.** Add these two entries to the same profile file as the photo
+roles. Keep `privacyVerifiedAt` exactly as it is on the owner-accepted photo
+profiles of the same route; do not set a new value (a different route needs the
+operator). Copy `catalogSnapshotAt` and `pricingSnapshotVersion` from the
+snapshot in use.
+
+```json
+{ "gateway": "concentrate", "role": "research_text", "version": "research-1",
+  "model": "anthropic/claude-haiku-5-5", "provider": "anthropic", "allowedFallbackProviders": [],
+  "maxOutputTokens": 4000, "reasoningEffort": "none", "maxInputTokens": 24000, "maxInputBytes": 24000,
+  "image": { "maxBytes": 0, "maxPixels": 0, "maxDimension": 0, "maxCount": 0 },
+  "timeoutMs": 15000, "structuredOutput": true, "requireZdr": true, "providerZdrEligible": true,
+  "contentLoggingEnabled": false, "privacyVerifiedAt": "<unchanged accepted value>",
+  "promptVersion": "research-v1", "schemaVersion": "reference_notes",
+  "catalogSnapshotAt": "<snapshot fetched_at>", "qualificationArtifactId": "rt-haiku55-none-<date>",
+  "pricingSnapshotVersion": "<snapshot fetched_at>", "reservationMicros": 4500 }
+{ "...": "same fields", "role": "composer", "version": "composer-1", "maxOutputTokens": 1500,
+  "timeoutMs": 12000, "promptVersion": "composer-v1", "schemaVersion": "composer-v1",
+  "qualificationArtifactId": "co-haiku55-none-<date>", "reservationMicros": 3200 }
+```
+
+`timeoutMs` 15000 for research is the cap for text profiles: live research
+replies wrote about 1,200 output tokens and took up to 10.6 s, so 12 s would
+leave too little margin. The input caps cover five 4,000-character sources
+(the runner compares prompt bytes with both caps). `reservationMicros` is the
+worst case at the listed standard rate ($0.10 / $0.50 per million tokens):
+24k input plus the output cap, rounded up.
+
+**Runbook (operator).**
+
+```sh
+export CONCENTRATE_API_KEY_FILE=/secure/concentrate-key
+# 0. The fixtures must match the production prompts (also enforced by pnpm test).
+pnpm exec tsx scripts/eval/build-text-fixtures.ts --check
+# Optional, needs network: re-check every source excerpt against its pinned file.
+pnpm exec tsx scripts/eval/build-text-fixtures.ts --verify-sources
+# 1. Dry runs: print the plan, send nothing.
+pnpm qualify:concentrate --profile-file profiles.json --role research_text \
+  --fixtures fixtures/eval/text-v1/research_text --out-dir /secure/concentrate-qualification \
+  --max-requests 6 --spend-cap-usd 0.5
+pnpm qualify:concentrate --profile-file profiles.json --role composer \
+  --fixtures fixtures/eval/text-v1/composer --out-dir /secure/concentrate-qualification \
+  --max-requests 11 --spend-cap-usd 0.5
+# 2. The same two commands plus --confirm-paid-requests (17 billed requests in all).
+```
+
+A role counts as qualified only when the transport pass and the content checks
+both pass. Scoring each reply with `scoreTextFixture` (expectations from
+`readTextExpect`), aggregating with `summarizeTextRun`, and binding the result
+and `manifest.json`'s `golden_sha256` into the artifact's eval block is wired
+by the qualification-gating package (quality plan §7.5). Until then, run the
+dry runs above and score the replies in memory; never write replies into the
+artifact or the repository.
+
+**Live smoke (2026-10-19, 16 billed requests, no artifact).** All 13 fixtures
+tried completed and were schema-valid; replies stayed in the scratchpad.
+
+- Research, 6 of 6 passed the checks, 5.0–10.6 s, 770–1,280 output tokens
+  each. The model added one fact from its own knowledge (a publication year)
+  in 1 of 8 claims, which T11 reports under its 20 % gate. It also corrected a
+  misspelt name in an old source, which T11 accepts as a near spelling.
+- Composer, Eat ideas 2 of 2 passed, 2.6–4.9 s. Both kept the injected
+  reference name out of their output and grounded every dish in the real
+  cuisine.
+- Composer, plan prose: the first runs added a director's name that was not
+  in the input (T7), and one title had eight words where the prompt asks for
+  at most six (T6). The prose prompt now says to use only names and titles
+  from the data and to count the title's words. Re-run once each (the name case
+  with the name rule, the title case with the final wording), both passed. One
+  run each is not a measured rate; the Evaluate run measures it.
+- Movie-night dishes: the model wrote "gluten-free" in reasons. Production
+  strips such sentences. The production dietary lexicon also dropped a potato
+  tortilla and an almond-flour cake under a gluten exclusion. The case passed,
+  because 2 of the 4 dishes survive the filter.
 
 ## Remaining release gates
 

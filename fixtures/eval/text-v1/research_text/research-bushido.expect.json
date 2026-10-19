@@ -1,0 +1,27 @@
+{
+  "fixture": "research-bushido",
+  "schema": "reference_notes",
+  "source_urls": [
+    "https://github.com/GITenberg/Bushido-the-Soul-of-Japan_12096/blob/248684ebdb132c6e97ec42d483af8924c1addc02/12096.txt#L313-L338"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/GITenberg/Bushido-the-Soul-of-Japan_12096/blob/248684ebdb132c6e97ec42d483af8924c1addc02/12096.txt#L313-L338",
+      "title": "Bushido, the Soul of Japan, by Inazo Nitobe (Bushido as an ethical system)",
+      "text": "The Japanese word which I have roughly rendered Chivalry, is, in the original, more expressive than Horsemanship. _Bu-shi-do_ means literally Military-Knight-Ways--the ways which fighting nobles should observe in their daily life as well as in their vocation; in a word, the \"Precepts of Knighthood,\" the _noblesse oblige_ of the warrior class. Having thus given its literal significance, I may be allowed henceforth to use the word in the original. The use of the original term is also advisable for this reason, that a teaching so circumscribed and unique, engendering a cast of mind and character so peculiar, so local, must wear the badge of its singularity on its face; then, some words have a national _timbre_ so expressive of race characteristics that the best of translators can do them but scant justice, not to say positive injustice and grievance. Who can improve by translation what the German \"_Gemueth_\" signifies, or who does not feel the difference between the two words verbally so closely allied as the English _gentleman_ and the French _gentilhomme_? Bushido, then, is the code of moral principles which the knights were required or instructed to observe. It is not a written code; at best it consists of a few maxims handed down from mouth to mouth or coming from the pen of some well-known warrior or savant. More frequently it is a code unuttered and unwritten, possessing all the more the powerful sanction of veritable deed, and of a law written on the fleshly tablets of the heart. It was founded not on the creation of one brain, however able, or on the life of a single personage, however renowned. It was an organic growth of decades and centuries of military career."
+    }
+  ],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [
+    "Bushido"
+  ],
+  "input_text": "",
+  "exclusions": [],
+  "word_limits": {},
+  "forbidden_strings": [],
+  "input_ids": [],
+  "reference_names": [],
+  "avoid": [],
+  "min_items": 1
+}

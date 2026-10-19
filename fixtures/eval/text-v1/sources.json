@@ -1,0 +1,103 @@
+{
+  "version": "text-v1",
+  "note": "Verbatim public-domain excerpts used as research sources in the text-role fixtures. Each excerpt is lines [from, to] of the file at the pinned commit, CR removed and whitespace collapsed, optionally cut after end_after. Regenerate or verify with scripts/eval/build-text-fixtures.ts.",
+  "sources": [
+    {
+      "id": "book-of-tea-schools",
+      "title": "The Book of Tea, by Kakuzo Okakura, chapter II: The Schools of Tea",
+      "publisher": "Project Gutenberg eBook #769 (GITenberg mirror)",
+      "license": "Public domain in the USA (Project Gutenberg eBook #769, metadata.yaml at the same commit)",
+      "repo": "GITenberg/The-Book-of-Tea_769",
+      "commit": "7b4f957a18745c3cc0f48036b86f488fa47b15b0",
+      "path": "769.txt",
+      "file_sha256": "83a07bef4dd0df1de5aa7b13e8d1113e511c8cba6dc9804723f6ca2340740d8d",
+      "lines": [
+        462,
+        501
+      ],
+      "excerpt": "Japan, which followed closely on the footsteps of Chinese civilisation, has known the tea in all its three stages. As early as the year 729 we read of the Emperor Shomu giving tea to one hundred monks at his palace in Nara. The leaves were probably imported by our ambassadors to the Tang Court and prepared in the way then in fashion. In 801 the monk Saicho brought back some seeds and planted them in Yeisan. Many tea-gardens are heard of in succeeding centuries, as well as the delight of the aristocracy and priesthood in the beverage. The Sung tea reached us in 1191 with the return of Yeisai-zenji, who went there to study the southern Zen school. The new seeds which he carried home were successfully planted in three places, one of which, the Uji district near Kioto, bears still the name of producing the best tea in the world. The southern Zen spread with marvelous rapidity, and with it the tea-ritual and the tea-ideal of the Sung. By the fifteenth century, under the patronage of the Shogun, Ashikaga-Voshinasa, the tea ceremony is fully constituted and made into an independent and secular performance. Since then Teaism is fully established in Japan. The use of the steeped tea of the later China is comparatively recent among us, being only known since the middle of the seventeenth century. It has replaced the powdered tea in ordinary consumption, though the latter still continues to hold its place as the tea of teas. It is in the Japanese tea ceremony that we see the culmination of tea-ideals. Our successful resistance of the Mongol invasion in 1281 had enabled us to carry on the Sung movement so disastrously cut off in China itself through the nomadic inroad. Tea with us became more than an idealisation of the form of drinking; it is a religion of the art of life. The beverage grew to be an excuse for the worship of purity and refinement, a sacred function at which the host and guest joined to produce for that occasion the utmost beatitude of the mundane. The tea-room was an oasis in the dreary waste of existence where weary travellers could meet to drink from the common spring of art-appreciation. The ceremony was an improvised drama whose plot was woven about the tea, the flowers, and the paintings. Not a colour to disturb the tone of the room, not a sound to mar the rhythm of things, not a gesture to obtrude on the harmony, not a word to break the unity of the surroundings, all movements to be performed simply and naturally--such were the aims of the tea-ceremony. And strangely enough it was often successful. A subtle philosophy lay behind it all. Teaism was Taoism in disguise.",
+      "excerpt_sha256": "b161be6fb9de4112fce6a74d346e8989deef9f909f1e3a6f585c3e5dd3c67303"
+    },
+    {
+      "id": "book-of-tea-tea-room",
+      "title": "The Book of Tea, by Kakuzo Okakura, chapter IV: The Tea-Room",
+      "publisher": "Project Gutenberg eBook #769 (GITenberg mirror)",
+      "license": "Public domain in the USA (Project Gutenberg eBook #769, metadata.yaml at the same commit)",
+      "repo": "GITenberg/The-Book-of-Tea_769",
+      "commit": "7b4f957a18745c3cc0f48036b86f488fa47b15b0",
+      "path": "769.txt",
+      "file_sha256": "83a07bef4dd0df1de5aa7b13e8d1113e511c8cba6dc9804723f6ca2340740d8d",
+      "lines": [
+        800,
+        845
+      ],
+      "excerpt": "The tea-room (the Sukiya) does not pretend to be other than a mere cottage--a straw hut, as we call it. The original ideographs for Sukiya mean the Abode of Fancy. Latterly the various tea-masters substituted various Chinese characters according to their conception of the tea-room, and the term Sukiya may signify the Abode of Vacancy or the Abode of the Unsymmetrical. It is an Abode of Fancy inasmuch as it is an ephemeral structure built to house a poetic impulse. It is an Abode of Vacancy inasmuch as it is devoid of ornamentation except for what may be placed in it to satisfy some aesthetic need of the moment. It is an Abode of the Unsymmetrical inasmuch as it is consecrated to the worship of the Imperfect, purposely leaving some thing unfinished for the play of the imagination to complete. The ideals of Teaism have since the sixteenth century influenced our architecture to such degree that the ordinary Japanese interior of the present day, on account of the extreme simplicity and chasteness of its scheme of decoration, appears to foreigners almost barren. The first independent tea-room was the creation of Senno-Soyeki, commonly known by his later name of Rikiu, the greatest of all tea-masters, who, in the sixteenth century, under the patronage of Taiko-Hideyoshi, instituted and brought to a high state of perfection the formalities of the Tea-ceremony. The proportions of the tea-room had been previously determined by Jowo--a famous tea-master of the fifteenth century. The early tea-room consisted merely of a portion of the ordinary drawing-room partitioned off by screens for the purpose of the tea-gathering. The portion partitioned off was called the Kakoi (enclosure), a name still applied to those tea-rooms which are built into a house and are not independent constructions. The Sukiya consists of the tea-room proper, designed to accommodate not more than five persons, a number suggestive of the saying \"more than the Graces and less than the Muses,\" an anteroom (midsuya) where the tea utensils are washed and arranged before being brought in, a portico (machiai) in which the guests wait until they receive the summons to enter the tea-room, and a garden path (the roji) which connects the machiai with the tea-room. The tea-room is unimpressive in appearance. It is smaller than the smallest of Japanese houses, while the materials used in its construction are intended to give the suggestion of refined poverty. Yet we must remember that all this is the result of profound artistic forethought, and that the details have been worked out with care perhaps even greater than that expended on the building of the richest palaces and temples. A good tea-room is more costly than an ordinary mansion, for the selection of its materials, as well as its workmanship, requires immense care and precision. Indeed, the carpenters employed by the tea-masters form a distinct and highly honoured class among artisans, their work being no less delicate than that of the makers of lacquer cabinets.",
+      "excerpt_sha256": "91c303f52cb7893bd20395b32e0dfbaf965c655173b8f49a262309cbcb4f2d7c"
+    },
+    {
+      "id": "bushido-cha-no-yu",
+      "title": "Bushido, the Soul of Japan, by Inazo Nitobe (on politeness and Cha-no-yu)",
+      "publisher": "Project Gutenberg eBook #12096 (GITenberg mirror)",
+      "license": "Public domain in the USA (Project Gutenberg eBook #12096, metadata.yaml at the same commit)",
+      "repo": "GITenberg/Bushido-the-Soul-of-Japan_12096",
+      "commit": "248684ebdb132c6e97ec42d483af8924c1addc02",
+      "path": "12096.txt",
+      "file_sha256": "9769d8e0f52cdf9811c09afc02d87d0f3eb2f79642c074d05ec74fdbf5bbb3f0",
+      "lines": [
+        1154,
+        1186
+      ],
+      "excerpt": "As an example of how the simplest thing can be made into an art and then become spiritual culture, I may take _Cha-no-yu_, the tea ceremony. Tea-sipping as a fine art! Why should it not be? In the children drawing pictures on the sand, or in the savage carving on a rock, was the promise of a Raphael or a Michael Angelo. How much more is the drinking of a beverage, which began with the transcendental contemplation of a Hindoo anchorite, entitled to develop into a handmaid of Religion and Morality? That calmness of mind, that serenity of temper, that composure and quietness of demeanor, which are the first essentials of _Cha-no-yu_ are without doubt the first conditions of right thinking and right feeling. The scrupulous cleanliness of the little room, shut off from sight and sound of the madding crowd, is in itself conducive to direct one's thoughts from the world. The bare interior does not engross one's attention like the innumerable pictures and bric-a-brac of a Western parlor; the presence of _kakemono_[13] calls our attention more to grace of design than to beauty of color. The utmost refinement of taste is the object aimed at; whereas anything like display is banished with religious horror. The very fact that it was invented by a contemplative recluse, in a time when wars and the rumors of wars were incessant, is well calculated to show that this institution was more than a pastime. Before entering the quiet precincts of the tea-room, the company assembling to partake of the ceremony laid aside, together with their swords, the ferocity of the battle-field or the cares of government, there to find peace and friendship. [Footnote 13: Hanging scrolls, which may be either paintings or ideograms, used for decorative purposes.] _Cha-no-yu_ is more than a ceremony--it is a fine art; it is poetry, with articulate gestures for rhythm: it is a _modus operandi_ of soul discipline. Its greatest value lies in this last phase. Not infrequently the other phases preponderated in the mind of its votaries, but that does not prove that its essence was not of a spiritual nature.",
+      "excerpt_sha256": "99294de3af803759e1eaf4f02ee465eb629a2122e2d953e5fb699c0eda4b9105"
+    },
+    {
+      "id": "bushido-definition",
+      "title": "Bushido, the Soul of Japan, by Inazo Nitobe (Bushido as an ethical system)",
+      "publisher": "Project Gutenberg eBook #12096 (GITenberg mirror)",
+      "license": "Public domain in the USA (Project Gutenberg eBook #12096, metadata.yaml at the same commit)",
+      "repo": "GITenberg/Bushido-the-Soul-of-Japan_12096",
+      "commit": "248684ebdb132c6e97ec42d483af8924c1addc02",
+      "path": "12096.txt",
+      "file_sha256": "9769d8e0f52cdf9811c09afc02d87d0f3eb2f79642c074d05ec74fdbf5bbb3f0",
+      "lines": [
+        313,
+        338
+      ],
+      "end_after": "decades and centuries of military career.",
+      "excerpt": "The Japanese word which I have roughly rendered Chivalry, is, in the original, more expressive than Horsemanship. _Bu-shi-do_ means literally Military-Knight-Ways--the ways which fighting nobles should observe in their daily life as well as in their vocation; in a word, the \"Precepts of Knighthood,\" the _noblesse oblige_ of the warrior class. Having thus given its literal significance, I may be allowed henceforth to use the word in the original. The use of the original term is also advisable for this reason, that a teaching so circumscribed and unique, engendering a cast of mind and character so peculiar, so local, must wear the badge of its singularity on its face; then, some words have a national _timbre_ so expressive of race characteristics that the best of translators can do them but scant justice, not to say positive injustice and grievance. Who can improve by translation what the German \"_Gemueth_\" signifies, or who does not feel the difference between the two words verbally so closely allied as the English _gentleman_ and the French _gentilhomme_? Bushido, then, is the code of moral principles which the knights were required or instructed to observe. It is not a written code; at best it consists of a few maxims handed down from mouth to mouth or coming from the pen of some well-known warrior or savant. More frequently it is a code unuttered and unwritten, possessing all the more the powerful sanction of veritable deed, and of a law written on the fleshly tablets of the heart. It was founded not on the creation of one brain, however able, or on the life of a single personage, however renowned. It was an organic growth of decades and centuries of military career.",
+      "excerpt_sha256": "3e87768eb734657dd638d1d3eba5f6388264f681e7a942ba2a03a1626bd34df9"
+    },
+    {
+      "id": "beeton-yorkshire-pudding",
+      "title": "The Book of Household Management, by Isabella Beeton, recipe 1384: Yorkshire pudding",
+      "publisher": "Project Gutenberg eBook #10136 (GITenberg mirror)",
+      "license": "Public domain in the USA (Project Gutenberg eBook #10136, metadata.yaml at the same commit)",
+      "repo": "GITenberg/The-Book-of-Household-Management_10136",
+      "commit": "390da3230f06ac1360cfb62a9167845d81d527af",
+      "path": "10136.txt",
+      "file_sha256": "c2feaf423761d78b4e0bd63dddb9b203b6262b7f2ce501bc0f0cb4eb828999bc",
+      "lines": [
+        43332,
+        43354
+      ],
+      "excerpt": "YORKSHIRE PUDDING, to serve with hot Roast Beef. 1384. INGREDIENTS.--1-1/2 pint of milk, 6 _large_ tablespoonfuls of flour, 3 eggs, 1 saltspoonful of salt. [Illustration: YORKSHIRE PUDDING.] _Mode_.--Put the flour into a basin with the salt, and stir gradually to this enough milk to make it into a stiff batter. When this is perfectly smooth, and all the lumps are well rubbed down, add the remainder of the milk and the eggs, which should be well beaten. Beat the mixture for a few minutes, and pour it into a shallow tin, which has been previously well rubbed with beef dripping. Put the pudding into the oven, and bake it for an hour; then, for another 1/2 hour, place it under the meat, to catch a little of the gravy that flows from it. Cut the pudding into small square pieces, put them on a hot dish, and serve. If the meat is baked, the pudding may at once be placed under it, resting the former on a small three-cornered stand. _Time_.--1-1/2 hour. _Average cost_, 7d. _Sufficient_ for 5 or 6 persons. _Seasonable_ at any time.",
+      "excerpt_sha256": "efb3f8030ca4b103b6f739f17862e02af0cae81f4a04136b235dc37ad5af74ba"
+    },
+    {
+      "id": "seven-lamps-preface",
+      "title": "The Seven Lamps of Architecture, by John Ruskin, preface",
+      "publisher": "Project Gutenberg eBook #35898 (GITenberg mirror)",
+      "license": "Public domain in the USA (Project Gutenberg eBook #35898, metadata.yaml at the same commit)",
+      "repo": "GITenberg/The-Seven-Lamps-of-Architecture_35898",
+      "commit": "78c3d9d0c35171c8fb27fe314dec40c6094f598a",
+      "path": "35898.txt",
+      "file_sha256": "c75548d5c09fa94f9e69e8c62c147dc36dcaab866e93106cbdee38298c04f5d7",
+      "lines": [
+        231,
+        253
+      ],
+      "excerpt": "The reader will perhaps be surprised by the small number of buildings to which reference has been made. But it is to be remembered that the following chapters pretend only to be a statement of principles, illustrated each by one or two examples, not an essay on European architecture; and those examples I have generally taken either from the buildings which I love best, or from the schools of architecture which, it appeared to me, have been less carefully described than they deserved. I could as fully, though not with the accuracy and certainty derived from personal observation, have illustrated the principles subsequently advanced, from the architecture of Egypt, India, or Spain, as from that to which the reader will find his attention chiefly directed, the Italian Romanesque and Gothic. But my affections, as well as my experience, led me to that line of richly varied and magnificently intellectual schools, which reaches, like a high watershed of Christian architecture, from the Adriatic to the Northumbrian seas, bordered by the impure schools of Spain on the one hand, and of Germany on the other: and as culminating points and centres of this chain, I have considered, first, the cities of the Val d'Arno, as representing the Italian Romanesque and pure Italian Gothic; Venice and Verona as representing the Italian Gothic colored by Byzantine elements; and Rouen, with the associated Norman cities, Caen, Bayeux, and Coutances, as representing the entire range of Northern architecture from the Romanesque to Flamboyant.",
+      "excerpt_sha256": "040c168c50d13681739332ebb094b3e5c36fd42f9307e40086c056b2013e85df"
+    }
+  ]
+}

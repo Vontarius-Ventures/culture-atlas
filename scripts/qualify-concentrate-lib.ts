@@ -22,8 +22,7 @@ import {
   type ModelProfile,
   type QualificationArtifact,
 } from '../packages/providers/src/index';
-import { RawExtraction } from '../packages/providers/src/research/wikipedia';
-import { PlanProse } from '../packages/domain/src/composer/creative';
+import { parseTextFixture } from './eval/text-schemas';
 
 /**
  * Deliberate operator qualification of ONE Concentrate role profile
@@ -142,28 +141,10 @@ export async function discoverFixtures(
     }
     return videos;
   }
+  // `<id>.expect.json` siblings hold the content checks (scripts/eval/text-scorer.ts), not prompts.
   return entries
-    .filter((e) => e.isFile() && e.name.endsWith('.json'))
+    .filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.endsWith('.expect.json'))
     .map((e) => ({ name: e.name, kind: 'text', files: [{ path: path.join(dir, e.name) }] }));
-}
-
-function textFixture(value: unknown): {
-  system: string;
-  prompt: string;
-  schema: 'reference_notes' | 'plan_prose';
-} {
-  const v = value as Record<string, unknown>;
-  if (
-    !v ||
-    typeof v.system !== 'string' ||
-    !v.system ||
-    typeof v.prompt !== 'string' ||
-    !v.prompt ||
-    (v.schema !== 'reference_notes' && v.schema !== 'plan_prose') ||
-    Object.keys(v).some((k) => !['system', 'prompt', 'schema'].includes(k))
-  )
-    throw new Error('Text fixture must be {system, prompt, schema: reference_notes|plan_prose}.');
-  return { system: v.system, prompt: v.prompt, schema: v.schema };
 }
 
 export interface QualificationRun {
@@ -240,6 +221,11 @@ export async function qualifyProfile(
     );
   if (files * perFileMicros > opts.spendCapMicros)
     throw new Error('Worst-case reservation for these fixtures exceeds the spend cap.');
+  // Text fixtures are validated before anything is sent: a fixture for another
+  // role's schema (e.g. composer prompts under research_text) is refused.
+  for (const fixture of fixtures)
+    if (fixture.kind === 'text')
+      parseTextFixture(JSON.parse(await readFile(fixture.files[0]!.path, 'utf8')), profile.role);
   log(
     `plan: ${fixtures.length} fixtures, ${plannedRequests} requests, worst case ${files * perFileMicros} micro-USD; reading ${readingForProfile(profile)}; ${effortNote(profile)}`,
   );
@@ -311,14 +297,16 @@ export async function qualifyProfile(
         sent++;
         let usage: { inputTokens?: number; outputTokens?: number } | undefined;
         if (fixture.kind === 'text') {
-          const spec = textFixture(JSON.parse(await readFile(file.path, 'utf8')));
+          const spec = parseTextFixture(JSON.parse(await readFile(file.path, 'utf8')), profile.role);
           const model = new ConcentrateTextModel(runner);
+          // Same wire schema name and output cap as the production builder.
           const res = await model.generateStructured(
             {
               system: spec.system,
               prompt: spec.prompt,
-              schemaName: spec.schema,
-              schema: spec.schema === 'reference_notes' ? RawExtraction : PlanProse,
+              schemaName: spec.entry.schemaName,
+              schema: spec.entry.schema,
+              maxTokens: spec.entry.maxTokens,
             },
             { maxRetries: 0, modelIdentity: identity },
           );
