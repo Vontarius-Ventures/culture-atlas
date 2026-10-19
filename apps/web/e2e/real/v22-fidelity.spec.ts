@@ -201,6 +201,9 @@ for (const width of WIDTHS) {
         await press(page, chip(page, 'Foods to leave out', 'Shellfish'));
         await search(page, 'nina');
         await shot(page, '14-taste-picks', width, true);
+        // Pick order drives the screen 15 collage (Tea rituals, Japandi, Nina Simone, Sunday
+        // listening, as in mockup 15). Mockup 18 lists Sunday listening before Nina Simone, which
+        // no single pick order satisfies together with 15; 15 wins (docs/design-fidelity-v22.md).
         await addNinaSimone(page);
         await press(page, tile(page, 'Sunday listening'));
         await expect(page.locator('.pick-counter')).toHaveText('Ready');
@@ -264,6 +267,12 @@ for (const width of WIDTHS) {
         timeout: 30_000,
       });
       await shot(page, '16-more-to-explore', width, true);
+      // Record what the live run reported per category, for the honest verdict in the notes.
+      const captureId = /\/captures\/([^/?#]+)/.exec(page.url())?.[1];
+      const detail = (await (await page.request.get(`/v1/captures/${captureId}`)).json()) as {
+        analysis?: { sections?: Record<string, string> };
+      };
+      console.log(`[16@${width}] sections ${JSON.stringify(detail.analysis?.sections ?? {})}`);
 
       // ---- 17: ready notice -----------------------------------------------------
       await page.goto('/capture/photo');

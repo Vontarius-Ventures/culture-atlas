@@ -32,6 +32,8 @@ async function shot(page: Page, info: TestInfo, name: string, viewportOnly = fal
   mkdirSync(OUT, { recursive: true });
   // No hover state in reference captures.
   await page.mouse.move(0, 0);
+  // Under `next dev` the dev indicator is drawn over the page; it is not part of the app.
+  await page.addStyleTag({ content: 'nextjs-portal{display:none!important}' });
   await settleImages(page);
   await page.screenshot({
     path: path.join(OUT, `${name}-${info.project.name}.png`),
