@@ -4,7 +4,7 @@ What each provider capability can actually do in this deployment. Source of trut
 
 Statuses: **available** (probed and working) · **degraded** (working with limits) · **unverified** (configured, not yet probed; calls attempted, failures mark it unavailable) · **unavailable** (not configured, not implemented, or inaccessible — dependent features show partial states, never simulated data).
 
-Last updated: 2026-10-13 (provider adapters and World Sensor import implemented). Qloo key: **not yet issued**.
+Last updated: 2026-10-19: live qualification of the two photo-reading stages and live taste-seed timings (build plan phase 4). Earlier: 2026-10-13, provider adapters and World Sensor import. The Qloo hackathon key was issued and probed on 2026-10-17.
 
 ## Qloo (hackathon key pending)
 
@@ -25,7 +25,7 @@ Adapter behavior (`packages/providers/src/qloo/client.ts`): `X-Api-Key` header, 
 | --- | --- |
 | Base URL (`QLOO_API_URL`) | default `https://hackathon.api.qloo.com` — confirm with key |
 | Auth | `X-Api-Key` header |
-| Rate limits (per second / per day) | pending |
+| Rate limits (per second / per day) | not published. Bursts are throttled: on 2026-10-19, 2 of the 5 insights calls made while reading one photo got HTTP 429 and were retried, and insights latency ranged from 3.6 s to 13.7 s. Every caller keeps ≤ 3 requests in flight |
 | May responses be stored (`provider_queries.results`)? For how long? | pending — until confirmed, store only ids, names and ranks needed for traceability |
 | May provider images/metadata be displayed publicly? | pending — until confirmed, use licensed/own imagery or text treatment |
 | Categories available to the key | pending |
@@ -34,7 +34,8 @@ Adapter behavior (`packages/providers/src/qloo/client.ts`): `X-Api-Key` header, 
 
 | Capability | Provider | Status today | Notes |
 | --- | --- | --- | --- |
-| `vlm.analyze_image` | Concentrate (default, `LLM_PROVIDER=concentrate`): role profiles `vision_photo` / `vision_video_frame` pinned by `CONCENTRATE_PROFILE_FILE` or `CONCENTRATE_PROFILES_JSON`. Featherless / Anthropic only as an explicit `LLM_PROVIDER` rollback | `unavailable / not_configured` until a key, durable ledger, spend limits AND a **qualified** profile exist (see [concentrate.md](concentrate.md)); then `unverified` until the first validated response. **No model is qualified in this repository** | Responses API (`POST /v1/responses`), nonstreaming strict `json_schema`, bounded JPEG data URIs, no tools, no automatic cross-gateway fallback. Readiness ladder configured → catalog-compatible → qualified → available / degraded / unavailable is read-only (no paid probe). Video uses ≤ 8 extracted frames, one call each |
+| `vlm.analyze_image` | Concentrate (default, `LLM_PROVIDER=concentrate`): role profiles `vision_photo` / `vision_video_frame` pinned by `CONCENTRATE_PROFILE_FILE` or `CONCENTRATE_PROFILES_JSON`. Featherless / Anthropic only as an explicit `LLM_PROVIDER` rollback | `unavailable / not_configured` until a key, durable ledger, spend limits AND a **qualified** profile exist (see [concentrate.md](concentrate.md)); then `unverified` until the first validated response. **2026-10-19:** `vision_photo` (quick read) on `anthropic/claude-haiku-5-5`, effort `none`, **passed** live qualification on 15 real photographs (p50 2.47 s, p95 5.30 s). The local real stack then reported `unverified` and served a live upload. The profile and artifact stay with the operator, not in git. **Not for production yet:** the ZDR/no-logging dashboard confirmation is pending, and re-qualification follows it. `vision_video_frame` is not qualified | Responses API (`POST /v1/responses`), nonstreaming strict `json_schema`, bounded JPEG data URIs, no tools, no automatic cross-gateway fallback. Readiness ladder configured → catalog-compatible → qualified → available / degraded / unavailable is read-only (no paid probe). Video uses ≤ 8 extracted frames, one call each |
+| `vlm.enrich_image` (stage 2) | Concentrate `vision_photo_enrich` profile only; no Elorian or rollback fallback | Same ladder as above. **2026-10-19:** `anthropic/claude-haiku-5-5`, effort `none`, **passed** on the same 15 photos (p50 4.60 s, p95 9.27 s; one reply used the full 1200-token cap). Same pending privacy gate | Background call after the first section; deterministic merge, advisory vetoes (FAST-02). Reads visible text and small logos well at 768 px |
 | `text.generate` | Concentrate `research_text` / `composer` profiles (rollback: Featherless or Anthropic `RESEARCH_MODEL` / `COMPOSER_MODEL`) | as above, per role | Claim extraction, dish ideas and plan prose. v1 jobs attach verified job identity per call; session-only (anonymous) jobs get none, so the budgeted gateway refuses them |
 | `research.sources` | Wikipedia Action API search + REST `/page/summary` | `unverified` until first call (no key needed) | Real canonical page URLs, CC BY-SA 4.0 text license, disambiguation skipped; `WIKIMEDIA_USER_AGENT` sent. Not reachable from this build sandbox (egress proxy 403), so tests use documented response shapes |
 | `research.claims` | text model over research sources | follows `text.generate` | Factual claims without a supplied source URL are dropped; overview and section text are assembled only from kept claims |

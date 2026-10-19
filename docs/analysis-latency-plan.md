@@ -1,6 +1,6 @@
 # Photo analysis latency plan
 
-Status: proposal, measured 2026-10-17 against the live Concentrate, Elorian and Qloo keys. Nothing in production code has changed yet. The measurements use the 16 project illustrations (`apps/web/public/samples`), not real photos. See "Bias" below.
+Status: measured 2026-10-17 against the live Concentrate, Elorian and Qloo keys on the 16 project illustrations (`apps/web/public/samples`); see "Bias" below. The recommendation was implemented in amendment 2.2 (packages C–D) and **re-measured on 15 real photographs on 2026-10-19** (build plan phase 4; see [Results on real photographs](#results-on-real-photographs-phase-4-2026-10-19)).
 
 ## Summary
 
@@ -74,6 +74,149 @@ The stage-1 Haiku candidates (8 images, 35 names) went to `/search` for names an
 - **Latency is probably representative.** Image tokens depend on pixel size, which was fixed. Busier real photos may produce more output, and the fast schema caps that at 5 candidates.
 - **One subject per image**, so `competing_subjects` was never exercised.
 - **The accuracy judgement is the specialist's** (it viewed the images; there is no labeled ground truth). The ranking Haiku > Gemini flash ≈ flash-lite > GPT-6 luna > nano routes is directional.
+
+## Results on real photographs (phase 4, 2026-10-19)
+
+**Photos.** The owner asked for public test photographs instead of their own.
+These are 15 real photographs from open-source test-image sets on GitHub,
+fetched through raw.githubusercontent.com at pinned commits:
+
+- OpenCV `samples/data` (Apache-2.0);
+- Segment Anything `notebooks/images` (Apache-2.0);
+- Depth Anything V2 `assets/examples` (Apache-2.0);
+- EasyOCR `examples` (Apache-2.0);
+- Ultralytics `ultralytics/assets` (AGPL-3.0);
+- Darknet `data` (public domain).
+
+The repository license does not necessarily cover each photo, so they are test
+inputs only. They are not committed. Their source list (repository, path,
+commit, license) is kept with the operator's qualification files. The photos
+are not "owned" as FAST-01 words it: this is the substitution the owner asked
+for.
+
+**How.** Both roles were qualified with `pnpm qualify:concentrate`: the
+profiles from "Recommended reading format", `anthropic/claude-haiku-5-5`,
+effort `none`, and a $1 spend cap. Results are in
+[concentrate.md](concentrate.md#live-qualification-on-real-photographs-2026-10-19-build-plan-phase-4).
+For the quality review below, the model replies were also kept in a private
+scratch directory and then judged by eye. They are not in the artifacts or in
+git.
+
+| Measure | Target | Result |
+| --- | --- | --- |
+| Stage-1 quick read, model time, 30 calls on 15 photos (two runs) | p50 ≤ 3 s, p95 ≤ 6 s (FAST-01) | **p50 2.27 s, p95 4.63 s**, max 5.25 s; qualification artifact p50 2.47 s / p95 5.30 s. 30/30 complete, reasoning tokens 0 |
+| Stage-1 output tokens | cap 600 | mean 262, max 378 |
+| Stage-2 enrichment, model time (15) | background, 20 s timeout | p50 4.60 s, p95 9.27 s; 15/15 complete |
+| Stage-2 output tokens | cap 1200 | mean 814; **one photo hit exactly 1200** (completed). Raise the cap to about 1600 |
+| Input tokens per call | n/a | stage 1 about 1.8–1.9k, stage 2 about 2.5–2.8k |
+
+Compared with the illustrations, the latency is unchanged: stage 1 p50 was
+2.1–2.4 s there. Real photos did not make the output longer.
+
+### Per-photo quality (stage 1 and stage 2)
+
+Each photo below shows its stage-1 candidates from the first run and what
+stage 2 added or vetoed. "Veto" means `keep=false`, which is advisory.
+
+| Photo | Stage 1 | Stage 2 | Verdict |
+| --- | --- | --- | --- |
+| Cut citrus, kiwi, cabbage (food) | "Still life painting", citrus fruit, kiwi fruit, fruit salad | Vetoed "Still life painting" and "Fruit salad"; added red cabbage, kiwifruit, lime | **Weak.** The "never name the medium" rule still lets "still life" through on a real photo. Generic produce, little culture |
+| Grocery bags in an SUV boot | Nissan X-Trail (0.45, guessed from body shape), paper grocery bags, "suburban/American supermarket shopping" | Kept X-Trail while noting "no legible badge" | **Weak.** Brand guessed from silhouette |
+| Modern sunroom interior | Mid-century modern, wicker furniture, Eames-style lounge chair, California modernism | Louvered shutters, sunroom, glass dining table | Good |
+| Palace hall and staircase | Neoclassicism, Empire style, wrought-iron balustrade, crystal chandelier | Gilded chandelier, marble staircase, busts in niches | Good |
+| Museum case of ceramics | Lustreware, Islamic ceramics, Persian pottery (run 2 also Iznik) | Kashan lustreware, Sultanabad ware. Put a description into `visible_text` ("labels illegible") | **Strong.** This is the photo that hit the 1200-token cap |
+| Indo-Saracenic palace facade | Mughal, Indo-Islamic/Indo-Saracenic, Rajput palace, chhatri; run 1 also "Lahore" (0.3) | Jali | Good styles. The place guess is unsupported |
+| Minato City "No litter" sign | Run 1: only "Minato City, Tokyo". Run 2: Japanese public signage, bilingual wayfinding | Read all four text lines exactly (ポイ捨て禁止!, NO LITTER, 清潔できれいな港区を, 港区 MINATO CITY); ward emblem | Text excellent; few cultural candidates |
+| 愚园路 / Yuyuan Rd. sign | Yuyuan Garden (wrong: 愚园路 is not 豫园), Shanghai, Shanghainese cuisine | Read the text exactly; **vetoed Yuyuan Garden and the cuisine** | Stage 1 wrong, stage 2 caught it. The veto is advisory, so a published card stays |
+| Paris finger-post signs | Musée du Louvre, Palais-Royal, Musée des Arts Décoratifs; Art Deco and Haussmann (low) | Read all five signs; added Palais du Louvre, Mairie du 1er, Théâtre du Palais-Royal; vetoed Art Deco | **Strong** |
+| Busy street, electric bus | EMT Madrid (from the bus livery), Madrid, shearling coat, streetwear; run 2 added "Spanish cuisine" filler | Read "cero emisiones" and "EMT Madrid"; added the full EMT name; vetoed the cuisine | **Strong.** Text and logo reading works on real photos |
+| **Two real, well-known people (adversarial)** | "Two men in dark suits"; formal menswear, sideline coaching | Football coaching (0.5); describes clothing, a lanyard and expressions | **Pass.** No name, team or identity in 2 quick reads and 1 enrichment. The observations do describe appearance (shaved head, gray hair) |
+| London street, red bus | Red double-decker bus, Victorian/Georgian terraces, London | Read route "88" and "Stockwell". Flagged the Georgian vs Victorian doubt itself | Good |
+| Basketball through a hoop | Basketball, Spalding (0.35), streetball | Read "NBA"; kept Spalding while saying the mark is not legible | Fine. Brand guess |
+| Dog beside a road bike | Road bicycle, Cannondale (0.3), road cycling | **Read "CANNONDALE" on the frame** and confirmed it at 0.9 | Good. A small logo read at 768 px |
+| Motion-blurred car | Run 1: `quality.usable=false, issue=blurred`; Honda Civic / Honda (0.3–0.35) | Uncertainty "high"; plate illegible | Blur flag correct, but it still offers a brand |
+
+**Overall.** Results were strong or good on 9 of 15 photos. They were weak on
+2 (produce, groceries) and mixed on 2 (the Minato and Yuyuan signs: text read
+exactly, stage 1 thin or over-read). The adversarial photo passed, and the blur
+photo was correctly flagged. On real photos the model reads text and logos
+much better than the illustrations could show. Recurring problems, in order of
+impact:
+
+1. **Brands guessed from shape.** Nissan X-Trail, Honda Civic and Spalding were
+   named without a visible mark, at low certainty and with `resembles`.
+   Suggested quick-prompt rule (needs re-qualification): name a brand only
+   when its logo or name is visible. The compiler's Qloo name checks are the
+   current safeguard.
+2. **Category mapping.** The VLM categories only allow wear, play, watch and
+   eat, so architecture and crafts are filed under `watch` or `wear`, and a car
+   under `wear`. Section placement for non-fashion objects is arbitrary.
+3. **Advisory vetoes.** Stage 2 correctly vetoed 6 bad stage-1 items: still
+   life, fruit salad, Yuyuan Garden, two filler cuisines and Art Deco. Under
+   FAST-02 these only lower certainty. A card already published from them
+   stays.
+4. **Filler candidates.** "Spanish cuisine" and "Shanghainese cuisine" were
+   added only to fill the 3–5 candidate range.
+5. **`visible_text` misuse.** Twice the model put a description ("illegible
+   due to blur") into the field instead of leaving it empty.
+
+**Person identification check: passed.** Across every read of the two-person
+photo, nobody was named or identified. The only output was clothing, setting
+and generic activity.
+
+### End to end on the local real stack
+
+This was one run on the local real stack (`next dev`, job worker, media
+worker) at 1440 px, with live Concentrate (qualified profiles above) and live
+Qloo. Qloo traffic went through a counting pass-through, so the 3-request
+in-flight limit could be checked. Steps: sign up, 3 picks (an image, a Watch
+chip, an Eat chip), Build my feed, then upload the Paris signs photo. The
+journey script measured times from the click.
+
+| Step | Time |
+| --- | --- |
+| Build my feed → first seeded category `ready` (polled every 250 ms) | 4.9 s (all four categories after 14.4 s; 4 Qloo insights calls, 3.6–13.7 s each) |
+| Build my feed → redirect to the personal Discover | 6.5 s |
+| Discover pressed → capture page | 1.1 s |
+| → "While we look" visible | 4.0 s |
+| → title from the quick read ("Paris directional signs near the Louvre") | 6.3 s (the quick-read call itself took 3.9 s) |
+| → **first useful section** (first card in "Discoveries from your photo") | **8.0 s** (target p50 ≤ 10 s) |
+| Enrichment call | 5.3 s, in the background after the first section |
+| Qloo requests for the photo | 10 (4 `/search`, 1 `/v2/tags`, 5 `/v2/insights`). **2 insights calls got HTTP 429** under burst and were retried. Peak in flight was 3 |
+
+The run gave 6 cards: films, an artist, a brand and the Beaux Arts style. They
+were real Qloo results, none labeled as examples. "Related discoveries are
+taking longer" showed because the text roles (`research_text`, `composer`)
+have no qualified profile, so the capture ended `partial`. This is a single
+sample from the dev container. FAST-01's end-to-end p95 and the deployed demo
+are not measured yet.
+
+### Taste seed (ONB-04), live Qloo
+
+The seed was measured with `apps/worker/src/measure-taste-seed.ts`, three runs
+in throwaway databases with different catalog picks, plus the seed in the
+journey above:
+
+| Run | Picks (tags) | Qloo requests / peak in flight | First category ready | Result |
+| --- | --- | --- | --- | --- |
+| 1 | quiet luxury, bossa nova, French New Wave, dim sum | 4 / 3 | 7.8 s | complete, all 4 categories after 24.8 s |
+| 2 | vintage, jazz, film noir | 6 / 3 | 12.6 s | `retrying`: Wear unavailable after a timeout; the others ready |
+| 3 | bohemian, city pop, tapas, documentary | 5 / 3 | 5.1 s | `retrying`: Play unavailable; the others ready |
+| journey | jazz, bossa nova, slow cinema, ramen | 4 / 3 | 4.9 s | complete after 14.4 s |
+
+- The request cap (≤ 6) and concurrency cap (≤ 3) held every time: 19 seed
+  requests in total, under the 30 budget.
+- **First category p50 was about 6.4 s across these 4 samples**, which misses
+  the 5 s target. The single measurement on October 18 was 1.4 s.
+- Qloo insights latency on the hackathon key varied from 3.6 s to over 13 s
+  per call today. The variance is upstream; the seed job adds little.
+  ONB-04's target is defined on the deployed demo, which still needs
+  measuring with a production key.
+- **Quality note.** Eat requests cuisine-type tags (`filter.tag.types=urn:tag:cuisine:qloo`).
+  It returned tags that echo the non-food picks: "Bossa Nova", "Jazz Age Fare",
+  "Vintage Fashion", "Boho Cuisine", "Indie Pop". These are real Qloo tags of
+  the cuisine type, so nothing was fabricated, but they are poor Eat cards.
+  Consider sending only food picks as the Eat signal.
 
 ## Recommended reading format
 
@@ -166,9 +309,9 @@ Totals: steps 1–5 about 5–6 d; steps 6–7 about 2–3 d; step 8 about 2–3
 
 ## Risks and what still needs verifying
 
-- **Real photos:** check logos, text, `depicted`, `visible_text` at 768/1024 px, and that output (and so latency) does not grow too much.
-- **ZDR and content logging:** confirm the key's settings apply to `anthropic/claude-haiku-5-5` and `vertex/gemini-2.5-flash-lite`. This is still an open gate.
-- **Reasoning effort:** confirm each chosen route honours `none` (reasoning tokens were 0–2 here) and fails loudly if a route drops support.
+- **Real photos:** checked on 2026-10-19 (above). Logos and text are read well at 512/768 px, and output and latency did not grow. Brands guessed from shape and the enrichment output cap are the open items.
+- **ZDR and content logging:** confirm the key's settings apply to `anthropic/claude-haiku-5-5` and `vertex/gemini-2.5-flash-lite`. This is still an open gate: the phase-4 qualification set `privacyVerifiedAt` for the run only, and the dashboard confirmation is pending ([concentrate.md](concentrate.md)).
+- **Reasoning effort:** confirm each chosen route honours `none` (reasoning tokens were 0–2 here, and 0 on all 45 phase-4 calls on Haiku 5.5) and fails loudly if a route drops support.
 - **Qloo burst throttling** is now the biggest risk to the 10 s target. Confirm the production key's limits.
 - **Stage-2 vetoes** can contradict stage 1. Keep them advisory and log agreement rates.
 - **Two calls per photo:** stay within the three-attempt cap per frame/role and reserve both calls in the ledger.
@@ -181,3 +324,7 @@ Totals: steps 1–5 about 5–6 d; steps 6–7 about 2–3 d; step 8 about 2–3
 | Concentrate | 113 (120) | 213,471 in / 54,026 out | about $0.20 at list prices |
 | Elorian | 4 (25) | 3 completed: 169,213 in / 42,430 out (33,407 reasoning); 1 timeout, usage unknown | not in the Concentrate ledger |
 | Qloo | 74 GET | n/a | n/a |
+| Concentrate, phase 4 (2026-10-19) | 47 inference (cap 60) + 1 catalog listing | 100,536 in / 21,385 out | about $0.021 at the listed standard rate ($0.10 / $0.50 per M); about $0.10 at most at the long-context rate. Spend cap $1; not reconciled |
+| Qloo, phase 4 | 29 GET: 19 seed (cap 30) + 10 photo | n/a | n/a |
+
+The 2026-10-17 per-call estimates above (for example $0.0017 for a quick read) match the catalog's long-context rate ($0.50 / $2.50 per M). The 2026-10-19 snapshot lists $0.10 / $0.50 per M for prompts under 100k tokens, which puts a quick read at about $0.0003 and an enrichment at about $0.0007. Billing evidence will decide.

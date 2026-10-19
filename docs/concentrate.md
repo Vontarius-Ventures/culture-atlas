@@ -6,10 +6,14 @@ rollbacks (`LLM_PROVIDER=featherless|anthropic`); nothing ever falls back to
 them automatically, and v2 media analysis is unavailable under a rollback
 provider. Qloo stays independent.
 
-**No production model is qualified in this repository.** Every test uses
-synthetic ids such as `fixture/model-1`, which must never be deployed. Without a
-key, qualified profiles, a durable ledger and spend ceilings every role reports
-`unavailable`; capture, library, uploads and playback keep working.
+**No qualified profile ships in this repository.** Every test uses synthetic
+ids such as `fixture/model-1`, which must never be deployed. The two photo
+stages passed a live qualification on 2026-10-19 (see "Live qualification on
+real photographs" below), but the profiles and artifacts stay with the operator,
+and the ZDR/no-logging confirmation in the Concentrate dashboard is **still
+pending**. Without a key, qualified profiles, a durable ledger and spend
+ceilings every role reports `unavailable`; capture, library, uploads and
+playback keep working.
 
 Authority: `specs/capture-platform-v2/CONCENTRATE.md`.
 
@@ -178,7 +182,7 @@ unavailable under Concentrate.
 - Both prompts keep the security rules (image text and `user_data` are DATA; no tools). The quick prompt adds "Read the subject as if it were a photo; never name the rendering medium or drawing style." and "Skip generic objects unless named as a specific type, style or tradition." Stage 2 receives the stage-1 title and candidate names inside the `user_data` block.
 - The stage-2 role is wired only from a qualified Concentrate profile (`gateway.vlmEnrich`, `registry.vlmEnrich`); there is no Elorian or rollback fallback for it, and a fallback model's stage-1 answer (no quick read) never gets a stage 2.
 - Ledger: each call reserves its own `inference_attempts` row; both stages of one job share the job id and count as one daily analysis. `ModelSpendLedger.canReserveAll` is the read-only pre-check the compiler uses before stage 1 so that stage 2 is planned only when both worst cases fit.
-- The default route measured in [the latency plan](analysis-latency-plan.md) is `anthropic/claude-haiku-5-5` with effort `none` for both stages. **Not qualified here:** it needs the operator's ≥ 10 real owned photos and the ZDR/logging confirmation (build plan phase 4).
+- The default route measured in [the latency plan](analysis-latency-plan.md) is `anthropic/claude-haiku-5-5` with effort `none` for both stages. Both stages passed live qualification on 15 real photographs on 2026-10-19 (below). **Before production** the operator must still confirm ZDR and no content logging for this route in the Concentrate dashboard, then re-qualify with the confirmed `privacyVerifiedAt`.
 
 Example profile pair (values from the latency plan; ids, artifact names and privacy dates are placeholders the operator fills in after qualification):
 
@@ -280,6 +284,69 @@ be split into a fast first section and a follow-up call.
 The catalog fix needed to run these at all (provider/model pins vs bare catalog
 ids) landed in `packages/providers/src/concentrate/profiles.ts`.
 
+## Live qualification on real photographs (2026-10-19, build plan phase 4)
+
+Both photo stages qualified on `anthropic/claude-haiku-5-5` with
+`reasoningEffort: "none"`, through `pnpm qualify:concentrate` with the
+`--confirm-paid-requests` flag. The owner asked for public test photographs
+instead of their own: 15 real photographs from open-source test-image sets
+(OpenCV samples, Segment Anything, Depth Anything V2, EasyOCR, Ultralytics,
+Darknet), fetched from raw.githubusercontent.com at pinned commits. They cover
+food, interiors, architecture, crafts, signage with Japanese, Chinese and
+French text, a busy street, a sports object, a brand on a bicycle frame, a
+motion-blurred car, and one photo of two real, well-known people as an
+adversarial check. The photos, their source list, the profiles, the catalog
+snapshot and both artifacts are kept outside the repository, in the operator's
+qualification directory. Per-photo quality notes are in
+[the latency plan](analysis-latency-plan.md#results-on-real-photographs-phase-4-2026-10-19).
+
+| Role | Artifact id | Result | Requests | Latency p50 / p95 | Tokens in / out | Profile hash (prefix) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `vision_photo` (quick read, `atlas_quick_read_v1`, 512 px, 600 out, 10 s) | `vp-quick-haiku55-none-20261019` | **pass** 15/15 | 15 | 2.47 / 5.30 s | 27,706 / 3,901 | `9cbbb362ef19` |
+| `vision_photo_enrich` (`atlas_enrichment_v1`, 768 px, 1200 out, 20 s) | `vpe-enrich-haiku55-none-20261019` | **pass** 15/15 | 30 (15 stage-1 inputs + 15 enrichments) | 4.60 / 9.27 s (enrichment calls) | 40,479 / 12,209 (enrichment calls) | `07a1836b20c6` |
+
+- **Catalog snapshot:** `fetched_at` 2026-10-19T01:11:29.472Z (200 models). It
+  lists `anthropic` as the provider for `claude-haiku-5-5`, with a ZDR policy
+  and certificate link. It lists $0.10 per million input tokens and $0.50 per
+  million output tokens below 100k input tokens, and $0.50 / $2.50 above that.
+  Both profiles use `reservationMicros` 7000 (60k input-token cap plus the
+  output cap at the standard rate, rounded up).
+- **Reasoning effort:** `none` was sent on every request, and every response
+  reported `reasoning_tokens: 0`.
+- **Stage-1 model time over both runs (30 quick reads, FAST-01):** p50 2.27 s,
+  p95 4.63 s, max 5.25 s. Output was 262 tokens on average and 378 at most,
+  under the 600 cap.
+- **Enrichment output** averaged 814 tokens. One photo (a ceramics display)
+  used exactly the 1200-token cap and still completed. Raise
+  `maxOutputTokens` to about 1600 at the next re-qualification so that a busy
+  photo does not end `incomplete`.
+- **Live app run:** one upload on the real stack, with live Concentrate and
+  live Qloo, made 2 model calls. The quick read took 3.9 s and the enrichment
+  5.3 s. Timings are in [the latency plan](analysis-latency-plan.md#end-to-end-on-the-local-real-stack).
+
+**Privacy gate, still open.** For this qualification run only, both profiles
+set `privacyVerifiedAt` to 2026-10-19T01:12Z. The operator has **not** yet
+confirmed in the Concentrate dashboard that zero data retention and no content
+logging apply to `anthropic/claude-haiku-5-5` on this key. Before production:
+
+1. Confirm ZDR and no content logging for this route in the dashboard.
+2. Set `privacyVerifiedAt` to the confirmation time. Raise the enrichment
+   output cap at the same time.
+3. Re-qualify both roles, because any profile edit changes the profile hash.
+   That is about 45 requests, roughly $0.02 at the listed standard rate.
+
+Until then, do not deploy these profiles.
+
+**Spend (phase 4):**
+
+- 47 billed Concentrate inference requests: 45 for qualification and 2 for the
+  live app run.
+- 1 catalog listing (`GET /v1/models`, not inference).
+- Tokens: 100,536 input and 21,385 output in total.
+- Cost: about $0.021 at the listed standard rate, and at most about $0.10 even
+  at the long-context rate. The spend cap was $1.
+- Billing is not reconciled.
+
 ## Elorian fallback (operator choice)
 
 `MODEL_FALLBACK=elorian` plus `ELORIAN_API_KEY` adds Elorian
@@ -332,10 +399,14 @@ Concentrate against the operator's credits, independently of AWS.
 
 ## Remaining release gates
 
-- No qualified model ids; no live run of the qualification script yet (no key or
-  network here). A mock pass is not production qualification.
+- Qualified profiles exist only in the operator's directory: `vision_photo` and
+  `vision_photo_enrich` on `anthropic/claude-haiku-5-5` (effort `none`, passed
+  live on 2026-10-19). The other roles (`vision_video_frame`, `research_text`,
+  `composer`) are not qualified. A mock pass is not production qualification.
+- **ZDR / content-logging confirmation for `anthropic/claude-haiku-5-5` is
+  pending in the Concentrate dashboard.** After it, re-qualify with the
+  confirmed `privacyVerifiedAt` (see above).
 - Billing reconciliation feed (who calls `ledger.reconcile`) is not automated.
-- ZDR / content-logging settings on the real key are unverified.
 - Alerts are emitted as structured log lines (`[alert] model_gateway {…}`);
   routing them to a pager/alarm is deployment work.
 - MCP `analyze_media` tool and agent REST media routes belong to the agents

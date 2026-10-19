@@ -9,3 +9,5 @@
 - Without `QLOO_API_KEY` the script exits without writing anything. In a worktree without `.env`, pass `--env-file /path/to/.env`.
 
 First build: October 18, 2026, in three runs (40, 8 and 2 requests). The first run lost requests to Qloo 429 throttling. Labels without an exact tag of an accepted type (Workwear, Streetwear, Soul, Linen, Arthouse) were replaced by Bohemian, Preppy, Art deco, Classical, Scandinavian and Art House.
+
+Checked October 19, 2026 (build plan phase 4): the catalog was complete for the current labels, and a run without `--refresh` needed 0 Qloo requests. It was not rebuilt, so the stored ids were not re-checked against live Qloo that day.

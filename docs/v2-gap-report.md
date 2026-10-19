@@ -281,18 +281,18 @@ Date: 2026-10-19. Authority: [specs/onboarding-and-fast-analysis.md](../specs/on
 | ONB-01 | done, verified-here | Server `required` state, 409 below 3, web gate; anonymous never redirected (real journey). The feed API itself does not refuse a required account; the web gate redirects it. |
 | ONB-02 | done, verified-here | Picks are saves backed by Qloo ids (catalog or signed search result); image counted once (unit and route tests; the journey checks `picks_count` and Saved for later). |
 | ONB-03 | done, verified-here | Catalog-only completion, degraded search, seed retries through 503s and an open circuit, no fabricated cards (real journey, unit tests). |
-| ONB-04 | done; latency partial | Request cap and concurrency tested. "First category ≤ 5 s p50" was measured once, locally, against live Qloo (1.4 s), never on a deployed demo. |
+| ONB-04 | done; latency partial | Request cap (≤ 6) and concurrency (≤ 3) held in every live run. Locally, against live Qloo, the first category came after 1.4 s (Oct 18) and after 4.9, 5.1, 7.8 and 12.6 s (Oct 19, p50 about 6.4 s). That misses 5 s, because Qloo insights took 3.6–13.7 s per call. Not measured on a deployed demo ([latency plan](analysis-latency-plan.md#taste-seed-onb-04-live-qloo)). |
 | ONB-05 | done | Exclusions as plan defaults and Eat filter (unit and route tests); the journey checks the exclusion is stored and is not a pick. |
 | ONB-06 | done, verified-here | Real journey (sign-in trigger, asked once). |
 | ONB-07 | partial | Web: keyboard, 320 px and reduced motion checked by the mock and real suites, and axe passes. A screenshot comparison against the mockups was done by package D. Native: needs-physical-device. |
-| FAST-01 | needs-live-keys | No live model qualification (needs ≥ 10 real owned photos and the ZDR/logging confirmation). |
+| FAST-01 | model time verified-here; end to end partial | Live qualification on 15 real public test photographs (the owner asked for these instead of owned photos): stage-1 p50 2.27 s, p95 4.63 s over 30 calls. One live real-stack upload reached its first useful section in 8.0 s. The end-to-end p95 and the deployed demo are not measured. The ZDR/logging dashboard confirmation is pending. |
 | FAST-02 | done | Merge rules and failure isolation (unit and worker tests); the real journey shows both stages with the fake transport. |
-| FAST-03 | done; qualification needs-live-keys | Effort sent only when the profile sets it (transport and contract tests). |
+| FAST-03 | done; qualified live (privacy gate pending) | Effort is sent only when the profile sets it (transport and contract tests). Both roles have passing live artifacts from 2026-10-19, with effort `none` and 0 reasoning tokens. They stay with the operator and must be redone after the ZDR confirmation. |
 | FAST-04 | done, verified-here | The strip only reads the feed snapshot (mock suite counts requests); real journey. |
 
 ### Still open after this merge
 
-- **Live qualification (build plan phase 4).** Neither `vision_photo` (quick read) nor `vision_photo_enrich` is qualified. Every browser run used the fake transport. Profiles not pinned to `atlas_observations_v2` are treated as quick-read profiles, so check deployed profile files.
+- **Live qualification (build plan phase 4).** `vision_photo` (quick read) and `vision_photo_enrich` passed on `anthropic/claude-haiku-5-5` with effort `none` on 2026-10-19 ([concentrate.md](concentrate.md)). Still open: the operator's ZDR/no-logging dashboard confirmation, then re-qualification with the confirmed `privacyVerifiedAt` and a higher enrichment output cap. The automated browser suites still use the fake transport. Profiles not pinned to `atlas_observations_v2` are treated as quick-read profiles, so check deployed profile files.
 - **Licensed photography.** The onboarding images are generated mock photos (owner request). Replace them before a public release if generated imagery is not acceptable there.
 - **Wear chips.** Qloo has no fashion-style tags for brands, so the Wear chips are style, decor and ambience tags. Whether they are useful signals for brand insights is unverified with live data.
 - **Qloo limits.** The limit is per process: the web app and the worker can each hold 3 requests in flight against the same key.
