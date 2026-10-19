@@ -1686,6 +1686,58 @@ describe('native owner bridge and push registration through the real handlers', 
     expect(called).toBe(false);
   });
 
+  it('a phone completes onboarding through the real /v1/onboarding handlers', async () => {
+    const routes = {
+      state: await import('../../app/v1/onboarding/state/route'),
+      catalog: await import('../../app/v1/onboarding/catalog/route'),
+      picks: await import('../../app/v1/onboarding/picks/route'),
+      exclusions: await import('../../app/v1/onboarding/exclusions/route'),
+      complete: await import('../../app/v1/onboarding/complete/route'),
+      seed: await import('../../app/v1/onboarding/seed/route'),
+      tastePicks: await import('../../app/v1/taste/picks/route'),
+    };
+    const phone = new Phone('android');
+    await phone.enroll(await phone.signIn(`${randomUUID()}@example.test`));
+    const call = async (
+      handler: (req: NextRequest, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>,
+      method: string,
+      path: string,
+      body?: unknown,
+    ) => {
+      const headers: Record<string, string> = { authorization: `Bearer ${phone.access}`, 'x-forwarded-for': phone.ip };
+      if (method !== 'GET') {
+        headers['idempotency-key'] = randomUUID();
+        headers['x-atlas-expected-account'] = phone.accountId;
+      }
+      if (body !== undefined) headers['content-type'] = 'application/json';
+      const res = await handler(
+        new NextRequest(`http://localhost:3399${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }),
+        { params: Promise.resolve({}) },
+      );
+      return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+    };
+    // A new account made on the phone must finish the questionnaire first (ONB-01).
+    const before = await call(routes.state.GET, 'GET', '/v1/onboarding/state');
+    expect(before.status).toBe(200);
+    expect(before.json.state).toMatchObject({ required: true, picks_count: 0 });
+    const catalog = await call(routes.catalog.GET, 'GET', '/v1/onboarding/catalog');
+    const chips = Object.values(catalog.json.chips as Record<string, { id: string }[]>).flat();
+    for (const chip of chips.slice(0, 2))
+      expect((await call(routes.picks.POST, 'POST', '/v1/onboarding/picks', { source: 'catalog', catalog_item_id: chip.id })).status).toBe(201);
+    const early = await call(routes.complete.POST, 'POST', '/v1/onboarding/complete');
+    expect(early.status).toBe(409);
+    await call(routes.picks.POST, 'POST', '/v1/onboarding/picks', { source: 'catalog', catalog_item_id: chips[2]!.id });
+    const excl = await call(routes.exclusions.PUT, 'PUT', '/v1/onboarding/exclusions', { food_exclusions: ['peanuts'] });
+    expect(excl).toMatchObject({ status: 200, json: { food_exclusions: ['peanuts'] } });
+    const done = await call(routes.complete.POST, 'POST', '/v1/onboarding/complete');
+    expect(done.status).toBe(200);
+    expect(done.json).toMatchObject({ state: { required: false, picks_count: 3 }, seed: { state: 'queued' } });
+    const seed = await call(routes.seed.GET, 'GET', '/v1/onboarding/seed');
+    expect(seed.json).toMatchObject({ state: 'queued', job_id: (done.json.seed as { job_id: string }).job_id });
+    const taste = await call(routes.tastePicks.GET, 'GET', '/v1/taste/picks');
+    expect(taste.json).toMatchObject({ picks_count: 3, food_exclusions: ['peanuts'] });
+  });
+
   it('mutations must name the signed-in account, and an ended installation is refused', async () => {
     const phone = new Phone('android');
     await phone.enroll(await phone.signIn(`${randomUUID()}@example.test`));

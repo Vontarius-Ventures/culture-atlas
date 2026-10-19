@@ -60,7 +60,7 @@ class OnboardingTest {
         val catalog = decode(OnboardingCatalog.serializer(), "onboarding_catalog_response")
         assertEquals(OnboardingPolicy.MIN_PICKS, catalog.minPicks)
         assertEquals(
-            "https://app.cultureatlas.com/samples/feed/tea-rituals.jpg",
+            "https://app.cultureatlas.com/samples/onboarding/tea.jpg",
             catalog.images.first().image?.resolved("https://app.cultureatlas.com/"),
         )
         assertTrue(catalog.allEntries.any { it.picked && it.pickId != null })

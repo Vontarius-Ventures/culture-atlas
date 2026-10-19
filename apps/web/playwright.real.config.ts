@@ -18,6 +18,8 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e/real',
+  // Amendment 2.2 journeys need the fake providers: playwright.real-v22.config.ts.
+  testIgnore: /v22-.*\.spec\.ts/,
   timeout: 240_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,

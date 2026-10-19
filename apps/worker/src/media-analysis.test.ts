@@ -13,6 +13,8 @@ import {
   authorizeMedia,
   collections,
   createCaptureV2Context,
+  setAnalysisReadyListener,
+  type AnalysisReadyEvent,
   type PoolDb,
 } from '@culture-atlas/domain';
 import {
@@ -389,6 +391,42 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
       },
     ]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('screen 17 native: only the phone that asked is woken when its reading is published', async () => {
+    const { accountId } = await insertAccount(db);
+    const installationId = (
+      await db.query<{ id: string }>(
+        `INSERT INTO mobile_installations(account_id,installation_public_id,platform,app_version)
+         VALUES($1,$2,'android','1') RETURNING id`,
+        [accountId, randomUUID()],
+      )
+    ).rows[0]!.id;
+    const events: AnalysisReadyEvent[] = [];
+    setAnalysisReadyListener((e) => {
+      events.push(e);
+    });
+    try {
+      const phoneAsset = await photoAsset(accountId, 'red');
+      const fromPhone = (await analysisFor(accountId, {
+        authority: { kind: 'installation', accountId, installationId, sessionId: randomUUID(), expiresAt: new Date(Date.now() + 600_000) },
+      }).request(phoneAsset, { expected_generation: 1, mode: 'photo', focus: '' }, randomUUID())) as { analysis_id: string };
+      const webAsset = await photoAsset(accountId, 'blue');
+      const fromWeb = await request(accountId, webAsset, { mode: 'photo', focus: '' });
+      expect((await analysisRow(fromPhone.analysis_id)).started_by_installation_id).toBe(installationId);
+      expect((await analysisRow(fromWeb.analysis_id)).started_by_installation_id).toBeNull();
+      const { gateway } = gatewayWith(() => envelope(JSON.stringify(reading([{ name: 'Mid-century modern' }]))));
+      await worker(gateway, accountId).drain();
+      expect((await analysisRow(fromWeb.analysis_id)).state).toBe('complete');
+      expect(events).toEqual([
+        { accountId, installationId, analysisId: fromPhone.analysis_id, assetId: phoneAsset, state: 'complete' },
+      ]);
+      // A revoked or deleted phone never blocks the analysis; the link is simply dropped.
+      await db.query('DELETE FROM mobile_installations WHERE id=$1', [installationId]);
+      expect((await analysisRow(fromPhone.analysis_id)).started_by_installation_id).toBeNull();
+    } finally {
+      setAnalysisReadyListener(undefined);
+    }
   });
 
   it('an agent that only requested the analysis is not the capture creator, so removal from its grant sticks', async () => {

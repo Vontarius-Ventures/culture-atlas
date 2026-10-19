@@ -37,14 +37,15 @@ Specs: [`specs/onboarding-and-fast-analysis.md`](../specs/onboarding-and-fast-an
 
 ### Example replays
 
-`packages/domain/src/feed/examples.ts` holds a hand-reviewed reading for each "Try an example" photo (`outfit`, `room`, `cafe`). It is used only when an example capture is analyzed while the VLM is unavailable; uploaded photos are never replayed. The observe stage records a `vlm` provider query with `is_replay = true` and model `reviewed-example`, so the inspector shows it as a replay. Resolution, Qloo categories and research then run as usual, so without a Qloo key Wear/Play/Watch still report `unavailable` and the "Related discoveries are taking longer." warning stays.
+`packages/domain/src/feed/examples.ts` holds a hand-reviewed reading for each "Try an example" photo (`outfit`, `room`, `cafe`). It is used only when an example capture is analyzed while no vision model can serve the job: the VLM is unavailable, or the job has no account and the only model is the account-budgeted Concentrate gateway (which refuses session-only jobs). Uploaded photos are never replayed. The observe stage records a `vlm` provider query with `is_replay = true` and model `reviewed-example`, so the inspector shows it as a replay. Resolution, Qloo categories and research then run as usual, so without a Qloo key Wear/Play/Watch still report `unavailable` and the "Related discoveries are taking longer." warning stays.
 
 After that, the example's reviewed picks (public sample items from `feed/samples.ts`) fill categories that have no live results. They are stored with `origin = 'sample'` and no provider query ids, cite the example references they were chosen for as a creative rationale, and their sections become `partial`. Cards and the capture are labeled "Example result". Live results always take precedence.
 
 ### Budgets and resilience
 
 - `JobBudget` (`compiler/budget.ts`): photo-reading model calls per job (2: quick read + enrichment, reserved together), Qloo requests per job (default 12; every HTTP attempt counts, including retries, across job attempts via `provider_queries.query_context.attempts`), and two retries per provider stage. The compiler prepays one request per Qloo call, so the limit holds even for adapters that ignore the budget. Lower-priority categories are `skipped` once it is spent.
-- Adapters retry transient errors with exponential backoff and jitter, honor Retry-After, and trip a circuit breaker. A Retry-After longer than 15 s propagates instead, and the worker re-queues the job with that delay.
+- Adapters retry transient errors with exponential backoff and jitter, honor Retry-After, and trip a circuit breaker. A Retry-After longer than 15 s propagates instead, and the worker re-queues the job with that delay. An open circuit is transient too: its error carries the time until the breaker's next trial, and the worker re-queues with that delay.
+- Qloo requests share one in-flight limit per process and key (`QLOO_MAX_CONCURRENCY`, default 3) across every caller.
 - Soft deadline at 75% of `ANALYSIS_DEADLINE_MS` (45 of 60 s): research and dish ideas are skipped and what exists is published. The worker enforces the hard 60 s deadline per attempt.
 - Non-retryable failures (or the last attempt) mark the capture `failed`, or `partial` if an analysis was already visible. A failure observed after cancellation is treated as cancellation.
 

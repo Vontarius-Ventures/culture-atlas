@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. Branch `claude/wizardly-cannon-yu8trw`. All real-stack rows ran against the production build (`next start`) with `STORAGE_DRIVER=s3` and `IDENTITY_MAIL_DRIVER=ses` pointed at `scripts/local-aws.ts`, never a real AWS account. Authority: `specs/capture-platform-v2/` (v2.1).
 
-This report describes the final tree after the package merges listed below, the two design-fidelity branches (`fidelity/v2-capture`, `fidelity/v1-and-account`) and the fixes for the last review round (section 8).
+Section 9 (added 2026-10-19) covers the spec amendment 2.2 merge (taste onboarding, fast analysis) and its gate; sections 0–8 describe the v2 state as of 2026-10-17. This report describes the final tree after the package merges listed below, the two design-fidelity branches (`fidelity/v2-capture`, `fidelity/v1-and-account`) and the fixes for the last review round (section 8).
 
 | Branch | Package |
 | --- | --- |
@@ -224,3 +224,80 @@ Other notes:
 | This report labelled packages done while pieces were missing | Fixed: Packages 1, 2 and 5 are partial; the bare `GET /v2/shared/media/{id}` route was added. |
 | Fidelity doc presented scripted phone and glasses as real | Fixed in `design-fidelity-v2-capture.md`. |
 | Source screen claims connected glasses in a browser | Fixed (`glassesEntryLine`). |
+
+## 9. Spec amendment 2.2: taste onboarding and fast analysis
+
+Date: 2026-10-19. Authority: [specs/onboarding-and-fast-analysis.md](../specs/onboarding-and-fast-analysis.md) (wins on conflicts) and [docs/build-plan-v2.2.md](build-plan-v2.2.md). Phase 3 (merge and end to end) of the build plan.
+
+| Branch | Package |
+| --- | --- |
+| `v22/onboarding-backend` | A: catalog, picks, exclusions, onboarding state, `/v1/onboarding/*`, `/v1/taste/picks` |
+| `v22/taste-seed` | B: the `taste_seed` job, seeded feed pool, seed status |
+| `v22/fast-analysis` | C: quick read, `vision_photo_enrich`, `reasoningEffort`, compiler enrich stage, v2 worker stage 2 |
+| `v22/web-ui` | D: screens 14–18 on the web |
+| `v22/native-onboarding` | E: iOS and Android onboarding, Settings → Taste and ready notices |
+
+### Integration work done while merging
+
+1. **Seed wiring (A ↔ B).** Onboarding completion now queues the seed through `tasteSeed.enqueueTasteSeed`. `GET /v1/onboarding/seed` and the `seed` field of the state and completion responses return `tasteSeed.getTasteSeedStatus`, which reads `taste_seed_runs`/`taste_seed_categories`. A's placeholder `job_stages` reader is gone. A's tests now record progress the way the job does.
+2. **Settings → Taste re-seeds.** After completion, adding or removing a pick queues one seed for the new taste revision. No second seed is queued while one is still waiting to start, because that one will read the current saves. Covered by a test.
+3. **Tag picks were not seed signals (found by the real-stack journey).** Catalog picks store their Qloo tag under `external_ids.qloo_tag`, but the seed only read `external_ids.qloo`. An onboarding made only of image and chip picks therefore seeded nothing: every category came back `empty`. The seed now reads both. B's test helper now stores tags the way real picks do, and the test failed before the fix.
+4. **An open Qloo circuit made the seed give up (found by the journey).** After an outage the adapter's circuit breaker stays open for 30 s. The seed treated "circuit open" as permanent and ended `partial` or `failed`. A circuit-open error now carries the time until the breaker's next trial. The worker re-queues with that delay, and the seed retries instead of giving up. New test in `taste-seed.test.ts`.
+5. **One Qloo limit per process.** Every Qloo adapter built for the same key now shares one FIFO limiter (`QLOO_MAX_CONCURRENCY`, default 3), across onboarding search, the seed, analysis resolution and related discovery. Waiting for a slot does not use up a request's timeout. Tests in `http/concurrency.test.ts`.
+6. **Native ready push (E's server side).** `media_analysis_requests.started_by_installation_id` (migration 140) records the enrolled phone that asked for an analysis. When the worker publishes the reading, it calls `devicePush.wakeInstallation` for that phone only: a silent wake with an opaque reference. Web, agent and backfill requests never wake a phone. Covered by a test in `media-analysis.test.ts`.
+7. **Anonymous examples under a qualified gateway.** The Concentrate gateway refuses session-only jobs. If a vision role had been qualified, "Try an example" for an anonymous visitor would have failed instead of replaying its reviewed reading. The compiler now replays the example whenever no model can serve the job. Covered by a test in `pipeline.test.ts`.
+8. **Native bridge on the real handlers.** E's bridge tests used stand-in handlers because A's routes were not on its base. A new test drives an enrolled phone through the real `/v1/onboarding/*` and `/v1/taste/picks` route files: required state, the 409 below 3 picks, picks, exclusions, completion and seed status.
+9. **Mock images (owner request).** The 12 image picks are now generated mock photos in `apps/web/public/samples/onboarding` (800×1000, no people, text or logos), recorded in `fixtures/images/LICENSES.md`. The catalog was updated with the script's own version function (new `catalog_version`). The web mock, native fixtures and tests, and the screen 14/15/18 mockups point at them.
+10. **Older real-stack journeys.** `journey.spec.ts` and `v2-journey.spec.ts` now answer the questionnaire after account creation.
+
+### Gate after the merge (2026-10-19)
+
+| Check | Result |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | passes, lockfile unchanged (no new dependencies) |
+| `pnpm typecheck`, `pnpm lint` | pass |
+| `pnpm test` | 119 files, 976 tests pass (run without the shell's live provider variables; with `MODEL_FALLBACK`/`CONCENTRATE_*` exported, 7 older tests in `model-readiness.test.ts` and `agent-media-http.test.ts` fail as before the merge) |
+| Fresh-database migrate | 26 migrations (including `140_ready_notice.sql`) apply to a fresh database; a second run applies nothing |
+| `pnpm build` (`next build`) | passes |
+| Playwright mock suite (`pnpm test:e2e`, 1440/390/360/320) | 399 passed, 21 skipped (desktop-only and screenshot-only cases) |
+| Android core JVM tests (`:core:test`, plain JVM, JDK 21 toolchain override) | 28 of 28 pass |
+| Real-stack v1 journey (`journey.spec.ts`) and v2 journey (`v2-journey.spec.ts`) | 3 of 3 widths each, against `next dev` + worker + media worker with the 2.2 stand-ins (both now answer the questionnaire) |
+| Real-stack 2.2 journeys (`v22-journey.spec.ts`) | 9 of 9 (below), on a fresh database |
+
+### Real-stack journeys
+
+`apps/web/e2e/real/v22-journey.spec.ts`, run against `next dev`, the worker and the media worker with local provider stand-ins ([v22-real-stack.md](v22-real-stack.md)): **9 of 9 pass** (3 tests × 1440/390/320). Screenshots are `apps/web/e2e/screenshots/real-v22-*.png`; their names are fixture data.
+
+| Journey | Steps |
+| --- | --- |
+| Main | anonymous browse and a labeled example, with no questionnaire → sign up → questionnaire: one image, one chip, one live search pick, one exclusion; disabled with its reason until 3 picks → Building your feed → personal Discover with seeded cards → upload → While we look (cards from the feed) → quick read and enrichment → a second upload, leave → "Your photo is ready" → Open → Settings → Taste: remove one pick, add one |
+| Qloo unavailable | catalog-only completion; "Search is taking a break. Pick from the ideas above."; "We'll keep building in the background."; seed `retrying`, no invented cards; Qloo back, retry publishes |
+| Existing account < 3 saves | asked at sign-in, completes, not asked again at the next sign-in |
+
+### Acceptance (amendment 2.2)
+
+| ID | Status | Evidence / what is missing |
+| --- | --- | --- |
+| ONB-01 | done, verified-here | Server `required` state, 409 below 3, web gate; anonymous never redirected (real journey). The feed API itself does not refuse a required account; the web gate redirects it. |
+| ONB-02 | done, verified-here | Picks are saves backed by Qloo ids (catalog or signed search result); image counted once (unit and route tests; the journey checks `picks_count` and Saved for later). |
+| ONB-03 | done, verified-here | Catalog-only completion, degraded search, seed retries through 503s and an open circuit, no fabricated cards (real journey, unit tests). |
+| ONB-04 | done; latency partial | Request cap and concurrency tested. "First category ≤ 5 s p50" was measured once, locally, against live Qloo (1.4 s), never on a deployed demo. |
+| ONB-05 | done | Exclusions as plan defaults and Eat filter (unit and route tests); the journey checks the exclusion is stored and is not a pick. |
+| ONB-06 | done, verified-here | Real journey (sign-in trigger, asked once). |
+| ONB-07 | partial | Web: keyboard, 320 px and reduced motion checked by the mock and real suites, and axe passes. A screenshot comparison against the mockups was done by package D. Native: needs-physical-device. |
+| FAST-01 | needs-live-keys | No live model qualification (needs ≥ 10 real owned photos and the ZDR/logging confirmation). |
+| FAST-02 | done | Merge rules and failure isolation (unit and worker tests); the real journey shows both stages with the fake transport. |
+| FAST-03 | done; qualification needs-live-keys | Effort sent only when the profile sets it (transport and contract tests). |
+| FAST-04 | done, verified-here | The strip only reads the feed snapshot (mock suite counts requests); real journey. |
+
+### Still open after this merge
+
+- **Live qualification (build plan phase 4).** Neither `vision_photo` (quick read) nor `vision_photo_enrich` is qualified. Every browser run used the fake transport. Profiles not pinned to `atlas_observations_v2` are treated as quick-read profiles, so check deployed profile files.
+- **Licensed photography.** The onboarding images are generated mock photos (owner request). Replace them before a public release if generated imagery is not acceptable there.
+- **Wear chips.** Qloo has no fashion-style tags for brands, so the Wear chips are style, decor and ambience tags. Whether they are useful signals for brand insights is unverified with live data.
+- **Qloo limits.** The limit is per process: the web app and the worker can each hold 3 requests in flight against the same key.
+- **ONB-06 timing.** The ONB-06 check runs at sign-in only. An account that is already signed in is asked at its next sign-in.
+- **Native.** iOS and Android were not compiled (no Xcode, Swift or Android SDK). The Android core module's 28 JVM tests pass. The `firebase-messaging` pin is unresolved offline. The native ready push now has a server-side sender, but it was not delivered to a real device.
+- **Web ready watcher.** It is per tab and in memory: it covers analyses started or opened in that tab.
+- **Copy.** Native-only retry and error strings are not in `copy.json`.
+- **v2 media detail.** "While we look" was driven on the v1 capture result. The v2 media detail strip is covered by the mock suite only, because v2 analysis needs a qualified model on the web side as well.

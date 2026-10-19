@@ -6,6 +6,7 @@ import { AppError } from '../errors';
 import { enqueueJob } from '../jobs/queue';
 import { MediaAnalysis } from './analysis';
 import { CaptureQueue } from './queue';
+import { notifyAnalysisReady } from './ready-notice';
 import type { CaptureLease, CaptureV2Context } from './types';
 
 /**
@@ -452,7 +453,7 @@ export class MediaAnalysisRun {
       throw new AppError('invalid_input');
     if (input.errorCode && !/^[a-z0-9_]{1,64}$/.test(input.errorCode))
       throw new AppError('invalid_input');
-    return this.ctx.db.transaction(async (tx: Db) => {
+    const published = await this.ctx.db.transaction(async (tx: Db) => {
       await this.analysis.workerRow(tx, lease);
       let captureId: string | null = null;
       let compileJobId: string | null = null;
@@ -528,10 +529,10 @@ export class MediaAnalysisRun {
         });
         compileJobId = job.id;
       }
-      await tx.query(
+      const updated = await tx.query<{ started_by_installation_id: string | null }>(
         `UPDATE media_analysis_requests SET state=$3,capture_id=$4,error_code=$5,observation=$6::jsonb,
            observation_model=$7,result=$8::jsonb,waiting_reason=NULL,completed_at=$9
-         WHERE account_id=$1 AND id=$2`,
+         WHERE account_id=$1 AND id=$2 RETURNING started_by_installation_id`,
         [
           lease.account_id,
           lease.analysis_id,
@@ -554,7 +555,18 @@ export class MediaAnalysisRun {
         ],
       );
       await this.queue.complete(lease, tx);
-      return { captureId, compileJobId };
+      return { captureId, compileJobId, installationId: updated.rows[0]?.started_by_installation_id ?? null };
     });
+    // After commit: wake the phone that asked (best effort; the phone confirms by polling).
+    const installationId = published.installationId;
+    if (installationId && lease.analysis_id && lease.asset_id)
+      await notifyAnalysisReady({
+        accountId: lease.account_id,
+        installationId,
+        analysisId: lease.analysis_id,
+        assetId: lease.asset_id,
+        state: input.state,
+      });
+    return { captureId: published.captureId, compileJobId: published.compileJobId };
   }
 }

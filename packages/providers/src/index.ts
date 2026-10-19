@@ -12,6 +12,7 @@ export * from './storage/multipart-types';
 export * from './storage/multipart-s3';
 export * from './storage/multipart-local';
 export * from './storage/multipart-factory';
+export { ConcurrencyLimiter, sharedLimiter } from './http/concurrency';
 export { backoffDelay, CircuitBreaker, parseRetryAfter, withRetries, type BreakerState, type Sleep } from './http/resilience';
 export { createAnthropicVlm, AnthropicVlm } from './vlm/anthropic';
 export {
@@ -35,7 +36,7 @@ export {
 } from './fallback';
 export { createFeatherlessTransport, type FeatherlessJsonMode } from './featherless/transport';
 export type { MessagesTransport, TransportRequest, TransportResult } from './anthropic/transport';
-export { createQlooProvider, QlooHttpProvider } from './qloo/client';
+export { createQlooProvider, DEFAULT_QLOO_CONCURRENCY, QlooHttpProvider } from './qloo/client';
 export { ReplayQloo, createReplayQloo, recordingKey, type QlooRecording } from './qloo/replay';
 export {
   createWikipediaResearch,

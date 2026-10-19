@@ -287,6 +287,16 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
     );
     const mail = await mailFor(email, started);
     await page.goto(mail.callback);
+    // Amendment 2.2: a new account answers the taste questionnaire before anything personal.
+    await expect(page).toHaveURL(/\/welcome\/taste$/, { timeout: 30_000 });
+    for (const image of ['Tea rituals', 'Linen days', 'Sunday listening'])
+      await page.getByRole('button', { name: image }).click();
+    await expect(page.locator('.pick-counter')).toHaveText('Ready');
+    for (let step = 1; step < 3 && (await page.getByRole('button', { name: 'Next', exact: true }).isVisible()); step++)
+      await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: 'Build my feed' }).click();
+    await expect(page).toHaveURL(/\/welcome\/building|\/$/);
+    await page.goto('/library');
     await expect(page).toHaveURL(/\/library$/, { timeout: 30_000 });
     await expect(page.getByRole('heading', { name: 'Your library', level: 1 })).toBeVisible();
     await shot(page, info, '01-library-empty');

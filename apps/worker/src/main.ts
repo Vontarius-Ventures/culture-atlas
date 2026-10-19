@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { JOB_HANDLERS, getDb, getDomainConfig, loadRootEnv } from '@culture-atlas/domain';
-import { configureProviderRuntime, getProviders } from '@culture-atlas/providers';
+import { JOB_HANDLERS, devicePush, getDb, getDomainConfig, loadRootEnv, setAnalysisReadyListener } from '@culture-atlas/domain';
+import { configureProviderRuntime, createPushDriverFromEnv, getProviders } from '@culture-atlas/providers';
 import { createCaptureStorage } from './capture-storage';
 import { MediaAnalysisWorker } from './media-analysis';
 import { Worker } from './worker';
@@ -16,6 +16,18 @@ configureProviderRuntime({
   },
 });
 const providers = getProviders();
+
+// Screen 17 on native: wake the phone that started an analysis once it is published.
+try {
+  devicePush.setPushDriver(createPushDriverFromEnv(process.env));
+} catch {
+  console.error('[worker] push misconfigured; ready notices fall back to in-app polling');
+}
+setAnalysisReadyListener(async (event) => {
+  const outcome = await devicePush.wakeInstallation(getDb(), event, { encryptionKey: config.CREDENTIAL_ENCRYPTION_KEY });
+  // IDs and an outcome code only; never the device token.
+  console.log('[worker] ready_notice', JSON.stringify({ analysis_id: event.analysisId, state: event.state, outcome }));
+});
 const worker = new Worker({ db: getDb(), providers, config, handlers: JOB_HANDLERS });
 
 // v2 media analysis (Concentrate). Disable only for a dedicated non-analysis worker.

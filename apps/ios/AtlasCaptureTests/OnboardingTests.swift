@@ -13,7 +13,7 @@ final class OnboardingTests: XCTestCase {
     let catalog = try decoder.decode(OnboardingCatalog.self, from: Fixtures.message("onboarding_catalog_response"))
     XCTAssertEqual(catalog.minPicks, OnboardingPolicy.minPicks)
     XCTAssertEqual(catalog.images.first?.image?.resolved(against: URL(string: "https://app.cultureatlas.com")!)?.absoluteString,
-                   "https://app.cultureatlas.com/samples/feed/tea-rituals.jpg")
+                   "https://app.cultureatlas.com/samples/onboarding/tea.jpg")
     XCTAssertTrue(catalog.allEntries.contains { $0.picked && $0.pickID != nil })
     let search = try decoder.decode(OnboardingSearchResponse.self, from: Fixtures.message("onboarding_search_response"))
     XCTAssertEqual(search.status, .ok)

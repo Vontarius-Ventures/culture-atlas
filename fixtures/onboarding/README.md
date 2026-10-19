@@ -4,7 +4,7 @@
 
 - **Built by** `pnpm onboarding:catalog` (`scripts/build-onboarding-catalog.ts`) from live `GET /v2/tags` lookups. A label is kept only when Qloo returns a tag with exactly that name and a tag type the category accepts. Nothing is filled in by hand.
 - **Request discipline:** at most 3 requests in flight, a pause between requests, and a hard cap of 40 Qloo requests per run (retries included). A rerun reuses unchanged entries, so it only spends requests on labels that changed or never resolved. Use `--refresh` to resolve everything again.
-- **Images** are the project-owned illustrations in `apps/web/public/samples` (see `fixtures/images/LICENSES.md`). Each one stands for 1–3 tags; a pick of an image counts once.
+- **Images** are project-owned mock photos in `apps/web/public/samples/onboarding` (generated for the project at the owner's request; see `fixtures/images/LICENSES.md`). Each one stands for 1–3 tags; a pick of an image counts once. Changing an image's URL changes `catalog_version`.
 - **Refresh:** run it again when Qloo's taxonomy changes or when you edit the labels in `scripts/onboarding-catalog-lib.ts`, then commit the result. The `catalog_version` changes whenever items or ids change and is stored on each account's onboarding state.
 - Without `QLOO_API_KEY` the script exits without writing anything. In a worktree without `.env`, pass `--env-file /path/to/.env`.
 

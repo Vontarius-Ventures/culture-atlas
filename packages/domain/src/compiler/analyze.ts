@@ -264,7 +264,11 @@ export class CaptureCompiler {
     }
     this.capture = capture;
     this.owner = ownerFromRow(capture);
-    this.example = capture.source === 'sample' && !isUsable(ctx.providers.vlm.capability()) ? exampleReplay(capture.sample_id) : null;
+    // "Try an example" replays its reviewed reading when no vision model can
+    // serve this job: none is usable, or the job has no account and the budgeted
+    // gateway (which charges spend to an account) would refuse it.
+    const modelServesJob = isUsable(ctx.providers.vlm.capability()) && !(ctx.providers.modelGateway && !ctx.job.owner_account_id);
+    this.example = capture.source === 'sample' && !modelServesJob ? exampleReplay(capture.sample_id) : null;
 
     const row = await ensureAnalysisRow(ctx.db, {
       captureId: capture.id,

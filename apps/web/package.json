@@ -9,7 +9,8 @@
     "start": "next start --port 3000",
     "typecheck": "tsc -p tsconfig.json",
     "test:e2e": "playwright test",
-    "test:e2e:real": "playwright test -c playwright.real.config.ts"
+    "test:e2e:real": "playwright test -c playwright.real.config.ts",
+    "test:e2e:real:v22": "playwright test -c playwright.real-v22.config.ts"
   },
   "dependencies": {
     "@culture-atlas/agent-gateway": "workspace:*",

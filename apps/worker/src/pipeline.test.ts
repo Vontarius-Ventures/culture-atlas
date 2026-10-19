@@ -311,6 +311,19 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(pq.some((q) => q.provider === 'qloo')).toBe(false);
   });
 
+  it('an anonymous example replays its reviewed reading when the only model is the account-budgeted gateway', async () => {
+    const { providers, vlm } = world({ qloo: null, composer: false });
+    // A usable model behind the Concentrate gateway, which never serves a job without an account.
+    const gated = { ...providers, modelGateway: {} as NonNullable<typeof providers.modelGateway> };
+    const ctx = await anonCtx(gated);
+    const { capture_id, job_id } = await captures.createCapture(ctx, { kind: 'json', body: { sample_id: 'outfit' } as never });
+    await runJobs(ctx, [job_id]);
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    expect(view).toMatchObject({ is_example: true });
+    expect(view.analysis).toMatchObject({ title: 'Vintage racing references' });
+    expect(vlm.calls).toHaveLength(0);
+  });
+
   it('never replays an example reading for an uploaded photo', async () => {
     const { providers } = world({ qloo: null, overrides: { vlm: new UnavailableVlm('not_configured') } });
     const ctx = await anonCtx(providers);

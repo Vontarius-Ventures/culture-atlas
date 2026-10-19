@@ -113,8 +113,8 @@ export class MediaAnalysis {
         jobId = randomUUID();
       await tx.query(
         `INSERT INTO media_analysis_requests(id,account_id,asset_id,generation,mode,focus,selected_frames,extraction_version,request_hash,
-          created_by_agent_connection_id,authorization_version)
-         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          created_by_agent_connection_id,authorization_version,started_by_installation_id)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           analysisId,
           ctx.authority.accountId,
@@ -127,6 +127,8 @@ export class MediaAnalysis {
           fingerprint,
           ctx.agent?.connectionId ?? null,
           ctx.agent?.authorizationVersion ?? null,
+          // Screen 17 on native: only a request the phone's own user made gets a ready wake.
+          ctx.authority.kind === 'installation' && !ctx.agent ? ctx.authority.installationId : null,
         ],
       );
       await tx.query(

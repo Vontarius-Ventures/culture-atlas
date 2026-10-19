@@ -43,18 +43,18 @@ interface CatalogFixture {
 }
 
 const IMAGES: Array<[string, Category, string, string]> = [
-  ['img-racing', 'wear', 'Vintage racing', '/samples/outfit.jpg'],
-  ['img-linen', 'wear', 'Linen days', '/samples/feed/linen-days.jpg'],
-  ['img-tailoring', 'wear', 'Soft tailoring', '/samples/feed/softer-silhouette.jpg'],
-  ['img-corners', 'wear', 'Quiet corners', '/samples/room.jpg'],
-  ['img-forms', 'wear', 'Sculptural forms', '/samples/feed/sculptural-forms.jpg'],
-  ['img-listening', 'play', 'Sunday listening', '/samples/feed/sunday-listening.jpg'],
-  ['img-cinema', 'watch', 'Late-night cinema', '/samples/feed/late-night-cinema.jpg'],
-  ['img-night', 'watch', 'Night wanderings', '/samples/feed/night-wanderings.jpg'],
-  ['img-lanterns', 'eat', 'Lantern-lit alleys', '/samples/feed/rainy-alley.jpg'],
-  ['img-tea', 'eat', 'Tea rituals', '/samples/feed/tea-rituals.jpg'],
-  ['img-noodles', 'eat', 'Sesame noodles', '/samples/feed/sesame-noodles.jpg'],
-  ['img-table', 'eat', 'Around the table', '/samples/feed/around-the-table.jpg'],
+  ['img-racing', 'wear', 'Vintage racing', '/samples/onboarding/racing.jpg'],
+  ['img-linen', 'wear', 'Linen days', '/samples/onboarding/linen.jpg'],
+  ['img-tailoring', 'wear', 'Soft tailoring', '/samples/onboarding/tailoring.jpg'],
+  ['img-corners', 'wear', 'Quiet corners', '/samples/onboarding/corners.jpg'],
+  ['img-forms', 'wear', 'Sculptural forms', '/samples/onboarding/forms.jpg'],
+  ['img-listening', 'play', 'Sunday listening', '/samples/onboarding/listening.jpg'],
+  ['img-cinema', 'watch', 'Late-night cinema', '/samples/onboarding/cinema.jpg'],
+  ['img-night', 'watch', 'Night wanderings', '/samples/onboarding/night.jpg'],
+  ['img-lanterns', 'eat', 'Lantern-lit alleys', '/samples/onboarding/lanterns.jpg'],
+  ['img-tea', 'eat', 'Tea rituals', '/samples/onboarding/tea.jpg'],
+  ['img-noodles', 'eat', 'Sesame noodles', '/samples/onboarding/noodles.jpg'],
+  ['img-table', 'eat', 'Around the table', '/samples/onboarding/table.jpg'],
 ];
 
 const CHIPS: Record<Category, string[]> = {
@@ -173,7 +173,7 @@ export class OnboardingMock {
       item_kind: c.item_kind,
       saved_item_ids: Array.from({ length: tags }, () => uid()),
       discovery_item_ids: Array.from({ length: tags }, () => uid()),
-      image: c.image ? { url: c.image, width: 1000, height: 1250, alt: c.label } : null,
+      image: c.image ? { url: c.image, width: 800, height: 1000, alt: c.label } : null,
       created_at: now(),
     };
     this.picks.push(pick);
@@ -243,7 +243,7 @@ export class OnboardingMock {
       kind: c.kind,
       category: c.category,
       label: c.label,
-      image: c.image ? { url: c.image, width: 1000, height: 1250, alt: c.label } : null,
+      image: c.image ? { url: c.image, width: 800, height: 1000, alt: c.label } : null,
       picked: Boolean(pick),
       pick_id: pick?.id ?? null,
     };

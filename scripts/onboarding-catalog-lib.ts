@@ -53,13 +53,14 @@ export const TAG_TYPE_PREFERENCE: Record<Category, readonly string[]> = {
   eat: ['urn:tag:cuisine:qloo', 'urn:tag:specialty_dish:place', 'urn:tag:genre:place:restaurant', 'urn:tag:category:place'],
 };
 
+/** Mock photos (generated for this project, see fixtures/images/LICENSES.md), 800x1000, 4:5. */
 const IMG = (file: string, alt: string) => ({
-  url: `/samples/${file}`,
-  width: 1000,
-  height: 1250,
+  url: `/samples/onboarding/${file}`,
+  width: 800,
+  height: 1000,
   alt,
-  credit: 'culture atlas (original illustration)',
-  license: 'project-original',
+  credit: 'culture atlas (generated mock photo)',
+  license: 'project-owned mock',
 });
 
 /** Chips: Wear, Play, Watch, Eat, 6-10 each (amendment 2.2). Labels Qloo has no tag for are dropped at build time. */
@@ -102,34 +103,34 @@ export const CHIP_SPECS: readonly ChipSpec[] = [
 ];
 
 /**
- * Images: the project-owned illustrations in apps/web/public/samples (see
- * fixtures/images/LICENSES.md), each standing for 1-3 Qloo tags. Most reuse a
+ * Images: project-owned mock photos in apps/web/public/samples/onboarding
+ * (see fixtures/images/LICENSES.md), each standing for 1-3 Qloo tags. Most reuse a
  * chip's tag so the whole catalog stays inside the request budget.
  */
 export const IMAGE_SPECS: readonly ImageSpec[] = [
-  { id: 'img-racing', category: 'wear', label: 'Vintage racing', image: IMG('outfit.jpg', 'Cream racing jacket with red and navy stripes on a wooden chair'),
+  { id: 'img-racing', category: 'wear', label: 'Vintage racing', image: IMG('racing.jpg', 'Cream racing jacket with red and navy stripes over a bentwood chair'),
     tags: [{ chip: 'chip-wear-vintage' }, { chip: 'chip-play-mod-revival' }] },
-  { id: 'img-linen', category: 'wear', label: 'Linen days', image: IMG('feed/linen-days.jpg', 'Linen shirt on a hanger with leaf shadows'),
+  { id: 'img-linen', category: 'wear', label: 'Linen days', image: IMG('linen.jpg', 'Oatmeal linen shirt on a wooden hanger with leaf shadows'),
     tags: [{ chip: 'chip-wear-minimalist' }, { query: 'scandinavian' }] },
-  { id: 'img-tailoring', category: 'wear', label: 'Soft tailoring', image: IMG('feed/softer-silhouette.jpg', 'Unstructured blazer on a cane chair'),
+  { id: 'img-tailoring', category: 'wear', label: 'Soft tailoring', image: IMG('tailoring.jpg', 'Camel blazer draped over a cane chair'),
     tags: [{ chip: 'chip-wear-quiet-luxury' }, { chip: 'chip-wear-preppy' }] },
-  { id: 'img-corners', category: 'wear', label: 'Quiet corners', image: IMG('room.jpg', 'Paned window with afternoon light, a low table and a branch in a vase'),
+  { id: 'img-corners', category: 'wear', label: 'Quiet corners', image: IMG('corners.jpg', 'Paned window with afternoon light, a low oak table and a branch in a vase'),
     tags: [{ chip: 'chip-wear-japandi' }, { chip: 'chip-wear-wabi-sabi' }] },
-  { id: 'img-forms', category: 'wear', label: 'Sculptural forms', image: IMG('feed/sculptural-forms.jpg', 'Rounded cream chair beside a side table and a branch'),
+  { id: 'img-forms', category: 'wear', label: 'Sculptural forms', image: IMG('forms.jpg', 'Rounded cream boucle chair beside a teak side table'),
     tags: [{ query: 'mid century modern' }, { chip: 'chip-wear-minimalist' }] },
-  { id: 'img-listening', category: 'play', label: 'Sunday listening', image: IMG('feed/sunday-listening.jpg', 'Record player, records and a lamp'),
+  { id: 'img-listening', category: 'play', label: 'Sunday listening', image: IMG('listening.jpg', 'Record player, a stack of records and a brass lamp'),
     tags: [{ chip: 'chip-play-jazz' }, { chip: 'chip-play-bossa-nova' }] },
-  { id: 'img-cinema', category: 'watch', label: 'Late-night cinema', image: IMG('feed/late-night-cinema.jpg', 'Cinema marquee lights and two silhouettes'),
+  { id: 'img-cinema', category: 'watch', label: 'Late-night cinema', image: IMG('cinema.jpg', 'Cinema marquee lights and two silhouettes on a wet street'),
     tags: [{ chip: 'chip-watch-film-noir' }, { query: 'art house' }] },
-  { id: 'img-night', category: 'watch', label: 'Night wanderings', image: IMG('feed/night-wanderings.jpg', 'Lamplit street after rain'),
+  { id: 'img-night', category: 'watch', label: 'Night wanderings', image: IMG('night.jpg', 'Empty lamplit city street after rain'),
     tags: [{ query: 'neo noir' }, { chip: 'chip-play-ambient' }] },
-  { id: 'img-lanterns', category: 'eat', label: 'Lantern-lit alleys', image: IMG('feed/rainy-alley.jpg', 'Lantern-lit alley at night'),
+  { id: 'img-lanterns', category: 'eat', label: 'Lantern-lit alleys', image: IMG('lanterns.jpg', 'Alley of small bars lit by red paper lanterns at night'),
     tags: [{ query: 'izakaya' }, { chip: 'chip-eat-ramen' }] },
-  { id: 'img-tea', category: 'eat', label: 'Tea rituals', image: IMG('feed/tea-rituals.jpg', 'Cast-iron teapot, a cup and a blossom branch'),
+  { id: 'img-tea', category: 'eat', label: 'Tea rituals', image: IMG('tea.jpg', 'Cast-iron teapot, a ceramic cup and a blossom branch'),
     tags: [{ query: 'tea house' }, { chip: 'chip-wear-wabi-sabi' }] },
-  { id: 'img-noodles', category: 'eat', label: 'Sesame noodles', image: IMG('feed/sesame-noodles.jpg', 'Bowl of noodles with chopsticks'),
+  { id: 'img-noodles', category: 'eat', label: 'Sesame noodles', image: IMG('noodles.jpg', 'Bowl of sesame noodles with chili oil and chopsticks'),
     tags: [{ chip: 'chip-eat-sichuan-cuisine' }, { chip: 'chip-eat-ramen' }] },
-  { id: 'img-table', category: 'eat', label: 'Around the table', image: IMG('feed/around-the-table.jpg', 'Shared dishes on a wooden table, seen from above'),
+  { id: 'img-table', category: 'eat', label: 'Around the table', image: IMG('table.jpg', 'Shared small plates on a wooden table, seen from above'),
     tags: [{ chip: 'chip-eat-mezze' }, { chip: 'chip-eat-tapas' }] },
 ];
 

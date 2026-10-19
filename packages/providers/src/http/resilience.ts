@@ -74,6 +74,12 @@ export class CircuitBreaker {
     return this.now() - this.openedAt >= this.cooldownMs ? 'half_open' : 'open';
   }
 
+  /** Milliseconds until an open circuit lets a trial request through (0 when not open). */
+  remainingMs(): number {
+    if (this.openedAt === null) return 0;
+    return Math.max(0, this.cooldownMs - (this.now() - this.openedAt));
+  }
+
   /** Whether a request may be sent now. In half-open state only one trial is allowed. */
   tryAcquire(): boolean {
     const state = this.state;
@@ -136,7 +142,10 @@ export async function withRetries<T>(fn: (attempt: number) => Promise<T>, option
   for (let attempt = 0; ; attempt++) {
     if (options.signal?.aborted) throw new ProviderError(options.provider, 'aborted', 'request aborted');
     if (options.breaker && !options.breaker.tryAcquire()) {
-      throw new ProviderError(options.provider, 'unavailable', `${options.provider} circuit is open`);
+      // Transient: the caller may try again once the cooldown has passed.
+      throw new ProviderError(options.provider, 'unavailable', `${options.provider} circuit is open`, {
+        retryAfterMs: Math.max(options.breaker.remainingMs(), 1000),
+      });
     }
     if (options.budget && !options.budget.take(options.provider, attempt === 0 ? 'request' : 'retry')) {
       options.breaker?.onNeutral();

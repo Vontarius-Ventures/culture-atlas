@@ -1,6 +1,6 @@
 {
   "kind": "onboarding-catalog",
-  "catalog_version": "2026-10-18.025c6486d0",
+  "catalog_version": "2026-10-18.acbd789a37",
   "retrieved_at": "2026-10-18T20:53:43.911Z",
   "items": [
     {
@@ -23,12 +23,12 @@
         }
       ],
       "image": {
-        "url": "/samples/outfit.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Cream racing jacket with red and navy stripes on a wooden chair",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/racing.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Cream racing jacket with red and navy stripes over a bentwood chair",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:02.735Z"
     },
@@ -52,12 +52,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/linen-days.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Linen shirt on a hanger with leaf shadows",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/linen.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Oatmeal linen shirt on a wooden hanger with leaf shadows",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:33.065Z"
     },
@@ -81,12 +81,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/softer-silhouette.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Unstructured blazer on a cane chair",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/tailoring.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Camel blazer draped over a cane chair",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:00.904Z"
     },
@@ -110,12 +110,12 @@
         }
       ],
       "image": {
-        "url": "/samples/room.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Paned window with afternoon light, a low table and a branch in a vase",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/corners.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Paned window with afternoon light, a low oak table and a branch in a vase",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:52:59.866Z"
     },
@@ -139,12 +139,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/sculptural-forms.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Rounded cream chair beside a side table and a branch",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/forms.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Rounded cream boucle chair beside a teak side table",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:06.725Z"
     },
@@ -168,12 +168,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/sunday-listening.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Record player, records and a lamp",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/listening.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Record player, a stack of records and a brass lamp",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:01.568Z"
     },
@@ -197,12 +197,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/late-night-cinema.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Cinema marquee lights and two silhouettes",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/cinema.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Cinema marquee lights and two silhouettes on a wet street",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:43.911Z"
     },
@@ -226,12 +226,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/night-wanderings.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Lamplit street after rain",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/night.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Empty lamplit city street after rain",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:33.417Z"
     },
@@ -255,12 +255,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/rainy-alley.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Lantern-lit alley at night",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/lanterns.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Alley of small bars lit by red paper lanterns at night",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:34.360Z"
     },
@@ -284,12 +284,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/tea-rituals.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Cast-iron teapot, a cup and a blossom branch",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/tea.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Cast-iron teapot, a ceramic cup and a blossom branch",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:34.662Z"
     },
@@ -313,12 +313,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/sesame-noodles.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Bowl of noodles with chopsticks",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/noodles.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Bowl of sesame noodles with chili oil and chopsticks",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:05.624Z"
     },
@@ -342,12 +342,12 @@
         }
       ],
       "image": {
-        "url": "/samples/feed/around-the-table.jpg",
-        "width": 1000,
-        "height": 1250,
-        "alt": "Shared dishes on a wooden table, seen from above",
-        "credit": "culture atlas (original illustration)",
-        "license": "project-original"
+        "url": "/samples/onboarding/table.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Shared small plates on a wooden table, seen from above",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:32.114Z"
     },

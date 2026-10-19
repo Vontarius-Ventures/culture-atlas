@@ -73,8 +73,10 @@ export function toFailure(err: unknown): { failure: JobFailure; retryAfterMs?: n
         : err.provider === 'vlm'
           ? 'We can’t look at photos right now. Try again in a little while.'
           : 'Part of this is taking longer than usual. Try again in a little while.';
+    // An open circuit (kind unavailable, with the time until its next trial) is transient too.
+    const circuitOpen = err.kind === 'unavailable' && (err.retryAfterMs ?? 0) > 0;
     return {
-      failure: { code, message, retryable: err.retryable },
+      failure: { code, message, retryable: err.retryable || circuitOpen },
       retryAfterMs: err.retryAfterMs,
     };
   }

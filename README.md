@@ -10,6 +10,15 @@
 > - collection sharing;
 > - iOS and Android capture apps.
 >
+> **Spec amendment 2.2 is merged** ([amendment](specs/onboarding-and-fast-analysis.md), [build plan](docs/build-plan-v2.2.md), status in [the gap report](docs/v2-gap-report.md) section 9):
+>
+> - new accounts answer a required taste questionnaire (at least 3 picks from images, Wear/Play/Watch/Eat chips and live Qloo search, plus optional food exclusions);
+> - the picks seed a personal, Qloo-backed feed (`taste_seed` job);
+> - photos get a fast two-stage reading (quick read, then background enrichment);
+> - "While we look" shows feed cards while a photo is read, and "Your photo is ready" appears after you leave (a push on native).
+>
+> The questionnaire's image grid uses generated mock photos (`apps/web/public/samples/onboarding`), not licensed photography. Neither model role is qualified with a live model yet.
+>
 > The web and server parts pass their tests and a real-stack browser journey. The native apps, Meta glasses, live model output, S3, email and push delivery, and any AWS deployment have **not** been run. See "What is not verified" below.
 
 **Capture something you like. Discover more you will like.**
@@ -22,9 +31,10 @@ It uses a vision model to read the photo, Qloo's cultural graph for related disc
 
 | Piece | Status |
 | --- | --- |
-| Vision and text models: **Concentrate (default)** | `LLM_PROVIDER` unset means Concentrate. Every role (`vision_photo`, `vision_video_frame`, `research_text`, `composer`) stays `unavailable` until all of these exist: `CONCENTRATE_API_KEY`, qualified role profiles (`CONCENTRATE_PROFILES_JSON` or `CONCENTRATE_PROFILE_FILE`), qualification artifacts (`CONCENTRATE_QUALIFICATION_DIR`, from `pnpm qualify:concentrate`) and spend ceilings (`MODEL_DAILY_SPEND_LIMIT_USD` and the rest). **No model has been qualified and no live Concentrate call has been made** ([docs/concentrate.md](docs/concentrate.md)). Until then, uploads are kept and show "We can’t look at this photo yet", and v2 "Explore" says exploration is unavailable. Sessions without an account get no AI under Concentrate, because spend is tied to an account. |
+| Vision and text models: **Concentrate (default)** | `LLM_PROVIDER` unset means Concentrate. Every role (`vision_photo`, `vision_video_frame`, `research_text`, `composer`, and the stage-2 `vision_photo_enrich` from amendment 2.2) stays `unavailable` until all of these exist: `CONCENTRATE_API_KEY`, qualified role profiles (`CONCENTRATE_PROFILES_JSON` or `CONCENTRATE_PROFILE_FILE`), qualification artifacts (`CONCENTRATE_QUALIFICATION_DIR`, from `pnpm qualify:concentrate`) and spend ceilings (`MODEL_DAILY_SPEND_LIMIT_USD` and the rest). **No model has been qualified and no live Concentrate call has been made** ([docs/concentrate.md](docs/concentrate.md)). Until then, uploads are kept and show "We can’t look at this photo yet", and v2 "Explore" says exploration is unavailable. Sessions without an account get no AI under Concentrate, because spend is tied to an account. |
 | Rollback models: Featherless or Anthropic | Explicit operator rollback only: `LLM_PROVIDER=featherless` with `FEATHERLESS_API_KEY`, or `LLM_PROVIDER=anthropic` with `ANTHROPIC_API_KEY`. Nothing falls back to them automatically. v2 media analysis is unavailable under either. Neither has been run against its live API. |
 | Example photos | The three "Try an example" photos replay a hand-reviewed reading with reviewed sample picks. They are labeled "Example result" and never presented as Qloo results ([docs/pipeline.md](docs/pipeline.md#example-replays)). |
+| Taste onboarding (2.2) | Catalog of real Qloo tag ids (`fixtures/onboarding/catalog.json`, built from live `/v2/tags` on 2026-10-18) with generated mock photos for the image grid. Onboarding search is live Qloo; with Qloo down the catalog still completes onboarding and search says it is taking a break. The seed job makes at most 6 Qloo requests, 3 at a time, and retries while Qloo is down. Elorian is not used for analysis (it stays an operator-only last resort, `MODEL_FALLBACK=elorian`, off by default). |
 | Qloo | Adapter implemented against the documented API (`/search`, `/v2/tags`, `/v2/insights`, `/v2/trending`, `/trends/entity`). A one-off probe with the hackathon key (2026-10-17, [docs/capability-matrix.md](docs/capability-matrix.md)) found:<br>- search, tags and insights with explainability answer;<br>- trending returns nothing;<br>- entity trends return 404.<br>Without a key, or when Qloo is unreachable, Wear/Play/Watch show "Related discoveries are taking longer". Results are never invented, and replayed fixtures are labeled "Example result" ([docs/qloo-probes.md](docs/qloo-probes.md)). |
 | Reference research | Wikipedia/Wikimedia REST with real source URLs; claims extracted by the text model. |
 | World Sensor import | Implemented (server polling and an outbound bridge). The relay runs only on the operator's machine and was not reachable during development, so it is tested against a mock relay modeled on the Sensor asset API. Route names still need checking against the real relay ([docs/sensor.md](docs/sensor.md)). |
@@ -64,7 +74,18 @@ pnpm worker &
 E2E_BASE_URL=http://localhost:3200 pnpm --filter @culture-atlas/web test:e2e:real
 ```
 
-It browses, tries an example, uploads, creates an account, saves into a collection, makes a movie night from mixed items and connects an agent to one collection.
+It browses, tries an example, uploads, creates an account (answering the taste questionnaire), saves into a collection, makes a movie night from mixed items and connects an agent to one collection.
+
+The amendment 2.2 journeys (`e2e/real/v22-journey.spec.ts`, 1440/390/320) run against `next dev`, the worker and the media worker, with local provider stand-ins and no live keys: a fake Qloo server (`scripts/e2e/fake-qloo.ts`, every invented name says "Fixture") and a worker entry whose Concentrate gateway uses an in-process fake transport (`apps/worker/src/e2e-fake-models.ts`). They cover:
+
+- anonymous browsing and examples without the questionnaire;
+- sign-up, then the questionnaire, Building your feed and a personal Discover;
+- an upload with While we look, the two-stage result and the ready toast;
+- Settings → Taste;
+- a Qloo outage;
+- the existing-account trigger.
+
+Commands are in [docs/v22-real-stack.md](docs/v22-real-stack.md).
 
 Design fidelity of the v1 screens and the agent and sharing screens is checked on the same real stack with a fixture account (`scripts/seed-fidelity.ts`, every item labeled "Example result") and `apps/web/playwright.fidelity.config.ts` at 1440, 390 and 320 px; see [docs/design-fidelity-v1-and-account.md](docs/design-fidelity-v1-and-account.md).
 
@@ -83,7 +104,8 @@ All names are in [.env.example](.env.example) with defaults in comments. The one
 | `LLM_PROVIDER`, `FEATHERLESS_API_KEY` / `ANTHROPIC_API_KEY` | explicit rollback only | `featherless` or `anthropic`. Models: `VLM_MODEL`, `RESEARCH_MODEL`, `COMPOSER_MODEL` |
 | `IDENTITY_MAIL_DRIVER` (`ses` / `file` / `none`), `IDENTITY_MAIL_FROM` | v2 email sign-in | `file` is local only; production uses Amazon SES |
 | `FEATURE_KILL_SWITCHES`, `META_GLASSES_*` | v2 feature flags | Server-side flags; kill switches can only turn features off (`pnpm ops:kill`) |
-| `QLOO_API_KEY`, `QLOO_API_URL` | related discoveries | Key pending; default URL `https://hackathon.api.qloo.com` |
+| `QLOO_API_KEY`, `QLOO_API_URL`, `QLOO_MAX_CONCURRENCY` | related discoveries, onboarding search, taste seed | Default URL `https://hackathon.api.qloo.com`; at most `QLOO_MAX_CONCURRENCY` (default 3) requests in flight per process, shared by every Qloo caller |
+| `ONBOARDING_REQUIRED`, `TASTE_SEED_ENABLED`, `WHILE_WE_LOOK_ENABLED` | amendment 2.2 | Default on; killable like other flags. `fast_analysis_two_stage` turns on only with a qualified `vision_photo_enrich` profile |
 | `WIKIMEDIA_USER_AGENT` | reference research | Descriptive User-Agent with contact info |
 | `STORAGE_DRIVER` | media | `local` (default, `.data/objects`, needs `STORAGE_SIGNING_SECRET`), `s3` (deployments) or `memory` (tests) |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `s3` storage | Any S3-compatible private bucket |
@@ -125,6 +147,8 @@ The spec requires at least one discovery per live demo path to trace back to a s
 | `pnpm ops:kill` / `ops:metrics` / `ops:backup` / `ops:restore-drill` | Feature kill switches, CloudWatch health metrics, logical backup, restore drill |
 | `pnpm db:setup` / `pnpm db:migrate` | Local PostgreSQL setup / apply migrations to `DATABASE_URL` |
 | `pnpm test` / `pnpm test:e2e` | Vitest / Playwright |
+| `pnpm --filter @culture-atlas/web test:e2e:real:v22` | Amendment 2.2 journeys on the real stack ([docs/v22-real-stack.md](docs/v22-real-stack.md)) |
+| `pnpm onboarding:catalog` | Rebuild the onboarding catalog from live Qloo `/v2/tags` (at most 40 requests, 3 at a time) |
 | `pnpm qloo:probe` | Qloo contract probes; writes `docs/capability-matrix.md` (needs `QLOO_API_KEY`) |
 | `pnpm sensor-bridge [start\|once\|list]` | World Sensor outbound bridge (runs next to the relay) |
 | `pnpm mock-relay` | Local mock World Sensor relay for demos and tests |
@@ -154,7 +178,9 @@ These are written and, where possible, unit- or contract-tested, but have not ru
 
 - **Native apps.** The iOS and Android capture apps (`apps/ios`, `apps/android`) have never been compiled or run. There is no Xcode, Android SDK or Kotlin compiler here. The Android Meta SDK binding is written from documentation and unchecked.
 - **Glasses and phones.** Nothing has run on Meta glasses or on a physical phone (DEV-01..03, and the device parts of MED-04/05 and TEN-01).
-- **Models.** No Concentrate model is qualified and no live call has been made. Billing reconciliation is manual.
+- **Models.** No Concentrate model is qualified and no live call has been made by the app. That includes the two-stage reading: `vision_photo` (quick read) and `vision_photo_enrich` need the phase-4 live qualification on at least 10 real, owned photos and the operator's ZDR and no-logging confirmation. The browser journeys use an in-process fake transport. Billing reconciliation is manual.
+- **Onboarding images.** The 12 image picks are generated mock photos, not licensed photography ([fixtures/images/LICENSES.md](fixtures/images/LICENSES.md)).
+- **ONB-04 on a deployed demo.** "First category within 5 s p50" was measured once, locally, against live Qloo (1.4 s), never on a deployed demo.
 - **Browser video playback.** MP4 playback in a real browser was not observed: Playwright's Chromium has no H.264. The stream was decoded with ffmpeg instead.
 - **External services.** S3 (multipart, CORS, ListMultipartUploads), SES email, APNs/FCM push and the AWS stack were tested against local fakes only.
 - **Release qualification.** There is no store or SDK eligibility evidence, no independent two-user trial and no cloud restore drill.
@@ -172,7 +198,7 @@ These are written and, where possible, unit- or contract-tested, but have not ru
 - [Deploy](docs/deploy.md) and [Deploy on AWS](docs/deploy-aws.md)
 - Capture platform v2:
   - [gap report](docs/v2-gap-report.md);
-  - [real-stack journey](docs/v2-real-stack.md);
+  - [real-stack journey](docs/v2-real-stack.md) and [amendment 2.2 real-stack journeys](docs/v22-real-stack.md);
   - [contract](docs/capture-v2-contract.md);
   - [operations](docs/capture-v2-operations.md);
   - [media worker](docs/media-worker.md);

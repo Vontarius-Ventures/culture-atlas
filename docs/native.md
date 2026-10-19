@@ -302,13 +302,12 @@ These are outside `apps/ios`, `apps/android` and `fixtures/native-contract`:
    before any experimental build can capture.
 6. **Push wake-ups for remote commands** are not sent by the server yet; the
    apps poll commands only while armed in the foreground.
-7. **Ready-notice wake-ups (amendment 2.2):** the apps register push tokens and
-   handle silent wakes, but nothing on the server calls
-   `devicePush.wakeInstallation` when an analysis completes. The analysis
-   pipeline (package C / the v2 worker) needs to record which installation
-   requested an analysis and wake that installation (only for analyses a
-   person started, never agent requests) when it reaches `complete`. Until
-   then notices appear only while the app is open (foreground polling).
+7. **Ready-notice wake-ups (amendment 2.2):** wired on the server since the
+   phase-3 merge. An analysis records the enrolled phone that requested it
+   (`media_analysis_requests.started_by_installation_id`; never for web,
+   agent or backfill requests). When the worker publishes the reading, it calls
+   `devicePush.wakeInstallation` for that phone only. Delivery through real APNs
+   and FCM to a device has not been observed (no credentials or device here).
 8. **Result view:** the apps open the web result page for "Open"; that page
    needs a browser session, so a person who never signed in on the web sees
    the sign-in page first.

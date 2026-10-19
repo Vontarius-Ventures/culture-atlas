@@ -63,7 +63,7 @@ const RESULTS: Record<string, Reply> = {
 };
 
 /** Real Qloo HTTP adapter over a scripted fetch that counts requests and concurrency. */
-function scriptedQloo(reply: (filterType: string, url: URL) => Reply | Promise<Reply>, timeoutMs = 150) {
+function scriptedQloo(reply: (filterType: string, url: URL) => Reply | Promise<Reply>, timeoutMs = 150, breaker?: CircuitBreaker) {
   const calls: URL[] = [];
   let inflight = 0;
   const state = { peak: 0 };
@@ -90,7 +90,7 @@ function scriptedQloo(reply: (filterType: string, url: URL) => Reply | Promise<R
     baseUrl: 'https://qloo.example.test',
     timeoutMs,
     fetch: impl,
-    breaker: new CircuitBreaker({ failureThreshold: 10_000, cooldownMs: 1 }),
+    breaker: breaker ?? new CircuitBreaker({ failureThreshold: 10_000, cooldownMs: 1 }),
   });
   return { providers: testProviders({ qloo }), calls, state };
 }
@@ -100,7 +100,9 @@ async function insertPick(accountId: string, input: { kind: string; category: st
   const { rows } = await db.query<{ id: string }>(
     `INSERT INTO discovery_items (owner_account_id, kind, category, canonical_key, title, external_ids)
      VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING id`,
-    [accountId, input.kind, input.category, `qloo:${input.qloo}`, input.title, JSON.stringify({ qloo: input.qloo })],
+    // Stored like real onboarding picks (onboarding/catalog.ts itemForRef): tags under qloo_tag, entities under qloo.
+    [accountId, input.kind, input.category, `qloo:${input.qloo}`, input.title,
+      JSON.stringify(input.qloo.startsWith('urn:tag:') ? { qloo_tag: input.qloo } : { qloo: input.qloo })],
   );
   await db.query('INSERT INTO saved_items (owner_account_id, discovery_item_id) VALUES ($1, $2)', [accountId, rows[0]!.id]);
 }
@@ -321,6 +323,35 @@ describe('taste seed job', () => {
     expect(done.state).toBe('complete');
     expect(done.categories.every((c) => c.state === 'ready')).toBe(true);
     expect((await wholeFeed(ctx)).is_example_feed).toBe(false);
+  });
+
+  it('an open Qloo circuit re-queues the seed for after the cooldown instead of giving up (ONB-03)', async () => {
+    const { accountId } = await onboardedAccount();
+    let clock = Date.now();
+    const breaker = new CircuitBreaker({ failureThreshold: 2, cooldownMs: 60_000, now: () => clock });
+    let healthy = false;
+    const { providers } = scriptedQloo((t) => (healthy ? RESULTS[t] ?? ok({ entities: [] }) : { status: 503 }), 150, breaker);
+    const jobId = await enqueue(accountId);
+    await runAttempt(providers, jobId);
+    expect(breaker.state).toBe('open');
+    expect(await job(jobId)).toMatchObject({ state: 'queued', attempt: 1 });
+    // Next attempt while the circuit is still open: no request is possible, so wait for the cooldown.
+    await runAttempt(providers, jobId);
+    const waiting = await getTestDb().query<{ state: string; attempt: number; wait_ms: number }>(
+      `SELECT state, attempt, EXTRACT(EPOCH FROM (available_at - now())) * 1000 AS wait_ms FROM jobs WHERE id = $1`,
+      [jobId],
+    );
+    expect(waiting.rows[0]).toMatchObject({ state: 'queued', attempt: 2 });
+    expect(Number(waiting.rows[0]!.wait_ms)).toBeGreaterThan(30_000);
+    expect(await seededRecs(accountId)).toEqual([]);
+    // Qloo is back and the cooldown has passed: the half-open trial succeeds and the seed publishes.
+    healthy = true;
+    clock += 61_000;
+    await runAttempt(providers, jobId);
+    if ((await job(jobId)).state === 'queued') await runAttempt(providers, jobId);
+    const status = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
+    expect(status.categories.some((c) => c.state === 'ready')).toBe(true);
+    expect((await seededRecs(accountId)).length).toBeGreaterThan(0);
   });
 
   it('keeps categories Qloo has nothing for empty instead of filling them (no fabrication)', async () => {

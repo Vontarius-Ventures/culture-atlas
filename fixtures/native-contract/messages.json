@@ -575,9 +575,9 @@
             "category": "eat",
             "label": "Tea rituals",
             "image": {
-              "url": "/samples/feed/tea-rituals.jpg",
-              "width": 1000,
-              "height": 1250,
+              "url": "/samples/onboarding/tea.jpg",
+              "width": 800,
+              "height": 1000,
               "alt": "A pot of tea and two cups on a wooden tray"
             },
             "picked": true,
@@ -589,9 +589,9 @@
             "category": "eat",
             "label": "Sesame noodles",
             "image": {
-              "url": "/samples/feed/sesame-noodles.jpg",
-              "width": 1000,
-              "height": 1250,
+              "url": "/samples/onboarding/noodles.jpg",
+              "width": 800,
+              "height": 1000,
               "alt": "A bowl of sesame noodles with chopsticks"
             },
             "picked": false,
@@ -742,9 +742,9 @@
             "3d4e5f60-7182-4394-b5a6-cd2e3f405162"
           ],
           "image": {
-            "url": "/samples/feed/tea-rituals.jpg",
-            "width": 1000,
-            "height": 1250,
+            "url": "/samples/onboarding/tea.jpg",
+            "width": 800,
+            "height": 1000,
             "alt": "A pot of tea and two cups on a wooden tray"
           },
           "created_at": "2026-10-18T20:01:00.000Z"
@@ -883,9 +883,9 @@
               "3d4e5f60-7182-4394-b5a6-cd2e3f405162"
             ],
             "image": {
-              "url": "/samples/feed/tea-rituals.jpg",
-              "width": 1000,
-              "height": 1250,
+              "url": "/samples/onboarding/tea.jpg",
+              "width": 800,
+              "height": 1000,
               "alt": "A pot of tea and two cups on a wooden tray"
             },
             "created_at": "2026-10-18T20:01:00.000Z"
@@ -1078,9 +1078,9 @@
                 "3d4e5f60-7182-4394-b5a6-cd2e3f405162"
               ],
               "image": {
-                "url": "/samples/feed/tea-rituals.jpg",
-                "width": 1000,
-                "height": 1250,
+                "url": "/samples/onboarding/tea.jpg",
+                "width": 800,
+                "height": 1000,
                 "alt": "A pot of tea and two cups on a wooden tray"
               },
               "created_at": "2026-10-18T20:01:00.000Z"

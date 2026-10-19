@@ -31,9 +31,9 @@ import {
   putExclusions,
   search,
   signSearchResult,
-  TASTE_SEED_QLOO_REQUESTS,
 } from './onboarding';
 import { getPreferences, updatePreferences } from './agent-platform';
+import { TASTE_SEED_MAX_QLOO_REQUESTS } from './taste-seed';
 
 const db = getTestDb();
 afterAll(closeTestDb);
@@ -268,9 +268,9 @@ describe('ONB-03 Qloo unavailable: search reports it, catalog completion still w
       'SELECT type, max_attempts, budget, payload FROM jobs WHERE id = $1',
       [done.seed.job_id],
     );
-    expect(job.rows[0]).toMatchObject({ type: 'taste_seed', budget: { qloo_requests: TASTE_SEED_QLOO_REQUESTS } });
+    expect(job.rows[0]).toMatchObject({ type: 'taste_seed', budget: { qloo_requests: TASTE_SEED_MAX_QLOO_REQUESTS } });
     expect(job.rows[0]!.max_attempts).toBeGreaterThan(1);
-    expect(TASTE_SEED_QLOO_REQUESTS).toBeLessThanOrEqual(6);
+    expect(TASTE_SEED_MAX_QLOO_REQUESTS).toBeLessThanOrEqual(6);
     // Completing again reuses the same job.
     expect((await complete(ctx)).seed.job_id).toBe(done.seed.job_id);
     // No cards were invented.
@@ -281,12 +281,15 @@ describe('ONB-03 Qloo unavailable: search reports it, catalog completion still w
     await db.query(`UPDATE jobs SET attempt = 1, error_code = 'provider_unavailable', error_retryable = true WHERE id = $1`, [done.seed.job_id]);
     expect((await getSeedStatus(ctx)).state).toBe('retrying');
     await db.query(`UPDATE jobs SET state = 'running' WHERE id = $1`, [done.seed.job_id]);
+    // The seed job (pipeline/taste-seed.ts) records category progress on its run.
     await db.query(
-      `INSERT INTO job_stages (job_id, stage, status, attempt, output, completed_at) VALUES
-         ($1, 'seed:play', 'complete', 2, '{"state":"ready","card_count":4}', now()),
-         ($1, 'seed:eat', 'complete', 2, '{"state":"empty","card_count":0}', now())`,
+      `UPDATE taste_seed_categories c SET state = v.state, card_count = v.n, ready_at = v.ready
+         FROM taste_seed_runs r,
+              (VALUES ('play', 'ready', 4, now()), ('eat', 'empty', 0, NULL::timestamptz)) AS v(category, state, n, ready)
+        WHERE r.job_id = $1 AND c.run_id = r.id AND c.category = v.category`,
       [done.seed.job_id],
     );
+    await db.query(`UPDATE taste_seed_runs SET first_ready_at = now() WHERE job_id = $1`, [done.seed.job_id]);
     const progress = await getSeedStatus(ctx);
     expect(progress).toMatchObject({ state: 'running', poll_after_ms: 1000 });
     expect(progress.first_ready_at).not.toBeNull();
@@ -305,7 +308,37 @@ describe('ONB-03 Qloo unavailable: search reports it, catalog completion still w
     const done = await complete(ctx);
     expect(done.seed).toEqual({ job_id: null, state: 'not_started', categories: [], first_ready_at: null, poll_after_ms: null });
   });
+
+  it('Settings -> Taste changes after completion queue one fresh seed, not one per edit', async () => {
+    const { principal } = await newAccount();
+    const ctx = testContext(principal);
+    for (const c of chips.slice(0, 3)) await pick(ctx, c.id);
+    expect(await seedJobs(principal.accountId)).toHaveLength(0); // nothing before completion
+    const done = await complete(ctx);
+    expect(await seedJobs(principal.accountId)).toHaveLength(1);
+    // A queued, not yet started seed reads the current saves when it runs: no second job.
+    await pick(ctx, chips[3]!.id);
+    expect(await seedJobs(principal.accountId)).toHaveLength(1);
+    // Once that seed has run, a change queues a new one for the new revision.
+    await db.query(`UPDATE jobs SET state = 'complete', attempt = 1 WHERE id = $1`, [done.seed.job_id]);
+    const added = await pick(ctx, chips[4]!.id);
+    const jobs = await seedJobs(principal.accountId);
+    expect(jobs).toHaveLength(2);
+    expect(jobs[1]!.payload.taste_revision).toBe(added.taste_revision);
+    await db.query(`UPDATE jobs SET state = 'complete', attempt = 1 WHERE id = $1`, [jobs[1]!.id]);
+    await deletePick(ctx, added.pick.id);
+    expect(await seedJobs(principal.accountId)).toHaveLength(3);
+    expect((await getSeedStatus(ctx)).job_id).toBe((await seedJobs(principal.accountId))[2]!.id);
+  });
 });
+
+async function seedJobs(accountId: string) {
+  const { rows } = await db.query<{ id: string; payload: { taste_revision: number } }>(
+    `SELECT id, payload FROM jobs WHERE owner_account_id = $1 AND type = 'taste_seed' ORDER BY created_at, id`,
+    [accountId],
+  );
+  return rows;
+}
 
 describe('ONB-05 exclusions are preferences: plan defaults and Eat filtering, never picks', () => {
   it('stores normalized exclusions without counting them as picks', async () => {

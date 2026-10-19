@@ -78,6 +78,8 @@ const BaseProviderConfigSchema = z.object({
   QLOO_API_KEY: optional,
   QLOO_API_URL: z.string().default('https://hackathon.api.qloo.com'),
   QLOO_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  /** Qloo requests in flight at once per process (shared by every caller; the hackathon key throttles bursts). */
+  QLOO_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(3),
   /** Allow recorded fixtures as labeled "Example result" when Qloo is unavailable. */
   QLOO_REPLAY_FIXTURES: z
     .enum(['true', 'false', '1', '0'])

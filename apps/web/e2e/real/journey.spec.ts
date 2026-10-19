@@ -36,6 +36,8 @@ test('main journey on the real stack', async ({ page }, info) => {
   const project = info.project.name;
   const email = `journey-${project}-${Date.now()}@example.com`;
   const apiErrors: string[] = [];
+  let capturePath = '';
+  let artistTitle = '';
   page.on('response', (r) => {
     const url = new URL(r.url());
     // 4xx answers the UI handles on purpose are fine; 5xx never is.
@@ -71,6 +73,7 @@ test('main journey on the real stack', async ({ page }, info) => {
     await page.getByRole('button', { name: 'Try an example' }).click();
     await page.getByRole('button', { name: 'An outfit' }).click();
     await expect(page).toHaveURL(/\/captures\//);
+    capturePath = new URL(page.url()).pathname;
     await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('Finding your next favorites…', { timeout: 60_000 });
     await expect(page.getByText('Example result').first()).toBeVisible();
     await expect(page.getByRole('list', { name: 'Discoveries from your photo' }).getByRole('listitem').first()).toBeVisible();
@@ -97,6 +100,21 @@ test('main journey on the real stack', async ({ page }, info) => {
     await expect(dialog).toHaveCount(0);
     await toastSays(page, 'Saved to Slow Sunday');
     expect(title.length).toBeGreaterThan(0);
+  });
+
+  await test.step('a new account answers the taste questionnaire (amendment 2.2), the save counting as one pick', async () => {
+    await expect(page).toHaveURL(/\/welcome\/taste/, { timeout: 20_000 });
+    await expect(page.locator('.pick-counter')).toHaveText('2 picks to go');
+    await page.getByRole('button', { name: 'Tea rituals' }).click();
+    if (project !== 'desktop') await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('group', { name: 'Play' }).getByRole('button', { name: 'Jazz' }).click();
+    await expect(page.locator('.pick-counter')).toHaveText('Ready');
+    if (project !== 'desktop') await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await page.getByRole('button', { name: 'Build my feed' }).click();
+    await expect(page).toHaveURL(/\/welcome\/building|\/$/);
+    // Without a Qloo key the seed cannot run: the honest state, then back to the result.
+    await page.goto(capturePath);
+    await expect(page.getByRole('heading', { level: 1 })).not.toHaveText('Finding your next favorites…', { timeout: 60_000 });
   });
 
   await test.step('save the inspiration itself', async () => {
@@ -129,7 +147,13 @@ test('main journey on the real stack', async ({ page }, info) => {
 
   await test.step('save an artist from the feed into the remembered collection', async () => {
     await page.goto('/');
-    const save = page.getByRole('button', { name: 'Save Nina Simone' }).first();
+    // After the questionnaire the feed is personal (seeded picks when Qloo is reachable,
+    // labeled examples otherwise): save the first artist card it shows.
+    const artist = page.getByRole('list', { name: /discoveries/i }).first().getByRole('listitem').filter({ hasText: 'Artist' }).first();
+    const save = artist.getByRole('button', { name: /^Save / }).first();
+    const label = (await save.getAttribute('aria-label')) ?? (await save.innerText());
+    artistTitle = label.replace(/^Save /, '').trim();
+    expect(artistTitle.length).toBeGreaterThan(0);
     await save.click();
     const dialog = page.getByRole('dialog', { name: 'Save to a collection' });
     await expect(dialog.getByRole('radio', { name: 'Slow Sunday' })).toBeChecked();
@@ -145,7 +169,7 @@ test('main journey on the real stack', async ({ page }, info) => {
     await shot(page, info, '08-collections');
     await page.getByRole('link', { name: /Slow Sunday/ }).first().click();
     await expect(page.getByRole('heading', { name: 'Slow Sunday', level: 1 })).toBeVisible();
-    await expect(page.getByText('Nina Simone').first()).toBeVisible();
+    await expect(page.getByText(artistTitle).first()).toBeVisible();
     await expectNoHorizontalScroll(page);
     await shot(page, info, '09-collection');
   });
@@ -153,7 +177,7 @@ test('main journey on the real stack', async ({ page }, info) => {
   await test.step('select mixed items and make a movie night', async () => {
     await page.getByRole('button', { name: 'Make something' }).click();
     await page.getByRole('dialog').getByRole('button', { name: /Movie night/ }).click();
-    await expect(page.getByText(/selected/)).toBeVisible();
+    await expect(page.locator('.selection-bar__count')).toHaveText(/selected/);
     await shot(page, info, '10-selection');
     await page.getByRole('button', { name: 'Make a movie night' }).click();
     await expect(page.getByRole('heading', { name: 'Make a movie night' })).toBeVisible();

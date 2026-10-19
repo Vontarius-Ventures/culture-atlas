@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { isProviderError, type QlooEntity, type QlooInsightsRequest, type QlooTag } from '@culture-atlas/providers';
+import { isProviderError, ProviderError, type QlooEntity, type QlooInsightsRequest, type QlooTag } from '@culture-atlas/providers';
 import { violatedExclusions } from '../composer/dietary';
 import { BudgetExhaustedError, QlooSession, type RecordedQuery } from '../composer/provider-calls';
 import {
@@ -55,6 +55,8 @@ export const SEED_RESULTS_TAKE = 15;
 export const SEED_CARDS_PER_CATEGORY = 8;
 /** Cuisine-tag insights measured ~12 s uncached on the hackathon key (Oct 2026). */
 export const SEED_EAT_TIMEOUT_MS = 25_000;
+/** Retry delay when Qloo's circuit is open and the adapter cannot say for how long (its default cooldown). */
+const CIRCUIT_RETRY_MS = 30_000;
 
 interface CategoryPlan {
   filterType: QlooInsightsRequest['filterType'];
@@ -106,10 +108,14 @@ interface CategoryOutput {
 
 /** Real Qloo ids from the account's current explicit saves, most recent first. */
 export async function loadSeedSignals(db: Queryable, accountId: string): Promise<SeedSignals> {
+  // Entities carry `qloo`; tags (onboarding catalog picks, compiler style refs) carry `qloo_tag`.
   const { rows } = await db.query<{ title: string; qloo_id: string }>(
-    `SELECT di.title, di.external_ids->>'qloo' AS qloo_id
+    `SELECT di.title,
+            CASE WHEN jsonb_typeof(di.external_ids->'qloo') = 'string' THEN di.external_ids->>'qloo'
+                 ELSE di.external_ids->>'qloo_tag' END AS qloo_id
        FROM saved_items si JOIN discovery_items di ON di.id = si.discovery_item_id
-      WHERE si.owner_account_id = $1 AND jsonb_typeof(di.external_ids->'qloo') = 'string'
+      WHERE si.owner_account_id = $1
+        AND (jsonb_typeof(di.external_ids->'qloo') = 'string' OR jsonb_typeof(di.external_ids->'qloo_tag') = 'string')
       ORDER BY si.saved_at DESC, si.id
       LIMIT 200`,
     [accountId],
@@ -311,7 +317,8 @@ type Failure = { error: unknown; retryable: boolean };
 
 function failureOf(err: unknown): Failure {
   if (err instanceof BudgetExhaustedError) return { error: err, retryable: true };
-  if (isProviderError(err)) return { error: err, retryable: err.retryable };
+  // An open circuit is transient too: it carries the time until the next trial request.
+  if (isProviderError(err)) return { error: err, retryable: err.retryable || (err.kind === 'unavailable' && (err.retryAfterMs ?? 0) > 0) };
   return { error: err, retryable: false };
 }
 
@@ -362,8 +369,12 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
     });
     if (!session.insightsUsable()) {
       const reason = session.capability().reason;
+      const breaker = (ctx.providers.qloo as { breaker?: { remainingMs?: () => number } }).breaker;
       failures.push({
-        error: new AppError('provider_unavailable', { message: 'Part of this is taking longer than usual. Try again in a little while.', retryable: false }),
+        // Circuit open: retry once the cooldown has passed instead of spending the remaining attempts now.
+        error: reason === 'circuit_open'
+          ? new ProviderError('qloo', 'unavailable', 'qloo circuit is open', { retryAfterMs: Math.max(breaker?.remainingMs?.() ?? CIRCUIT_RETRY_MS, 1000) })
+          : new AppError('provider_unavailable', { message: 'Part of this is taking longer than usual. Try again in a little while.', retryable: false }),
         retryable: reason !== 'not_configured' && reason !== 'access_denied' && reason !== 'not_implemented',
       });
       await markUnavailable(ctx.db, runId, todo);

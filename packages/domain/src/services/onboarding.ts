@@ -5,11 +5,9 @@ import { violatedExclusions } from '../composer/dietary';
 import { upsertDiscoveryItem } from '../composer/store';
 import type { ServiceContext } from '../context';
 import type { Db, Queryable } from '../db/pool';
-import { CATEGORIES, type Category, type ItemKind } from '../enums';
+import { type Category, type ItemKind } from '../enums';
 import { AppError } from '../errors';
 import { serviceFeatureState } from '../flags/feature-flags';
-import { enqueueJob } from '../jobs/queue';
-import { tasteSeedDedupeKey } from '../jobs/dedupe';
 import { accountIdOf } from '../library/access';
 import {
   entityTypeInfo,
@@ -40,14 +38,13 @@ import {
   type OnboardingStateResponse,
   type PutExclusionsRequest,
   type QlooRef,
-  type SeedCategoryState,
-  type SeedState,
   type TastePicksResponse,
   type TasteSeedStatus,
 } from '../schemas/onboarding';
 import { iso } from '../util/time';
 import { recordPreference, saveItem, type TargetItem } from './preferences';
 import { getTasteRevision } from './taste';
+import { enqueueTasteSeed, getTasteSeedStatus } from './taste-seed';
 
 /**
  * Taste onboarding (spec amendment 2.2): the sign-up questionnaire (screen 14),
@@ -72,9 +69,6 @@ import { getTasteRevision } from './taste';
 const SEARCH_TOKEN_TTL_SECONDS = 30 * 60;
 const SEARCH_TIMEOUT_MS = 4000;
 const SEARCH_MAX_CONCURRENT = 3;
-const SEED_MAX_ATTEMPTS = 5;
-/** Qloo requests one taste seed may make (amendment 2.2, ONB-04). */
-export const TASTE_SEED_QLOO_REQUESTS = 6;
 
 type Tx = Db;
 
@@ -441,6 +435,7 @@ export async function createPick(ctx: ServiceContext, req: CreatePickRequest): P
     const [created] = await loadPicks(tx, accountId, pickId);
     return { pick: created!, already: false };
   });
+  if (!result.already) await reseedAfterTasteChange(ctx, accountId);
   return {
     pick: result.pick,
     already_picked: result.already,
@@ -478,6 +473,7 @@ export async function deletePick(ctx: ServiceContext, pickId: string): Promise<D
     }
     await tx.query('DELETE FROM onboarding_picks WHERE id = $1 AND account_id = $2', [pickId, accountId]);
   });
+  await reseedAfterTasteChange(ctx, accountId);
   return {
     removed_pick_id: pickId,
     state: await currentState(ctx, ctx.db, accountId),
@@ -658,63 +654,18 @@ export async function putExclusions(ctx: ServiceContext, body: PutExclusionsRequ
 // Completion and seed status
 // ---------------------------------------------------------------------------
 
-interface SeedJobRow {
-  id: string;
-  state: string;
-  attempt: number;
-  error_code: string | null;
-  payload: { categories?: Category[] };
-}
-
 /**
- * GET /v1/onboarding/seed. Reads the account's latest taste_seed job. Per
- * category progress comes from job_stages rows named `seed:<category>` whose
- * output is `{state: 'ready'|'empty'|'unavailable', card_count}` (written by
- * the seed job, pipeline/taste-seed.ts); a category without one is pending.
+ * GET /v1/onboarding/seed. The seed job's own status (services/taste-seed.ts):
+ * per-category progress from taste_seed_runs / taste_seed_categories, the
+ * job row for queued, running and retrying.
  */
 export async function getSeedStatus(ctx: ServiceContext): Promise<TasteSeedStatus> {
   const owner = requireAccountOwner(ctx.principal);
-  return seedStatusFor(ctx.db, owner.accountId);
+  return seedStatusFor(ctx.db, owner.accountId, ctx.now());
 }
 
-export async function seedStatusFor(db: Queryable, accountId: string): Promise<TasteSeedStatus> {
-  const { rows } = await db.query<SeedJobRow>(
-    `SELECT id, state, attempt, error_code, payload FROM jobs
-      WHERE owner_account_id = $1 AND type = 'taste_seed'
-      ORDER BY created_at DESC, id DESC LIMIT 1`,
-    [accountId],
-  );
-  const job = rows[0];
-  if (!job) return { job_id: null, state: 'not_started', categories: [], first_ready_at: null, poll_after_ms: null };
-  const state: SeedState =
-    job.state === 'queued' ? (job.attempt > 0 && job.error_code ? 'retrying' : 'queued')
-      : job.state === 'running' ? 'running'
-        : job.state === 'partial' ? 'partial'
-          : job.state === 'complete' ? 'complete'
-            : 'failed';
-  const stages = await db.query<{ stage: string; status: string; output: { state?: string; card_count?: number } | null; completed_at: Date | null }>(
-    `SELECT stage, status, output, completed_at FROM job_stages WHERE job_id = $1 AND stage LIKE 'seed:%'`,
-    [job.id],
-  );
-  const byCategory = new Map(stages.rows.map((s) => [s.stage.slice('seed:'.length), s]));
-  const categories = (job.payload.categories?.length ? job.payload.categories : [...CATEGORIES]).map((category) => {
-    const s = byCategory.get(category);
-    const reported = s?.status === 'complete' ? s.output?.state : undefined;
-    const known: SeedCategoryState | null =
-      reported === 'ready' || reported === 'empty' || reported === 'unavailable' ? reported : null;
-    const st: SeedCategoryState = known ?? (state === 'failed' ? 'unavailable' : 'pending');
-    const count = st === 'ready' ? Math.max(0, Math.trunc(Number(s?.output?.card_count ?? 0))) : 0;
-    return { category, state: st, card_count: count, ready_at: st === 'ready' && s?.completed_at ? iso(s.completed_at) : null };
-  });
-  const ready = categories.map((c) => c.ready_at).filter((x): x is string => Boolean(x)).sort();
-  const active = state === 'queued' || state === 'running' || state === 'retrying';
-  return {
-    job_id: job.id,
-    state,
-    categories,
-    first_ready_at: ready[0] ?? null,
-    poll_after_ms: active ? (state === 'running' ? 1000 : 2000) : null,
-  };
+export function seedStatusFor(db: Queryable, accountId: string, now?: Date): Promise<TasteSeedStatus> {
+  return getTasteSeedStatus(db, accountId, now);
 }
 
 /**
@@ -744,24 +695,39 @@ export async function complete(ctx: ServiceContext): Promise<CompleteOnboardingR
     );
     await queueTasteSeed({ ...ctx, db: tx }, accountId);
   });
-  return { state: await currentState(ctx, ctx.db, accountId), seed: await seedStatusFor(ctx.db, accountId) };
+  return { state: await currentState(ctx, ctx.db, accountId), seed: await seedStatusFor(ctx.db, accountId, ctx.now()) };
 }
 
 async function queueTasteSeed(ctx: ServiceContext, accountId: string): Promise<void> {
-  const enabled = await serviceFeatureState(ctx.db, { accountId, env: ctx.config }, 'taste_seed_enabled');
-  if (!enabled.enabled) return; // the feed keeps its labeled examples; nothing is fabricated
+  // When taste_seed_enabled is off nothing is queued: the feed keeps its labeled examples.
   const owner: Owner = { kind: 'account', accountId };
-  const tasteRevision = await getTasteRevision(ctx.db, owner);
   const row = await loadStateRow(ctx.db, accountId);
-  await enqueueJob(ctx.db, {
-    type: 'taste_seed',
-    owner,
-    payload: { taste_revision: tasteRevision, catalog_version: row?.catalog_version ?? null, categories: [...CATEGORIES] },
-    dedupeKey: tasteSeedDedupeKey({ owner, tasteRevision }),
-    maxAttempts: SEED_MAX_ATTEMPTS,
-    budget: { qloo_requests: TASTE_SEED_QLOO_REQUESTS, provider_retries: 2 },
+  await enqueueTasteSeed(ctx.db, {
+    accountId,
+    tasteRevision: await getTasteRevision(ctx.db, owner),
+    catalogVersion: row?.catalog_version ?? null,
+    config: ctx.config,
     traceId: ctx.traceId,
+    now: ctx.now(),
   });
+}
+
+/**
+ * Settings -> Taste: once onboarding is complete, a pick added or removed
+ * queues a fresh seed for the new taste revision, so the personal feed follows
+ * the picks. A seed that is still queued (not yet started) already reads the
+ * current saves when it runs, so no second one is queued behind it; this keeps
+ * a burst of edits to one bounded seed.
+ */
+async function reseedAfterTasteChange(ctx: ServiceContext, accountId: string): Promise<void> {
+  const row = await loadStateRow(ctx.db, accountId);
+  if (!row?.completed_at) return; // during onboarding the seed starts at completion
+  const queued = await ctx.db.query(
+    `SELECT 1 FROM jobs WHERE owner_account_id = $1 AND type = 'taste_seed' AND state = 'queued' AND attempt = 0 LIMIT 1`,
+    [accountId],
+  );
+  if (queued.rowCount) return;
+  await queueTasteSeed(ctx, accountId);
 }
 
 /** GET /v1/onboarding/state */
@@ -771,7 +737,7 @@ export async function getState(ctx: ServiceContext): Promise<OnboardingStateResp
     state: await currentState(ctx, ctx.db, owner.accountId),
     picks: await loadPicks(ctx.db, owner.accountId),
     food_exclusions: await loadFoodExclusions(ctx.db, owner.accountId),
-    seed: await seedStatusFor(ctx.db, owner.accountId),
+    seed: await seedStatusFor(ctx.db, owner.accountId, ctx.now()),
   };
 }
 

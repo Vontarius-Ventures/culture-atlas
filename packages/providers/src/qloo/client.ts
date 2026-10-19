@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { type CapabilityEntry, type CapabilityReason } from '../capabilities';
 import type { ProviderConfig } from '../config';
 import { ProviderError, type CallOptions, type ProviderErrorKind } from '../errors';
+import { sharedLimiter, type ConcurrencyLimiter } from '../http/concurrency';
 import { attemptSignal, CircuitBreaker, parseRetryAfter, retriesFor, withRetries, type Sleep } from '../http/resilience';
 import { resolveFromWorkspace } from '../paths';
 import { UnavailableQloo } from '../unavailable';
@@ -61,6 +63,11 @@ export interface QlooHttpOptions {
   now?: () => Date;
   /** Default retries for transient errors when the caller does not pass maxRetries. */
   defaultRetries?: number;
+  /**
+   * Requests in flight at once. Defaults to the process-wide limiter for this
+   * API key (QLOO_MAX_CONCURRENCY, default 3), shared by every Qloo caller.
+   */
+  limiter?: ConcurrencyLimiter;
 }
 
 type QueryValue = string | number | boolean | readonly string[] | undefined | null;
@@ -74,15 +81,24 @@ function kindForStatus(status: number): ProviderErrorKind {
   return 'bad_request';
 }
 
+/** Default Qloo requests in flight per process and key (the hackathon key throttles bursts). */
+export const DEFAULT_QLOO_CONCURRENCY = 3;
+
+function keyFingerprint(apiKey: string): string {
+  return createHash('sha256').update(apiKey).digest('hex').slice(0, 12);
+}
+
 export class QlooHttpProvider implements QlooProvider {
   readonly id = 'qloo:http';
   readonly breaker: CircuitBreaker;
   private readonly fetchImpl: typeof fetch;
+  readonly limiter: ConcurrencyLimiter;
   private readonly observed = new Map<keyof QlooCapabilities, CapabilityEntry>();
 
   constructor(private readonly options: QlooHttpOptions) {
     this.fetchImpl = options.fetch ?? fetch;
     this.breaker = options.breaker ?? new CircuitBreaker({ failureThreshold: 5, cooldownMs: 30_000 });
+    this.limiter = options.limiter ?? sharedLimiter(`qloo:${options.baseUrl}:${keyFingerprint(options.apiKey)}`, DEFAULT_QLOO_CONCURRENCY);
   }
 
   private now(): Date {
@@ -143,7 +159,10 @@ export class QlooHttpProvider implements QlooProvider {
     const url = `${this.options.baseUrl.replace(/\/+$/, '')}${path}?${search.toString()}`;
     const timeoutMs = options?.timeoutMs ?? this.options.timeoutMs;
 
-    const attempt = async (n: number): Promise<QlooResponse<T>> => {
+    // Each HTTP attempt holds one slot of the shared limiter; queueing does not eat the timeout.
+    const attempt = (n: number): Promise<QlooResponse<T>> =>
+      this.limiter.run(() => attemptOnce(n), { signal: options?.signal, provider: 'qloo' });
+    const attemptOnce = async (n: number): Promise<QlooResponse<T>> => {
       const started = Date.now();
       const sig = attemptSignal(options?.signal, timeoutMs);
       let status: number | null = null;
@@ -341,5 +360,6 @@ export function createQlooProvider(config: ProviderConfig, options: Partial<Omit
     }
     return new UnavailableQloo('not_configured');
   }
-  return new QlooHttpProvider({ apiKey: config.QLOO_API_KEY, baseUrl: config.QLOO_API_URL, timeoutMs: config.QLOO_TIMEOUT_MS, ...options });
+  const limiter = sharedLimiter(`qloo:${config.QLOO_API_URL}:${keyFingerprint(config.QLOO_API_KEY)}`, config.QLOO_MAX_CONCURRENCY);
+  return new QlooHttpProvider({ apiKey: config.QLOO_API_KEY, baseUrl: config.QLOO_API_URL, timeoutMs: config.QLOO_TIMEOUT_MS, limiter, ...options });
 }
