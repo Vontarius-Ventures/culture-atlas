@@ -5,7 +5,9 @@
  * qualified (docs/quality-plan.md §7.5): the thresholds file, each golden
  * set's digest, its scorer version and the digest of the code the
  * evaluation measured (guardrails, lexicons, prompts and scorer for the
- * photo sets; scorer, schemas and fixture builder for the text set).
+ * photo sets; scorer, schemas and fixture builder for the text set). A photo
+ * set whose freeze.json records a failed blind run is `blind_consumed`: no
+ * photo role qualifies on it any more.
  * scripts/eval/binding.test.ts recomputes every value from the repository
  * and fails when this file is out of date. Regenerating it makes every
  * artifact scored on the old inputs stale, so the affected roles drop to
@@ -18,11 +20,13 @@ export const EVAL_BINDING = {
       golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
       scorer_version: 'score-v4',
       code_sha256: '6b227a3c6b025a2d2c8be8db24d8847e07bd287a99ac8d35cd5784be11a02653',
+      blind_consumed: false,
     },
     'golden-v2': {
-      golden_sha256: 'e4289b6f9923d1422f6a082f733c7b12d0fa44eba0c4ae3fe594540f5565c7d0',
+      golden_sha256: 'b429f6190fc688b20b8e8a3d3ff3e287bd3c899cca4c3ebe291de2b69682f930',
       scorer_version: 'score-v4',
       code_sha256: '6b227a3c6b025a2d2c8be8db24d8847e07bd287a99ac8d35cd5784be11a02653',
+      blind_consumed: true,
     },
     'text-v1': {
       golden_sha256: '8d171b14201054d1b2ef175c7f8606d2ac07c1726ca64df76e667c0216e917dc',
@@ -30,4 +34,4 @@ export const EVAL_BINDING = {
       code_sha256: '72da5e5d65e9c11670db92ca4b8b0c8aebb01f7b56b6bc843faadae8eebb13d6',
     },
   },
-} as const satisfies { thresholds_sha256: string; sets: Record<string, { golden_sha256: string; scorer_version: string; code_sha256: string }> };
+} as const satisfies { thresholds_sha256: string; sets: Record<string, { golden_sha256: string; scorer_version: string; code_sha256: string; blind_consumed?: boolean }> };

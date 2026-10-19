@@ -11,8 +11,12 @@ checked and what may happen after the blind run.
   `freeze.json`.
 - `freeze.json` records the sha256 of every held-out label file and of the
   held-out manifest entries. `scripts/eval/labels.test.ts` ("the held-out labels
-  and manifest entries are exactly the frozen ones") recomputes them on every
-  `pnpm test` and fails on any difference.
+  and manifest entries are exactly the frozen ones", through
+  `freezeViolations()` in `scripts/eval/freeze.ts`) recomputes them on every
+  `pnpm test` and fails on any difference. The one permitted change is in
+  step 5: after a recorded failed blind run, every held-out entry's `blind`
+  flag goes from `true` to `false`; the hashes are checked with the flag
+  restored, and the test fails if the flag and the record disagree.
 - Not frozen: the tune split (`p01`–`p15` and `h01`–`h13`, moved to tune because
   they stopped being blind in the Evaluate phase). Tune labels may still change
   in plan steps 1 and 3; the p14 decision (plan decision 1) lands on
@@ -57,6 +61,14 @@ checked and what may happen after the blind run.
    threshold changes after the blind run. If it fails, the result is reported as a
    failure with the failing gate; fixes go into a future round with yet another
    fresh set (`h30`+), and `h14`–`h29` then move to tune as `h01`–`h13` did.
+   A failed run is also recorded where the code reads it: a `blind_run` entry
+   is added to `freeze.json` (the frozen fields stay as they are), every
+   held-out entry in `manifest.json` becomes `"blind": false`, and the binding
+   is regenerated (`pnpm eval:binding --write`), which marks the set
+   `blind_consumed`. From then on `pnpm qualify:concentrate` refuses the set for
+   the photo roles before any request, and `evalGateFailure()` refuses every
+   photo-role artifact on it (`blind_set_consumed`), however a later reading
+   scores. Neither rules nor labels change in this step.
 6. **Label errors found later** are reported next to the result, never fixed in
    place: editing a held-out label after the run ends its blindness.
 
@@ -80,3 +92,4 @@ checked and what may happen after the blind run.
 | Freeze commit recorded | `9e24243e454725e2541e9901fd779bd133167ac2`; checked with step 2 (empty diff, freeze test passing) after the merge into the build branch | 2026-10-19 | build lead (tune step) |
 | Binding with golden-v2 (rules frozen) | `b2cf11ac7d7ac76ec1e5ae2e70a650074c4423a6`: photo roles require golden-v2; `EVAL_BINDING` pins golden-v2 `e4289b6f9923…`, photo code `6b227a3c6b02…` (unchanged from the tune step's final rules, guard-v5), thresholds `9d43471b818b…` (thr-v2). Freeze check (step 2) re-run on it: empty diff against `9e24243`, `pnpm test` passing. No rule, prompt, label, lexicon, scorer or threshold may change from this commit on. | 2026-10-19 | build lead (blind step) |
 | Blind run (once) | `eval:live --split holdout`, two-stage, verifier off, code `303b29b` (the freeze above plus this table's freeze row), 32 Concentrate + 32 Qloo calls. **FAIL**: M1 4, M4 0.2105, M11 3; every other live gate passes (docs/quality-plan.md §16). Nothing changed afterwards; photo roles not qualified. Label observations made after the run are in §16.3 and were not applied. | 2026-10-19 | build lead (blind step) |
+| Blind split consumed (step 5) | `freeze.json` `blind_run` (result `fail`, gates M1, M4, M11, code `303b29b`); h14–h29 `"blind": false`; binding regenerated with golden-v2 `blind_consumed: true` (photo code digest `6b227a3c6b02…` and thresholds unchanged; only the manifest's blind flags changed the golden digest). No label, rule, prompt, lexicon, scorer or threshold changed. golden-v2 can no longer qualify a photo role; requalification needs a fresh blind set (`h30`+). | 2026-10-19 | review fix |

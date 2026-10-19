@@ -28,6 +28,7 @@ import { parseTextFixture } from './eval/text-schemas';
 import { REQUIRED_GOLDEN_SET, type EvalBindingLike, type EvalBlock } from '../packages/providers/src/concentrate/profiles';
 import { EVAL_BINDING } from '../packages/providers/src/concentrate/eval-binding';
 import { BOUND_CODE, codeDigest } from './eval/binding';
+import { loadFreezeRecord, type BlindRun } from './eval/freeze';
 import { HOLDOUT_MIN_PHOTOS, evaluatePhotoRecordings, verifiedGoldenPhotos, type TextScorer } from './eval/golden-photos';
 import { goldenDigest, loadGoldenSet, loadThresholds, type GoldenSet } from './eval/labels';
 import { SCORER_VERSION } from './eval/scorer';
@@ -59,6 +60,18 @@ export function bindingPreflight(input: {
   if (bound.scorer_version !== input.scorerVersion) return `scorer ${input.scorerVersion} differs from the committed ${bound.scorer_version}`;
   if (bound.code_sha256 !== input.codeSha256) return 'the evaluated code (guards, prompts, scorer) differs from the committed binding';
   return null;
+}
+
+/**
+ * A failed blind run consumed the set's held-out split (fixtures/eval/<set>/freeze.json,
+ * carried into the binding as blind_consumed): reading it again would be a second look,
+ * and evalGateFailure() refuses any artifact on it (docs/requalification-plan.md).
+ */
+function consumedBlindSet(set: string, run?: BlindRun): Error {
+  const detail = run ? ` (${run.date}, code ${run.code_commit.slice(0, 7)}, failed ${run.failed_gates.join(', ')})` : '';
+  return new Error(
+    `${set}'s blind held-out split was consumed by a failed blind run${detail}; photo roles qualify only on a fresh blind set (docs/requalification-plan.md). Nothing was sent.`,
+  );
 }
 
 /**
@@ -350,6 +363,11 @@ export async function qualifyProfile(
     golden = await loadGoldenSet(opts.golden.dir);
     if (golden.manifest.version !== REQUIRED_GOLDEN_SET[profile.role])
       throw new Error(`${profile.role} must qualify on ${REQUIRED_GOLDEN_SET[profile.role]}; got ${golden.manifest.version}.`);
+    // A failed blind run consumed the held-out split: reading it again would be a second look,
+    // and no artifact on the set can qualify (docs/requalification-plan.md, FREEZE.md step 5).
+    // The set's own record (freeze.json) is checked here; the committed binding's copy after the binding check below.
+    const run = (await loadFreezeRecord(opts.golden.dir))?.blind_run;
+    if (run?.result === 'fail') throw consumedBlindSet(golden.manifest.version, run);
     const verified = await verifiedGoldenPhotos(golden, opts.golden.photosDir);
     fixtures = verified.map((v) => ({ name: v.photo.file, kind: 'image', files: [{ path: v.path }] }));
     for (const v of verified) photoIds.set(v.path, v.photo.id);
@@ -379,7 +397,7 @@ export async function qualifyProfile(
     }
   }
   // The artifact binds the inputs it was scored on; refuse a run that could never qualify.
-  const binding = opts.binding ?? EVAL_BINDING;
+  const binding: EvalBindingLike = opts.binding ?? EVAL_BINDING;
   const evalSet = golden?.manifest.version ?? textGolden?.goldenSet;
   let codeSha256: string | undefined;
   if (evalSet) {
@@ -395,6 +413,7 @@ export async function qualifyProfile(
       binding,
     });
     if (stale) throw new Error(`Evaluation inputs are not the committed ones: ${stale}. Run pnpm eval:binding --write first; nothing was sent.`);
+    if (golden && binding.sets[evalSet]?.blind_consumed === true) throw consumedBlindSet(evalSet);
   }
   if (golden) {
     const blind = golden.manifest.photos.filter((p) => p.split === 'holdout' && p.blind === true).length;

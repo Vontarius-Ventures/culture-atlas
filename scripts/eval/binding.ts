@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { blindConsumed, loadFreezeRecord } from './freeze';
 import { goldenDigest, loadGoldenSet, sha256Hex } from './labels';
 import { SCORER_VERSION } from './scorer';
 import { TEXT_SCORER_VERSION } from './text-scorer';
@@ -55,6 +56,12 @@ export interface EvalSetBinding {
   golden_sha256: string;
   scorer_version: string;
   code_sha256: string;
+  /**
+   * Photo sets only: true once a failed blind run is recorded in the set's
+   * freeze.json (scripts/eval/freeze.ts). The held-out split has then been read
+   * and can no longer qualify a photo role, whatever a later run scores.
+   */
+  blind_consumed?: boolean;
 }
 export interface EvalBinding {
   thresholds_sha256: string;
@@ -78,6 +85,7 @@ export async function computeEvalBinding(root: string): Promise<EvalBinding> {
       golden_sha256: goldenDigest(golden),
       scorer_version: SCORER_VERSION,
       code_sha256: await codeDigest(root, BOUND_CODE[name]!),
+      blind_consumed: blindConsumed(await loadFreezeRecord(path.join(root, 'fixtures/eval', name))),
     };
   }
   return {
@@ -99,7 +107,9 @@ export function bindingSource(b: EvalBinding): string {
     .sort(([x], [y]) => x.localeCompare(y))
     .map(
       ([name, s]) =>
-        `    '${name}': {\n      golden_sha256: '${s.golden_sha256}',\n      scorer_version: '${s.scorer_version}',\n      code_sha256: '${s.code_sha256}',\n    },`,
+        `    '${name}': {\n      golden_sha256: '${s.golden_sha256}',\n      scorer_version: '${s.scorer_version}',\n      code_sha256: '${s.code_sha256}',\n${
+          s.blind_consumed === undefined ? '' : `      blind_consumed: ${s.blind_consumed},\n`
+        }    },`,
     )
     .join('\n');
   return `/**
@@ -109,7 +119,9 @@ export function bindingSource(b: EvalBinding): string {
  * qualified (docs/quality-plan.md §7.5): the thresholds file, each golden
  * set's digest, its scorer version and the digest of the code the
  * evaluation measured (guardrails, lexicons, prompts and scorer for the
- * photo sets; scorer, schemas and fixture builder for the text set).
+ * photo sets; scorer, schemas and fixture builder for the text set). A photo
+ * set whose freeze.json records a failed blind run is \`blind_consumed\`: no
+ * photo role qualifies on it any more.
  * scripts/eval/binding.test.ts recomputes every value from the repository
  * and fails when this file is out of date. Regenerating it makes every
  * artifact scored on the old inputs stale, so the affected roles drop to
@@ -120,6 +132,6 @@ export const EVAL_BINDING = {
   sets: {
 ${sets}
   },
-} as const satisfies { thresholds_sha256: string; sets: Record<string, { golden_sha256: string; scorer_version: string; code_sha256: string }> };
+} as const satisfies { thresholds_sha256: string; sets: Record<string, { golden_sha256: string; scorer_version: string; code_sha256: string; blind_consumed?: boolean }> };
 `;
 }

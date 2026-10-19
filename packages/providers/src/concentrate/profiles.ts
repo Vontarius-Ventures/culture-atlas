@@ -194,7 +194,8 @@ export type EvalBlock = z.infer<typeof EvalBlockSchema>;
  * thresholds file, the scorer version and the measured code. A changed label,
  * threshold, scorer, prompt builder or guard rule therefore un-qualifies the
  * role by itself, with no version to remember to bump. Photo roles also need
- * the current guardrail version and a blind held-out split.
+ * the current guardrail version and a blind held-out split, on a set whose
+ * blind split no failed blind run has consumed (`blind_set_consumed`).
  */
 export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined, binding: EvalBindingLike = EVAL_BINDING): string | null {
   const required = REQUIRED_GOLDEN_SET[role];
@@ -203,6 +204,9 @@ export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined, b
   if (block.golden_set !== required) return 'wrong_golden_set';
   const bound = (binding.sets as Record<string, EvalBindingLike['sets'][string] | undefined>)[required];
   if (!bound) return 'unbound_golden_set';
+  // A failed blind run consumed the set's held-out split (fixtures/eval/<set>/freeze.json):
+  // no artifact on it qualifies a photo role, however it scores (docs/requalification-plan.md).
+  if (PHOTO_EVAL_ROLES.includes(role) && bound.blind_consumed === true) return 'blind_set_consumed';
   if (block.golden_sha256 !== bound.golden_sha256) return 'stale_golden_set';
   if (block.thresholds_sha256 !== binding.thresholds_sha256) return 'stale_thresholds';
   if (block.scorer_version !== bound.scorer_version) return 'stale_scorer';
@@ -218,7 +222,7 @@ export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined, b
 /** The shape of EVAL_BINDING (tests pass their own). */
 export interface EvalBindingLike {
   thresholds_sha256: string;
-  sets: Readonly<Record<string, { golden_sha256: string; scorer_version: string; code_sha256: string }>>;
+  sets: Readonly<Record<string, { golden_sha256: string; scorer_version: string; code_sha256: string; blind_consumed?: boolean }>>;
 }
 
 /** Safe aggregate qualification evidence. Never media, prompts, outputs or keys. */

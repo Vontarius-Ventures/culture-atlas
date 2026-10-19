@@ -209,19 +209,31 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
   });
 });
 
+/**
+ * The committed binding with golden-v2's blind split NOT consumed: what a fresh
+ * blind set looks like to the gate. The photo-role gating tests run against it,
+ * since the committed golden-v2 is consumed (its failed blind run is recorded)
+ * and refuses every photo artifact first (tested below).
+ */
+const FRESH_BLIND_BINDING = {
+  ...EVAL_BINDING,
+  sets: { ...EVAL_BINDING.sets, 'golden-v2': { ...EVAL_BINDING.sets['golden-v2'], blind_consumed: false } },
+};
+
 describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
   it('photo roles need a passing golden-v2 evaluation with the current guardrail version', async () => {
+    const fresh = FRESH_BLIND_BINDING;
     // The verifier (vision_verify) is gated exactly like the photo roles it checks.
     for (const role of ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const) {
-      expect(evalGateFailure(role, undefined)).toBe('missing_eval');
-      expect(evalGateFailure(role, evalBlock(role))).toBeNull();
-      expect(evalGateFailure(role, evalBlock(role, { guardrail_version: 'guard-v0' }))).toBe('stale_guardrail_version');
-      expect(evalGateFailure(role, evalBlock(role, { guardrail_version: null }))).toBe('stale_guardrail_version');
-      expect(evalGateFailure(role, evalBlock(role, { golden_set: 'text-v1' }))).toBe('wrong_golden_set');
+      expect(evalGateFailure(role, undefined, fresh)).toBe('missing_eval');
+      expect(evalGateFailure(role, evalBlock(role), fresh)).toBeNull();
+      expect(evalGateFailure(role, evalBlock(role, { guardrail_version: 'guard-v0' }), fresh)).toBe('stale_guardrail_version');
+      expect(evalGateFailure(role, evalBlock(role, { guardrail_version: null }), fresh)).toBe('stale_guardrail_version');
+      expect(evalGateFailure(role, evalBlock(role, { golden_set: 'text-v1' }), fresh)).toBe('wrong_golden_set');
       // An artifact scored on golden-v1 (whose held-out split was used for tuning) no longer qualifies.
       expect(REQUIRED_GOLDEN_SET[role]).toBe('golden-v2');
-      expect(evalGateFailure(role, evalBlock(role, { golden_set: 'golden-v1' }))).toBe('wrong_golden_set');
-      expect(evalGateFailure(role, evalBlock(role, { pass: false }))).toBe('eval_failed');
+      expect(evalGateFailure(role, evalBlock(role, { golden_set: 'golden-v1' }), fresh)).toBe('wrong_golden_set');
+      expect(evalGateFailure(role, evalBlock(role, { pass: false }), fresh)).toBe('eval_failed');
     }
     const d = await dir();
     const vision = { ...visionProfile, qualificationArtifactId: 'vision-photo-eval' };
@@ -229,22 +241,41 @@ describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
     const write = (a: QualificationArtifact) =>
       writeFile(path.join(d, `${vision.qualificationArtifactId}.json`), JSON.stringify(a));
     await write(artifact(vision));
-    expect(qualificationState(vision, d)).toBe('qualified');
+    expect(qualificationState(vision, d, fresh)).toBe('qualified');
     // A guard rule change bumps the version and un-qualifies the role until it is re-evaluated.
     await write(artifact(vision, { eval: evalBlock('vision_photo', { guardrail_version: 'guard-v0' }) }));
-    expect(qualificationState(vision, d)).toBe('catalog-compatible');
+    expect(qualificationState(vision, d, fresh)).toBe('catalog-compatible');
     await write(artifact(vision, { eval: undefined }));
-    expect(qualificationState(vision, d)).toBe('catalog-compatible');
+    expect(qualificationState(vision, d, fresh)).toBe('catalog-compatible');
     await write(artifact(vision, { eval: evalBlock('vision_photo', { pass: false }) }));
+    expect(qualificationState(vision, d, fresh)).toBe('catalog-compatible');
+  });
+
+  it('after the failed golden-v2 blind run, no photo role qualifies on golden-v2, however its artifact scores', async () => {
+    // fixtures/eval/golden-v2/freeze.json records the failed blind run; the committed binding carries it.
+    expect(EVAL_BINDING.sets['golden-v2'].blind_consumed).toBe(true);
+    for (const role of ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const) {
+      // A passing, current, "blind" artifact (e.g. a lucky re-read of h14-h29) is still refused.
+      expect(evalGateFailure(role, evalBlock(role))).toBe('blind_set_consumed');
+      expect(evalGateFailure(role, evalBlock(role), FRESH_BLIND_BINDING)).toBeNull();
+    }
+    // Text roles are not photo sets: the photo set's blind run does not touch them.
+    expect(evalGateFailure('composer', evalBlock('composer'))).toBeNull();
+    const d = await dir();
+    const vision = { ...visionProfile, qualificationArtifactId: 'vision-photo-consumed' };
+    await writeFile(path.join(d, CATALOG_SNAPSHOT_FILE), JSON.stringify(snapshot));
+    await writeFile(path.join(d, `${vision.qualificationArtifactId}.json`), JSON.stringify(artifact(vision)));
     expect(qualificationState(vision, d)).toBe('catalog-compatible');
+    expect(qualificationState(vision, d, FRESH_BLIND_BINDING)).toBe('qualified');
   });
 
   it('binds every evaluation input: a changed golden set, thresholds file, scorer or measured code un-qualifies the role', async () => {
     for (const role of ['vision_photo', 'research_text', 'composer'] as const) {
-      expect(evalGateFailure(role, evalBlock(role, { golden_sha256: '0'.repeat(64) }))).toBe('stale_golden_set');
-      expect(evalGateFailure(role, evalBlock(role, { thresholds_sha256: '1'.repeat(64) }))).toBe('stale_thresholds');
-      expect(evalGateFailure(role, evalBlock(role, { scorer_version: 'score-v0' }))).toBe('stale_scorer');
-      expect(evalGateFailure(role, evalBlock(role, { code_sha256: '2'.repeat(64) }))).toBe('stale_code');
+      const b = FRESH_BLIND_BINDING;
+      expect(evalGateFailure(role, evalBlock(role, { golden_sha256: '0'.repeat(64) }), b)).toBe('stale_golden_set');
+      expect(evalGateFailure(role, evalBlock(role, { thresholds_sha256: '1'.repeat(64) }), b)).toBe('stale_thresholds');
+      expect(evalGateFailure(role, evalBlock(role, { scorer_version: 'score-v0' }), b)).toBe('stale_scorer');
+      expect(evalGateFailure(role, evalBlock(role, { code_sha256: '2'.repeat(64) }), b)).toBe('stale_code');
     }
     // The review probe: an otherwise passing text artifact with zeroed golden and thresholds digests.
     const d = await dir();
@@ -261,8 +292,8 @@ describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
   });
 
   it('photo roles need a blind held-out split (a split used for tuning is not a generalization gate)', () => {
-    expect(evalGateFailure('vision_photo', evalBlock('vision_photo', { holdout_blind: false }))).toBe('holdout_not_blind');
-    expect(evalGateFailure('vision_photo_enrich', evalBlock('vision_photo_enrich', { holdout_blind: null }))).toBe('holdout_not_blind');
+    expect(evalGateFailure('vision_photo', evalBlock('vision_photo', { holdout_blind: false }), FRESH_BLIND_BINDING)).toBe('holdout_not_blind');
+    expect(evalGateFailure('vision_photo_enrich', evalBlock('vision_photo_enrich', { holdout_blind: null }), FRESH_BLIND_BINDING)).toBe('holdout_not_blind');
     // An artifact from before the binding (no code digest, no held-out flag) no longer parses: never qualified.
     const { code_sha256: _c, holdout_blind: _h, ...legacy } = evalBlock('vision_photo');
     expect(QualificationArtifactSchema.safeParse({ ...artifact(visionProfile), eval: legacy }).success).toBe(false);

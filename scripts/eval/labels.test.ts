@@ -10,8 +10,8 @@ import {
   goldenDigest,
   loadGoldenSet,
   loadThresholds,
-  sha256Hex,
 } from './labels';
+import { blindConsumed, checkFreeze, loadFreezeRecord } from './freeze';
 import { label, syntheticGolden } from './test-golden';
 
 const root = path.resolve(import.meta.dirname, '../..');
@@ -96,8 +96,11 @@ describe('golden-v2 (fixtures/eval/golden-v2): blind held-out set h14+', () => {
     expect(golden.labels.size).toBe(golden.manifest.photos.length);
   });
 
-  it('tunes on p01-p15 plus the no-longer-blind h01-h13, and holds out 12-16 blind photos h14+', async () => {
+  it('tunes on p01-p15 plus the no-longer-blind h01-h13, and holds out 12-16 photos h14+, blind until a failed blind run', async () => {
     const { manifest, labels } = await loadGoldenSet(v2Dir);
+    // The blind run on h14-h29 failed (freeze.json blind_run): the split has been read and is no longer blind.
+    const consumed = blindConsumed(await loadFreezeRecord(v2Dir));
+    expect(consumed).toBe(true);
     const tune = manifest.photos.filter((p) => p.split === 'tune');
     const holdout = manifest.photos.filter((p) => p.split === 'holdout');
     expect(tune.map((p) => p.id)).toEqual([...ids('p', 1, 15), ...ids('h', 1, 13)]);
@@ -106,7 +109,7 @@ describe('golden-v2 (fixtures/eval/golden-v2): blind held-out set h14+', () => {
     expect(holdout.length).toBeLessThanOrEqual(16);
     expect(holdout.map((p) => p.id)).toEqual(ids('h', 14, 13 + holdout.length));
     for (const p of holdout) {
-      expect(p.blind).toBe(true);
+      expect(p.blind).toBe(!consumed);
       expect(p.source.raw_url).toContain(`/${p.source.repo}/${p.source.commit}/`);
       expect(labels.get(p.id)!.split).toBe('holdout');
     }
@@ -144,24 +147,18 @@ describe('golden-v2 (fixtures/eval/golden-v2): blind held-out set h14+', () => {
   });
 
   it('the held-out labels and manifest entries are exactly the frozen ones (FREEZE.md)', async () => {
-    const freeze = JSON.parse(await readFile(path.join(v2Dir, 'freeze.json'), 'utf8')) as {
-      golden_set: string;
-      holdout_manifest_sha256: string;
-      photos: Record<string, { label_sha256: string; photo_sha256: string }>;
-    };
-    const manifest = JSON.parse(await readFile(path.join(v2Dir, 'manifest.json'), 'utf8')) as { version: string; photos: { id: string; split: string; sha256: string }[] };
-    const holdout = manifest.photos.filter((p) => p.split === 'holdout');
-    expect(freeze.golden_set).toBe(manifest.version);
-    expect(Object.keys(freeze.photos).sort()).toEqual(holdout.map((p) => p.id).sort());
-    expect(sha256Hex(JSON.stringify(holdout))).toBe(freeze.holdout_manifest_sha256);
-    for (const p of holdout) {
-      const raw = (await readFile(path.join(v2Dir, 'labels', `${p.id}.json`), 'utf8')).replace(/\r\n/g, '\n');
-      expect({ id: p.id, label: sha256Hex(raw), photo: p.sha256 }).toEqual({
-        id: p.id,
-        label: freeze.photos[p.id]!.label_sha256,
-        photo: freeze.photos[p.id]!.photo_sha256,
-      });
-    }
+    // Only permitted change since the freeze: after the recorded failed blind run, every held-out entry's
+    // blind flag went from true to false (scripts/eval/freeze.ts, freezeViolations).
+    const { freeze, violations } = await checkFreeze(v2Dir);
+    expect(freeze?.golden_set).toBe('golden-v2');
+    expect(violations).toEqual([]);
+    // The record of the one blind run (FREEZE.md "Record"): code 303b29b, failed M1, M4 and M11.
+    expect(freeze?.blind_run).toMatchObject({
+      binding_commit: 'b2cf11ac7d7ac76ec1e5ae2e70a650074c4423a6',
+      code_commit: '303b29ba4f333288891f5fc9b5ef28a63abad1fa',
+      result: 'fail',
+      failed_gates: ['M1', 'M4', 'M11'],
+    });
   });
 });
 

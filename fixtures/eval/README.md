@@ -12,10 +12,11 @@ fixtures/eval/
   golden-v1/
     manifest.json    { version, photos: [{ id, split, file, sha256, width, height, source }] }
     labels/<id>.json one hand-written label per photo (schema: scripts/eval/labels.ts)
-  golden-v2/         tune = p01-p15 + h01-h13; blind held-out = h14-h29
+  golden-v2/         tune = p01-p15 + h01-h13; held-out = h14-h29 (no longer blind: its blind run failed)
     manifest.json, labels/<id>.json   as in golden-v1
     FREEZE.md        the freeze procedure for the blind split
-    freeze.json      sha256 of every held-out label and manifest entry (checked by labels.test.ts)
+    freeze.json      sha256 of every held-out label and manifest entry (checked by labels.test.ts),
+                     plus the blind_run record that consumes the split (scripts/eval/freeze.ts)
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -64,7 +65,11 @@ fixtures/eval/
   a busy street). Their labels were written before any model saw the photos and
   are frozen: `freeze.json` pins them and `FREEZE.md` gives the procedure (record
   the freeze commit, bind golden-v2, run the blind split once, change nothing
-  afterwards). golden-v1 stays as it was for `replay-v1` and earlier artifacts.
+  afterwards). The blind run on 2026-10-19 failed (M1, M4, M11): `freeze.json`
+  records it (`blind_run`), h14–h29 are `"blind": false`, and the binding marks
+  golden-v2 `blind_consumed`, so no photo role can qualify on golden-v2 any more;
+  the next round needs a fresh blind set (`h30`+). golden-v1 stays as it was for
+  `replay-v1` and earlier artifacts.
   The photo on h27 shows a real person; its upstream path holds no name, and no
   name is written in this repository.
 - **Version bumps and the binding.** Editing a label, the manifest,

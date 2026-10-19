@@ -425,7 +425,7 @@
     {
       "id": "h14",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h14-food-burger.jpg",
       "sha256": "97c15bbbf3cf3615063b1031c85d669de55839f59262bbe145d15ca75b36ecbf",
       "width": 480,
@@ -441,7 +441,7 @@
     {
       "id": "h15",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h15-food-doughnuts.jpg",
       "sha256": "e9f29f7db9fd2dddac47762b4bbdaeb6dbdfbc194735b27abaaa281d7de076fe",
       "width": 640,
@@ -457,7 +457,7 @@
     {
       "id": "h16",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h16-food-espresso.png",
       "sha256": "cc02f8ca188b167c775a7101b5d767d1e71792cf762c33d6fa15a4599b5a8de7",
       "width": 600,
@@ -473,7 +473,7 @@
     {
       "id": "h17",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h17-interior-canopy-bedroom.jpg",
       "sha256": "669fd839097a6c5f8c7d680eabb1eddef431bcbec31cd69f186d6820bdc3ca92",
       "width": 425,
@@ -489,7 +489,7 @@
     {
       "id": "h18",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h18-interior-kitchen.jpg",
       "sha256": "6ba9d67943cc551a0d976af3026e387b48eab7876ba0b14e61238af910ba2dc3",
       "width": 683,
@@ -505,7 +505,7 @@
     {
       "id": "h19",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h19-craft-ceramic-head.jpg",
       "sha256": "fafc9f88fad9d96bd5eaba1238eb40861e550d03169f22c616797df0910e548e",
       "width": 900,
@@ -521,7 +521,7 @@
     {
       "id": "h20",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h20-sign-double-parking.jpg",
       "sha256": "7f3041a7019ab4d33d2452bc757d8c4f38616bfde71431e12f7ec370d7b2018e",
       "width": 800,
@@ -537,7 +537,7 @@
     {
       "id": "h21",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h21-sign-priory-galleries.jpg",
       "sha256": "e4d64f10bbfb27b2c5980cb048fd0abe20dd74868ba5460298de473ced53b518",
       "width": 640,
@@ -553,7 +553,7 @@
     {
       "id": "h22",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h22-busy-street-japan.jpg",
       "sha256": "1b2f7e9e976b58aa84ba84bf8e2b91b059affd2b2d5ed4a643438ae0ccb92948",
       "width": 640,
@@ -569,7 +569,7 @@
     {
       "id": "h23",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h23-sign-road-japan.jpg",
       "sha256": "b041d8c01473b72e2ea2f909174a4d2e5cdefae9a3d5abd06a9db91755392ad3",
       "width": 640,
@@ -585,7 +585,7 @@
     {
       "id": "h24",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h24-vehicle-motorcycle-badge.png",
       "sha256": "db18e9c4157617403c3537a6ba355dfeafe9a7eabb6b9b94cb33f6525dd49179",
       "width": 741,
@@ -601,7 +601,7 @@
     {
       "id": "h25",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h25-vehicle-bus-badge.jpg",
       "sha256": "5db92d3ade8c4721645987dac30244b392c24d0a813e0f6e4f1a000478c07216",
       "width": 640,
@@ -617,7 +617,7 @@
     {
       "id": "h26",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h26-vehicle-roadster-nobadge.jpg",
       "sha256": "b6d75247fcd88918054fdbcd09864e3d303de064d28ca18766b8568a31c0d898",
       "width": 4317,
@@ -633,7 +633,7 @@
     {
       "id": "h27",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h27-person-adversarial.jpg",
       "sha256": "68bbb631ebb95e3c9ff5c82bcf8baf445d938771501014440541bf4dbc71c1b6",
       "width": 359,
@@ -649,7 +649,7 @@
     {
       "id": "h28",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h28-clothing-logos-tennis.jpg",
       "sha256": "1c911efcfaca6b975a0b3ec772005863140c70df33ad16a13043db905dab3b40",
       "width": 425,
@@ -665,7 +665,7 @@
     {
       "id": "h29",
       "split": "holdout",
-      "blind": true,
+      "blind": false,
       "file": "h29-clothing-nologo-jacket.jpg",
       "sha256": "0b3e16220a59d8631a8ecb0284eafd20e86f0e5ce85b9541a498b13ca9dbc636",
       "width": 750,

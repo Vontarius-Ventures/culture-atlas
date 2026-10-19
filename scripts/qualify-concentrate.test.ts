@@ -288,6 +288,69 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('refuses, before any request, a golden set whose blind split a failed blind run consumed (no second look)', async () => {
+    const fetchImpl = responses();
+    const base = { apiKey: KEY, profile, pipeline: versionedTestPipeline, maxRequests: 30, spendCapMicros: 2_000_000, confirmPaidRequests: true, fetch: fetchImpl as unknown as typeof fetch };
+    // The set's own record: freeze.json with a failed blind run (and its held-out entries still claiming blind: true).
+    const recorded = await syntheticGolden(ids(12));
+    await writeFile(
+      path.join(recorded.dir, 'freeze.json'),
+      JSON.stringify({
+        golden_set: 'golden-v2',
+        split: 'holdout',
+        labelled_on: '2026-10-19',
+        labelled_from: '0'.repeat(40),
+        model_runs_before_freeze: 0,
+        holdout_manifest_sha256: 'f'.repeat(64),
+        photos: {},
+        blind_run: {
+          date: '2026-10-19',
+          binding_commit: '1'.repeat(40),
+          code_commit: '2'.repeat(40),
+          result: 'fail',
+          failed_gates: ['M1', 'M11'],
+          requests: { concentrate: 24, qloo: 12 },
+          report: 'docs/quality-plan.md section 16',
+        },
+      }),
+    );
+    await expect(qualifyProfile({ ...base, outDir: await preparedOutDir(), golden: recorded })).rejects.toThrow(
+      /blind held-out split was consumed by a failed blind run \(2026-10-19, code 2222222, failed M1, M11\).*Nothing was sent/,
+    );
+    // The committed binding's record alone (a copy of the set without its freeze.json) is enough.
+    const copy = await syntheticGolden(ids(12));
+    const committed = (await syntheticBinding({ golden: copy }))!;
+    const consumed: EvalBindingLike = { ...committed, sets: { 'golden-v2': { ...committed.sets['golden-v2']!, blind_consumed: true } } };
+    await expect(qualifyProfile({ ...base, outDir: await preparedOutDir(), golden: copy, binding: consumed })).rejects.toThrow('consumed by a failed blind run');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('the review probe: the committed golden-v2 refuses both photo stages before any request, with the default binding', async () => {
+    const fetchImpl = responses();
+    const photos = await tmp('ca-qphotos-');
+    for (const [p, stage1] of [
+      [profile, undefined],
+      [enrich, profile],
+    ] as const) {
+      await expect(
+        realQualifyProfile({
+          apiKey: KEY,
+          outDir: await preparedOutDir(),
+          profile: p,
+          stage1Profile: stage1,
+          stage1Artifact: !!stage1,
+          pipeline: versionedTestPipeline,
+          golden: { dir: path.resolve(import.meta.dirname, '../fixtures/eval/golden-v2'), photosDir: photos },
+          maxRequests: 100,
+          spendCapMicros: 5_000_000,
+          confirmPaidRequests: true,
+          fetch: fetchImpl as unknown as typeof fetch,
+        }),
+      ).rejects.toThrow(/golden-v2's blind held-out split was consumed by a failed blind run \(2026-10-19, code 303b29b, failed M1, M4, M11\)/);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('refuses, before any request, inputs that differ from the committed binding (the artifact could never qualify)', async () => {
     const fetchImpl = responses();
     const g = await syntheticGolden(ids(10));

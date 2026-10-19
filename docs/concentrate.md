@@ -6,13 +6,17 @@ rollbacks (`LLM_PROVIDER=featherless|anthropic`); nothing ever falls back to
 them automatically, and v2 media analysis is unavailable under a rollback
 provider. Qloo stays independent.
 
-**No qualified profile ships in this repository.** Every test uses synthetic
-ids such as `fixture/model-1`, which must never be deployed. The two photo
-stages passed a live qualification on 2026-10-19 (see "Live qualification on
-real photographs" below), but the profiles and artifacts stay with the operator,
-and the ZDR/no-logging confirmation in the Concentrate dashboard is **still
-pending**. Without a key, qualified profiles, a durable ledger and spend
-ceilings every role reports `unavailable`; capture, library, uploads and
+**No qualified profile ships in this repository, and no role is qualified
+now.** Every test uses synthetic ids such as `fixture/model-1`, which must
+never be deployed. The two photo stages failed the requalification blind run
+on golden-v2 (M1, M4, M11; see "Requalification blind run" below), so photo
+analysis fails closed. Their earlier passes are history, not qualification:
+the phase-4 run on 2026-10-19 ("Live qualification on real photographs"
+below) checked transport only and its artifacts carry no eval block
+(`missing_eval`), and the Evaluate-phase golden-v1 artifacts failed their
+evaluation. The ZDR/no-logging confirmation in the Concentrate dashboard is
+also **still pending**. Without a key, qualified profiles, a durable ledger and
+spend ceilings every role reports `unavailable`; capture, library, uploads and
 playback keep working.
 
 Authority: `specs/capture-platform-v2/CONCENTRATE.md`.
@@ -189,7 +193,7 @@ unavailable under Concentrate.
 - **Reading v2 smoke, 2026-10-19** (build package P1, 12 billed requests, no retries, 5 tuning photos, `anthropic/claude-haiku-5-5`, effort none; not a qualification run). Stage 1 took 1.9–4.8 s and stage 2 3.5–6.9 s, with at most 1031 output tokens at stage 2. Results: on the grocery-bags photo stage 1 returned no candidates instead of guessing a car model from its shape; on the Paris signs all five places carried the exact sign text as evidence and published at stage 1; on the photo of two people one tailoring style was proposed, with no identity or role; on the basketball photo "Streetball" was held and published only as a weak, non-anchor resemblance, and "NBA" was published from its logo plus the stage-2 transcription; on the bicycle photo the road bicycle was demoted as generic, and no brand was claimed because stage 2 did not read the maker's name. Two findings changed the code: the Paris enrichment drew five evidence boxes against a schema cap of four, so the whole call failed validation (the v2 schema now accepts up to eight and the merge keeps four); and one observation described a mouth, so G-PERSON-OBS also covers mouth, lips, teeth and grimaces. Stage 2 still adds a confirmation for the title despite the prompt; it is ignored. Outputs stay in the team scratchpad.
 - The stage-2 role is wired only from a qualified Concentrate profile (`gateway.vlmEnrich`, `registry.vlmEnrich`); there is no Elorian or rollback fallback for it, and a fallback model's stage-1 answer (no quick read) never gets a stage 2.
 - Ledger: each call reserves its own `inference_attempts` row; both stages of one job share the job id and count as one daily analysis. `ModelSpendLedger.canReserveAll` is the read-only pre-check the compiler uses before stage 1 so that stage 2 is planned only when both worst cases fit.
-- The default route measured in [the latency plan](analysis-latency-plan.md) is `anthropic/claude-haiku-5-5` with effort `none` for both stages. Both stages passed live qualification on 15 real photographs on 2026-10-19 (below). **Before production** the operator must still confirm ZDR and no content logging for this route in the Concentrate dashboard, then re-qualify with the confirmed `privacyVerifiedAt`.
+- The default route measured in [the latency plan](analysis-latency-plan.md) is `anthropic/claude-haiku-5-5` with effort `none` for both stages. Neither stage is qualified on it now: the phase-4 transport pass on 15 real photographs (2026-10-19, below) has no eval block and does not qualify a role (`missing_eval`), and the golden-v2 blind run failed ("Requalification blind run" below). Qualifying the photo roles needs a fresh blind set. **Before production** the operator must also confirm ZDR and no content logging for this route in the Concentrate dashboard and qualify with the confirmed `privacyVerifiedAt`.
 
 Example profile pair for reading v2 (values from the latency plan, with the enrichment cap raised to 1600; ids, artifact names and privacy dates are placeholders the operator fills in after qualification; on the same route the owner-accepted `privacyVerifiedAt` carries over unchanged):
 
@@ -299,9 +303,14 @@ by `pnpm eval:binding --write` and checked by the test suite, so any change to
 a label, a threshold, a scorer, a prompt builder or a guard rule fails CI until
 the binding is regenerated, and the regenerated binding un-qualifies every
 role scored on the old inputs (`stale_golden_set`, `stale_thresholds`,
-`stale_scorer`, `stale_code`, `holdout_not_blind`). The qualification script
-refuses to send anything when its inputs differ from the committed binding or
-when the golden set has fewer than 10 blind held-out photos. Artifacts written
+`stale_scorer`, `stale_code`, `holdout_not_blind`). A photo set whose
+`freeze.json` records a failed blind run is `blind_consumed` in the binding:
+`evalGateFailure()` then refuses every photo-role artifact on it
+(`blind_set_consumed`), however it scores, because re-reading a failed blind
+split is not a blind test. The qualification script
+refuses to send anything when its inputs differ from the committed binding,
+when the golden set's blind split is consumed, or when the golden set has
+fewer than 10 blind held-out photos. Artifacts written
 before the binding (the phase-4 and Evaluate-phase ones) have no code digest
 and are `catalog-compatible`.
 
@@ -366,7 +375,14 @@ ids) landed in `packages/providers/src/concentrate/profiles.ts`.
 
 ## Live qualification on real photographs (2026-10-19, build plan phase 4)
 
-Both photo stages qualified on `anthropic/claude-haiku-5-5` with
+> **Historical record; it does not qualify either photo role now.** This run
+> checked transport, schema validity and latency only. Its artifacts carry no
+> eval block, so `qualificationState()` reports them `missing_eval`
+> (catalog-compatible), and the reading it measured (`atlas_quick_read_v1`,
+> `atlas_enrichment_v1`) is not the current one. The current state is in
+> "Requalification blind run" and "Remaining release gates" below.
+
+Both photo stages passed a transport qualification on `anthropic/claude-haiku-5-5` with
 `reasoningEffort: "none"`, through `pnpm qualify:concentrate` with the
 `--confirm-paid-requests` flag. The owner asked for public test photographs
 instead of their own: 15 real photographs from open-source test-image sets
@@ -539,6 +555,8 @@ inputs (above). Re-qualified on `anthropic/claude-haiku-5-5`, effort none:
 | `vision_photo`, `vision_photo_enrich` | not run: the held-out split is no longer blind, so they cannot qualify until a fresh one exists; production keeps failing closed for photos | | |
 
 Spend: 34 Concentrate requests (6 + 11, twice), 0 Qloo, all in the ledger.
+These two text artifacts are stale since thr-v2 changed the thresholds digest
+(`stale_thresholds`); see "Remaining release gates".
 
 ## Requalification blind run (2026-10-19)
 
@@ -551,7 +569,14 @@ Spend: 34 Concentrate requests (6 + 11, twice), 0 Qloo, all in the ledger.
 | `vision_verify` | off, not qualified (Tune decision) | | |
 
 Qualification and the end-to-end upload were not run, as the plan requires
-when the blind split fails; nothing was changed after the run. Spend: 32
+when the blind split fails; no rule, prompt, lexicon, scorer, label or
+threshold was changed after the run. The failure is recorded where the code
+reads it: `fixtures/eval/golden-v2/freeze.json` has a `blind_run` entry, the
+held-out entries h14–h29 are `blind: false`, and the regenerated binding marks
+golden-v2 `blind_consumed`. `pnpm qualify:concentrate` therefore refuses
+golden-v2 for the photo roles before any request, and `evalGateFailure()`
+refuses any golden-v2 photo artifact (`blind_set_consumed`). Requalifying the
+photo roles needs a fresh blind set (h30+). Spend: 32
 Concentrate and 32 Qloo requests (package `rq-blind`); the requalification
 round is at 169 of 300 Concentrate and 32 of 200 Qloo requests. No Elorian.
 
@@ -610,8 +635,9 @@ Concentrate against the operator's credits, independently of AWS.
 Until both text roles are qualified, every real upload ends `partial`: the
 research section needs `research_text` and the Eat section needs `composer`.
 The owner chose `anthropic/claude-haiku-5-5` with `reasoningEffort: "none"`
-for both (quality plan §8). No independent verifier model is built in this
-round (quality plan §7.6); this section covers the text roles only.
+for both (quality plan §8). The independent verifier (quality plan §7.6,
+`vision_verify`, built in the requalification round) checks photo claims only;
+this section covers the text roles only.
 
 **What is checked.** A transport pass only proves that a reply arrived and
 parsed. The text golden set `fixtures/eval/text-v1` (see its README) adds
@@ -726,8 +752,12 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
   qualified now** (2026-10-19, after the requalification blind run):
   - `vision_photo` and `vision_photo_enrich` failed the blind golden-v2 run
     (M1, M4, M11; "Requalification blind run" below) and were not
-    re-qualified; their earlier artifacts are golden-v1 (`wrong_golden_set`).
-    Photos keep failing closed. `vision_verify` is off and not qualified.
+    re-qualified. Their earlier artifacts do not qualify either: the phase-4
+    v1 artifacts carry no eval block (`missing_eval`), and the Evaluate-phase
+    artifacts are golden-v1 (`wrong_golden_set`) and failed their evaluation.
+    golden-v2 itself can no longer qualify a photo role (`blind_set_consumed`),
+    so requalification needs a fresh blind set. Photos keep failing closed.
+    `vision_verify` is off and not qualified.
   - `research_text` and `composer` passed on text-v1 (§14.5 of the quality
     plan), but thr-v2 changed the thresholds digest, so their artifacts are
     `stale_thresholds`. Their inputs are otherwise unchanged; re-qualifying both

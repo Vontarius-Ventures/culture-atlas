@@ -1121,12 +1121,26 @@ refused to guess).
 
 - **Qualification (step 5): not run.** `vision_photo` and
   `vision_photo_enrich` stay `catalog-compatible`; their golden-v1 artifacts no
-  longer match (`wrong_golden_set`). Production keeps failing closed for
+  longer match (`wrong_golden_set`), and the phase-4 artifacts have no eval
+  block (`missing_eval`). Production keeps failing closed for
   photos ("We can't look at this photo yet"), and FAST-01 stays unmet end to
   end. `vision_verify` stays off and unqualified.
 - **End to end (step 6): not run**, because no photo role is qualified (the
   plan makes it conditional). The v2 media photo analysis was not run for the
   same reason.
+- **The failure is enforced in code (review fix).** At first it was recorded
+  only in the documents, so nothing stopped a second qualification run on the
+  same h14–h29 photos from marking the roles qualified if a nondeterministic
+  re-read happened to pass. Now `fixtures/eval/golden-v2/freeze.json` carries a
+  `blind_run` record (fail; M1, M4, M11; code `303b29b`), h14–h29 are
+  `"blind": false`, and the regenerated binding marks golden-v2
+  `blind_consumed`. `pnpm qualify:concentrate` refuses golden-v2 for the photo
+  roles before any request, `evalGateFailure()` returns `blind_set_consumed`
+  for any golden-v2 photo artifact, and the freeze test allows exactly the
+  `blind` true-to-false change after a recorded failed run. No label, rule,
+  prompt, lexicon, scorer or threshold changed (photo code digest and
+  thresholds digest unchanged); the blind split was not read again.
+  Requalification needs a fresh blind set (`h30`+).
 - **Text roles are stale too (found while preparing step 6).** thr-v2 (step 1)
   changed the thresholds digest, so the `research_text` and `composer`
   artifacts of §14.5 now read `stale_thresholds` and both roles are
