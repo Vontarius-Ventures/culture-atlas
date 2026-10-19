@@ -40,17 +40,27 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(view.analysis!.sections).toMatchObject({ observations: 'complete', references: 'complete', research: 'complete', wear: 'complete', play: 'complete', watch: 'complete', eat: 'complete' });
     expect(view.job_id).toBeNull();
 
-    // References: depicted brand is not qualified; resemblances are.
-    const denim = view.references.find((r) => r.name === 'Fixture Denim Co')!;
-    expect(denim).toMatchObject({ relation: 'depicted', qualified: false, type: 'brand', has_page: true });
-    expect(view.references.find((r) => r.name === 'Vintage Racing')).toMatchObject({ relation: 'resembles', qualified: true });
+    // Guardrails (quality plan §4): this single full reading has no stage 2, so the brand it read
+    // (a held claim in a two-stage reading) is dropped before resolution, never published.
+    expect(view.references.find((r) => r.name === 'Fixture Denim Co')).toBeUndefined();
+    const { rows: guardTrace } = await db.query<{ data: { version: string; decisions: { name: string; action: string; rules: string[]; note?: string }[] } }>(
+      `SELECT data FROM trace_events WHERE job_id = $1 AND name = 'guard'`,
+      [job_id],
+    );
+    expect(guardTrace).toHaveLength(1);
+    expect(guardTrace[0]!.data.version).toBe('guard-v1');
+    expect(guardTrace[0]!.data.decisions.find((d) => d.name === 'Fixture Denim Co')).toMatchObject({ action: 'drop', rules: ['G-BRAND'], note: 'no_stage_2' });
+    // References: resemblances are qualified.
+    const racing = view.references.find((r) => r.name === 'Vintage Racing')!;
+    expect(racing).toMatchObject({ relation: 'resembles', qualified: true, has_page: true });
 
-    // Recommendations: <= 3 per category, <= 12 total, interleaved, never the anchor itself.
+    // Recommendations: <= 3 per category, <= 12 total, interleaved, never an anchor itself.
     const recs = view.recommendations;
     expect(recs.length).toBeGreaterThan(0);
     expect(recs.length).toBeLessThanOrEqual(12);
     for (const c of ['wear', 'play', 'watch', 'eat']) expect(recs.filter((r) => r.category === c).length).toBeLessThanOrEqual(3);
-    expect(recs.map((r) => r.title)).not.toContain('Fixture Denim Co');
+    // A card named like a reference can only be that reference's own style direction (Wear).
+    for (const r of recs.filter((x) => view.references.some((ref) => ref.name === x.title))) expect(r.subtitle).toBe('Style direction');
     expect(recs.map((r) => r.title)).not.toContain('Ungrounded Dish');
     expect(recs.every((r) => r.is_example === false)).toBe(true);
     for (let i = 2; i < recs.length; i++) expect(recs[i]!.category === recs[i - 1]!.category && recs[i]!.category === recs[i - 2]!.category).toBe(false);
@@ -75,9 +85,9 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(q[0]!.n).toBeLessThanOrEqual(12);
 
     // Reference page: sourced claims only, public facts.
-    const page = await references.getReference(ctx, { id: denim.id, capture_id });
+    const page = await references.getReference(ctx, { id: racing.id, capture_id });
     expect(page.research_status).toBe('complete');
-    expect(page.overview).toBe('Fixture Denim Co is a test reference.');
+    expect(page.overview).toBe('Vintage Racing is a test reference.');
     expect(page.claims.filter((c) => c.claim_type === 'factual').every((c) => c.source_ids.length > 0)).toBe(true);
     expect(page.sources[0]!.url).toMatch(/^https:\/\/en\.wikipedia\.org\/wiki\//);
     expect(page.related.length).toBeGreaterThan(0);
@@ -98,7 +108,8 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(view.status).toBe('partial');
     expect(view.analysis!.sections).toMatchObject({ wear: 'unavailable', play: 'unavailable', watch: 'unavailable' });
     expect(view.analysis!.warnings).toContainEqual({ code: 'discoveries_delayed', message: 'Related discoveries are taking longer.' });
-    expect(view.references.map((r) => r.name)).toEqual(expect.arrayContaining(['Fixture Denim Co', '1960s motor racing style']));
+    // The brand of this single reading is dropped by G-BRAND (no stage 2); the rest stays unmatched.
+    expect(view.references.map((r) => r.name)).toEqual(['1960s motor racing style', 'Italian aperitivo culture']);
     expect(view.references.every((r) => r.qualified)).toBe(true); // unmatched -> qualified
     const rows = await recRows(capture_id);
     expect(rows.filter((r) => r.origin === 'qloo' || r.origin === 'replay')).toHaveLength(0);

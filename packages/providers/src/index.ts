@@ -15,10 +15,14 @@ export * from './storage/multipart-factory';
 export { ConcurrencyLimiter, sharedLimiter } from './http/concurrency';
 export { backoffDelay, CircuitBreaker, parseRetryAfter, withRetries, type BreakerState, type Sleep } from './http/resilience';
 export { createAnthropicVlm, AnthropicVlm } from './vlm/anthropic';
+export * from './vlm/guardrails';
+export * as vlmLexicons from './vlm/lexicons';
 export {
   VLM_SYSTEM_PROMPT,
   VLM_QUICK_SYSTEM_PROMPT,
   VLM_ENRICH_SYSTEM_PROMPT,
+  VLM_QUICK_SYSTEM_PROMPT_V2,
+  VLM_ENRICH_SYSTEM_PROMPT_V2,
   VLM_READING_VERSIONS,
   QUICK_READ_MAX_CANDIDATES,
   QUICK_READ_MAX_DIMENSION,

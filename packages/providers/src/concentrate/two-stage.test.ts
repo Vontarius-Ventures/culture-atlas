@@ -9,18 +9,31 @@ import { StructuredResponseRunner } from '../model-gateway/runner';
 import { createProviderRegistry } from '../registry';
 import { FallbackVlm } from '../fallback';
 import { FakeVlm } from '../testing/fakes';
-import { VLM_ENRICH_SYSTEM_PROMPT, VLM_QUICK_SYSTEM_PROMPT, VLM_SYSTEM_PROMPT } from '../vlm/prompt';
+import { createHash } from 'node:crypto';
+import { strictJsonSchema } from '../model-gateway/schema';
+import {
+  VLM_ENRICH_SYSTEM_PROMPT,
+  VLM_ENRICH_SYSTEM_PROMPT_V2,
+  VLM_QUICK_SYSTEM_PROMPT,
+  VLM_QUICK_SYSTEM_PROMPT_V2,
+  VLM_SYSTEM_PROMPT,
+} from '../vlm/prompt';
+import { VlmEnrichmentV2, VlmQuickReadV2 } from '../vlm/types';
 import { createModelGateway } from './gateway';
 import { profileHash, type ModelProfile } from './profiles';
-import { ConcentrateVlm, ConcentrateVlmEnricher, readingForProfile } from './providers';
+import { ConcentrateVlm, ConcentrateVlmEnricher, readingForProfile, readingVersionForProfile } from './providers';
 import { createConcentrateTransport } from './transport';
 import {
   enrichProfile,
+  enrichProfileV2,
   identity,
   limits,
   profile,
   quickProfile,
+  quickProfileV2,
+  validEnrichmentV2,
   validQuickRead,
+  validQuickReadV2,
   visionProfile,
 } from './test-fixtures';
 
@@ -320,5 +333,119 @@ describe('gateway and registry wiring', () => {
     expect(primary.calls).toHaveLength(1);
     expect(out.model).toBe('fake-vlm');
     expect(out.quick).toBeUndefined();
+  });
+});
+
+/** A contract fixture response whose output text is replaced (still a synthetic response). */
+function serveOutput(name: string, output: unknown) {
+  return vi.fn(async (_url: string, _init: RequestInit) => {
+    const f = structuredClone(fx[name]!) as {
+      status: number;
+      headers: Record<string, string>;
+      body: { output: Array<{ type: string; content?: Array<{ text?: string }> }> };
+    };
+    const message = f.body.output.find((o) => o.type === 'message')!;
+    message.content![0]!.text = JSON.stringify(output);
+    return new Response(JSON.stringify(f.body), { status: f.status, headers: f.headers });
+  });
+}
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
+describe('reading v2 (quality plan §3)', () => {
+  it('the profile schemaVersion selects the reading version; v1 pins keep v1', () => {
+    expect(readingVersionForProfile(quickProfile)).toBe('v1');
+    expect(readingVersionForProfile(enrichProfile)).toBe('v1');
+    expect(readingVersionForProfile(quickProfileV2)).toBe('v2');
+    expect(readingVersionForProfile(enrichProfileV2)).toBe('v2');
+    expect(readingVersionForProfile({ role: 'vision_video_frame', schemaVersion: 'x' })).toBe('v2');
+    expect(profileHash(quickProfileV2)).not.toBe(profileHash(quickProfile));
+  });
+
+  it('the phase-4 qualified v1 prompts stay byte-identical', () => {
+    expect(sha256(VLM_QUICK_SYSTEM_PROMPT)).toBe('99bd93996f93f55ff2ced9ec43dce2e5b41c92866ddfb76a738e66b858e617bd');
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT)).toBe('36fe95042734f3862cafc8cfbb9c8a17c9b7facafef5b1a28d898f581eed4ae2');
+    expect(sha256(VLM_SYSTEM_PROMPT)).toBe('b62f04a1d1a0b815ed824dc14048f859bf5658cec1cce5bef68c267e0d224a72');
+  });
+
+  it('both v2 prompts keep the security rules and add the evidence rules', () => {
+    const security = VLM_QUICK_SYSTEM_PROMPT.slice(
+      VLM_QUICK_SYSTEM_PROMPT.indexOf('Security rules'),
+      VLM_QUICK_SYSTEM_PROMPT.indexOf('Content rules'),
+    ).trim();
+    for (const prompt of [VLM_QUICK_SYSTEM_PROMPT_V2, VLM_ENRICH_SYSTEM_PROMPT_V2]) {
+      expect(prompt).toContain(security);
+      expect(prompt).toContain('only when its name or logo is legible in the photo');
+      expect(prompt).toContain('Never infer a make or model from shape, silhouette, colour, tail lights or proportions.');
+      expect(prompt).toContain('under the name exactly as written');
+      expect(prompt).toContain('Do not use words for the medium');
+      expect(prompt).toContain('Generic objects (a basketball, a bicycle, a bag, a chandelier, fruit) are not candidates');
+      expect(prompt).toContain('domain is what the reference is about');
+      expect(prompt).toContain('Do not describe hair, face, skin, age, body or facial expression');
+      expect(prompt).toContain('Do not identify real people.');
+    }
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).toContain('return 0 to 5');
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).toContain('Never add a cuisine, place or activity only to reach a count.');
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).not.toContain('3 to 5');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('never descriptions of text');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('Never transcribe licence plates.');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('Do not add a confirmed entry for the title.');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('illegible_text_present');
+  });
+
+  it('the v2 schemas are strict-representable: domain and evidence instead of categories, verdict instead of keep', () => {
+    const quick = strictJsonSchema(VlmQuickReadV2) as { properties: { candidates: { items: { properties: Record<string, unknown> } } } };
+    expect(Object.keys(quick.properties.candidates.items.properties).sort()).toEqual([
+      'certainty',
+      'domain',
+      'evidence',
+      'evidence_text',
+      'name',
+      'relation',
+      'tag_query',
+      'type',
+    ]);
+    const enrich = strictJsonSchema(VlmEnrichmentV2) as {
+      properties: Record<string, unknown> & { confirmed: { items: { properties: Record<string, unknown> } } };
+    };
+    expect(Object.keys(enrich.properties)).toContain('illegible_text_present');
+    expect(Object.keys(enrich.properties.confirmed.items.properties).sort()).toEqual(['name', 'rationale', 'verdict']);
+  });
+
+  it('stage 1 sends the v2 prompt and schema and returns the v2 fields on the merged reading', async () => {
+    const fetchImpl = serveOutput('valid_quick_read_json', validQuickReadV2);
+    const out = await new ConcentrateVlm(runnerFor(quickProfileV2, fetchImpl).runner).analyzeImage({
+      image: { bytes: await jpeg(640, 480), mediaType: 'image/jpeg' },
+    });
+    const body = bodyOf(fetchImpl);
+    expect(body.instructions).toBe(VLM_QUICK_SYSTEM_PROMPT_V2);
+    expect(body.text.format.name).toBe('atlas_quick_read_v2');
+    expect(body.max_output_tokens).toBe(600);
+    expect(out.quick).toEqual(validQuickReadV2);
+    expect(out.analysis.candidates.map((c) => [c.name, c.domain, c.evidence, c.evidence_text, c.suggested_categories])).toEqual([
+      ['Dan dan noodles', 'food', 'distinctive_form', null, []],
+      ['Fixture Noodle Bar', 'food', 'read_text', 'FIXTURE NOODLE BAR', []],
+    ]);
+  });
+
+  it('a v2 profile rejects a v1-shaped answer (the schema is exact, never the union)', async () => {
+    const fetchImpl = serveOutput('valid_quick_read_json', validQuickRead);
+    await expect(
+      new ConcentrateVlm(runnerFor(quickProfileV2, fetchImpl).runner).analyzeImage({
+        image: { bytes: await jpeg(64, 48), mediaType: 'image/jpeg' },
+      }),
+    ).rejects.toBeInstanceOf(ProviderError);
+  });
+
+  it('stage 2 sends the v2 prompt and schema at the 1600-token cap and returns verdicts', async () => {
+    const fetchImpl = serveOutput('valid_enrichment_json', validEnrichmentV2);
+    const out = await new ConcentrateVlmEnricher(runnerFor(enrichProfileV2, fetchImpl).runner).enrichImage({
+      image: { bytes: await jpeg(1000, 800), mediaType: 'image/jpeg' },
+      stage1: { title: 'Sesame noodle supper', candidates: ['Dan dan noodles', 'Fixture Noodle Bar'] },
+    });
+    const body = bodyOf(fetchImpl);
+    expect(body.instructions).toBe(VLM_ENRICH_SYSTEM_PROMPT_V2);
+    expect(body.text.format.name).toBe('atlas_enrichment_v2');
+    expect(body.max_output_tokens).toBe(1600);
+    expect(out.enrichment.confirmed[1]).toEqual({ name: 'Fixture Noodle Bar', rationale: 'Name printed on the bowl rim', verdict: 'supported' });
   });
 });
