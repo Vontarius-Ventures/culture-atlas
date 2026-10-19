@@ -12,6 +12,8 @@ import {
   type RecommendationParent,
 } from '../composer/store';
 import type { Queryable } from '../db/pool';
+import { FASHION_BRAND_TAG } from '../compiler/grounding';
+import { canonicalTokens, nameTokens, CANONICAL_STOP, stemToken } from '../compiler/text';
 import type { Category, ItemKind } from '../enums';
 import { AppError } from '../errors';
 import { requireServiceFeature } from '../flags/feature-flags';
@@ -36,6 +38,11 @@ import {
  *  - Signals: the account's CURRENT explicit saves that carry a real Qloo id
  *    (onboarding picks are such saves). `urn:tag:*` ids go to
  *    `signal.interests.tags`, entity ids to `signal.interests.entities`.
+ *  - Signal quality (docs/quality-plan.md §6): Eat is asked with FOOD picks
+ *    only (S-EAT-SIGNAL); with none it makes no request and stays `empty`
+ *    (S-EAT-EMPTY). Its tags are post-filtered: popularity, re-spellings of a
+ *    pick, echoes of non-food picks, plural duplicates (S-EAT-POST). Wear
+ *    asks for fashion brands only (S-WEAR-FILTER).
  *  - One Qloo insights request per category: brands (Wear), artists (Play),
  *    films (Watch), cuisine tags (Eat; measured faster and more relevant than
  *    location-less place queries, see docs/ARCHITECTURE.md). At most
@@ -67,12 +74,13 @@ const CIRCUIT_RETRY_MS = 30_000;
 interface CategoryPlan {
   filterType: QlooInsightsRequest['filterType'];
   filterTagTypes?: string[];
+  filterTags?: string[];
   kind: ItemKind;
   timeoutMs?: number;
 }
 
 export const SEED_CATEGORY_PLAN: Record<Category, CategoryPlan> = {
-  wear: { filterType: 'urn:entity:brand', kind: 'brand' },
+  wear: { filterType: 'urn:entity:brand', filterTags: [FASHION_BRAND_TAG], kind: 'brand' },
   play: { filterType: 'urn:entity:artist', kind: 'artist' },
   watch: { filterType: 'urn:entity:movie', kind: 'film' },
   eat: { filterType: 'urn:tag', filterTagTypes: ['urn:tag:cuisine:qloo'], kind: 'food', timeoutMs: SEED_EAT_TIMEOUT_MS },
@@ -84,6 +92,69 @@ const START_ORDER: Category[] = ['eat', 'wear', 'play', 'watch'];
 export interface SeedSignal {
   id: string;
   name: string;
+  /** A cuisine tag, a food item or an Eat pick: the only signals Eat is asked with. */
+  food: boolean;
+}
+
+/** Cuisine tags under this floor were obscure one-offs in live Eat responses (e.g. "Shanghainese Dim Sum" at 0.23). */
+export const SEED_EAT_MIN_POPULARITY = 0.3;
+
+/** A save is a food signal when its tag is a cuisine, its item is food, or it was picked under Eat. */
+export function isFoodSignal(input: { id: string; kind: string | null; category: string | null }): boolean {
+  return input.id.startsWith('urn:tag:cuisine:') || input.kind === 'food' || input.category === 'eat';
+}
+
+/** S-EAT-SIGNAL: Eat is asked with food signals only; the other categories with every signal. */
+export function signalsFor(category: Category, signals: SeedSignals): SeedSignals {
+  if (category !== 'eat') return signals;
+  return { tags: signals.tags.filter((s) => s.food), entities: signals.entities.filter((s) => s.food) };
+}
+
+/** Words that make a dish name a re-spelling, not a new dish ("Dim Sum-Style Dishes" for "Dim Sum"). */
+const RESPELL_FILLER: ReadonlySet<string> = new Set(['dish', 'fare', 'themed', 'traditional']);
+
+function stemmedTokens(name: string): Set<string> {
+  return new Set(
+    nameTokens(name)
+      .filter((t) => !CANONICAL_STOP.has(t))
+      .map(stemToken)
+      .filter((t) => !RESPELL_FILLER.has(t)),
+  );
+}
+
+function stemmedJoin(name: string): string {
+  return [...stemmedTokens(name)].join('');
+}
+
+/**
+ * S-EAT-POST on returned cuisine tags, in Qloo's order:
+ *  - popularity >= SEED_EAT_MIN_POPULARITY (an unknown popularity fails);
+ *  - not a re-spelling of a food pick (same stemmed tokens, or the same
+ *    letters without spaces: "Dim Sums", "Dimsum", "Dim Sum Style");
+ *  - no content token shared with a NON-food pick ("Jazz Age Fare" for Jazz,
+ *    "Bossa Nova" for Bossa Nova);
+ *  - one card per stemmed name ("Sichuan Noodle" / "Sichuan Noodles").
+ */
+export function filterEatTags<T extends Pick<QlooTag, 'name' | 'popularity'>>(tags: readonly T[], signals: SeedSignals): T[] {
+  const all = [...signals.tags, ...signals.entities];
+  const foodPicks = all.filter((s) => s.food).map((s) => ({ tokens: stemmedTokens(s.name), joined: stemmedJoin(s.name) }));
+  const nonFoodTokens = new Set(all.filter((s) => !s.food).flatMap((s) => [...canonicalTokens(s.name)]));
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const t of tags) {
+    if (typeof t.popularity !== 'number' || t.popularity < SEED_EAT_MIN_POPULARITY) continue;
+    const tokens = stemmedTokens(t.name);
+    const joined = stemmedJoin(t.name);
+    if (!joined) continue;
+    if (foodPicks.some((p) => p.joined === joined || (p.tokens.size === tokens.size && [...tokens].every((x) => p.tokens.has(x))))) continue;
+    if ([...canonicalTokens(t.name)].some((x) => nonFoodTokens.has(x))) continue;
+    const key = [...tokens].sort().join(' ');
+    if (seen.has(key) || seen.has(joined)) continue;
+    seen.add(key);
+    seen.add(joined);
+    out.push(t);
+  }
+  return out;
 }
 
 export interface SeedSignals {
@@ -115,8 +186,8 @@ interface CategoryOutput {
 /** Real Qloo ids from the account's current explicit saves, most recent first. */
 export async function loadSeedSignals(db: Queryable, accountId: string): Promise<SeedSignals> {
   // Entities carry `qloo`; tags (onboarding catalog picks, compiler style refs) carry `qloo_tag`.
-  const { rows } = await db.query<{ title: string; qloo_id: string }>(
-    `SELECT di.title,
+  const { rows } = await db.query<{ title: string; kind: string | null; category: string | null; qloo_id: string }>(
+    `SELECT di.title, di.kind, di.category,
             CASE WHEN jsonb_typeof(di.external_ids->'qloo') = 'string' THEN di.external_ids->>'qloo'
                  ELSE di.external_ids->>'qloo_tag' END AS qloo_id
        FROM saved_items si JOIN discovery_items di ON di.id = si.discovery_item_id
@@ -133,7 +204,7 @@ export async function loadSeedSignals(db: Queryable, accountId: string): Promise
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const list = id.startsWith('urn:tag:') ? out.tags : out.entities;
-    if (list.length < SEED_SIGNALS_MAX) list.push({ id, name: r.title });
+    if (list.length < SEED_SIGNALS_MAX) list.push({ id, name: r.title, food: isFoodSignal({ id, kind: r.kind, category: r.category }) });
   }
   return out;
 }
@@ -176,8 +247,10 @@ async function fetchCategory(
   },
 ): Promise<CategoryOutput> {
   const plan = SEED_CATEGORY_PLAN[category];
-  const { signals } = input;
-  const signalIds = new Set([...signals.tags, ...signals.entities].map((s) => s.id));
+  const signals = signalsFor(category, input.signals);
+  // S-EAT-EMPTY: no food picks, no Eat request; the labeled examples fill Eat.
+  if (signals.tags.length + signals.entities.length === 0) return { state: 'empty', cards: [], queries: [] };
+  const signalIds = new Set([...input.signals.tags, ...input.signals.entities].map((s) => s.id));
   const signalNames = new Map([...signals.tags, ...signals.entities].map((s) => [s.id, s.name]));
   const allNames = [...signals.tags, ...signals.entities].map((s) => s.name);
   const ownQueries = () => session.recorded.filter((q) => q.query_context['category'] === category);
@@ -188,6 +261,7 @@ async function fetchCategory(
       ...(signals.tags.length ? { signalTags: signals.tags.map((t) => ({ id: t.id })) } : {}),
       ...(signals.entities.length ? { signalEntities: signals.entities.map((e) => e.id) } : {}),
       ...(plan.filterTagTypes ? { filterTagTypes: plan.filterTagTypes } : {}),
+      ...(plan.filterTags ? { filterTags: plan.filterTags } : {}),
       ...(plan.filterType.startsWith('urn:entity:') ? { explainability: true } : {}),
       take: SEED_RESULTS_TAKE,
     },
@@ -206,7 +280,8 @@ async function fetchCategory(
   };
 
   if (plan.filterType === 'urn:tag') {
-    const tags: QlooTag[] = response.data.tags.filter((t) => /(^|:)cuisine(:|$)/.test(t.type ?? '') || t.id.startsWith('urn:tag:cuisine:'));
+    const cuisine: QlooTag[] = response.data.tags.filter((t) => /(^|:)cuisine(:|$)/.test(t.type ?? '') || t.id.startsWith('urn:tag:cuisine:'));
+    const tags = filterEatTags(cuisine, input.signals);
     for (const t of tags) {
       if (violatedExclusions({ title: t.name, cuisine: t.name }, input.foodExclusions).length) continue;
       consider({

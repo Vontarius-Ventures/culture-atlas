@@ -37,7 +37,8 @@ import { violatedExclusions } from '../composer/dietary';
 import { JobBudget } from './budget';
 import { composeDishIdeas } from './dishes';
 import { reciprocalRankFusion, selectDiverse, type RankedList } from './fusion';
-import { CATEGORY_ENTITY_TYPE, CATEGORY_ITEM_KIND, entityYear, searchTypesFor, TAG_RESOLVED_TYPES } from './mapping';
+import { acceptMatch, FASHION_BRAND_TAG, GROUNDING_VERSION, planLookup, textCorroborates, type AcceptDecision, type GuardedCandidate } from './grounding';
+import { CATEGORY_ENTITY_TYPE, CATEGORY_ITEM_KIND, entityYear } from './mapping';
 import { attemptCounter, attemptsSpent, errorSummary, recordProviderQuery } from './provider-queries';
 import { researchReferences } from './research';
 import {
@@ -51,7 +52,7 @@ import {
   upsertReference,
   type CaptureForCompile,
 } from './store';
-import { humanList, nameSimilarity, normalizeName, slugify } from './text';
+import { humanList, normalizeName, slugify } from './text';
 
 /**
  * Cultural compilation pipeline for one capture (build spec steps 3-8):
@@ -72,9 +73,9 @@ import { humanList, nameSimilarity, normalizeName, slugify } from './text';
  */
 
 export const QLOO_CATEGORIES = ['wear', 'play', 'watch'] as const satisfies readonly Category[];
-const MATCH_THRESHOLD_ENTITY = 0.75;
-const MATCH_THRESHOLD_TAG = 0.6;
 const PROVIDER_CACHE_TTL_SECONDS = 24 * 3600;
+/** Results per resolve lookup: acceptance is exact, so a wider window only adds recall. */
+const RESOLVE_TAKE = 10;
 /** Stage-2 enrichment deadline (amendment 2.2), further capped by the job's soft deadline. */
 const ENRICH_TIMEOUT_MS = 20_000;
 
@@ -98,6 +99,8 @@ export interface ResolvedRef {
   suggestedCategories: Category[];
   regionIds: string[];
   boxes: { x: number; y: number; w: number; h: number }[];
+  /** Qloo grounding decision (docs/quality-plan.md §5); absent for a reference confirmed in an earlier correction. */
+  grounding?: { lookup: 'none' | 'tags' | 'search'; rule: string; reason: string; doubt: boolean };
 }
 
 interface ObserveOutput {
@@ -146,6 +149,13 @@ interface QlooResolveState {
 interface ResolveWork {
   candidate: VlmCandidate;
   userSelected: boolean;
+  /**
+   * G-BRAND-CORROBORATE result from the guardrails, when they ran. Unset:
+   * the grounding falls back to the text check (the brand's head token in
+   * the reading's visible_text), so a stage-1 brand with no text read is
+   * never searched.
+   */
+  corroborated?: boolean;
 }
 
 interface CategoryCandidate {
@@ -177,15 +187,8 @@ function toRefType(t: string | undefined): ReferenceType {
   return t && REFERENCE_TYPES.has(t) ? (t as ReferenceType) : 'object';
 }
 
-function bestMatch<T>(name: string, items: readonly T[], nameOf: (t: T) => string, threshold: number): { item: T | null; ambiguous: boolean } {
-  const scored = items.map((item) => ({ item, s: nameSimilarity(name, nameOf(item)) })).filter((x) => x.s >= threshold);
-  if (scored.length === 0) return { item: null, ambiguous: false };
-  scored.sort((a, b) => b.s - a.s);
-  const top = scored[0]!;
-  const second = scored[1];
-  const ambiguous = top.s < 1 && !!second && second.s >= top.s - 0.05 && nameOf(second.item) !== nameOf(top.item);
-  return { item: top.item, ambiguous };
-}
+/** Grounding outcomes that mean "Qloo has same-named things and we cannot tell which" (reject on doubt). */
+const DOUBT_RULES: ReadonlySet<string> = new Set(['Q-DOUBT', 'Q-PLACE']);
 
 function boxesFor(regionIds: readonly string[], analysis: VlmAnalysis) {
   return regionIds.map((id) => analysis.regions.find((r) => r.id === id)?.box).filter((b): b is NonNullable<typeof b> => !!b);
@@ -346,6 +349,7 @@ export class CaptureCompiler {
       unmatched: resolved.refs.filter((r) => r.resolution === 'unmatched').length,
       anchors: resolved.refs.filter((r) => r.isAnchor).length,
       qloo: resolved.qloo,
+      grounding: resolved.refs.filter((r) => r.grounding).map((r) => ({ candidate: r.candidateName, ...r.grounding })),
     });
 
     // ---- recommend + compose per Qloo category (progressive) ---------------
@@ -808,7 +812,7 @@ export class CaptureCompiler {
     return results;
   }
 
-  private async resolveCandidate({ candidate, userSelected }: ResolveWork, analysis: VlmAnalysis, q: QlooResolveState): Promise<ResolvedRef> {
+  private async resolveCandidate({ candidate, userSelected, corroborated }: ResolveWork, analysis: VlmAnalysis, q: QlooResolveState): Promise<ResolvedRef> {
     const { ctx } = this;
     const type = toRefType(candidate.type);
     const base = {
@@ -820,41 +824,47 @@ export class CaptureCompiler {
       regionIds: candidate.region_ids,
       boxes: boxesFor(candidate.region_ids, analysis),
     };
-    let match: { kind: 'entity'; entity: QlooEntity } | { kind: 'tag'; tag: QlooTag } | null = null;
-    let ambiguous = false;
+    // Grounding (docs/quality-plan.md §5): plan the lookup from the candidate's
+    // type and evidence, then accept only a type-compatible, exact-name result.
+    const guarded: GuardedCandidate = {
+      ...(candidate as GuardedCandidate),
+      type,
+      relation: candidate.relation,
+      userSelected,
+      corroborated: userSelected || (corroborated ?? textCorroborates(candidate.name, analysis.visible_text.map((t) => t.text))),
+    };
+    const plan = planLookup(guarded);
+    let decision: AcceptDecision = { match: null, rule: 'Q-EVIDENCE', reason: plan.kind === 'none' ? plan.reason : 'qloo_unavailable' };
     let providerQueryId: string | null = null;
     let isReplay = false;
-    if (q.usable && q.state !== 'budget') {
-      const useTags = TAG_RESOLVED_TYPES.has(type);
+    if (plan.kind !== 'none' && q.usable && q.state !== 'budget') {
       const counter = attemptCounter();
       const started = Date.now();
-      const query = useTags ? (candidate.tag_queries[0] ?? candidate.name) : candidate.name;
       let attempts: number;
       try {
         let res: QlooResponse<QlooEntity[]> | QlooResponse<QlooTag[]>;
-        if (useTags) {
-          const call = await this.qlooCall('resolve', (o) => ctx.providers.qloo.lookupTags({ query, take: 5 }, { ...o, onAttempt: counter.observer }));
+        if (plan.kind === 'tags') {
+          const call = await this.qlooCall('resolve', (o) =>
+            ctx.providers.qloo.lookupTags({ query: plan.query, tagTypes: plan.tagTypes, take: RESOLVE_TAKE }, { ...o, onAttempt: counter.observer }),
+          );
           attempts = call.attempts;
-          const r = call.value;
-          const m = bestMatch(query, r.data, (t) => t.name, MATCH_THRESHOLD_TAG);
-          const alt = m.item ? m : bestMatch(candidate.name, r.data, (t) => t.name, MATCH_THRESHOLD_TAG);
-          if (alt.item) match = { kind: 'tag', tag: alt.item };
-          ambiguous = alt.ambiguous;
-          res = r;
+          res = call.value;
         } else {
-          const call = await this.qlooCall('resolve', (o) => ctx.providers.qloo.searchEntities({ query, types: searchTypesFor(type), take: 5 }, { ...o, onAttempt: counter.observer }));
+          const call = await this.qlooCall('resolve', (o) =>
+            ctx.providers.qloo.searchEntities(
+              { query: plan.query, ...(plan.types.length ? { types: plan.types } : {}), take: RESOLVE_TAKE },
+              { ...o, onAttempt: counter.observer },
+            ),
+          );
           attempts = call.attempts;
-          const r = call.value;
-          const m = bestMatch(query, r.data, (e) => e.name, MATCH_THRESHOLD_ENTITY);
-          if (m.item) match = { kind: 'entity', entity: m.item };
-          ambiguous = m.ambiguous;
-          res = r;
+          res = call.value;
         }
+        decision = acceptMatch(guarded, plan, res.data as (QlooEntity | QlooTag)[]);
         isReplay = res.is_replay;
         providerQueryId = await recordProviderQuery(ctx.db, {
           parent: { analysisId: this.analysisId },
           provider: 'qloo',
-          operation: useTags ? 'tags' : 'search',
+          operation: plan.kind,
           request: res.request,
           results: (res.data as (QlooEntity | QlooTag)[]).map((x, i) =>
             'entity_id' in x ? { rank: i + 1, entity_id: x.entity_id, name: x.name, types: x.types } : { rank: i + 1, tag_id: x.id, name: x.name, type: x.type },
@@ -863,7 +873,14 @@ export class CaptureCompiler {
           httpStatus: res.status,
           durationMs: res.duration_ms,
           isReplay: res.is_replay,
-          queryContext: { stage: 'resolve', candidate_id: candidate.id, candidate_name: candidate.name, matched: match !== null, attempts },
+          queryContext: {
+            stage: 'resolve',
+            candidate_id: candidate.id,
+            candidate_name: candidate.name,
+            matched: decision.match !== null,
+            attempts,
+            accept: { matched: decision.match !== null, rule: decision.rule, reason: decision.reason, grounding_version: GROUNDING_VERSION },
+          },
           traceId: this.traceId,
           cacheTtlSeconds: PROVIDER_CACHE_TTL_SECONDS,
         });
@@ -873,12 +890,13 @@ export class CaptureCompiler {
         else if (isProviderError(err) && (err.kind === 'unavailable' || err.kind === 'auth')) q.state = q.state === 'ok' ? 'unavailable' : q.state;
         else if (q.state === 'ok') q.state = 'errors';
         attempts = (err as { attempts?: number }).attempts ?? counter.count();
+        decision = { match: null, rule: 'Q-EVIDENCE', reason: `lookup_${e.code}` };
         if (e.code !== 'budget_exhausted' || attempts > 0) {
           await recordProviderQuery(ctx.db, {
             parent: { analysisId: this.analysisId },
             provider: 'qloo',
-            operation: TAG_RESOLVED_TYPES.has(type) ? 'tags' : 'search',
-            request: { query },
+            operation: plan.kind,
+            request: { query: plan.query },
             status: 'error',
             errorCode: e.code,
             httpStatus: e.status,
@@ -890,19 +908,20 @@ export class CaptureCompiler {
       }
     }
 
-    if (match?.kind === 'entity') {
-      const e = match.entity;
-      const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo:${e.entity_id}`, name: e.name, type, externalIds: { qloo: e.entity_id, qloo_types: e.types } });
-      return { ...base, referenceId, name: e.name, resolution: ambiguous ? 'ambiguous' : userSelected ? 'user_confirmed' : 'resolved', qloo: { entityId: e.entity_id, types: e.types }, providerQueryId, isReplay, isAnchor: false };
+    const match = decision.match;
+    const grounding = { lookup: plan.kind, rule: decision.rule, reason: decision.reason, doubt: match === null && DOUBT_RULES.has(decision.rule) };
+    const resolution = userSelected ? ('user_confirmed' as const) : ('resolved' as const);
+    if (match && 'entity_id' in match) {
+      const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo:${match.entity_id}`, name: match.name, type, externalIds: { qloo: match.entity_id, qloo_types: match.types } });
+      return { ...base, referenceId, name: match.name, resolution, qloo: { entityId: match.entity_id, types: match.types }, providerQueryId, isReplay, isAnchor: false, grounding };
     }
-    if (match?.kind === 'tag') {
-      const t = match.tag;
-      const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo_tag:${t.id}`, name: t.name, type, externalIds: { qloo_tag: t.id, qloo_tag_type: t.type } });
-      return { ...base, referenceId, name: t.name, resolution: ambiguous ? 'ambiguous' : userSelected ? 'user_confirmed' : 'resolved', qloo: { tagId: t.id }, providerQueryId, isReplay, isAnchor: false };
+    if (match) {
+      const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo_tag:${match.id}`, name: match.name, type, externalIds: { qloo_tag: match.id, qloo_tag_type: match.type } });
+      return { ...base, referenceId, name: match.name, resolution, qloo: { tagId: match.id }, providerQueryId, isReplay, isAnchor: false, grounding };
     }
-    // Unmatched: keep the descriptive observation as a qualified reference.
+    // Unmatched or doubtful: stored under the candidate's OWN name, never a Qloo look-alike's.
     const referenceId = await upsertReference(ctx.db, { canonicalKey: `${type}:${slugify(candidate.name)}`, name: candidate.name, type, externalIds: {} });
-    return { ...base, referenceId, name: candidate.name, resolution: userSelected ? 'user_confirmed' : 'unmatched', qloo: null, providerQueryId, isReplay: false, isAnchor: false };
+    return { ...base, referenceId, name: candidate.name, resolution: userSelected ? 'user_confirmed' : 'unmatched', qloo: null, providerQueryId, isReplay: false, isAnchor: false, grounding };
   }
 
   private async publishReferences(out: ResolveOutput): Promise<void> {
@@ -1222,7 +1241,15 @@ export class CaptureCompiler {
     if (this.pastSoftDeadline()) return empty('skipped', 'deadline');
     const counter = attemptCounter();
     const started = Date.now();
-    const request = { filterType: CATEGORY_ENTITY_TYPE[category]!, signalEntities: entityIds, signalTags: tagIds.map((id) => ({ id })), explainability: true, take: 10 };
+    const request = {
+      filterType: CATEGORY_ENTITY_TYPE[category]!,
+      signalEntities: entityIds,
+      signalTags: tagIds.map((id) => ({ id })),
+      // Wear recommends fashion brands only (unfiltered, Qloo returned banks and streaming services).
+      ...(category === 'wear' ? { filterTags: [FASHION_BRAND_TAG] } : {}),
+      explainability: true,
+      take: 10,
+    };
     try {
       const call = await this.qlooCall(`recommend:${category}`, (o) => ctx.providers.qloo.insights(request, { ...o, onAttempt: counter.observer }));
       const res = call.value;
@@ -1257,7 +1284,7 @@ export class CaptureCompiler {
           parent: { analysisId: this.analysisId },
           provider: 'qloo',
           operation: 'insights',
-          request: { filterType: request.filterType, signalEntities: entityIds, signalTags: tagIds },
+          request: { filterType: request.filterType, signalEntities: entityIds, signalTags: tagIds, ...(request.filterTags ? { filterTags: request.filterTags } : {}) },
           status: 'error',
           errorCode: e.code,
           httpStatus: e.status,
@@ -1501,7 +1528,13 @@ export class CaptureCompiler {
 
   /** Cuisine/place/tradition references with support: resolved via Qloo or researched. */
   private async supportedFoodReferences(refs: readonly ResolvedRef[]): Promise<{ id: string; name: string; type: string }[]> {
-    const foodish = refs.filter((r) => (r.type === 'cuisine' || r.type === 'place' || r.type === 'tradition' || r.suggestedCategories.includes('eat')) && r.resolution !== 'ambiguous');
+    // Ambiguous (legacy) and doubtful groundings never support dish ideas.
+    const foodish = refs.filter(
+      (r) =>
+        (r.type === 'cuisine' || r.type === 'place' || r.type === 'tradition' || r.suggestedCategories.includes('eat')) &&
+        r.resolution !== 'ambiguous' &&
+        !r.grounding?.doubt,
+    );
     if (foodish.length === 0) return [];
     const { rows } = await this.ctx.db.query<{ id: string }>(
       `SELECT id FROM cultural_references WHERE id = ANY($1::uuid[]) AND research_status = 'complete'`,

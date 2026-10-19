@@ -6,6 +6,7 @@ import { ProviderError, type RequestBudget } from '../errors';
 import { CircuitBreaker } from '../http/resilience';
 import { UnavailableQloo } from '../unavailable';
 import { createQlooProvider, QlooHttpProvider } from './client';
+import { parseInsights, parseSearch, parseTags } from './parse';
 import { ReplayQloo } from './replay';
 
 const FIXTURES = path.resolve(import.meta.dirname, '../../../../fixtures/qloo/contract');
@@ -281,5 +282,38 @@ describe('Qloo replay provider', () => {
     expect(res.data).toHaveLength(2);
     await expect(r.searchEntities({ query: 'other' })).rejects.toMatchObject({ kind: 'unavailable' });
     expect(r.capability().search.status).toBe('degraded');
+  });
+});
+
+describe('Qloo grounding fields (quality plan §5, §6)', () => {
+  it('keeps tag popularity and place disambiguation/geocode, and invents nothing when absent', () => {
+    const tags = parseTags({
+      results: {
+        tags: [
+          { id: 'urn:tag:cuisine:qloo:fixture_dim_sum', name: 'Fixture Dim Sum', type: 'urn:tag:cuisine:qloo', popularity: 0.71 },
+          { id: 'urn:tag:cuisine:qloo:fixture_noodle', name: 'Fixture Noodle', type: 'urn:tag:cuisine:qloo' },
+        ],
+      },
+    });
+    expect(tags[0]!.popularity).toBe(0.71);
+    expect('popularity' in tags[1]!).toBe(false);
+    const insightTags = parseInsights({ results: { tags: [{ id: 'urn:tag:cuisine:qloo:fixture_x', name: 'Fixture X', type: 'urn:tag:cuisine:qloo', popularity: 0.2 }] } }).tags;
+    expect(insightTags[0]!.popularity).toBe(0.2);
+    const [place, plain] = parseSearch({
+      results: [
+        {
+          entity_id: 'FIXTURE-PLACE-0001',
+          name: 'Fixture Palais',
+          types: ['urn:entity:place'],
+          disambiguation: ' 1 Fixture Street, Fixtureville ',
+          properties: { geocode: { city: 'Fixtureville', country_code: 'FR' }, hours: { monday: [] } },
+        },
+        { entity_id: 'FIXTURE-PLACE-0002', name: 'Fixture Garden', types: ['urn:entity:place'] },
+      ],
+    });
+    expect(place).toMatchObject({ disambiguation: '1 Fixture Street, Fixtureville', properties: { geocode: { city: 'Fixtureville', country_code: 'FR' } } });
+    expect(place!.properties).not.toHaveProperty('hours');
+    expect(plain!.popularity).toBeUndefined();
+    expect(plain!.disambiguation).toBeUndefined();
   });
 });

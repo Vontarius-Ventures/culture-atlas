@@ -30,6 +30,8 @@ const PICK_TAGS = [
   { id: 'urn:tag:genre:media:fixture_film_noir', name: 'Fixture Film Noir' },
 ];
 const PICK_ARTIST = { id: 'FIXTURE-ARTIST-PICK', name: 'Fixture Pick Artist' };
+/** An Eat chip pick (onboarding/catalog.ts stores it as kind food, category eat): the only signal Eat is asked with. */
+const PICK_FOOD = { id: 'urn:tag:cuisine:qloo:fixture_dim_sum', name: 'Dim Sum' };
 
 const RESULTS: Record<string, Reply> = {
   'urn:entity:brand': ok({
@@ -52,12 +54,19 @@ const RESULTS: Record<string, Reply> = {
       ent('FIXTURE-MOVIE-0002', 'Fixture Long Shadow', 'urn:entity:movie', { properties: { release_year: 1955 } }),
     ],
   }),
+  // Shaped like live Eat responses: names carry no "Fixture" word so the echo
+  // filter (a token shared with a non-food pick) is exercised on real words.
   'urn:tag': ok({
     tags: [
-      { id: 'urn:tag:cuisine:qloo:fixture_sichuanese', name: 'Fixture Sichuanese', type: 'urn:tag:cuisine:qloo' },
-      { id: 'urn:tag:cuisine:qloo:fixture_shellfish_shack', name: 'Shellfish Shack', type: 'urn:tag:cuisine:qloo' },
-      { id: 'urn:tag:genre:place:fixture_not_cuisine', name: 'Fixture Not A Cuisine', type: 'urn:tag:genre:place' },
-      { id: 'urn:tag:cuisine:qloo:fixture_teahouse', name: 'Fixture Teahouse', type: 'urn:tag:cuisine:qloo' },
+      { id: 'urn:tag:cuisine:qloo:fixture_sichuanese', name: 'Sichuanese', type: 'urn:tag:cuisine:qloo', popularity: 0.96 },
+      { id: 'urn:tag:cuisine:qloo:fixture_dim_sums', name: 'Dim Sums', type: 'urn:tag:cuisine:qloo', popularity: 0.9 }, // re-spells the food pick
+      { id: 'urn:tag:cuisine:qloo:fixture_shellfish_shack', name: 'Shellfish Shack', type: 'urn:tag:cuisine:qloo', popularity: 0.9 },
+      { id: 'urn:tag:genre:place:fixture_not_cuisine', name: 'Not A Cuisine', type: 'urn:tag:genre:place', popularity: 0.9 },
+      { id: 'urn:tag:cuisine:qloo:fixture_film_noir_fare', name: 'Film Noir Fare', type: 'urn:tag:cuisine:qloo', popularity: 0.9 }, // echoes a non-food pick
+      { id: 'urn:tag:cuisine:qloo:fixture_teahouse', name: 'Teahouse', type: 'urn:tag:cuisine:qloo', popularity: 0.81 },
+      { id: 'urn:tag:cuisine:qloo:fixture_obscure', name: 'Obscure Noodle Hut', type: 'urn:tag:cuisine:qloo', popularity: 0.23 }, // below the floor
+      { id: 'urn:tag:cuisine:qloo:fixture_hand_noodles', name: 'Hand-Pulled Noodles', type: 'urn:tag:cuisine:qloo', popularity: 0.88 },
+      { id: 'urn:tag:cuisine:qloo:fixture_hand_noodle', name: 'Hand-Pulled Noodle', type: 'urn:tag:cuisine:qloo', popularity: 0.87 }, // plural duplicate
     ],
   }),
 };
@@ -107,14 +116,15 @@ async function insertPick(accountId: string, input: { kind: string; category: st
   await db.query('INSERT INTO saved_items (owner_account_id, discovery_item_id) VALUES ($1, $2)', [accountId, rows[0]!.id]);
 }
 
-/** A new account that finished onboarding with three picks (two tags, one entity). */
-async function onboardedAccount(options: { exclusions?: string[]; hide?: string[]; isDemoOwner?: boolean } = {}) {
+/** A new account that finished onboarding with four picks (two style tags, one artist, one Eat chip). */
+async function onboardedAccount(options: { exclusions?: string[]; hide?: string[]; isDemoOwner?: boolean; foodPick?: boolean } = {}) {
   const db = getTestDb();
   const principal = await insertAccount(db, { isDemoOwner: options.isDemoOwner ?? false });
   const accountId = principal.accountId;
   await insertPick(accountId, { kind: 'style', category: 'wear', title: PICK_TAGS[0]!.name, qloo: PICK_TAGS[0]!.id });
   await insertPick(accountId, { kind: 'style', category: 'watch', title: PICK_TAGS[1]!.name, qloo: PICK_TAGS[1]!.id });
   await insertPick(accountId, { kind: 'artist', category: 'play', title: PICK_ARTIST.name, qloo: PICK_ARTIST.id });
+  if (options.foodPick ?? true) await insertPick(accountId, { kind: 'food', category: 'eat', title: PICK_FOOD.name, qloo: PICK_FOOD.id });
   if (options.exclusions) {
     await db.query('UPDATE accounts SET preferences = preferences || $2::jsonb WHERE id = $1', [accountId, JSON.stringify({ food: { exclusions: options.exclusions } })]);
   }
@@ -234,7 +244,7 @@ describe('taste seed job', () => {
       wear: ['ready', 2],
       play: ['ready', 2],
       watch: ['ready', 2],
-      eat: ['ready', 2],
+      eat: ['ready', 3],
     });
 
     // ONB-04 request caps, counted at the HTTP level (adapter retries disabled).
@@ -243,16 +253,25 @@ describe('taste seed job', () => {
     expect(q.state.peak).toBeLessThanOrEqual(3);
     for (const url of q.calls) {
       expect(url.pathname).toBe('/v2/insights');
-      expect(url.searchParams.get('signal.interests.tags')!.split(',').sort()).toEqual(PICK_TAGS.map((t) => t.id).sort());
+      if (url.searchParams.get('filter.type') === 'urn:tag') continue;
+      expect(url.searchParams.get('signal.interests.tags')!.split(',').sort()).toEqual([...PICK_TAGS.map((t) => t.id), PICK_FOOD.id].sort());
       expect(url.searchParams.get('signal.interests.entities')).toBe(PICK_ARTIST.id);
     }
+    // Eat is asked with the food pick only (S-EAT-SIGNAL), for cuisine tags.
     const eatCall = q.calls.find((u) => u.searchParams.get('filter.type') === 'urn:tag')!;
     expect(eatCall.searchParams.get('filter.tag.types')).toBe('urn:tag:cuisine:qloo');
+    expect(eatCall.searchParams.get('signal.interests.tags')).toBe(PICK_FOOD.id);
+    expect(eatCall.searchParams.get('signal.interests.entities')).toBeNull();
+    // Wear asks for fashion brands only (S-WEAR-FILTER); Play and Watch are unfiltered.
+    const byType = (type: string) => q.calls.find((u) => u.searchParams.get('filter.type') === type)!;
+    expect(byType('urn:entity:brand').searchParams.get('filter.tags')).toBe('urn:tag:genre:brand:fashion');
+    expect(byType('urn:entity:artist').searchParams.get('filter.tags')).toBeNull();
+    expect(byType('urn:entity:movie').searchParams.get('filter.tags')).toBeNull();
 
     // Every seeded card is a real returned Qloo result that cites its query.
     const recs = await seededRecs(accountId);
     expect(recs.map((r) => r.title).sort()).toEqual(
-      ['Fixture Linen House', 'Fixture Oak Studio', 'Fixture Night Trio', 'Fixture Quiet Choir', 'Fixture Rain City', 'Fixture Long Shadow', 'Fixture Sichuanese', 'Fixture Teahouse'].sort(),
+      ['Fixture Linen House', 'Fixture Oak Studio', 'Fixture Night Trio', 'Fixture Quiet Choir', 'Fixture Rain City', 'Fixture Long Shadow', 'Sichuanese', 'Teahouse', 'Hand-Pulled Noodles'].sort(),
     );
     const { rows: queries } = await getTestDb().query<{ id: string; status: string; is_replay: boolean }>(
       `SELECT pq.id, pq.status, pq.is_replay FROM provider_queries pq JOIN taste_seed_runs tr ON tr.id = pq.taste_seed_run_id WHERE tr.owner_account_id = $1`,
@@ -266,12 +285,15 @@ describe('taste seed job', () => {
       expect(r.canonical_key).toBe(`qloo:${r.external_ids.qloo}`);
     }
     expect(queries.every((x) => x.status === 'ok' && !x.is_replay)).toBe(true);
-    // Picks, hidden items, excluded food and non-cuisine tags never come back.
+    // Picks, hidden items, excluded food and non-cuisine tags never come back;
+    // nor do re-spellings of a food pick, echoes of other picks, obscure tags or plural duplicates (S-EAT-POST).
     const titles = recs.map((r) => r.title);
     expect(titles).not.toContain(PICK_ARTIST.name);
     expect(titles).not.toContain('Fixture Hidden Brand');
     expect(titles).not.toContain('Shellfish Shack');
-    expect(titles).not.toContain('Fixture Not A Cuisine');
+    expect(titles).not.toContain('Not A Cuisine');
+    for (const dropped of ['Dim Sums', 'Film Noir Fare', 'Obscure Noodle Hut', 'Hand-Pulled Noodle']) expect(titles).not.toContain(dropped);
+    expect(recs.find((r) => r.title === 'Sichuanese')!.display_reason).toBe(`From your picks: ${PICK_FOOD.name}.`);
     expect(recs.find((r) => r.title === 'Fixture Night Trio')!.display_reason).toBe(`Because you picked ${PICK_ARTIST.name}.`);
     expect(recs.find((r) => r.title === 'Fixture Oak Studio')!.display_reason).toMatch(/^From your picks: /);
 
@@ -279,7 +301,7 @@ describe('taste seed job', () => {
     const feed = await wholeFeed(ctx);
     expect(feed.is_example_feed).toBe(false);
     const seeded = feed.items.filter((i) => titles.includes(i.title));
-    expect(seeded.length).toBe(8);
+    expect(seeded.length).toBe(9);
     expect(seeded.every((i) => !i.is_example)).toBe(true);
     expect(feed.items.filter((i) => !titles.includes(i.title)).every((i) => i.is_example)).toBe(true);
     expect(discovery.longestCategoryRun(feed.items.slice(0, 8))).toBeLessThanOrEqual(2);
@@ -470,6 +492,25 @@ describe('taste seed job', () => {
     expect(card.is_example).toBe(true);
   });
 
+  it('asks Eat nothing without food picks: no request, Eat empty, the other categories still seed (S-EAT-EMPTY)', async () => {
+    const principal = await onboardedAccount({ foodPick: false });
+    const q = scriptedQloo((type) => RESULTS[type]!);
+    const jobId = await enqueue(principal.accountId);
+    await runAttempt(q.providers, jobId);
+    expect(await job(jobId)).toMatchObject({ state: 'complete' });
+    expect(q.calls.map((u) => u.searchParams.get('filter.type')).sort()).toEqual(['urn:entity:artist', 'urn:entity:brand', 'urn:entity:movie']);
+    const status = await tasteSeed.getTasteSeedStatus(getTestDb(), principal.accountId);
+    expect(Object.fromEntries(status.categories.map((c) => [c.category, [c.state, c.card_count]]))).toEqual({
+      wear: ['ready', 3],
+      play: ['ready', 2],
+      watch: ['ready', 2],
+      eat: ['empty', 0],
+    });
+    const { rows } = await getTestDb().query<{ n: number }>('SELECT qloo_requests_used AS n FROM taste_seed_runs WHERE job_id = $1', [jobId]);
+    expect(rows[0]!.n).toBe(3);
+    expect((await seededRecs(principal.accountId)).some((r) => r.category === 'eat')).toBe(false);
+  });
+
   it('asks Qloo nothing when there are no Qloo-backed picks', async () => {
     const principal = await insertAccount();
     const q = scriptedQloo((type) => RESULTS[type]!);
@@ -509,7 +550,7 @@ describe('taste seed job', () => {
 
     const trace = await traces.getTrace(testContext(owner, { providers: q.providers }), { job_id: jobId });
     expect(trace.provider_queries.length).toBe(4);
-    expect(trace.recommendations.length).toBe(10); // no hides or exclusions on this account
+    expect(trace.recommendations.length).toBe(11); // no hides or exclusions on this account: 3 + 2 + 2 + 4
     expect(trace.recommendations.every((r) => r.origin === 'qloo' && r.provider_query_ids.length === 1)).toBe(true);
   });
 
