@@ -1,0 +1,27 @@
+{
+  "fixture": "artist-ideas-neon",
+  "schema": "artist_ideas",
+  "source_urls": [],
+  "sources": [],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [],
+  "input_text": "<data>{\"items\":[{\"id\":\"i1\",\"kind\":\"capture\",\"title\":\"Rainy street with neon signs\",\"detail\":\"Wet asphalt reflecting neon signs, a look that resembles cyberpunk film.\",\"year\":null,\"references\":[\"Cyberpunk\"]},{\"id\":\"i2\",\"kind\":\"capture\",\"title\":\"Shelf of vinyl records\",\"detail\":\"Records with pastel sleeves that resemble city pop.\",\"year\":null,\"references\":[\"City pop\"]},{\"id\":\"i3\",\"kind\":\"capture\",\"title\":\"Houseplant on a windowsill\",\"detail\":\"A potted plant in daylight.\",\"year\":null,\"references\":[]},{\"id\":\"i4\",\"kind\":\"film\",\"title\":\"Blade Runner\",\"detail\":null,\"year\":1982,\"references\":[]}],\"collection\":null,\"instruction\":null,\"dietary_exclusions\":[],\"exploration\":\"adventurous\",\"film\":\"Blade Runner\",\"avoid_names\":[\"Mariya Takeuchi\"],\"replacement_request\":null}</data>",
+  "exclusions": [],
+  "word_limits": {
+    "reason_words": 45
+  },
+  "forbidden_strings": [],
+  "input_ids": [
+    "i1",
+    "i2",
+    "i3",
+    "i4"
+  ],
+  "reference_names": [],
+  "avoid": [
+    "Mariya Takeuchi"
+  ],
+  "min_items": 1,
+  "max_items": 4
+}

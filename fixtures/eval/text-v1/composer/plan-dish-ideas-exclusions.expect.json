@@ -1,0 +1,26 @@
+{
+  "fixture": "plan-dish-ideas-exclusions",
+  "schema": "plan_dish_ideas",
+  "source_urls": [],
+  "sources": [],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [],
+  "input_text": "<data>{\"items\":[{\"id\":\"i1\",\"kind\":\"capture\",\"title\":\"Fish market by a harbour\",\"detail\":\"Market stalls with octopus and peppers that resemble Galician cuisine.\",\"year\":null,\"references\":[\"Galician cuisine\"]},{\"id\":\"i2\",\"kind\":\"film\",\"title\":\"The Sea Inside\",\"detail\":null,\"year\":2004,\"references\":[]}],\"collection\":null,\"instruction\":null,\"dietary_exclusions\":[\"shellfish\",\"gluten\"],\"exploration\":\"balanced\",\"film\":\"The Sea Inside\",\"cuisine_hints\":[\"Galician cuisine\"],\"selected_dishes\":[],\"avoid_titles\":[],\"replacement_request\":null}</data>",
+  "exclusions": [
+    "shellfish",
+    "gluten"
+  ],
+  "word_limits": {
+    "reason_words": 45
+  },
+  "forbidden_strings": [],
+  "input_ids": [
+    "i1",
+    "i2"
+  ],
+  "reference_names": [],
+  "avoid": [],
+  "min_items": 2,
+  "max_items": 4
+}

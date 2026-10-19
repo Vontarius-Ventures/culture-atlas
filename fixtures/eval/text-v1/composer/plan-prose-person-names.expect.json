@@ -1,0 +1,26 @@
+{
+  "fixture": "plan-prose-person-names",
+  "schema": "plan_prose",
+  "source_urls": [],
+  "sources": [],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [],
+  "input_text": "<data>{\"items\":[{\"id\":\"i1\",\"kind\":\"capture\",\"title\":\"Small tea room with a hanging scroll\",\"detail\":\"A sparse tea room that resembles sukiya architecture.\",\"year\":null,\"references\":[\"Sen no Rikyu\",\"Okakura Kakuzo\",\"Sukiya\"]},{\"id\":\"i2\",\"kind\":\"film\",\"title\":\"Rikyu\",\"detail\":null,\"year\":1989,\"references\":[]}],\"collection\":null,\"instruction\":null,\"dietary_exclusions\":[],\"exploration\":\"balanced\",\"film\":\"Rikyu\",\"dishes\":[\"Wagashi sweets\"],\"artists\":[\"Toru Takemitsu\"],\"weak_inputs\":[]}</data>",
+  "exclusions": [],
+  "word_limits": {
+    "title_words": 6,
+    "summary_words": 45,
+    "summary_sentences": 1,
+    "rationale_words": 70,
+    "rationale_sentences": 2
+  },
+  "forbidden_strings": [],
+  "input_ids": [
+    "i1",
+    "i2"
+  ],
+  "reference_names": [],
+  "avoid": [],
+  "min_items": 1
+}
