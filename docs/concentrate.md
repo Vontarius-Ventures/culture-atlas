@@ -173,33 +173,36 @@ unavailable under Concentrate.
 
 | Role | Reading (`schemaVersion`) | Prompt (`promptVersion`) | Image | Output cap | Timeout | Code |
 | --- | --- | --- | --- | --- | --- | --- |
-| `vision_photo`, `vision_video_frame` | `atlas_quick_read_v1` (`VlmQuickRead`, ≤ 5 candidates) | `vlm-quick-v1` | ≤ 512 px | 600 | 10 s | `ConcentrateVlm` quick mode, `toVlmAnalysis()` |
-| `vision_photo_enrich` | `atlas_enrichment_v1` (`VlmEnrichment`) | `vlm-enrich-v1` | ≤ 768 px | 1200 | 20 s | `ConcentrateVlmEnricher`, `mergeEnrichment()` |
-| (legacy) `vision_photo` | `atlas_observations_v2` (full `VlmAnalysis`) | `vlm-full-v2` | profile bounds | profile | profile | `ConcentrateVlm` full mode |
+| `vision_photo`, `vision_video_frame` | `atlas_quick_read_v2` (`VlmQuickReadV2`, 0–5 candidates) | `vlm-quick-v2` | ≤ 512 px | 600 | 10 s | `ConcentrateVlm` quick mode, `toVlmAnalysis()` |
+| `vision_photo_enrich` | `atlas_enrichment_v2` (`VlmEnrichmentV2`) | `vlm-enrich-v2` | ≤ 768 px | 1600 | 20 s | `ConcentrateVlmEnricher`, `mergeEnrichmentContext()` |
+| (phase 4) `vision_photo`, `vision_photo_enrich` | `atlas_quick_read_v1` / `atlas_enrichment_v1` | `vlm-quick-v1` / `vlm-enrich-v1` | as above | 600 / 1200 | as above | same classes, v1 schemas |
+| (legacy) `vision_photo` | `atlas_observations_v2` (full reading, `VlmFullReading`) | `vlm-full-v2` | profile bounds | profile | profile | `ConcentrateVlm` full mode |
 
-- The profile's `schemaVersion` selects the reading (`readingForProfile`), so the profile hash, and with it the qualification artifact, binds the exact reading. Every vision profile not pinned to `atlas_observations_v2` uses the quick read.
+- The profile's `schemaVersion` selects the reading (`readingForProfile`) and its version (`readingVersionForProfile`), so the profile hash, and with it the qualification artifact, binds the exact reading. Every vision profile not pinned to `atlas_observations_v2` uses the quick read. A profile pinned to `atlas_quick_read_v1` or `atlas_enrichment_v1` keeps the phase-4 prompt and schema byte-identical (a test pins the prompt hashes); every other quick or enrich profile gets reading v2. Both photo roles must be re-qualified on v2 ([quality plan](quality-plan.md) §3, §7.5).
+- **Reading v2** ([quality plan](quality-plan.md) §3). Stage-1 candidates report `domain` (what the reference is about), `evidence` (`read_text`, `logo`, `distinctive_form`, `context`) and `evidence_text` (the words read) instead of categories; the enrichment returns a `verdict` (`supported`, `weak`, `unsupported`) per first-reading candidate instead of `keep`, verbatim `visible_text` only, and `illegible_text_present`. The prompts add the evidence rules: a brand or model only from a legible name or logo, sign names exactly as written, no medium words, no generic objects, 0 to 5 candidates, nothing about a person's looks or role.
+- **Guardrails** (`vlm/guardrails.ts`, `GUARDRAIL_VERSION = 'guard-v1'`, rules G-QUAL … G-CATEGORY in [quality plan](quality-plan.md) §4). The model proposes; this pure module decides. The compiler runs `guardQuickRead` right after stage 1, before anything is published, resolved or anchored, and `guardEnrichment` inside the stage-2 publish step. Risky claims (brands, names of places or works that do not match the text read, styles read off a sign, resemblances at certainty ≤ 0.35) are *held*: never shown, sent to stage 2 by name, and published only on a binding stage-2 verdict through the existing append path (a brand also needs a stage-2 transcription of its name, G-BRAND-CORROBORATE). If stage 2 is off, fails or times out, held claims are dropped; a reading without a planned stage 2 (the legacy full reading, a fallback model's answer) drops them at once. Published cards are never removed (FAST-02): stage 2's "unsupported" on them stays an advisory veto. The server assigns categories from `domain` (fashion → Wear, music → Play, film → Watch, food or cuisine → Eat, everything else none). Recorded v1 readings and full readings pass through the same rules: missing `domain`, `evidence` and verdicts are inferred (§4.4). Every decision (rule ids, action, note; names withheld for person rules) is recorded as a `guard` trace event per stage, shown by the inspector; dropped visible-text entries and observations are recorded as counts only. A reviewed example replay is not a model reading and is not guarded.
 - `reasoningEffort` (`none` | `minimal` | `low` | `medium` | `high`) is optional and part of the profile hash. The transport sends `reasoning: {effort}` only when the qualified profile sets it; otherwise no reasoning field is sent at all (FAST-03).
 - Both prompts keep the security rules (image text and `user_data` are DATA; no tools). The quick prompt adds "Read the subject as if it were a photo; never name the rendering medium or drawing style." and "Skip generic objects unless named as a specific type, style or tradition." Stage 2 receives the stage-1 title and candidate names inside the `user_data` block.
 - The stage-2 role is wired only from a qualified Concentrate profile (`gateway.vlmEnrich`, `registry.vlmEnrich`); there is no Elorian or rollback fallback for it, and a fallback model's stage-1 answer (no quick read) never gets a stage 2.
 - Ledger: each call reserves its own `inference_attempts` row; both stages of one job share the job id and count as one daily analysis. `ModelSpendLedger.canReserveAll` is the read-only pre-check the compiler uses before stage 1 so that stage 2 is planned only when both worst cases fit.
 - The default route measured in [the latency plan](analysis-latency-plan.md) is `anthropic/claude-haiku-5-5` with effort `none` for both stages. Both stages passed live qualification on 15 real photographs on 2026-10-19 (below). **Before production** the operator must still confirm ZDR and no content logging for this route in the Concentrate dashboard, then re-qualify with the confirmed `privacyVerifiedAt`.
 
-Example profile pair (values from the latency plan; ids, artifact names and privacy dates are placeholders the operator fills in after qualification):
+Example profile pair for reading v2 (values from the latency plan, with the enrichment cap raised to 1600; ids, artifact names and privacy dates are placeholders the operator fills in after qualification; on the same route the owner-accepted `privacyVerifiedAt` carries over unchanged):
 
 ```json
 [
-  { "gateway": "concentrate", "role": "vision_photo", "version": "quick-1",
+  { "gateway": "concentrate", "role": "vision_photo", "version": "quick-2",
     "model": "anthropic/claude-haiku-5-5", "provider": "anthropic", "allowedFallbackProviders": [],
     "maxOutputTokens": 600, "reasoningEffort": "none", "maxInputTokens": 60000, "maxInputBytes": 60000,
     "image": { "maxBytes": 120000, "maxPixels": 262144, "maxDimension": 512, "maxCount": 1 },
     "timeoutMs": 10000, "structuredOutput": true, "requireZdr": true, "providerZdrEligible": true,
     "contentLoggingEnabled": false, "privacyVerifiedAt": "<operator>",
-    "promptVersion": "vlm-quick-v1", "schemaVersion": "atlas_quick_read_v1",
+    "promptVersion": "vlm-quick-v2", "schemaVersion": "atlas_quick_read_v2",
     "catalogSnapshotAt": "<snapshot fetched_at>", "qualificationArtifactId": "<artifact id>",
     "pricingSnapshotVersion": "<pricing>", "reservationMicros": "<worst case>" },
-  { "role": "vision_photo_enrich", "version": "enrich-1", "maxOutputTokens": 1200, "reasoningEffort": "none",
+  { "role": "vision_photo_enrich", "version": "enrich-2", "maxOutputTokens": 1600, "reasoningEffort": "none",
     "image": { "maxBytes": 250000, "maxPixels": 589824, "maxDimension": 768, "maxCount": 1 },
-    "timeoutMs": 20000, "promptVersion": "vlm-enrich-v1", "schemaVersion": "atlas_enrichment_v1",
+    "timeoutMs": 20000, "promptVersion": "vlm-enrich-v2", "schemaVersion": "atlas_enrichment_v2",
     "...": "other fields as above" }
 ]
 ```

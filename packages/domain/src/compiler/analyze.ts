@@ -8,14 +8,19 @@ import {
   type QlooTag,
   type RequestBudget,
   ENRICHMENT_VETO_CERTAINTY_FACTOR,
+  GUARDRAIL_VERSION,
   MERGED_CANDIDATES_MAX,
   VlmAnalysis,
+  type GuardDecision,
+  type Stage1Guard,
   type VlmCandidate,
   type VlmEnrichment,
   candidateNameKey,
-  mergeEnrichment,
+  confirmationVerdict,
+  guardEnrichment,
+  guardQuickRead,
+  mergeEnrichmentContext,
   validateVision,
-  vetoedCandidateKeys,
 } from '@culture-atlas/providers';
 import { activeKills } from '../flags/feature-flags';
 import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionStatus, type SectionStatus } from '../enums';
@@ -100,6 +105,8 @@ interface ObserveOutput {
   model: string;
   /** Stage 1 was a Concentrate quick read (two-stage reading); only then may stage 2 run. */
   quickRead?: boolean;
+  /** A reviewed example replay, not a model reading. */
+  example?: boolean;
 }
 
 /** Stage-2 model output, cached by runStage so a retried attempt never dispatches it twice. */
@@ -115,7 +122,10 @@ interface EnrichSummary {
   model?: string | null;
   confirmed?: number;
   vetoed?: number;
+  /** Candidates stage 2 published: held claims that passed plus additions that passed. */
   additions?: number;
+  /** Held stage-1 claims that stage 2 confirmed (published through the append path). */
+  heldPublished?: number;
   resolvedAdditions?: number;
   appended?: Record<string, number>;
 }
@@ -301,10 +311,26 @@ export class CaptureCompiler {
     // Two-stage reading (amendment 2.2): decide up front and reserve both calls.
     this.twoStage = await this.planTwoStage(!!ctx.payload.media_analysis_id);
     const observed = await ctx.runStage<ObserveOutput>('observe', () => this.observe(rejectedNames, confirmed));
-    await this.publishObserve(observed.analysis);
-    await this.traceStage('observe', t0, { model: observed.model, candidates: observed.analysis.candidates.length, usable: observed.analysis.quality.usable });
+    // Guardrails (docs/quality-plan.md §4): pure and deterministic, so a retried
+    // attempt recomputes the same decisions from the cached reading. Only the
+    // publish set is published, resolved and anchored; held claims wait for stage 2.
+    const guarded = this.guardObserved(observed);
+    await this.publishObserve(guarded.analysis);
+    await this.traceStage('observe', t0, {
+      model: observed.model,
+      candidates: observed.analysis.candidates.length,
+      published: guarded.analysis.candidates.length,
+      usable: guarded.analysis.quality.usable,
+    });
+    await this.traceGuard(
+      1,
+      guarded,
+      observed.example
+        ? { skipped: 'reviewed_example' }
+        : { held: guarded.held.length, demoted: guarded.demoted.length, title_changed: guarded.titleChanged },
+    );
 
-    if (!observed.analysis.quality.usable) {
+    if (!guarded.analysis.quality.usable) {
       this.warnings.set(WARNINGS.unclear.code, WARNINGS.unclear);
       for (const s of ['references', 'research', ...CATEGORIES]) await this.section(s, 'skipped');
       return this.finish();
@@ -313,7 +339,7 @@ export class CaptureCompiler {
     // ---- resolve -----------------------------------------------------------
     await ctx.setStage('resolving');
     t0 = Date.now();
-    const resolved = await ctx.runStage<ResolveOutput>('resolve', () => this.resolve(observed.analysis, rejectedNames, rejectedIds, confirmed, correction?.replacement));
+    const resolved = await ctx.runStage<ResolveOutput>('resolve', () => this.resolve(guarded.analysis, rejectedNames, rejectedIds, confirmed, correction?.replacement));
     await this.publishReferences(resolved);
     await this.traceStage('resolve', t0, {
       resolved: resolved.refs.filter((r) => r.qloo).length,
@@ -342,8 +368,11 @@ export class CaptureCompiler {
     // ---- enrich (stage 2, background; never reorders or removes cards) ----
     t0 = Date.now();
     await ctx.setStage('enriching');
-    const enriched = await this.enrichStage(observed, resolved, { rejectedNames, rejectedIds }, order, excluded, usedKeys);
+    const enriched = await this.enrichStage(observed, guarded, resolved, { rejectedNames, rejectedIds }, order, excluded, usedKeys);
     await this.traceStage('enrich', t0, { ...enriched });
+    // Fail closed: held claims never publish without a binding stage-2 verdict.
+    if (enriched.status !== 'complete' && guarded.held.length)
+      await this.traceGuardDecisions(2, guarded.held.map((c) => ({ candidateId: c.id, name: c.name, action: 'drop' as const, rules: ['G-VERDICT'], note: `stage_2_${enriched.reason ?? enriched.status}` })));
 
     // ---- research ----------------------------------------------------------
     await ctx.setStage('researching');
@@ -558,7 +587,7 @@ export class CaptureCompiler {
       queryContext: { stage: 'observe', example: example.sampleId },
       traceId: this.traceId,
     });
-    return { analysis: example.analysis, model: EXAMPLE_REPLAY_MODEL };
+    return { analysis: example.analysis, model: EXAMPLE_REPLAY_MODEL, example: true };
   }
 
   /**
@@ -612,6 +641,32 @@ export class CaptureCompiler {
       }
     });
     return added;
+  }
+
+  /**
+   * Stage-1 guardrails. A reviewed example replay is not a model claim and is
+   * published as reviewed. Claims are held only when a stage 2 is planned for
+   * this reading (two-stage plan and a quick read); otherwise they are dropped.
+   */
+  private guardObserved(observed: ObserveOutput): Stage1Guard {
+    if (observed.example)
+      return { analysis: observed.analysis, held: [], demoted: [], decisions: [], titleChanged: false, dropped: { visibleText: 0, observations: 0 } };
+    return guardQuickRead(observed.analysis, { twoStage: this.twoStage.enabled && !!observed.quickRead });
+  }
+
+  /** Guard decisions go into the analysis trace for the inspector and the scorer (§2). */
+  private async traceGuard(stage: 1 | 2, g: { decisions: GuardDecision[]; dropped: { visibleText: number; observations: number } }, extra: Record<string, unknown> = {}): Promise<void> {
+    await this.traceGuardDecisions(stage, g.decisions, { dropped: g.dropped, ...extra });
+  }
+
+  private async traceGuardDecisions(stage: 1 | 2, decisions: GuardDecision[], extra: Record<string, unknown> = {}): Promise<void> {
+    await this.ctx.trace({
+      kind: 'stage',
+      name: 'guard',
+      data: { stage, version: GUARDRAIL_VERSION, decisions, ...extra },
+      durationMs: 0,
+      traceId: this.traceId,
+    });
   }
 
   private async publishObserve(analysis: VlmAnalysis): Promise<void> {
@@ -910,6 +965,7 @@ export class CaptureCompiler {
 
   private async enrichStage(
     observed: ObserveOutput,
+    guarded: Stage1Guard,
     resolved: ResolveOutput,
     rejected: { rejectedNames: string[]; rejectedIds: ReadonlySet<string> },
     order: readonly Category[],
@@ -921,20 +977,21 @@ export class CaptureCompiler {
     if (!observed.quickRead) return { status: 'skipped', reason: 'single_stage_reading' };
     if (this.pastSoftDeadline()) return { status: 'skipped', reason: 'deadline' };
     if (await this.twoStageKilled()) return { status: 'skipped', reason: 'killed' };
-    const out = await ctx.runStage<EnrichOutput>('enrich', () => this.enrich(observed.analysis));
-    // A failed or timed-out enrichment leaves every stage-1 result as published.
+    // Stage 2 checks the published candidates and the held claims (the only way a held claim can publish).
+    const out = await ctx.runStage<EnrichOutput>('enrich', () => this.enrich(guarded.analysis, guarded.held));
+    // A failed or timed-out enrichment leaves every stage-1 result as published; held claims are dropped.
     if (!out.enrichment) return { status: 'failed', reason: out.errorCode, model: out.model };
-    return this.publishEnrichment(observed.analysis, out, resolved, rejected, order, excluded, usedKeys);
+    return this.publishEnrichment(guarded, out, resolved, rejected, order, excluded, usedKeys);
   }
 
   /** One stage-2 call on the analysis image (for v2 media: the best frame the worker chose). */
-  private async enrich(analysis: VlmAnalysis): Promise<EnrichOutput> {
+  private async enrich(analysis: VlmAnalysis, held: readonly VlmCandidate[]): Promise<EnrichOutput> {
     const { ctx } = this;
     const object = this.capture.private_object_key ? await ctx.providers.storage.get(this.capture.private_object_key) : null;
     if (!object) return { enrichment: null, model: null, errorCode: 'image_missing' };
     const counter = attemptCounter();
     const started = Date.now();
-    const stage1 = { title: analysis.title, candidates: analysis.candidates.map((c) => c.name) };
+    const stage1 = { title: analysis.title, candidates: [...analysis.candidates, ...held].map((c) => c.name) };
     const request = { model_capability: ctx.providers.vlmEnrich.id, focus: (ctx.payload.focus as Focus).kind, stage1_candidates: stage1.candidates.length };
     try {
       const res = await ctx.providers.vlmEnrich.enrichImage(
@@ -955,7 +1012,8 @@ export class CaptureCompiler {
           model: res.model,
           observations: e.observations.length,
           visible_text: e.visible_text.length,
-          confirmed: e.confirmed.map((c) => ({ name: c.name, keep: c.keep })),
+          confirmed: e.confirmed.map((c) => ({ name: c.name, verdict: confirmationVerdict(c), ...('keep' in c ? { keep: c.keep } : {}) })),
+          ...('illegible_text_present' in e ? { illegible_text_present: e.illegible_text_present } : {}),
           additional: e.additional_candidates.map((c) => ({ name: c.name, type: c.type, relation: c.relation, certainty: c.certainty })),
           regions: e.regions.length,
           uncertainty: e.uncertainty.overall,
@@ -988,16 +1046,20 @@ export class CaptureCompiler {
   /**
    * Publishes a stage-2 enrichment (FAST-02). Strictly additive:
    *  - the inspector reading gains observations, regions, visible text and
-   *    rationales (title and interpretation stay);
-   *  - a veto (keep=false) only lowers the reference's certainty and moves it
-   *    out of "Explore the references"; its cards and anchor role stay;
-   *  - additional candidates resolve through Qloo into the slots left under
-   *    the 5-candidate cap and are appended to the references;
+   *    rationales (title and interpretation stay); visible text and
+   *    observations pass G-VTEXT and G-PERSON-OBS first;
+   *  - an unsupported verdict (v1 keep=false) on a published candidate only
+   *    lowers the reference's certainty and moves it out of "Explore the
+   *    references"; its cards and anchor role stay (advisory veto);
+   *  - held stage-1 claims publish only on a binding verdict, then the
+   *    additions that pass the guardrails (guardEnrichment); they resolve
+   *    through Qloo into the slots left under the 5-candidate cap and are
+   *    appended to the references;
    *  - they fill Qloo categories that have fewer than 3 cards, after the
    *    published cards; nothing is reordered or removed.
    */
   private async publishEnrichment(
-    base: VlmAnalysis,
+    guarded: Stage1Guard,
     out: EnrichOutput,
     resolved: ResolveOutput,
     rejected: { rejectedNames: string[]; rejectedIds: ReadonlySet<string> },
@@ -1006,17 +1068,25 @@ export class CaptureCompiler {
     usedKeys: Set<string>,
   ): Promise<EnrichSummary> {
     const { ctx } = this;
+    const base = guarded.analysis;
     const enrichment = out.enrichment!;
     let merged: VlmAnalysis;
+    let stage2: ReturnType<typeof guardEnrichment>;
     try {
-      merged = mergeEnrichment(base, enrichment);
+      const raw = mergeEnrichmentContext(base, enrichment, guarded.held);
+      validateVision(raw.analysis, MERGED_CANDIDATES_MAX);
+      stage2 = guardEnrichment({ published: base, held: guarded.held, merged: raw.analysis, merge: raw.merge });
+      merged = stage2.analysis;
       validateVision(merged, MERGED_CANDIDATES_MAX);
     } catch {
       return { status: 'failed', reason: 'invalid_enrichment', model: out.model };
     }
+    await this.traceGuard(2, stage2, { advisory_vetoes: stage2.advisoryVetoes.length, published: stage2.publishNow.length });
     const rejectedKeys = new Set(rejected.rejectedNames.map(normalizeName));
-    const vetoed = vetoedCandidateKeys(base, enrichment);
-    const additions = merged.candidates.slice(base.candidates.length).filter((c) => !rejectedKeys.has(normalizeName(c.name)));
+    const vetoed = new Set(stage2.advisoryVetoes.map(candidateNameKey));
+    const heldIds = new Set(guarded.held.map((c) => c.id));
+    const additions = stage2.publishNow.filter((c) => !rejectedKeys.has(normalizeName(c.name)));
+    const nonAnchor = new Set(stage2.publishNow.filter((c) => stage2.nonAnchorIds.includes(c.id)).map((c) => candidateNameKey(c.name)));
 
     // Qloo resolution stays capped at LIMITS.vlmCandidatesToResolve candidates per analysis.
     const stage1Resolved = Math.min(
@@ -1099,8 +1169,13 @@ export class CaptureCompiler {
     resolved.refs.push(...newRefs);
 
     // Fill thin Qloo categories from the new references only, after published cards.
+    // A weak-verdict style publishes as a reference but never signals (non-anchor).
+    // A reference with no category (G-CATEGORY: architecture, places, crafts...) is
+    // a cross-domain signal for every thin category, as stage-1 anchors are.
     const appended: Record<string, number> = {};
-    const signals = newRefs.filter((r) => r.qloo && (r.resolution === 'resolved' || r.resolution === 'user_confirmed'));
+    const signals = newRefs.filter(
+      (r) => r.qloo && (r.resolution === 'resolved' || r.resolution === 'user_confirmed') && !nonAnchor.has(candidateNameKey(r.candidateName)),
+    );
     if (signals.length) {
       const { rows } = await ctx.db.query<{ category: Category; n: number }>(
         'SELECT category, COUNT(*)::int AS n FROM recommendations WHERE analysis_id = $1 AND category IS NOT NULL GROUP BY category',
@@ -1110,7 +1185,7 @@ export class CaptureCompiler {
       const insightsUsable = isUsable(caps.insights);
       for (const category of order.filter((c): c is (typeof QLOO_CATEGORIES)[number] => (QLOO_CATEGORIES as readonly string[]).includes(c))) {
         const existing = counts.get(category) ?? 0;
-        const categorySignals = signals.filter((r) => r.suggestedCategories.includes(category));
+        const categorySignals = signals.filter((r) => r.suggestedCategories.includes(category) || r.suggestedCategories.length === 0);
         if (existing >= LIMITS.recommendationsPerCategory || categorySignals.length === 0 || this.pastSoftDeadline()) continue;
         const rec = await ctx.runStage<RecommendOutput>(`enrich:recommend:${category}`, () => this.recommend(category, categorySignals, insightsUsable));
         const added = await this.composeCategory(rec, resolved.refs, order, excluded, usedKeys, { signals: categorySignals, existing });
@@ -1120,9 +1195,10 @@ export class CaptureCompiler {
     return {
       status: 'complete',
       model: out.model,
-      confirmed: enrichment.confirmed.filter((c) => c.keep).length,
+      confirmed: enrichment.confirmed.filter((c) => confirmationVerdict(c) === 'supported').length,
       vetoed: vetoedRefs.length,
       additions: additions.length,
+      heldPublished: additions.filter((c) => heldIds.has(c.id)).length,
       resolvedAdditions: newRefs.filter((r) => r.qloo).length,
       appended,
     };

@@ -5,7 +5,7 @@ import type { ProviderConfig } from '../config';
 import type { CallOptions } from '../errors';
 import { UnavailableVlm } from '../unavailable';
 import { buildVlmUserText, VLM_SYSTEM_PROMPT } from './prompt';
-import { VlmAnalysis, type VlmAnalyzeInput, type VlmProvider, type VlmResult } from './types';
+import { VlmAnalysis, VlmFullReading, type VlmAnalyzeInput, type VlmProvider, type VlmResult } from './types';
 
 /**
  * Anthropic Claude VLM adapter (model from VLM_MODEL). Sends the normalized
@@ -32,21 +32,21 @@ export class AnthropicVlm implements VlmProvider {
 
   async analyzeImage(input: VlmAnalyzeInput, options?: CallOptions): Promise<VlmResult> {
     const max = Math.min(Math.max(input.maxCandidates ?? 8, 1), 12);
-    const out = await this.runner.run<typeof VlmAnalysis>(
+    const out = await this.runner.run<typeof VlmFullReading>(
       {
         system: VLM_SYSTEM_PROMPT,
         content: [
           { type: 'image', mediaType: input.image.mediaType, base64: Buffer.from(input.image.bytes).toString('base64') },
           { type: 'text', text: buildVlmUserText({ ...input, maxCandidates: max }) },
         ],
-        schema: VlmAnalysis,
+        schema: VlmFullReading,
         maxTokens: 8_000,
         effort: this.opts.effort,
         refusalFallback: this.opts.refusalFallback,
       },
       options,
     );
-    const analysis = out.data;
+    const analysis = VlmAnalysis.parse(out.data);
     // Enforce bounds the schema cannot express to the model.
     analysis.candidates = analysis.candidates.slice(0, max);
     return { analysis, model: out.model, durationMs: out.durationMs, usage: out.usage };

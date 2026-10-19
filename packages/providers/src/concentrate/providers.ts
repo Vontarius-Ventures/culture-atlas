@@ -9,7 +9,9 @@ import {
   QUICK_READ_MAX_CANDIDATES,
   QUICK_READ_MAX_DIMENSION,
   VLM_ENRICH_SYSTEM_PROMPT,
+  VLM_ENRICH_SYSTEM_PROMPT_V2,
   VLM_QUICK_SYSTEM_PROMPT,
+  VLM_QUICK_SYSTEM_PROMPT_V2,
   VLM_READING_VERSIONS,
   VLM_SYSTEM_PROMPT,
   buildVlmEnrichUserText,
@@ -18,8 +20,11 @@ import {
 } from '../vlm/prompt';
 import {
   VlmAnalysis,
-  VlmEnrichment,
-  VlmQuickRead,
+  VlmEnrichmentV1,
+  VlmEnrichmentV2,
+  VlmFullReading,
+  VlmQuickReadV1,
+  VlmQuickReadV2,
   candidateNameKey,
   toVlmAnalysis,
   type VlmAnalyzeInput,
@@ -27,6 +32,7 @@ import {
   type VlmEnrichInput,
   type VlmEnrichResult,
   type VlmProvider,
+  type VlmQuickRead,
   type VlmResult,
 } from '../vlm/types';
 import { boundJpegForProfile } from './image';
@@ -43,6 +49,19 @@ export type VlmReading = 'full' | 'quick' | 'enrich';
 export function readingForProfile(profile: Pick<ModelProfile, 'role' | 'schemaVersion'>): VlmReading {
   if (profile.role === 'vision_photo_enrich') return 'enrich';
   return profile.schemaVersion === VLM_READING_VERSIONS.full.schema ? 'full' : 'quick';
+}
+
+/**
+ * Which version of the two-stage reading a profile was qualified for. A
+ * profile pinned to a v1 schema (phase-4 qualified) keeps the v1 prompt and
+ * schema byte-identical; every other quick or enrich profile gets reading v2
+ * (docs/quality-plan.md §3). Both pass through the same guardrails.
+ */
+export function readingVersionForProfile(profile: Pick<ModelProfile, 'role' | 'schemaVersion'>): 'v1' | 'v2' {
+  return profile.schemaVersion === VLM_READING_VERSIONS.quick.schema ||
+    profile.schemaVersion === VLM_READING_VERSIONS.enrich.schema
+    ? 'v1'
+    : 'v2';
 }
 
 /** Largest derivative accepted for re-bounding to a stage's qualified size. */
@@ -184,14 +203,14 @@ export class ConcentrateVlm implements VlmProvider {
             height: metadata.height,
           },
         ],
-        schema: VlmAnalysis,
+        schema: VlmFullReading,
         schemaName: 'atlas_observations_v2',
-        validate: (analysis) => validateVision(analysis, max),
+        validate: (analysis) => validateVision(VlmAnalysis.parse(analysis), max),
       },
       options,
     );
     return {
-      analysis: result.data,
+      analysis: VlmAnalysis.parse(result.data),
       model: result.model,
       durationMs: result.durationMs,
       usage: result.usage,
@@ -208,25 +227,38 @@ export class ConcentrateVlm implements VlmProvider {
       Math.max(input.maxCandidates ?? QUICK_READ_MAX_CANDIDATES, 1),
       QUICK_READ_MAX_CANDIDATES,
     );
-    const result = await this.runner.run(
+    const v2 = readingVersionForProfile(this.runner.profile) === 'v2';
+    const content = [
+      { type: 'text' as const, text: buildVlmQuickUserText({ ...input, maxCandidates: max }) },
       {
-        system: VLM_QUICK_SYSTEM_PROMPT,
-        content: [
-          { type: 'text', text: buildVlmQuickUserText({ ...input, maxCandidates: max }) },
-          {
-            type: 'image',
-            mediaType: 'image/jpeg',
-            base64: Buffer.from(image.bytes).toString('base64'),
-            width: image.width,
-            height: image.height,
-          },
-        ],
-        schema: VlmQuickRead,
-        schemaName: VLM_READING_VERSIONS.quick.schema,
-        validate: (quick) => validateQuickRead(quick, max),
+        type: 'image' as const,
+        mediaType: 'image/jpeg' as const,
+        base64: Buffer.from(image.bytes).toString('base64'),
+        width: image.width,
+        height: image.height,
       },
-      options,
-    );
+    ];
+    const result: { data: VlmQuickRead; model: string; durationMs: number; usage?: VlmResult['usage'] } = v2
+      ? await this.runner.run(
+          {
+            system: VLM_QUICK_SYSTEM_PROMPT_V2,
+            content,
+            schema: VlmQuickReadV2,
+            schemaName: VLM_READING_VERSIONS.quickV2.schema,
+            validate: (quick) => validateQuickRead(quick, max),
+          },
+          options,
+        )
+      : await this.runner.run(
+          {
+            system: VLM_QUICK_SYSTEM_PROMPT,
+            content,
+            schema: VlmQuickReadV1,
+            schemaName: VLM_READING_VERSIONS.quick.schema,
+            validate: (quick) => validateQuickRead(quick, max),
+          },
+          options,
+        );
     return {
       analysis: toVlmAnalysis(result.data),
       quick: result.data,
@@ -239,7 +271,7 @@ export class ConcentrateVlm implements VlmProvider {
 
 /**
  * Stage 2 (role vision_photo_enrich): observations, visible text, short
- * rationales, advisory keep/veto per stage-1 candidate, up to four more
+ * rationales, a verdict (v1: keep) per stage-1 candidate, up to four more
  * candidates and regions, read from the same photo at <= 768 px.
  */
 export class ConcentrateVlmEnricher implements VlmEnricher {
@@ -254,28 +286,42 @@ export class ConcentrateVlmEnricher implements VlmEnricher {
   }
   async enrichImage(input: VlmEnrichInput, options?: CallOptions): Promise<VlmEnrichResult> {
     const image = await stageImage(input.image, this.runner.profile.image, ENRICH_MAX_DIMENSION);
-    const result = await this.runner.run(
+    const content = [
+      { type: 'text' as const, text: buildVlmEnrichUserText(input) },
       {
-        system: VLM_ENRICH_SYSTEM_PROMPT,
-        content: [
-          { type: 'text', text: buildVlmEnrichUserText(input) },
-          {
-            type: 'image',
-            mediaType: 'image/jpeg',
-            base64: Buffer.from(image.bytes).toString('base64'),
-            width: image.width,
-            height: image.height,
-          },
-        ],
-        schema: VlmEnrichment,
-        schemaName: VLM_READING_VERSIONS.enrich.schema,
-        validate: (enrichment) => {
-          const names = enrichment.additional_candidates.map((c) => candidateNameKey(c.name));
-          if (names.some((n) => !n)) throw new Error('Empty candidate name');
-        },
+        type: 'image' as const,
+        mediaType: 'image/jpeg' as const,
+        base64: Buffer.from(image.bytes).toString('base64'),
+        width: image.width,
+        height: image.height,
       },
-      options,
-    );
+    ];
+    const validate = (enrichment: { additional_candidates: readonly { name: string }[] }) => {
+      const names = enrichment.additional_candidates.map((c) => candidateNameKey(c.name));
+      if (names.some((n) => !n)) throw new Error('Empty candidate name');
+    };
+    const result =
+      readingVersionForProfile(this.runner.profile) === 'v2'
+        ? await this.runner.run(
+            {
+              system: VLM_ENRICH_SYSTEM_PROMPT_V2,
+              content,
+              schema: VlmEnrichmentV2,
+              schemaName: VLM_READING_VERSIONS.enrichV2.schema,
+              validate,
+            },
+            options,
+          )
+        : await this.runner.run(
+            {
+              system: VLM_ENRICH_SYSTEM_PROMPT,
+              content,
+              schema: VlmEnrichmentV1,
+              schemaName: VLM_READING_VERSIONS.enrich.schema,
+              validate,
+            },
+            options,
+          );
     return {
       enrichment: result.data,
       model: result.model,

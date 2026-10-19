@@ -6,15 +6,18 @@ import {
   MERGED_CANDIDATES_MAX,
   VlmAnalysis,
   VlmEnrichment,
+  VlmEnrichmentV1,
   VlmQuickRead,
   candidateNameKey,
   mergeEnrichment,
+  mergeEnrichmentContext,
   toVlmAnalysis,
   vetoedCandidateKeys,
+  type VlmEnrichmentV2,
 } from './types';
 
 const quick = VlmQuickRead.parse(validQuickRead);
-const enrichment = VlmEnrichment.parse(validEnrichment);
+const enrichment = VlmEnrichmentV1.parse(validEnrichment);
 
 describe('toVlmAnalysis: quick read alone', () => {
   it('builds a valid VlmAnalysis with synthetic ids in stage-1 order', () => {
@@ -178,5 +181,73 @@ describe('toVlmAnalysis with an enrichment (merge rules, FAST-02)', () => {
     expect(mergeEnrichment(base, { ...enrichment, additional_candidates: [{ ...four[0]!, name: 'j' }] }).candidates).toHaveLength(
       MERGED_CANDIDATES_MAX,
     );
+  });
+});
+
+describe('mergeEnrichmentContext: held claims and verdicts (quality plan §3.4)', () => {
+  const base = toVlmAnalysis({
+    title: 'Bike on a porch',
+    interpretation: 'A red road bike beside a dog.',
+    candidates: [
+      { name: 'Road cycling', type: 'tradition', relation: 'resembles', certainty: 0.6, domain: 'sport', evidence: 'context', evidence_text: null, tag_query: 'road cycling' },
+      { name: 'Porch culture', type: 'tradition', relation: 'resembles', certainty: 0.6, domain: 'other', evidence: 'context', evidence_text: null, tag_query: 'porch' },
+    ],
+    quality: { usable: true, issue: null },
+  });
+  // As the compiler sees it after stage 1: c1 published, c2 held.
+  const published = VlmAnalysis.parse({ ...base, candidates: [base.candidates[0]] });
+  const held = [base.candidates[1]!];
+  const v2: VlmEnrichmentV2 = {
+    observations: [],
+    visible_text: ['FIXTURE CYCLES', ''],
+    illegible_text_present: true,
+    confirmed: [
+      { name: 'Road cycling', rationale: 'Drop bars', verdict: 'supported' },
+      { name: 'porch culture', rationale: 'Not shown', verdict: 'unsupported' },
+      { name: 'Road cycling', rationale: 'second entry', verdict: 'unsupported' },
+      { name: 'Bike on a porch', rationale: 'the title', verdict: 'supported' },
+    ],
+    additional_candidates: [
+      { name: 'Porch culture', type: 'tradition', relation: 'resembles', certainty: 0.9, domain: 'other', evidence: 'context', evidence_text: null, tag_query: null, rationale: 'dup of held' },
+      { name: 'Fixture Cycles', type: 'brand', relation: 'depicted', certainty: 0.9, domain: 'vehicle', evidence: 'read_text', evidence_text: 'FIXTURE CYCLES', tag_query: null, rationale: 'lettering' },
+    ],
+    regions: [{ label: 'Porch culture', box: { x: 0, y: 0, w: 0.5, h: 0.5 } }],
+    uncertainty: { overall: 'low', notes: [] },
+    competing_subjects: [],
+  };
+  const { analysis, merge } = mergeEnrichmentContext(published, v2, held);
+
+  it('carries held claims after the published ones and never reuses their ids for additions', () => {
+    expect(analysis.candidates.map((c) => [c.id, c.name])).toEqual([
+      ['c1', 'Road cycling'],
+      ['c2', 'Porch culture'],
+      ['c3', 'Fixture Cycles'],
+    ]);
+    expect(merge.heldIds).toEqual(['c2']);
+    expect(merge.additionIds).toEqual(['c3']);
+    expect(analysis.candidates[1]).toMatchObject({ rationale: 'Not shown', region_ids: ['r1'], certainty: 0.6 });
+    expect(analysis.candidates[2]).toMatchObject({ domain: 'vehicle', evidence: 'read_text', evidence_text: 'FIXTURE CYCLES', suggested_categories: [] });
+    expect(() => validateVision(analysis, MERGED_CANDIDATES_MAX)).not.toThrow();
+  });
+
+  it('reports verdicts for published and held names only, first entry wins', () => {
+    expect(merge.verdicts).toEqual({ 'road cycling': 'supported', 'porch culture': 'unsupported' });
+    expect(merge.reading).toBe('v2');
+    expect(merge.stage2Text).toEqual(['FIXTURE CYCLES']);
+    expect(merge.illegibleTextPresent).toBe(true);
+    expect(analysis.uncertainty.notes).toContain('Some text in the photo is not legible.');
+  });
+
+  it('an unsupported verdict lowers only published candidates (advisory veto)', () => {
+    const a = mergeEnrichmentContext(base, v2).analysis;
+    expect(a.candidates[1]).toMatchObject({ name: 'Porch culture', certainty: 0.3 });
+    expect(vetoedCandidateKeys(base, v2)).toEqual(new Set(['porch culture']));
+  });
+
+  it('a v1 enrichment maps keep into verdicts', () => {
+    const m = mergeEnrichmentContext(toVlmAnalysis(quick), enrichment).merge;
+    expect(m.reading).toBe('v1');
+    expect(m.verdicts).toEqual({ 'dan dan noodles': 'supported', 'sichuan chili oil': 'unsupported' });
+    expect(m.illegibleTextPresent).toBe(false);
   });
 });

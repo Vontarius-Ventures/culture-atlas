@@ -4,6 +4,7 @@ import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testin
 import {
   ProviderError,
   VlmEnrichment,
+  VlmEnrichmentV1,
   VlmQuickRead,
   toVlmAnalysis,
   type CapabilityEntry,
@@ -48,7 +49,7 @@ const QUICK = VlmQuickRead.parse({
   quality: { usable: true, issue: null },
 });
 
-const ENRICHMENT = VlmEnrichment.parse({
+const ENRICHMENT = VlmEnrichmentV1.parse({
   observations: [{ text: 'Leather driving gloves', kind: 'garment' }],
   visible_text: ['FIXTURE DENIM'],
   confirmed: [
@@ -168,10 +169,13 @@ describe('two-stage photo reading (FAST-02)', () => {
     expect(vlm.calls).toHaveLength(1);
     expect(vlm.calls[0]!.maxCandidates).toBe(5);
     expect(enricher.calls).toHaveLength(1);
+    // Stage 2 checks the published candidates, then the held claim (guardrails: a brand
+    // never publishes from stage 1 alone).
     expect(enricher.calls[0]!.stage1).toEqual({
       title: 'Vintage racing references',
-      candidates: ['Fixture Denim Co', '1960s motor racing style', 'Italian aperitivo culture'],
+      candidates: ['1960s motor racing style', 'Italian aperitivo culture', 'Fixture Denim Co'],
     });
+    expect(beforeRefs).not.toContain('Fixture Denim Co');
     expect(enricher.calls[0]!.image.mediaType).toBe('image/jpeg');
 
     // FAST-02: every card published before stage 2 is still there, same row, same rank, same order.
@@ -202,7 +206,7 @@ describe('two-stage photo reading (FAST-02)', () => {
     expect(beforeRefs).toContain('Vintage Racing');
     const names = view.references.map((r) => r.name);
     expect(names.slice(0, beforeRefs.length)).toEqual(beforeRefs);
-    expect(names.slice(beforeRefs.length)).toContain('Mid-Century Modern');
+    expect(names.slice(beforeRefs.length)).toEqual(expect.arrayContaining(['Fixture Denim Co', 'Mid-Century Modern']));
     expect(view.references.find((r) => r.name === 'Vintage Racing')!.qualified).toBe(true);
     const { rows: refs } = await db.query<{ name: string; certainty: number; advisory_veto: boolean; is_anchor: boolean; evidence_region: { boxes: unknown[] } }>(
       `SELECT r.canonical_name AS name, cr.certainty, cr.advisory_veto, cr.is_anchor, cr.evidence_region
@@ -212,7 +216,8 @@ describe('two-stage photo reading (FAST-02)', () => {
     );
     const racing = refs.find((r) => r.name === 'Vintage Racing')!;
     expect(racing).toMatchObject({ advisory_veto: true, is_anchor: true, certainty: 0.3 });
-    expect(refs.find((r) => r.name === 'Fixture Denim Co')).toMatchObject({ advisory_veto: false, certainty: 0.9 });
+    // The held brand published only after stage 2 read it (G-BRAND-CORROBORATE), through the append path.
+    expect(refs.find((r) => r.name === 'Fixture Denim Co')).toMatchObject({ advisory_veto: false, certainty: 0.9, is_anchor: false });
     expect(refs.find((r) => r.name === 'Fixture Denim Co')!.evidence_region.boxes).toHaveLength(1);
     expect(refs.find((r) => r.name === 'Mid-Century Modern')).toMatchObject({ advisory_veto: false, is_anchor: false });
 
@@ -224,9 +229,9 @@ describe('two-stage photo reading (FAST-02)', () => {
     expect(analysis[0]!.title).toBe('Vintage racing references');
     expect(analysis[0]!.observations.map((o) => o.text)).toEqual(['Leather driving gloves', 'FIXTURE DENIM']);
     expect(analysis[0]!.candidates.map((c) => [c.name, c.rationale])).toEqual([
-      ['Fixture Denim Co', 'Legible chest wordmark'],
       ['1960s motor racing style', 'Gloves may be ordinary winter gloves'],
       ['Italian aperitivo culture', 'Spritz glass on the table'],
+      ['Fixture Denim Co', 'Legible chest wordmark'],
       ['Mid-Century Modern', 'Teak side table behind the chair'],
     ]);
 
@@ -237,7 +242,18 @@ describe('two-stage photo reading (FAST-02)', () => {
     );
     expect(pq).toHaveLength(1);
     expect(pq[0]!.status).toBe('ok');
-    expect(await stageTrace(job_id, 'enrich')).toMatchObject({ status: 'complete', vetoed: 1, additions: 1, resolvedAdditions: 1, appended: { watch: 1 } });
+    expect(await stageTrace(job_id, 'enrich')).toMatchObject({ status: 'complete', vetoed: 1, additions: 2, heldPublished: 1, resolvedAdditions: 2, appended: { watch: 1 } });
+    // Both guard passes are in the trace for the inspector.
+    const { rows: guard } = await db.query<{ data: { stage: number; decisions: { name: string; action: string; rules: string[] }[] } }>(
+      `SELECT data FROM trace_events WHERE job_id = $1 AND name = 'guard' ORDER BY created_at`,
+      [job_id],
+    );
+    expect(guard.map((g) => g.data.stage)).toEqual([1, 2]);
+    expect(guard[0]!.data.decisions.find((d) => d.name === 'Fixture Denim Co')).toMatchObject({ action: 'hold', rules: ['G-DEPICTED', 'G-BRAND'] });
+    expect(guard[1]!.data.decisions.find((d) => d.name === 'Fixture Denim Co')).toMatchObject({
+      action: 'publish',
+      rules: ['G-VERDICT', 'G-BRAND-CORROBORATE', 'G-CATEGORY'],
+    });
     // Budget: the per-job Qloo cap still holds with the stage-2 lookups.
     const { rows: q } = await db.query<{ n: number }>(
       `SELECT COALESCE(SUM((pq.query_context->>'attempts')::int), 0)::int AS n FROM provider_queries pq
@@ -307,16 +323,19 @@ describe('two-stage photo reading (FAST-02)', () => {
   });
 
   it('caps Qloo resolution at 5 candidates and 3 concurrent requests per analysis', async () => {
+    // Styles that pass every guardrail (brands would be held until stage 2 reads them).
     const names = ['Alpha Fixture', 'Beta Fixture', 'Gamma Fixture', 'Delta Fixture', 'Epsilon Fixture'];
     const quick = VlmQuickRead.parse({
       ...QUICK,
-      candidates: names.map((name, i) => ({ name, type: 'brand', relation: 'resembles', certainty: 0.9 - i * 0.1, categories: ['wear'], tag_query: null })),
+      candidates: names.map((name, i) => ({ name, type: 'style', relation: 'resembles', certainty: 0.9 - i * 0.1, categories: ['wear'], tag_query: name })),
     });
     const extra = ['Zeta Fixture', 'Eta Fixture', 'Theta Fixture', 'Iota Fixture'];
+    // No visible text: a style whose name shares a word with text read on the photo would be held (G-TEXT-ECHO).
     const enricher = new ScriptedEnricher(async () => ({
       ...ENRICHMENT,
+      visible_text: [],
       confirmed: [],
-      additional_candidates: extra.map((name) => ({ ...ENRICHMENT.additional_candidates[0]!, name, type: 'brand' as const, tag_query: null })),
+      additional_candidates: extra.map((name) => ({ ...ENRICHMENT.additional_candidates[0]!, name, type: 'style' as const, tag_query: name })),
     }));
     const inner = fakeQloo();
     let inFlight = 0;

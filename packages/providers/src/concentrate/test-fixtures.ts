@@ -55,6 +55,59 @@ export const enrichProfile: ModelProfile = {
   timeoutMs: 20_000,
   image: { maxBytes: 120_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
 };
+/** Reading v2 (docs/quality-plan.md §3): stage 1 at 512 px. */
+export const quickProfileV2: ModelProfile = {
+  ...quickProfile,
+  promptVersion: 'vlm-quick-v2',
+  schemaVersion: 'atlas_quick_read_v2',
+};
+/** Reading v2, stage 2: output cap raised to 1600 at re-qualification. */
+export const enrichProfileV2: ModelProfile = {
+  ...enrichProfile,
+  promptVersion: 'vlm-enrich-v2',
+  schemaVersion: 'atlas_enrichment_v2',
+  maxOutputTokens: 1600,
+};
+export const validQuickReadV2 = {
+  title: 'Sesame noodle supper',
+  interpretation: 'A bowl of noodles that resembles a Sichuan street-food supper.',
+  candidates: [
+    {
+      name: 'Dan dan noodles',
+      type: 'cuisine',
+      relation: 'resembles',
+      certainty: 0.8,
+      domain: 'food',
+      evidence: 'distinctive_form',
+      evidence_text: null,
+      tag_query: 'Sichuan cuisine',
+    },
+    {
+      name: 'Fixture Noodle Bar',
+      type: 'brand',
+      relation: 'depicted',
+      certainty: 0.7,
+      domain: 'food',
+      evidence: 'read_text',
+      evidence_text: 'FIXTURE NOODLE BAR',
+      tag_query: null,
+    },
+  ],
+  quality: { usable: true, issue: null },
+};
+export const validEnrichmentV2 = {
+  observations: [{ text: 'Red chili oil pooled under the noodles', kind: 'food' }],
+  visible_text: ['FIXTURE NOODLE BAR'],
+  illegible_text_present: false,
+  confirmed: [
+    { name: 'Dan dan noodles', rationale: 'Minced topping and chili oil', verdict: 'supported' },
+    { name: 'Fixture Noodle Bar', rationale: 'Name printed on the bowl rim', verdict: 'supported' },
+  ],
+  additional_candidates: [],
+  regions: [],
+  uncertainty: { overall: 'low', notes: [] },
+  competing_subjects: [],
+};
 export const validQuickRead = {
   title: 'Sesame noodle supper',
   interpretation: 'A bowl of noodles that resembles a Sichuan street-food supper.',
