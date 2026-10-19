@@ -78,5 +78,5 @@ checked and what may happen after the blind run.
 | --- | --- | --- | --- |
 | Labels written, freeze candidate | `9e24243e454725e2541e9901fd779bd133167ac2` (the commit adding this file) | 2026-10-19 | blind-set curator |
 | Freeze commit recorded | `9e24243e454725e2541e9901fd779bd133167ac2`; checked with step 2 (empty diff, freeze test passing) after the merge into the build branch | 2026-10-19 | build lead (tune step) |
-| Binding with golden-v2 | | | |
+| Binding with golden-v2 (rules frozen) | `b2cf11ac7d7ac76ec1e5ae2e70a650074c4423a6`: photo roles require golden-v2; `EVAL_BINDING` pins golden-v2 `e4289b6f9923…`, photo code `6b227a3c6b02…` (unchanged from the tune step's final rules, guard-v5), thresholds `9d43471b818b…` (thr-v2). Freeze check (step 2) re-run on it: empty diff against `9e24243`, `pnpm test` passing. No rule, prompt, label, lexicon, scorer or threshold may change from this commit on. | 2026-10-19 | build lead (blind step) |
 | Blind run | | | |
