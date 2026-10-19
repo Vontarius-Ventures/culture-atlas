@@ -1,0 +1,69 @@
+{
+  "id": "p03",
+  "split": "tune",
+  "file": "03-interior-modern-room.jpg",
+  "subject_domains": [
+    "interior",
+    "design"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Mid-century modern",
+      "pattern": "mid[- ]?century",
+      "aliases": [
+        "Midcentury modern"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "california modern|contemporary modern|modernis"
+    },
+    {
+      "pattern": "hollywood regency|faux[- ]bamboo|\\bcane\\b"
+    },
+    {
+      "pattern": "wicker|rattan"
+    },
+    {
+      "pattern": "louvere?d|shutters?",
+      "generic": true
+    },
+    {
+      "pattern": "sunroom|conservatory",
+      "generic": true
+    },
+    {
+      "pattern": "glass[- ]top|dining table",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "eames|saarinen|wegner|knoll|herman miller",
+      "why": "no designer piece is identifiable"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

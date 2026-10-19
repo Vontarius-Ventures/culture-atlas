@@ -1,0 +1,76 @@
+{
+  "id": "h24",
+  "split": "holdout",
+  "file": "h24-vehicle-motorcycle-badge.png",
+  "subject_domains": [
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Yamaha",
+      "pattern": "yamaha",
+      "aliases": [
+        "Yamaha Motor"
+      ],
+      "type": "brand",
+      "requires_text": "YAMAHA"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Yamaha Maxim",
+      "pattern": "maxim",
+      "type": "brand",
+      "requires_text": "MAXIM"
+    },
+    {
+      "pattern": "cruiser|standard motorcycle|\\bujm\\b|universal japanese motorcycle|1980s|vintage motorcycle|classic motorcycle|japanese motorcycle"
+    },
+    {
+      "pattern": "motorcycle|motorbike|garage|workshop|shelving|wooden bench|bench",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "honda|kawasaki|suzuki|harley|ducati|triumph|\\bbmw\\b|virago",
+      "why": "the tank reads YAMAHA and the side cover MAXIM",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "YAMAHA"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Red motorcycle in a garage; YAMAHA on the tank and engine cover, MAXIM on the side cover. Shelf items behind carry no legible text at 741 px."
+}

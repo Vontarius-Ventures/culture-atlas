@@ -1,0 +1,77 @@
+{
+  "id": "h01",
+  "split": "tune",
+  "file": "h01-car_eu026.jpg",
+  "subject_domains": [
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Citroën Berlingo",
+      "aliases": [
+        "Citroen Berlingo",
+        "Berlingo"
+      ],
+      "type": "brand",
+      "requires_text": "Berlingo"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Citroën",
+      "aliases": [
+        "Citroen"
+      ],
+      "type": "brand",
+      "requires_text": "Citroën"
+    },
+    {
+      "pattern": "puschkin",
+      "type": "brand",
+      "requires_text": "PUSCHKIN"
+    },
+    {
+      "pattern": "(panel |compact |delivery )?van|leisure activity vehicle",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "peugeot|partner|renault|kangoo|volkswagen|caddy|fiat|dobl[oò]|opel|combo",
+      "why": "only CITROËN and Berlingo are legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "RK ?492 ?AU",
+      "why": "never transcribe licence plates",
+      "field": "visible_text"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "CITROËN",
+    "Berlingo"
+  ],
+  "must_not_read_text": [
+    "RK ?492 ?AU"
+  ],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

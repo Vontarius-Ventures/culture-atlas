@@ -1,0 +1,62 @@
+{
+  "id": "p08",
+  "split": "tune",
+  "file": "08-sign-yuyuan-road.jpg",
+  "subject_domains": [
+    "signage",
+    "place"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Yuyuan Road",
+      "pattern": "yuyuan ro?a?d|愚园路",
+      "aliases": [
+        "Yuyuan Rd."
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "shanghai(?!\\w* cuisine)"
+    },
+    {
+      "pattern": "chinese street(-| )?(name )?signs?"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "yuyuan garden|yu garden|豫园",
+      "why": "Yu Garden is 豫园; the sign reads 愚园路, a different place"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "filler: no food visible",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "愚园路",
+    "Yuyuan Rd"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

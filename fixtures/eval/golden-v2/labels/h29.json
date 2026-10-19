@@ -1,0 +1,82 @@
+{
+  "id": "h29",
+  "split": "holdout",
+  "file": "h29-clothing-nologo-jacket.jpg",
+  "subject_domains": [
+    "fashion",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Varsity jacket",
+      "pattern": "varsity|letterman|baseball jacket|bomber",
+      "aliases": [
+        "Letterman jacket",
+        "Bomber jacket"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "(faux |vegan )?leather|contrast sleeves|ribbed (cuffs|collar|trim)|striped (cuffs|trim)"
+    },
+    {
+      "pattern": "(dark |raw |indigo |rinse |selvedge )?(denim|jeans)|skinny jeans|slim[- ]fit|rolled (cuffs|hems?)|turn[- ]?ups"
+    },
+    {
+      "pattern": "smart casual|casual menswear|menswear|streetwear|americana|preppy|athleisure|crew[- ]?neck|t-?shirt|grey (tee|t-shirt|sweater|sweatshirt)|lookbook|catalog(ue)?|studio"
+    },
+    {
+      "pattern": "(white )?(leather )?(sneakers|trainers|tennis shoes|court shoes)|minimalist sneakers",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "stan smith|adidas|common projects|\\bvans\\b|converse|nike|veja|golden goose|levi'?s|diesel|forever ?21|h ?& ?m|zara|uniqlo|schott|alpha industries|golden bear|ralph lauren|tommy",
+      "why": "no brand text is legible; the green heel tab is not text",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "\\b(beard|stubble|hair|age|young|tall|slim build|handsome|face|facial|eyes|expression)\\b",
+      "field": "observations",
+      "why": "physical descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "actor|celebrity",
+      "why": "role inference about the person",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Catalogue photo: varsity-style jacket with contrast sleeves and striped rib trim, dark jeans with rolled hems, white sneakers with a green heel tab. The sneakers resemble a well-known model but carry no legible text, so no brand may be published."
+}

@@ -1,0 +1,86 @@
+{
+  "id": "h20",
+  "split": "holdout",
+  "file": "h20-sign-double-parking.jpg",
+  "subject_domains": [
+    "signage",
+    "place",
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "The Washington Post",
+      "pattern": "washington post",
+      "type": "brand",
+      "requires_text": "Washington"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Washington, D.C.",
+      "pattern": "washington,? d\\.? ?c\\.?|district of columbia|^washington$",
+      "type": "place"
+    },
+    {
+      "pattern": "parking (sign|regulation|restriction|enforcement)|no parking|double parking|traffic sign|street sign|regulatory sign",
+      "generic": true
+    },
+    {
+      "pattern": "newspaper (box|vending|dispenser|rack)|news ?box",
+      "generic": true
+    },
+    {
+      "pattern": "station wagon|estate car|sedan|\\bcar\\b|sidewalk|city street|urban street|united states|\\busa?\\b|american city",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "subaru|outback|legacy|forester|volvo|audi|toyota|honda|ford|chevrolet|nissan|volkswagen|\\bvw\\b",
+      "why": "the wagon's badge is not legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "usa today|new york times|wall street journal|washington times",
+      "why": "the newspaper box reads The Washington Post",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "new york|\\bnyc\\b|manhattan|chicago|boston|philadelphia|san francisco|los angeles|london",
+      "why": "no text names a city other than the newspaper on the box"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "NOTICE",
+    "PARKING",
+    "PROHIBITED",
+    "Washington"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Two passers-by: no description or identification. The box prints 'The / Washington / Post' on three lines, so requires_text and must_read use the single word 'Washington'."
+}

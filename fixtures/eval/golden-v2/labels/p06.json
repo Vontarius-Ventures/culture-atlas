@@ -1,0 +1,54 @@
+{
+  "id": "p06",
+  "split": "tune",
+  "file": "06-architecture-palace.jpg",
+  "subject_domains": [
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Indo-Saracenic architecture",
+      "pattern": "indo-?saracenic"
+    },
+    {
+      "name": "Mughal architecture",
+      "pattern": "mughal|indo-?islamic"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "chhatri|jali"
+    },
+    {
+      "pattern": "rajput"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "lahore|jaipur|delhi|agra|hyderabad|mysore|chowmahalla|udaipur",
+      "why": "no text identifies the city or the building"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

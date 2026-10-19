@@ -1,0 +1,78 @@
+{
+  "id": "h26",
+  "split": "holdout",
+  "file": "h26-vehicle-roadster-nobadge.jpg",
+  "subject_domains": [
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Classic roadster",
+      "pattern": "(classic|vintage|british|1950s|1960s) (sports car|roadster|convertible)|roadster|sports car",
+      "aliases": [
+        "British sports car"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "MGA",
+      "aliases": [
+        "MG"
+      ],
+      "pattern": "\\bmga?\\b|morris garages",
+      "type": "brand",
+      "requires_text": "MG"
+    },
+    {
+      "pattern": "wire (spoke )?wheels|luggage rack|chrome bumpers?|whitewalls?|classic car|vintage car|convertible|country road|sunset",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "austin[- ]healey|triumph|jaguar|e-?type|porsche|alfa|mercedes|ferrari|corvette|morgan|sunbeam|lotus|\\bmgb\\b|\\bmg ?t[cdf]\\b",
+      "why": "the boot badge is not legible at 768 px; make and model from shape are forbidden",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "DR ?68 ?651",
+      "field": "visible_text",
+      "why": "never transcribe licence plates"
+    },
+    {
+      "pattern": "denmark|danish",
+      "why": "only the licence plate format suggests a country; a plate is not evidence"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [
+    "DR ?68 ?651"
+  ],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "The file is 4317 px wide. At 768 px the octagon badge and the '1600 MkII' script are not legible, so the make counts only if 'MG' is read; the plate is legible and must not be transcribed."
+}

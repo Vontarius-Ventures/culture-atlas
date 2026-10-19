@@ -10,6 +10,7 @@ import {
   goldenDigest,
   loadGoldenSet,
   loadThresholds,
+  sha256Hex,
 } from './labels';
 import { label, syntheticGolden } from './test-golden';
 
@@ -84,15 +85,96 @@ describe('golden-v1 (fixtures/eval/golden-v1)', () => {
   });
 });
 
+describe('golden-v2 (fixtures/eval/golden-v2): blind held-out set h14+', () => {
+  const v2Dir = path.join(root, 'fixtures/eval/golden-v2');
+  const ids = (prefix: string, from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => `${prefix}${String(from + i).padStart(2, '0')}`);
+
+  it('loads: every manifest photo has a matching label and vice versa', async () => {
+    const golden = await loadGoldenSet(v2Dir);
+    expect(golden.manifest.version).toBe('golden-v2');
+    expect(golden.labels.size).toBe(golden.manifest.photos.length);
+  });
+
+  it('tunes on p01-p15 plus the no-longer-blind h01-h13, and holds out 12-16 blind photos h14+', async () => {
+    const { manifest, labels } = await loadGoldenSet(v2Dir);
+    const tune = manifest.photos.filter((p) => p.split === 'tune');
+    const holdout = manifest.photos.filter((p) => p.split === 'holdout');
+    expect(tune.map((p) => p.id)).toEqual([...ids('p', 1, 15), ...ids('h', 1, 13)]);
+    expect(tune.every((p) => p.blind === undefined)).toBe(true);
+    expect(holdout.length).toBeGreaterThanOrEqual(12);
+    expect(holdout.length).toBeLessThanOrEqual(16);
+    expect(holdout.map((p) => p.id)).toEqual(ids('h', 14, 13 + holdout.length));
+    for (const p of holdout) {
+      expect(p.blind).toBe(true);
+      expect(p.source.raw_url).toContain(`/${p.source.repo}/${p.source.commit}/`);
+      expect(labels.get(p.id)!.split).toBe('holdout');
+    }
+  });
+
+  it('uses only photos and repositories that golden-v1 never used', async () => {
+    const v1 = await loadGoldenSet(goldenDir);
+    const v2 = await loadGoldenSet(v2Dir);
+    const v1Hashes = new Set(v1.manifest.photos.map((p) => p.sha256));
+    const v1Repos = new Set(v1.manifest.photos.map((p) => p.source.repo.toLowerCase()));
+    for (const p of v2.manifest.photos.filter((x) => x.split === 'holdout')) {
+      expect(v1Hashes.has(p.sha256)).toBe(false);
+      expect(v1Repos.has(p.source.repo.toLowerCase())).toBe(false);
+    }
+  });
+
+  it('covers the cases the requalification plan lists for the blind set', async () => {
+    const { labels } = await loadGoldenSet(v2Dir);
+    const blind = [...labels.values()].filter((l) => l.split === 'holdout');
+    const has = (fn: (l: (typeof blind)[number]) => boolean) => blind.some(fn);
+    const brandWithoutText = (l: (typeof blind)[number]) => l.forbidden.some((f) => f.class === 'brand_without_text');
+    const readBrand = (l: (typeof blind)[number]) => [...l.expected, ...l.acceptable].some((e) => e.type === 'brand' && !!e.requires_text);
+    expect(blind.filter((l) => l.allowed_categories.includes('eat')).length).toBeGreaterThanOrEqual(2); // food dishes
+    expect(has((l) => l.subject_domains.includes('interior'))).toBe(true);
+    expect(has((l) => l.subject_domains.includes('craft'))).toBe(true);
+    expect(has((l) => l.subject_domains.includes('signage') && l.must_read_text.some((t) => /^[\p{Script=Latin}\s]+$/u.test(t)))).toBe(true);
+    expect(has((l) => l.subject_domains.includes('signage') && l.must_read_text.some((t) => /[^\p{Script=Latin}\p{N}\p{P}\s]/u.test(t)))).toBe(true);
+    expect(has((l) => l.subject_domains.includes('vehicle') && l.expected.some((e) => e.type === 'brand') && l.must_read_text.length > 0)).toBe(true);
+    expect(has((l) => l.subject_domains[0] === 'vehicle' && brandWithoutText(l) && !l.must_read_text.length)).toBe(true);
+    expect(has((l) => l.subject_domains.includes('fashion') && readBrand(l) && l.must_read_text.length > 0)).toBe(true); // logo with legible text
+    expect(has((l) => l.subject_domains.includes('fashion') && brandWithoutText(l) && !readBrand(l))).toBe(true); // no legible logo
+    expect(has((l) => l.people.present && l.forbidden.some((f) => f.class === 'person_identity') && l.forbidden.some((f) => f.class === 'role_inference'))).toBe(true);
+    expect(has((l) => l.people.present && l.subject_domains.length >= 3 && l.subject_domains.includes('signage'))).toBe(true); // busy scene
+    for (const l of blind) expect(l.must_not_read_text.every((p) => !l.must_read_text.some((t) => new RegExp(p, 'iu').test(t)))).toBe(true);
+  });
+
+  it('the held-out labels and manifest entries are exactly the frozen ones (FREEZE.md)', async () => {
+    const freeze = JSON.parse(await readFile(path.join(v2Dir, 'freeze.json'), 'utf8')) as {
+      golden_set: string;
+      holdout_manifest_sha256: string;
+      photos: Record<string, { label_sha256: string; photo_sha256: string }>;
+    };
+    const manifest = JSON.parse(await readFile(path.join(v2Dir, 'manifest.json'), 'utf8')) as { version: string; photos: { id: string; split: string; sha256: string }[] };
+    const holdout = manifest.photos.filter((p) => p.split === 'holdout');
+    expect(freeze.golden_set).toBe(manifest.version);
+    expect(Object.keys(freeze.photos).sort()).toEqual(holdout.map((p) => p.id).sort());
+    expect(sha256Hex(JSON.stringify(holdout))).toBe(freeze.holdout_manifest_sha256);
+    for (const p of holdout) {
+      const raw = (await readFile(path.join(v2Dir, 'labels', `${p.id}.json`), 'utf8')).replace(/\r\n/g, '\n');
+      expect({ id: p.id, label: sha256Hex(raw), photo: p.sha256 }).toEqual({
+        id: p.id,
+        label: freeze.photos[p.id]!.label_sha256,
+        photo: freeze.photos[p.id]!.photo_sha256,
+      });
+    }
+  });
+});
+
 describe('label and manifest schemas', () => {
   it('rejects an entry with neither a name nor a pattern, and an invalid regular expression', () => {
     expect(PhotoLabelSchema.safeParse({ ...label('p01'), expected: [{ aliases: [] }] }).success).toBe(false);
     expect(PhotoLabelSchema.safeParse({ ...label('p01'), forbidden: [{ pattern: '(', why: 'x' }] }).success).toBe(false);
   });
 
-  it('ties p* ids to the tune split and h* ids to held-out', () => {
+  it('ties p* ids to the tune split; held-out photos are h*, and an h* photo may move to tune', () => {
     expect(PhotoLabelSchema.safeParse({ ...label('p01'), split: 'holdout' }).success).toBe(false);
     expect(PhotoLabelSchema.safeParse(label('h01')).success).toBe(true);
+    expect(PhotoLabelSchema.safeParse({ ...label('h01'), split: 'tune' }).success).toBe(true);
   });
 
   it('an unusable photo has no good references and must forbid published candidates', () => {
