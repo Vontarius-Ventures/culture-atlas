@@ -243,8 +243,8 @@ pnpm qualify:concentrate --profile-file profiles.json --role vision_photo_enrich
   --out-dir /secure/concentrate-qualification --max-requests 60 --spend-cap-usd 2
 # Text roles: prompts with content checks (fixtures/eval/text-v1, quality plan §8).
 pnpm qualify:concentrate --profile-file profiles.json --role composer \
-  --fixtures fixtures/eval/text-v1 --out-dir /secure/concentrate-qualification \
-  --max-requests 12 --spend-cap-usd 1
+  --fixtures fixtures/eval/text-v1/composer --out-dir /secure/concentrate-qualification \
+  --max-requests 11 --spend-cap-usd 0.5
 ```
 
 **A role qualifies on quality, not only on transport** (docs/quality-plan.md §7.5):
@@ -254,14 +254,19 @@ pnpm qualify:concentrate --profile-file profiles.json --role composer \
   sha256 before any request), never on a loose fixture directory. Each reading
   goes through the runtime guardrails (`vlm/guardrails.ts`) and is scored in
   memory by `scripts/eval/scorer.ts` against the **live** gates in
-  `fixtures/eval/thresholds.json`. The outputs are never written. Without the
-  guardrails module the script refuses to run (fail closed). `vision_photo`
-  must be a quick-read profile.
-- **Text roles** (`research_text`, `composer`) take `--fixtures` with
-  `<name>.json` prompts and `<name>.expect.json` content checks (the
-  `*.expect.json` files are not prompts). Every output is checked in memory by
-  `scoreTextFixture` (`scripts/eval/text-scorer.ts`), and at least 5 fixtures
-  are required. Without the checks module the script refuses to run.
+  `fixtures/eval/thresholds.json`. The outputs are never written. Stage 2 is
+  asked about exactly what production sends (`stage2Request`: the guarded
+  title, published names, then held names). `vision_photo` must be a
+  quick-read profile.
+- **Text roles** (`research_text`, `composer`) take `--fixtures
+  fixtures/eval/text-v1/<role>`: `<name>.json` prompts and `<name>.expect.json`
+  content checks, all pinned by sha256 in `fixtures/eval/text-v1/manifest.json`
+  and verified before any request (see "Text-role qualification"). Every
+  output is checked in memory by `scoreTextFixture`
+  (`scripts/eval/text-scorer.ts`), and at least 5 fixtures are required.
+- The guardrails and the content checks are imported statically by the
+  harness, `eval:replay` and `eval:live`, so there is no "module absent" path:
+  the CI replay always scores the runtime guardrails.
 - `vision_video_frame` keeps transport-only qualification until it has a golden set.
 
 The artifact `result` is `pass` only when the transport run **and** the
@@ -551,12 +556,17 @@ pnpm qualify:concentrate --profile-file profiles.json --role composer \
 ```
 
 A role counts as qualified only when the transport pass and the content checks
-both pass. Scoring each reply with `scoreTextFixture` (expectations from
-`readTextExpect`), aggregating with `summarizeTextRun`, and binding the result
-and `manifest.json`'s `golden_sha256` into the artifact's eval block is wired
-by the qualification-gating package (quality plan §7.5). Until then, run the
-dry runs above and score the replies in memory; never write replies into the
-artifact or the repository.
+both pass. `--fixtures` must be the role's directory of the pinned golden set
+(`fixtures/eval/text-v1/<role>`): before any request, the harness checks that
+the directory holds exactly the manifest's fixtures for the role, that every
+prompt and expect file matches its sha256 in `manifest.json`, and that the
+manifest's `golden_sha256` is the digest of its file table
+(`scripts/eval/text-golden.ts`). Each reply is scored in memory by
+`scoreTextFixture`; T1/T9/T10 come from `summarizeTextRun` (p95 under the
+profile's `timeoutMs`, no timeouts, every fixture passing, at least 5). The
+artifact's eval block binds `golden_set: text-v1`, the manifest's
+`golden_sha256`, the scorer version and the aggregate metrics only; replies are
+never written into the artifact or the repository.
 
 **Live smoke (2026-10-19, 16 billed requests, no artifact).** All 13 fixtures
 tried completed and were schema-valid; replies stayed in the scratchpad.

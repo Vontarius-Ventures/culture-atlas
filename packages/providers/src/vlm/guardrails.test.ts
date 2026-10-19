@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   GUARDRAIL_VERSION,
   NEUTRAL_TITLE,
+  brandCorroboratedIds,
   brandHeadToken,
   categoriesFor,
   domainOf,
@@ -10,6 +11,7 @@ import {
   isBrandLike,
   sanitizeObservations,
   sanitizeVisibleText,
+  stage2Request,
   type GuardDecision,
   type Stage1Guard,
 } from './guardrails';
@@ -680,5 +682,48 @@ describe('legacy (v1) compatibility', () => {
     });
     expect(decisionFor(s2.decisions, 'Spalding')).toMatchObject({ action: 'drop', rules: ['G-VERDICT'], note: 'weak' });
     expect(s2.publishNow.map((c) => [c.name, c.suggested_categories])).toEqual([['Streetball', []]]);
+  });
+});
+
+describe('shared stage-2 input and brand corroboration (used by the compiler, qualification and eval:live)', () => {
+  it('stage 2 is asked about the guarded title, the published names, then the held names; dropped claims never', () => {
+    const a = reading(
+      [
+        { name: 'Mid-century modern', tag_queries: ['mid-century modern'] },
+        { name: 'Fixturedale', type: 'brand', relation: 'depicted', certainty: 0.9 },
+        { name: 'Still life painting' },
+      ],
+      { title: 'A still life with a chair' },
+    );
+    const g = guardQuickRead(a, { twoStage: true });
+    const req = stage2Request(g.analysis, g.held);
+    expect(req.candidates).toEqual(['Mid-century modern', 'Fixturedale']);
+    expect(req.title).toBe(g.analysis.title);
+    expect(req.title).not.toMatch(/still life/i);
+  });
+
+  it('only a held brand whose own word stage 2 transcribed is corroborated; a shape guess is not', () => {
+    const a = reading([
+      { name: 'Fixturedale', type: 'brand', relation: 'depicted', certainty: 0.9 },
+      { name: 'Fixturo Civic', type: 'brand', certainty: 0.4 },
+      { name: 'Mid-century modern', tag_queries: ['mid-century modern'] },
+    ]);
+    const g = guardQuickRead(a, { twoStage: true });
+    expect(brandCorroboratedIds(g.decisions).size).toBe(0);
+    const s2 = stage2(
+      g,
+      enrichment({
+        visible_text: ['FIXTUREDALE'],
+        confirmed: [
+          { name: 'Fixturedale', rationale: 'wordmark', verdict: 'supported' },
+          { name: 'Fixturo Civic', rationale: 'shape', verdict: 'supported' },
+          { name: 'Mid-century modern', rationale: 'legs', verdict: 'supported' },
+        ],
+      }),
+    );
+    const ids = brandCorroboratedIds(s2.decisions);
+    const byName = new Map(s2.analysis.candidates.map((c) => [c.name, c.id]));
+    expect([...ids]).toEqual([byName.get('Fixturedale')]);
+    expect(byName.has('Fixturo Civic')).toBe(false);
   });
 });

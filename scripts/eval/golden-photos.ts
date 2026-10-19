@@ -1,5 +1,6 @@
-import { access, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { scoreTextFixture, TEXT_SCORER_VERSION } from './text-scorer';
 import { goldenDigest, sha256Hex, type GoldenSet, type ManifestPhoto, type Thresholds } from './labels';
 import type { ReadingPipeline, Recording } from './pipeline';
 import { scoreRuns, SCORER_VERSION, type Scorecard } from './scorer';
@@ -147,31 +148,15 @@ export function evaluatePhotoRecordings(input: {
 }
 
 /** Text-role content checks (P4's scripts/eval/text-scorer.ts, plan §8). */
+/** Content checks for one text fixture (scoreTextFixture in scripts/eval/text-scorer.ts, or a test double). */
 export type TextScorer = ((
-  schema: 'reference_notes' | 'plan_prose',
+  schema: string,
   expect: unknown,
   output: unknown,
 ) => { pass: boolean; metrics: Record<string, number>; reasons: string[] }) & { version?: string };
 
-/** Loads P4's scoreTextFixture, or null when the module is not present (text qualification then refuses). */
-export async function loadTextScorer(): Promise<TextScorer | null> {
-  const file = new URL('./text-scorer.ts', import.meta.url);
-  try {
-    await access(file);
-  } catch {
-    return null;
-  }
-  const mod = (await import(/* @vite-ignore */ file.href)) as { scoreTextFixture?: unknown; TEXT_SCORER_VERSION?: unknown };
-  if (typeof mod.scoreTextFixture !== 'function') throw new Error('scripts/eval/text-scorer.ts does not export scoreTextFixture');
-  const score = mod.scoreTextFixture as TextScorer;
-  const version = typeof mod.TEXT_SCORER_VERSION === 'string' ? mod.TEXT_SCORER_VERSION : undefined;
-  return Object.assign((...args: Parameters<TextScorer>) => score(...args), { version });
-}
-
-/** Digest of a text golden set directory: sorted file names and contents. */
-export async function textGoldenDigest(dir: string): Promise<string> {
-  const files = (await readdir(dir)).filter((f) => f.endsWith('.json')).sort();
-  const parts: string[] = [];
-  for (const f of files) parts.push(f, sha256Hex(await readFile(path.join(dir, f))));
-  return sha256Hex(parts.join('\n'));
-}
+/** The real content checks, tagged with their version (what the CLI passes for text roles). */
+export const runtimeTextScorer: TextScorer = Object.assign(
+  (schema: string, expect: unknown, output: unknown) => scoreTextFixture(schema, expect, output),
+  { version: TEXT_SCORER_VERSION },
+);

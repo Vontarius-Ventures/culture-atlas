@@ -1,4 +1,4 @@
-import { readFile, readdir, stat, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, readdir, rename, stat, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import {
   CATALOG_SNAPSHOT_FILE,
@@ -16,17 +16,21 @@ import {
   catalogCompatible,
   createConcentrateTransport,
   fetchCatalogSnapshot,
+  guardQuickRead,
   profileHash,
   readingForProfile,
+  stage2Request,
   type CatalogSnapshot,
   type ModelProfile,
   type QualificationArtifact,
 } from '../packages/providers/src/index';
 import { parseTextFixture } from './eval/text-schemas';
 import { REQUIRED_GOLDEN_SET, type EvalBlock } from '../packages/providers/src/concentrate/profiles';
-import { evaluatePhotoRecordings, textGoldenDigest, verifiedGoldenPhotos, type TextScorer } from './eval/golden-photos';
+import { evaluatePhotoRecordings, verifiedGoldenPhotos, type TextScorer } from './eval/golden-photos';
 import { loadGoldenSet, loadThresholds, type GoldenSet } from './eval/labels';
 import type { ReadingPipeline, Recording } from './eval/pipeline';
+import { verifiedTextGolden, type VerifiedTextGolden } from './eval/text-golden';
+import { summarizeTextRun, type TextRunRow } from './eval/text-scorer';
 
 /** Pass thresholds of the evaluation (docs/quality-plan.md §7.2). */
 export const DEFAULT_THRESHOLDS = path.resolve(import.meta.dirname, '../fixtures/eval/thresholds.json');
@@ -87,32 +91,57 @@ export async function fetchCatalog(opts: QualifyOptions): Promise<CatalogSnapsho
   return snapshot;
 }
 
-/** Persistent hard counter: reserved before each request, never decremented. */
+/**
+ * Persistent hard counter: reserved before each request, never decremented.
+ * Reads and reservations are serialized within the process (a request that
+ * times out while its reservation is still being written cannot race the next
+ * check), and every write replaces the file atomically (temp file + rename),
+ * so a crash never leaves a truncated counter behind.
+ */
 export class RequestCounter {
+  private queue: Promise<unknown> = Promise.resolve();
   constructor(
     private readonly file: string,
     private readonly max: number,
   ) {}
-  async used(): Promise<number> {
+  private serial<T>(op: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(op, op);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+  private async read(): Promise<number> {
     let raw: string;
     try {
       raw = await readFile(this.file, 'utf8');
-    } catch {
-      return 0;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+      throw new Error('Request counter is unreadable; refusing to send.', { cause: error });
     }
-    const sent = (JSON.parse(raw) as { sent?: unknown }).sent;
+    let sent: unknown;
+    try {
+      sent = (JSON.parse(raw) as { sent?: unknown }).sent;
+    } catch {
+      sent = undefined;
+    }
     // A corrupt counter must never reset the cap to zero.
     if (typeof sent !== 'number' || !Number.isSafeInteger(sent) || sent < 0)
       throw new Error('Request counter is unreadable; refusing to send.');
     return sent;
   }
-  async reserve(): Promise<void> {
-    const sent = await this.used();
-    if (sent >= this.max)
-      throw new Error(
-        `Request cap reached (${sent}/${this.max}). Raise --max-requests deliberately.`,
-      );
-    await writeFile(this.file, JSON.stringify({ sent: sent + 1 }), { mode: 0o600 });
+  used(): Promise<number> {
+    return this.serial(() => this.read());
+  }
+  reserve(): Promise<void> {
+    return this.serial(async () => {
+      const sent = await this.read();
+      if (sent >= this.max)
+        throw new Error(
+          `Request cap reached (${sent}/${this.max}). Raise --max-requests deliberately.`,
+        );
+      const tmp = `${this.file}.${process.pid}.tmp`;
+      await writeFile(tmp, JSON.stringify({ sent: sent + 1 }), { mode: 0o600 });
+      await rename(tmp, this.file);
+    });
   }
 }
 
@@ -196,7 +225,11 @@ export async function qualifyProfile(
     golden?: { dir: string; photosDir: string };
     /** Photo roles (required): the guarded reading pipeline the outputs are scored through. */
     pipeline?: ReadingPipeline;
-    /** Text roles (required): P4's content checks, scoreTextFixture. */
+    /**
+     * Text roles (required): the content checks (the CLI passes scoreTextFixture
+     * from scripts/eval/text-scorer.ts). `fixturesDir` must then be the role's
+     * directory of the hash-pinned text golden set (fixtures/eval/text-v1/<role>).
+     */
     textScorer?: TextScorer;
     /** Defaults to fixtures/eval/thresholds.json. */
     thresholdsFile?: string;
@@ -237,6 +270,7 @@ export async function qualifyProfile(
   const textRole = TEXT_ROLES.includes(profile.role);
   const { thresholds, sha256: thresholdsSha256 } = await loadThresholds(opts.thresholdsFile ?? DEFAULT_THRESHOLDS);
   let golden: GoldenSet | undefined;
+  let textGolden: VerifiedTextGolden | undefined;
   let fixtures: Fixture[];
   const photoIds = new Map<string, string>();
   const expectations = new Map<string, unknown>();
@@ -262,6 +296,15 @@ export async function qualifyProfile(
   if (textRole) {
     if (!opts.textScorer)
       throw new Error('Text roles need the content checks (scripts/eval/text-scorer.ts); refusing to qualify without them.');
+    // A fixture for another role's schema is refused first (e.g. composer prompts under research_text).
+    for (const f of fixtures) parseTextFixture(JSON.parse(await readFile(f.files[0]!.path, 'utf8')), profile.role);
+    // Only the hash-pinned golden set: exactly its fixtures for this role, every file untampered.
+    textGolden = await verifiedTextGolden(opts.fixturesDir!, profile.role);
+    if (textGolden.goldenSet !== REQUIRED_GOLDEN_SET[profile.role])
+      throw new Error(`${profile.role} must qualify on ${REQUIRED_GOLDEN_SET[profile.role]}; got ${textGolden.goldenSet}.`);
+    const pinned = textGolden.fixtures.map((f) => path.basename(f)).sort();
+    if (JSON.stringify(fixtures.map((f) => f.name).sort()) !== JSON.stringify(pinned))
+      throw new Error('Text fixtures differ from the golden manifest.');
     for (const f of fixtures) {
       const file = expectFileFor(f.files[0]!.path);
       try {
@@ -348,6 +391,8 @@ export async function qualifyProfile(
   // Outputs kept in memory for scoring only; never written anywhere.
   const recordings: Recording[] = [];
   const textVerdicts: Array<{ pass: boolean; metrics: Record<string, number> }> = [];
+  // One row per text fixture (T9/T10 via summarizeTextRun): its outcome, latency and content score.
+  const textRows: TextRunRow[] = [];
   const count = (key: string) => (outcomes[key] = (outcomes[key] ?? 0) + 1);
   outer: for (const fixture of fixtures) {
     let fixtureOk = true;
@@ -386,6 +431,13 @@ export async function qualifyProfile(
           // Content checks run in memory; only their aggregate reaches the artifact.
           const verdict = opts.textScorer!(spec.schema, expectations.get(fixture.name), res.data);
           textVerdicts.push({ pass: verdict.pass, metrics: verdict.metrics });
+          // The runner already validated the reply against the wire schema (T1), unless the scorer says otherwise.
+          textRows.push({
+            fixture: fixture.name,
+            outcome: 'complete',
+            latencyMs: Date.now() - started,
+            score: { ...verdict, metrics: { t1_schema_valid: 1, ...verdict.metrics } },
+          });
         } else if (stage1Runner) {
           // Stage 1 at its own bounds, then stage 2 on the same photo at the enrichment bounds.
           const { bytes } = await boundJpegForProfile(await readFile(file.path), profile.image);
@@ -402,10 +454,11 @@ export async function qualifyProfile(
           const res = await new ConcentrateVlmEnricher(runner).enrichImage(
             {
               image: { bytes, mediaType: 'image/jpeg' },
-              stage1: {
-                title: quick.analysis.title,
-                candidates: quick.analysis.candidates.map((c) => c.name),
-              },
+              // Exactly what production sends: the guarded title, published names, then held names.
+              stage1: (() => {
+                const g1 = guardQuickRead(quick.analysis, { twoStage: true });
+                return stage2Request(g1.analysis, g1.held);
+              })(),
             },
             { maxRetries: 0, modelIdentity: identity },
           );
@@ -443,6 +496,7 @@ export async function qualifyProfile(
         const kind = error instanceof ProviderError ? error.kind : 'local_error';
         const outcome = error instanceof ProviderError && error.status ? `http_${error.status}` : kind;
         count(inStage1 ? `stage1_${outcome}` : outcome);
+        if (fixture.kind === 'text') textRows.push({ fixture: fixture.name, outcome: kind === 'timeout' ? 'timeout' : outcome });
         if (error instanceof Error && /Request cap reached/.test(error.message)) {
           stoppedBy = 'request_cap';
           break outer;
@@ -475,31 +529,35 @@ export async function qualifyProfile(
       recordings,
       failedCalls: total - recordings.length,
     }).block;
-  } else if (textRole && opts.fixturesDir) {
+  } else if (textRole && textGolden) {
+    // T1, T9 (p95 under the profile timeout, no timeouts) and T10 (every fixture passed, enough fixtures).
+    const run = summarizeTextRun(textRows, {
+      timeoutMs: profile.timeoutMs,
+      minimumFixtures: Math.max(thresholds.text.t10_fixtures_min ?? 0, QUALIFICATION_MINIMUM_FIXTURES[profile.role]),
+    });
     const metrics: Record<string, number> = {
+      ...run.metrics,
       fixtures_total: total,
       fixtures_scored: textVerdicts.length,
       fixtures_content_passed: textVerdicts.filter((v) => v.pass).length,
     };
-    // Worst value per content metric across fixtures would need P4's direction; report means only.
+    // Mean of each content metric across fixtures; the per-fixture gates are applied by the scorer.
     const keys = new Set(textVerdicts.flatMap((v) => Object.keys(v.metrics)));
     for (const k of keys) {
       const values = textVerdicts.map((v) => v.metrics[k]).filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
       if (values.length && /^[A-Za-z0-9_]{1,35}$/.test(k)) metrics[`mean_${k}`] = values.reduce((a, b) => a + b, 0) / values.length;
     }
     evalBlock = {
-      golden_set: path.basename(path.resolve(opts.fixturesDir)),
-      golden_sha256: await textGoldenDigest(opts.fixturesDir),
+      golden_set: textGolden.goldenSet,
+      golden_sha256: textGolden.goldenSha256,
       thresholds_sha256: thresholdsSha256,
       guardrail_version: null,
       grounding_version: null,
       scorer_version: opts.textScorer?.version ?? 'scoreTextFixture',
       metrics,
-      pass:
-        textVerdicts.length === total &&
-        total >= (thresholds.text.t10_fixtures_min ?? 0) &&
-        textVerdicts.every((v) => v.pass),
+      pass: run.pass && textVerdicts.length === total && textVerdicts.every((v) => v.pass),
     };
+    if (!run.pass) log(`text evaluation: ${run.reasons.join('; ')}`);
   }
   const transportPass = !stoppedBy && failed === 0 && passed >= minimum && passed === total;
   const artifact = QualificationArtifactSchema.parse({

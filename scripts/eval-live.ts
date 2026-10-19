@@ -15,12 +15,12 @@
  * only. Keys: CONCENTRATE_API_KEY_FILE or CONCENTRATE_API_KEY; QLOO_API_KEY for --qloo.
  * The keys are never printed or written.
  */
-import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { loadModelProfiles } from '../packages/providers/src/concentrate/profiles';
 import { loadGoldenSet, loadThresholds } from './eval/labels';
+import * as grounding from '../packages/domain/src/compiler/grounding';
 import { runLiveEval, type GroundingModule } from './eval/live';
-import { guardedPipeline, loadGuardModule } from './eval/pipeline';
+import { RUNTIME_GUARDS, runtimeGuardedPipeline } from './eval/pipeline';
 import { summarize } from './eval/replay';
 import { readApiKey } from './qualify-concentrate-lib';
 
@@ -46,11 +46,6 @@ if (roles.some((r) => r !== 'vision_photo' && r !== 'vision_photo_enrich')) {
   console.error('--roles takes vision_photo and vision_photo_enrich only.');
   process.exit(2);
 }
-const guards = await loadGuardModule();
-if (!guards) {
-  console.error('The runtime guardrails (packages/providers/src/vlm/guardrails.ts) are not present; nothing to evaluate.');
-  process.exit(2);
-}
 const golden = await loadGoldenSet(arg('golden', path.join(root, 'fixtures/eval/golden-v1'))!);
 const { thresholds } = await loadThresholds(arg('thresholds', path.join(root, 'fixtures/eval/thresholds.json'))!);
 const confirm = flag('confirm-paid-requests');
@@ -64,16 +59,6 @@ if (flag('qloo')) {
     console.error('--qloo needs --max-qloo-requests > 0, --qloo-concurrency 1..3 and --qloo-spacing-ms >= 700.');
     process.exit(2);
   }
-  const groundingFile = new URL('../packages/domain/src/compiler/grounding.ts', import.meta.url);
-  const present = await access(groundingFile).then(
-    () => true,
-    () => false,
-  );
-  const grounding = present ? ((await import(/* @vite-ignore */ groundingFile.href)) as Partial<GroundingModule>) : null;
-  if (!grounding || typeof grounding.planLookup !== 'function' || typeof grounding.acceptMatch !== 'function') {
-    console.error('--qloo needs the grounding rules (packages/domain/src/compiler/grounding.ts).');
-    process.exit(2);
-  }
   const apiKey = process.env.QLOO_API_KEY?.trim();
   if (confirm && !apiKey) {
     console.error('Set QLOO_API_KEY for --qloo.');
@@ -84,7 +69,7 @@ if (flag('qloo')) {
     baseUrl: process.env.QLOO_API_URL ?? 'https://hackathon.api.qloo.com',
     maxRequests: maxQloo,
     spacingMs,
-    grounding: grounding as GroundingModule,
+    grounding: grounding satisfies GroundingModule,
   };
 }
 
@@ -104,7 +89,7 @@ const result = await runLiveEval({
   spendCapMicros: Math.floor(spendCapUsd * 1_000_000),
   confirmPaidRequests: confirm,
   apiKey,
-  pipeline: guardedPipeline(guards),
+  pipeline: runtimeGuardedPipeline,
   thresholds,
   qloo,
   ledgerFile: arg('ledger'),
@@ -115,7 +100,7 @@ if (result.dryRun) {
   log(`dry run only: ${result.plannedRequests} Concentrate request(s), at most ${result.plannedQlooMax} Qloo. Re-run with --confirm-paid-requests to send them.`);
   process.exit(0);
 }
-for (const line of summarize({ pipeline: 'guarded', guardrail_version: guards.GUARDRAIL_VERSION, scorecard: result.scorecard!, decisions: {}, runs: [] }))
+for (const line of summarize({ pipeline: 'guarded', guardrail_version: RUNTIME_GUARDS.GUARDRAIL_VERSION, scorecard: result.scorecard!, decisions: {}, runs: [] }))
   log(line);
 log(`requests sent ${result.requestsSent}, Qloo ${result.qlooSent}${result.stoppedBy ? `, stopped by ${result.stoppedBy}` : ''}; scorecard.json written to --out-dir`);
 process.exit(result.scorecard!.pass && !result.stoppedBy ? 0 : 1);

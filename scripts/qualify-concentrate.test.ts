@@ -9,6 +9,8 @@ import {
 } from '../packages/providers/src/index';
 import type { TextScorer } from './eval/golden-photos';
 import { unguardedPipeline } from './eval/pipeline';
+import { sha256Hex } from './eval/labels';
+import { textManifestDigest } from './eval/text-golden';
 import { syntheticGolden, versionedTestPipeline } from './eval/test-golden';
 import { discoverFixtures, fetchCatalog, qualifyProfile, readApiKey } from './qualify-concentrate-lib';
 
@@ -371,6 +373,36 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     expect(artifact).not.toContain(KEY);
   });
 
+  it('stage 2 is asked about exactly what production sends: the guarded stage-1 names, never a dropped claim', async () => {
+    const quick: ModelProfile = { ...profile, qualificationArtifactId: 'vision-photo-quick-guarded' };
+    const bodies: Array<{ text: { format: { name: string } }; input: unknown }> = [];
+    const inner = responses(200, 'Still life painting');
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      return inner(url, init);
+    });
+    const g = await syntheticGolden(ids(10));
+    await qualifyProfile({
+      apiKey: KEY,
+      outDir: await preparedOutDir(),
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: versionedTestPipeline,
+      spendCapMicros: 2_000_000,
+      fetch: fetchImpl as unknown as typeof fetch,
+      profile: enrich,
+      stage1Profile: quick,
+      maxRequests: 30,
+      confirmPaidRequests: true,
+    });
+    const enrichBodies = bodies.filter((b) => b.text.format.name === enrich.schemaVersion);
+    expect(enrichBodies).toHaveLength(10);
+    // G-MEDIUM drops the medium-word claim at stage 1, so stage 2 never sees it (as in the compiler).
+    for (const b of enrichBodies) {
+      expect(JSON.stringify(b.input)).toContain('Round table');
+      expect(JSON.stringify(b.input)).not.toContain('Still life painting');
+    }
+  });
+
   it('stops at the first 402 (no retry, no further spend) and records a failing artifact', async () => {
     const outDir = await preparedOutDir();
     const fetchImpl = responses(402);
@@ -406,13 +438,25 @@ describe('text roles: content checks gate qualification (plan §8)', () => {
     qualificationArtifactId: 'composer-2026-10-19',
   };
   const prose = { title: 'An evening plan', summary: 'A short plan for the evening.', rationale: null };
+  /** A synthetic text golden set laid out like fixtures/eval/text-v1: <root>/manifest.json pins <root>/composer/*. */
   async function textFixtures(n: number, withExpect = true) {
-    const dir = path.join(await tmp('ca-text-'), 'text-v1');
-    await mkdir(dir);
+    const root = path.join(await tmp('ca-text-'), 'text-v1');
+    const dir = path.join(root, 'composer');
+    await mkdir(dir, { recursive: true });
+    const files: Record<string, string> = {};
+    const put = async (name: string, body: string) => {
+      await writeFile(path.join(dir, name), body);
+      files[`composer/${name}`] = sha256Hex(body);
+    };
     for (let i = 0; i < n; i++) {
-      await writeFile(path.join(dir, `plan-${i}.json`), JSON.stringify({ system: 'S', prompt: `P${i}`, schema: 'plan_prose' }));
-      if (withExpect) await writeFile(path.join(dir, `plan-${i}.expect.json`), JSON.stringify({ word_limits: { overview: 150 } }));
+      await put(`plan-${i}.json`, JSON.stringify({ system: 'S', prompt: `P${i}`, schema: 'plan_prose' }));
+      if (withExpect) await put(`plan-${i}.expect.json`, JSON.stringify({ word_limits: { overview: 150 } }));
     }
+    const roles = { composer: Array.from({ length: n }, (_, i) => `composer/plan-${i}.json`) };
+    await writeFile(
+      path.join(root, 'manifest.json'),
+      JSON.stringify({ golden_set: 'text-v1', scorer_version: 'text-double', roles, files, golden_sha256: textManifestDigest(files) }),
+    );
     return dir;
   }
   function textResponses() {
@@ -464,5 +508,52 @@ describe('text roles: content checks gate qualification (plan §8)', () => {
     const bad = await qualifyProfile({ ...base, textScorer: scorer(false), fetch: textResponses() as unknown as typeof fetch });
     expect(bad.artifact).toMatchObject({ result: 'fail', fixtures: { passed: 5 }, eval: { pass: false } });
     expect(qualificationState(textProfile, outDir)).toBe('catalog-compatible');
+  });
+
+  it('qualifies only on the pinned golden set: a tampered, unlisted or missing fixture is refused before any request', async () => {
+    const outDir = await preparedOutDir();
+    const fetchImpl = textResponses();
+    const base = { apiKey: KEY, outDir, profile: textProfile, maxRequests: 20, spendCapMicros: 2_000_000, confirmPaidRequests: true, textScorer: scorer(true), fetch: fetchImpl as unknown as typeof fetch };
+    const tampered = await textFixtures(5);
+    await writeFile(path.join(tampered, 'plan-0.json'), JSON.stringify({ system: 'S', prompt: 'changed', schema: 'plan_prose' }));
+    await expect(qualifyProfile({ ...base, fixturesDir: tampered })).rejects.toThrow('composer/plan-0.json: sha256 differs');
+    const unlisted = await textFixtures(5);
+    await writeFile(path.join(unlisted, 'extra.json'), JSON.stringify({ system: 'S', prompt: 'X', schema: 'plan_prose' }));
+    await expect(qualifyProfile({ ...base, fixturesDir: unlisted })).rejects.toThrow('not listed: extra.json');
+    const missing = await textFixtures(5);
+    await rm(path.join(missing, 'plan-4.expect.json'));
+    await expect(qualifyProfile({ ...base, fixturesDir: missing })).rejects.toThrow('missing: plan-4.expect.json');
+    const forged = await textFixtures(5);
+    const manifestFile = path.join(path.dirname(forged), 'manifest.json');
+    const manifest = JSON.parse(await readFile(manifestFile, 'utf8'));
+    await writeFile(manifestFile, JSON.stringify({ ...manifest, golden_sha256: '0'.repeat(64) }));
+    await expect(qualifyProfile({ ...base, fixturesDir: forged })).rejects.toThrow('golden_sha256 does not match');
+    const flat = path.join(await tmp('ca-text-flat-'), 'text-v1');
+    await mkdir(flat);
+    await expect(qualifyProfile({ ...base, fixturesDir: flat })).rejects.toThrow("golden set's composer/ directory");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('binds the manifest digest, the scorer version and T9/T10 into the eval block; a slow p95 fails', async () => {
+    const fixturesDir = await textFixtures(5);
+    const manifest = JSON.parse(await readFile(path.join(path.dirname(fixturesDir), 'manifest.json'), 'utf8'));
+    const outDir = await preparedOutDir();
+    const ok = await qualifyProfile({
+      apiKey: KEY, outDir, profile: textProfile, fixturesDir, maxRequests: 20, spendCapMicros: 2_000_000, confirmPaidRequests: true,
+      textScorer: scorer(true), fetch: textResponses() as unknown as typeof fetch,
+    });
+    expect(ok.artifact?.eval).toMatchObject({ golden_sha256: manifest.golden_sha256, metrics: { t10_fixtures_total: 5, t10_fixtures_passed: 5, t9_timeouts: 0, t1_valid_share: 1 } });
+    // T9: a profile whose timeout every reply exceeds cannot qualify, even with every content check passing.
+    const slowProfile = { ...textProfile, timeoutMs: 1, qualificationArtifactId: 'composer-slow' };
+    const slowFetch = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return (textResponses() as unknown as () => Promise<Response>)();
+    });
+    const slow = await qualifyProfile({
+      apiKey: KEY, outDir: await preparedOutDir(), profile: slowProfile, fixturesDir, maxRequests: 40, spendCapMicros: 2_000_000, confirmPaidRequests: true,
+      textScorer: scorer(true), fetch: slowFetch as unknown as typeof fetch,
+    });
+    // Either the transport times out (a T9 timeout) or the p95 is over the timeout: never a pass.
+    expect(slow.artifact).toMatchObject({ result: 'fail', eval: { pass: false } });
   });
 });

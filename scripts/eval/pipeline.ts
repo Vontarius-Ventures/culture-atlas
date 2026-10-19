@@ -1,5 +1,6 @@
-import { access } from 'node:fs/promises';
+import { GUARDRAIL_VERSION, guardEnrichment, guardQuickRead } from '../../packages/providers/src/vlm/guardrails';
 import {
+  mergeEnrichmentContext,
   toVlmAnalysis,
   type VlmAnalysis,
   type VlmEnrichment,
@@ -159,40 +160,18 @@ export function guardedPipeline(guards: GuardModule): ReadingPipeline {
   };
 }
 
-function isGuardModule(value: unknown): value is GuardModule {
-  const m = value as Partial<GuardModule> | null;
-  return (
-    !!m &&
-    typeof m.GUARDRAIL_VERSION === 'string' &&
-    typeof m.guardQuickRead === 'function' &&
-    typeof m.guardEnrichment === 'function' &&
-    typeof m.mergeEnrichmentContext === 'function'
-  );
-}
-
 /**
- * Loads the runtime guardrails (packages/providers/src/vlm/guardrails.ts, P1)
- * and the context merge from vlm/types.ts. Returns null when they are not
- * present, so callers fail closed: vision qualification refuses to run and
- * the guarded replay reports itself as unavailable.
+ * The runtime guardrails (packages/providers/src/vlm/guardrails.ts) and the
+ * context merge from vlm/types.ts, imported statically: the evaluation always
+ * scores the exact guard code production runs, and there is no "module
+ * absent" path that could skip the guarded replay or qualification.
  */
-export async function loadGuardModule(): Promise<GuardModule | null> {
-  const base = new URL('../../packages/providers/src/vlm/', import.meta.url);
-  const file = new URL('guardrails.ts', base);
-  try {
-    await access(file);
-  } catch {
-    return null;
-  }
-  // Present but broken is an error, never a silent "no guards".
-  const guardrails = (await import(/* @vite-ignore */ file.href)) as Record<string, unknown>;
-  const types = (await import(/* @vite-ignore */ new URL('types.ts', base).href)) as Record<string, unknown>;
-  const mod = {
-    GUARDRAIL_VERSION: guardrails.GUARDRAIL_VERSION,
-    guardQuickRead: guardrails.guardQuickRead,
-    guardEnrichment: guardrails.guardEnrichment,
-    mergeEnrichmentContext: guardrails.mergeEnrichmentContext ?? types.mergeEnrichmentContext,
-  };
-  if (!isGuardModule(mod)) throw new Error('vlm/guardrails.ts does not export the §4.1 guard surface');
-  return mod;
-}
+export const RUNTIME_GUARDS: GuardModule = {
+  GUARDRAIL_VERSION,
+  guardQuickRead,
+  guardEnrichment,
+  mergeEnrichmentContext,
+};
+
+/** The guarded pipeline over the runtime guardrails (what production publishes). */
+export const runtimeGuardedPipeline: ReadingPipeline = guardedPipeline(RUNTIME_GUARDS);

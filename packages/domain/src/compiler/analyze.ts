@@ -15,11 +15,13 @@ import {
   type Stage1Guard,
   type VlmCandidate,
   type VlmEnrichment,
+  brandCorroboratedIds,
   candidateNameKey,
   confirmationVerdict,
   guardEnrichment,
   guardQuickRead,
   mergeEnrichmentContext,
+  stage2Request,
   validateVision,
 } from '@culture-atlas/providers';
 import { activeKills } from '../flags/feature-flags';
@@ -33,7 +35,7 @@ import type { Owner } from '../principal';
 import type { Focus } from '../schemas/common';
 import { activateAnalysis, ensureAnalysisRow } from '../services/analyses';
 import { foodExclusionsFor } from '../services/onboarding';
-import { violatedExclusions } from '../composer/dietary';
+import { stripSafetyClaims, violatedExclusions } from '../composer/dietary';
 import { JobBudget } from './budget';
 import { composeDishIdeas } from './dishes';
 import { reciprocalRankFusion, selectDiverse, type RankedList } from './fusion';
@@ -342,7 +344,12 @@ export class CaptureCompiler {
     // ---- resolve -----------------------------------------------------------
     await ctx.setStage('resolving');
     t0 = Date.now();
-    const resolved = await ctx.runStage<ResolveOutput>('resolve', () => this.resolve(guarded.analysis, rejectedNames, rejectedIds, confirmed, correction?.replacement));
+    // Brand-like claims never publish at stage 1, so nothing is brand-corroborated yet; a reviewed
+    // example (no guard decisions) falls back to the grounding's own text check.
+    const stage1Corroborated = observed.example ? undefined : brandCorroboratedIds(guarded.decisions);
+    const resolved = await ctx.runStage<ResolveOutput>('resolve', () =>
+      this.resolve(guarded.analysis, rejectedNames, rejectedIds, confirmed, correction?.replacement, stage1Corroborated),
+    );
     await this.publishReferences(resolved);
     await this.traceStage('resolve', t0, {
       resolved: resolved.refs.filter((r) => r.qloo).length,
@@ -718,6 +725,8 @@ export class CaptureCompiler {
     rejectedIds: ReadonlySet<string>,
     confirmed: { id: string; name: string; type: ReferenceType; externalIds: Record<string, unknown> } | null,
     replacement: { name: string; type?: string } | undefined,
+    /** G-BRAND-CORROBORATE results by candidate id, when the guardrails ran (undefined: text fallback). */
+    corroboratedIds?: ReadonlySet<string>,
   ): Promise<ResolveOutput> {
     const { ctx } = this;
     const caps = ctx.providers.qloo.capability();
@@ -730,7 +739,11 @@ export class CaptureCompiler {
       .sort((a, b) => b.certainty - a.certainty)
       .slice(0, LIMITS.vlmCandidatesToResolve);
 
-    const work: { candidate: VlmCandidate; userSelected: boolean }[] = candidates.map((c) => ({ candidate: c, userSelected: false }));
+    const work: ResolveWork[] = candidates.map((c) => ({
+      candidate: c,
+      userSelected: false,
+      ...(corroboratedIds ? { corroborated: corroboratedIds.has(c.id) } : {}),
+    }));
     if (replacement) {
       work.unshift({
         userSelected: true,
@@ -1010,7 +1023,7 @@ export class CaptureCompiler {
     if (!object) return { enrichment: null, model: null, errorCode: 'image_missing' };
     const counter = attemptCounter();
     const started = Date.now();
-    const stage1 = { title: analysis.title, candidates: [...analysis.candidates, ...held].map((c) => c.name) };
+    const stage1 = stage2Request(analysis, held);
     const request = { model_capability: ctx.providers.vlmEnrich.id, focus: (ctx.payload.focus as Focus).kind, stage1_candidates: stage1.candidates.length };
     try {
       const res = await ctx.providers.vlmEnrich.enrichImage(
@@ -1105,6 +1118,8 @@ export class CaptureCompiler {
     const vetoed = new Set(stage2.advisoryVetoes.map(candidateNameKey));
     const heldIds = new Set(guarded.held.map((c) => c.id));
     const additions = stage2.publishNow.filter((c) => !rejectedKeys.has(normalizeName(c.name)));
+    // Only a brand claim whose own word was read at stage 2 (G-BRAND-CORROBORATE) is searched as a brand.
+    const corroborated = brandCorroboratedIds(stage2.decisions);
     const nonAnchor = new Set(stage2.publishNow.filter((c) => stage2.nonAnchorIds.includes(c.id)).map((c) => candidateNameKey(c.name)));
 
     // Qloo resolution stays capped at LIMITS.vlmCandidatesToResolve candidates per analysis.
@@ -1118,7 +1133,7 @@ export class CaptureCompiler {
     const q: QlooResolveState = { usable: qlooUsable && !this.pastSoftDeadline(), state: qlooUsable ? 'ok' : 'unavailable' };
     const fresh = toResolve.length
       ? await this.resolveCandidates(
-          toResolve.map((candidate) => ({ candidate, userSelected: false })),
+          toResolve.map((candidate) => ({ candidate, userSelected: false, corroborated: corroborated.has(candidate.id) })),
           merged,
           q,
         )
@@ -1513,7 +1528,8 @@ export class CaptureCompiler {
           rank: this.rankFor(order, 'eat', position++),
           title: idea.name,
           externalIds: {},
-          displayReason: idea.reason,
+          // Shown as written: a dietary safety promise is never ours to make (as in movie-night plans).
+          displayReason: stripSafetyClaims(idea.reason) || 'A dish idea inspired by a reference in your photo.',
           origin: 'vlm_creative',
           providerQueryIds: providerQueryId ? [providerQueryId] : [],
           contributingReferenceIds: idea.referenceIds,

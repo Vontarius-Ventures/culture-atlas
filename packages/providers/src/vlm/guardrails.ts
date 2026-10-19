@@ -600,6 +600,30 @@ export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stag
   };
 }
 
+/**
+ * What stage 2 is asked to check, exactly as production sends it: the
+ * published title and the published candidates followed by the held claims
+ * (the only way a held claim can publish). Shared by the compiler, the
+ * qualification harness and the live evaluation so all three send the same
+ * stage-2 input.
+ */
+export function stage2Request(published: VlmAnalysis, held: readonly VlmCandidate[]): { title: string; candidates: string[] } {
+  return { title: published.title, candidates: [...published.candidates, ...held].map((c) => c.name) };
+}
+
+/**
+ * Ids of the candidates that published with G-BRAND-CORROBORATE (their brand
+ * word was transcribed at stage 2 and the claim was confirmed). Only these
+ * brand-like candidates may be searched in Qloo as brands (grounding §5).
+ */
+export function brandCorroboratedIds(
+  decisions: readonly { candidateId: string; action: string; rules: readonly string[] }[],
+): Set<string> {
+  return new Set(
+    decisions.filter((d) => d.action === 'publish' && d.rules.includes('G-BRAND-CORROBORATE')).map((d) => d.candidateId),
+  );
+}
+
 // ---- stage 2 -------------------------------------------------------------------
 
 /**

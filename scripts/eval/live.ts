@@ -11,9 +11,12 @@ import {
   QlooHttpProvider,
   StructuredResponseRunner,
   boundJpegForProfile,
+  brandCorroboratedIds,
   catalogCompatible,
   createConcentrateTransport,
+  guardQuickRead,
   readingForProfile,
+  stage2Request,
   type ModelProfile,
   type ModelProfiles,
   type QlooEntity,
@@ -50,12 +53,12 @@ export interface LedgerEntry {
 /** P3's grounding surface (§5): planLookup + acceptMatch. Loaded only for --qloo. */
 export interface GroundingModule {
   GROUNDING_VERSION: string;
-  planLookup(c: VlmAnalysis['candidates'][number]):
+  planLookup(c: VlmAnalysis['candidates'][number] & { corroborated?: boolean }):
     | { kind: 'none'; reason: string }
     | { kind: 'tags'; query: string; tagTypes: string[] }
     | { kind: 'search'; query: string; types: string[] };
   acceptMatch(
-    c: VlmAnalysis['candidates'][number],
+    c: VlmAnalysis['candidates'][number] & { corroborated?: boolean },
     plan: unknown,
     results: readonly (QlooEntity | QlooTag)[],
   ): { match: QlooEntity | QlooTag | null; rule: string; reason: string };
@@ -228,7 +231,11 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
         const res = await enricher.enrichImage(
           {
             image: { bytes: bounded.bytes, mediaType: 'image/jpeg' },
-            stage1: { title: quick.analysis.title, candidates: quick.analysis.candidates.map((c) => c.name) },
+            // Exactly what production sends: the guarded title, published names, then held names.
+            stage1: (() => {
+              const g1 = guardQuickRead(quick.analysis, { twoStage: true });
+              return stage2Request(g1.analysis, g1.held);
+            })(),
           },
           { maxRetries: 0, ...identity(photo.id, 'stage2') },
         );
@@ -272,11 +279,16 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     );
 
   const runs: ScoredRun[] = [];
-  const finals = new Map<string, VlmAnalysis['candidates']>();
+  // Each final candidate carries its G-BRAND-CORROBORATE result, as the compiler passes it to grounding.
+  const finals = new Map<string, (VlmAnalysis['candidates'][number] & { corroborated: boolean })[]>();
   for (const r of recordings) {
-    const { decisions: _d, finalCandidates, ...run } = opts.pipeline.run(r);
+    const { decisions, finalCandidates, ...run } = opts.pipeline.run(r);
     runs.push(run);
-    finals.set(r.photoId, finalCandidates);
+    const corroborated = brandCorroboratedIds(decisions);
+    finals.set(
+      r.photoId,
+      finalCandidates.map((c) => ({ ...c, corroborated: corroborated.has(c.id) })),
+    );
   }
 
   let qlooSent = 0;

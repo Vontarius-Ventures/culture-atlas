@@ -34,8 +34,8 @@
  */
 import { fetchCatalog, qualifyProfile, readApiKey } from './qualify-concentrate-lib';
 import { loadModelProfiles } from '../packages/providers/src/concentrate/profiles';
-import { loadTextScorer } from './eval/golden-photos';
-import { guardedPipeline, loadGuardModule } from './eval/pipeline';
+import { runtimeTextScorer } from './eval/golden-photos';
+import { runtimeGuardedPipeline } from './eval/pipeline';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -80,19 +80,11 @@ if (!profileFile || !role || (photoRole ? !goldenDir || !photosDir : !fixturesDi
   );
   process.exit(2);
 }
-// Photo roles are scored through the runtime guardrails; text roles through the content checks.
-// Both fail closed: without the module, nothing is qualified.
-const pipeline = photoRole ? await loadGuardModule().then((g) => (g ? guardedPipeline(g) : undefined)) : undefined;
-if (photoRole && !pipeline) {
-  console.error('The runtime guardrails (packages/providers/src/vlm/guardrails.ts) are not present; photo roles cannot be qualified.');
-  process.exit(2);
-}
+// Photo roles are scored through the runtime guardrails, text roles through the content checks;
+// both are imported statically, so qualification always runs the code production runs.
+const pipeline = photoRole ? runtimeGuardedPipeline : undefined;
 const textRole = role === 'research_text' || role === 'composer';
-const textScorer = textRole ? ((await loadTextScorer()) ?? undefined) : undefined;
-if (textRole && !textScorer) {
-  console.error('The text content checks (scripts/eval/text-scorer.ts) are not present; text roles cannot be qualified.');
-  process.exit(2);
-}
+const textScorer = textRole ? runtimeTextScorer : undefined;
 const profiles = loadModelProfiles(profileFile);
 const profile = profiles[role as 'vision_photo'];
 if (!profile) {

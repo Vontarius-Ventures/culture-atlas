@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { analyses, captures, getJobById, references, type ServiceContext } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
 import { ProviderError, UnavailableVlm, type VlmProvider } from '@culture-atlas/providers';
+import { FakeTextModel } from '@culture-atlas/providers/testing';
 import { anonCtx, accountCtx, runJobs, testJpeg, vlmFixture, world } from './test-world';
 
 const db = getTestDb();
@@ -95,6 +96,31 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     // Uploading never changes taste.
     const { rows: prefs } = await db.query('SELECT 1 FROM preference_events WHERE owner_session_id = $1', [(ctx.principal as { sessionId: string }).sessionId]);
     expect(prefs).toHaveLength(0);
+  });
+
+  it('never shows a dietary safety promise in an Eat reason (the composer text is filtered as in plans)', async () => {
+    const composer = new FakeTextModel((req) => {
+      const refs = JSON.parse(req.prompt.split('\n')[2]!) as { name: string }[];
+      return {
+        dishes: [
+          { name: 'Fixture Safe Bites', cuisine: 'Italian', reason: 'Completely nut-free and safe for allergies. A nod to the aperitivo mood.', reference_names: [refs[0]!.name] },
+          { name: 'Fixture Free Plate', cuisine: 'Italian', reason: 'Allergen-free.', reference_names: [refs[0]!.name] },
+        ],
+      };
+    });
+    const { providers } = world({ overrides: { composer } });
+    const ctx = await anonCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    const { rows } = await db.query<{ title: string; display_reason: string }>(
+      `SELECT r.title, r.display_reason FROM recommendations r JOIN analyses a ON a.id = r.analysis_id
+        WHERE a.capture_id = $1 AND r.category = 'eat' ORDER BY r.rank`,
+      [capture_id],
+    );
+    expect(rows.map((r) => r.title)).toEqual(['Fixture Safe Bites', 'Fixture Free Plate']);
+    expect(rows[0]!.display_reason).toBe('A nod to the aperitivo mood.');
+    expect(rows[1]!.display_reason).toBe('A dish idea inspired by a reference in your photo.');
+    for (const r of rows) expect(r.display_reason).not.toMatch(/free|safe for/i);
   });
 
   it('keeps reference results and marks discoveries unavailable when Qloo is not configured (no fabrication)', async () => {

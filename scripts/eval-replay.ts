@@ -12,7 +12,7 @@
 import { access, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { loadGoldenSet, loadThresholds } from './eval/labels';
-import { guardedPipeline, loadGuardModule, unguardedPipeline, type ReadingPipeline } from './eval/pipeline';
+import { runtimeGuardedPipeline, unguardedPipeline, type ReadingPipeline } from './eval/pipeline';
 import { loadPhase4Recordings, loadReplayFixtures, runReplay, summarize } from './eval/replay';
 import { scorerTeeth } from './eval/scorer';
 
@@ -43,9 +43,7 @@ const residual = loaded.filter((r) => 'gate' in r && !(r as { gate: boolean }).g
 const pipelines: ReadingPipeline[] = [];
 if (which === 'unguarded' || which === 'both') pipelines.push(unguardedPipeline);
 if (which === 'guarded' || which === 'both') {
-  const guards = await loadGuardModule();
-  if (guards) pipelines.push(guardedPipeline(guards));
-  else console.log('[eval-replay] guardrails module not present (vlm/guardrails.ts): guarded replay skipped.');
+  pipelines.push(runtimeGuardedPipeline);
 }
 const results = pipelines.map((p) => runReplay(golden, recordings, p, thresholds, mode));
 console.log(`[eval-replay] ${recordings.length} recording(s), thresholds ${thresholds.version} (${sha256.slice(0, 12)})`);

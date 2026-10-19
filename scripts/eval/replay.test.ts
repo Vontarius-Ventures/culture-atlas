@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { REQUIRED_GUARDRAIL_VERSION } from '../../packages/providers/src/concentrate/profiles';
 import { VlmEnrichment, VlmQuickRead } from '../../packages/providers/src/vlm/types';
 import { loadGoldenSet, loadThresholds } from './labels';
-import { guardedPipeline, loadGuardModule, unguardedPipeline } from './pipeline';
+import { GUARDRAIL_VERSION } from '../../packages/providers/src/vlm/guardrails';
+import { RUNTIME_GUARDS, runtimeGuardedPipeline, unguardedPipeline } from './pipeline';
 import { loadPhase4Recordings, loadReplayFixtures, runReplay } from './replay';
 import { SCORER_VERSION, scorerTeeth } from './scorer';
 
@@ -20,8 +21,6 @@ const golden = await loadGoldenSet(path.join(root, 'fixtures/eval/golden-v1'));
 const { thresholds, sha256: thresholdsSha } = await loadThresholds(path.join(root, 'fixtures/eval/thresholds.json'));
 const { manifest, recordings } = await loadReplayFixtures(path.join(root, 'fixtures/eval/replay-v1'));
 const gated = recordings.filter((r) => r.gate);
-// The guardrails module (P1) is loaded when present; a present but malformed module throws here.
-const guards = await loadGuardModule();
 /** Readings the providers' current schemas parse (v2-shape recordings need the reading-v2 schema). */
 const parseable = (r: (typeof recordings)[number]) =>
   VlmQuickRead.safeParse(r.quick).success && (r.enrichment === undefined || VlmEnrichment.safeParse(r.enrichment).success);
@@ -47,7 +46,8 @@ describe('replay-v1 recordings (fixtures/eval/replay-v1)', () => {
     expect(manifest.scorer_version).toBe(SCORER_VERSION);
     expect(manifest.thresholds_sha256).toBe(thresholdsSha);
     expect(manifest.guardrail_version).toBe(REQUIRED_GUARDRAIL_VERSION);
-    if (guards) expect(guards.GUARDRAIL_VERSION).toBe(REQUIRED_GUARDRAIL_VERSION);
+    expect(RUNTIME_GUARDS.GUARDRAIL_VERSION).toBe(REQUIRED_GUARDRAIL_VERSION);
+    expect(GUARDRAIL_VERSION).toBe(REQUIRED_GUARDRAIL_VERSION);
   });
 });
 
@@ -64,12 +64,10 @@ describe('M17: the scorer has teeth', () => {
   });
 });
 
-// Runs whenever packages/providers/src/vlm/guardrails.ts exists (P1). Until that module is
-// merged there is nothing to replay through, and photo qualification refuses to run
-// (qualify-concentrate.test.ts "fails closed without the guarded pipeline").
-describe.runIf(guards)('guarded replay (§7.3)', () => {
+// The runtime guardrails are imported statically: this block always runs in CI.
+describe('guarded replay (§7.3)', () => {
   it('passes every replay gate on the gated recordings', () => {
-    const result = runReplay(golden, gated, guardedPipeline(guards!), thresholds, 'replay');
+    const result = runReplay(golden, gated, runtimeGuardedPipeline, thresholds, 'replay');
     const tune = result.scorecard.splits.tune!;
     expect(tune.failures).toEqual([]);
     expect(tune.notApplicable).toEqual([]);
@@ -81,7 +79,7 @@ describe.runIf(guards)('guarded replay (§7.3)', () => {
   });
 
   it('records a decision for every candidate the reading emitted at stage 1', () => {
-    const result = runReplay(golden, gated, guardedPipeline(guards!), thresholds, 'replay');
+    const result = runReplay(golden, gated, runtimeGuardedPipeline, thresholds, 'replay');
     for (const rec of gated) {
       const decisions = result.decisions[`${rec.photoId}/${rec.runId}`]!;
       expect(decisions.length).toBeGreaterThan(0);

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { ModelRole } from '../model-gateway/types';
+import { GUARDRAIL_VERSION } from '../vlm/guardrails';
 
 /** Every model role a profile can qualify (ModelRole). */
 export const MODEL_ROLE_VALUES = [
@@ -141,12 +142,11 @@ export const REQUIRED_GOLDEN_SET: Partial<Record<ModelRole, string>> = {
 };
 
 /**
- * Guardrail version a photo role's evaluation must have run with. It must
- * equal GUARDRAIL_VERSION in vlm/guardrails.ts (asserted by
- * scripts/eval/replay.test.ts). Changing a guard rule bumps that version and
- * un-qualifies both photo roles until they are re-evaluated.
+ * Guardrail version a photo role's evaluation must have run with: the
+ * runtime GUARDRAIL_VERSION of vlm/guardrails.ts. Changing a guard rule bumps
+ * that version and un-qualifies both photo roles until they are re-evaluated.
  */
-export const REQUIRED_GUARDRAIL_VERSION = 'guard-v1';
+export const REQUIRED_GUARDRAIL_VERSION: string = GUARDRAIL_VERSION;
 
 const PHOTO_EVAL_ROLES: readonly ModelRole[] = ['vision_photo', 'vision_photo_enrich'];
 

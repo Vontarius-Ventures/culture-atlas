@@ -1,4 +1,4 @@
-import type { QlooEntity, QlooEntityType, QlooTag } from '@culture-atlas/providers';
+import { brandHeadToken, type QlooEntity, type QlooEntityType, type QlooTag } from '@culture-atlas/providers';
 import { canonicalTokens, nameTokens, sameTokens, strictSubset } from './text';
 
 export { canonicalTokens } from './text';
@@ -102,12 +102,15 @@ const MEDIUM = /\b(still[- ]?life|painting|painted|illustrat\w*|drawing|sketch|r
 const HEAD_SKIP: ReadonlySet<string> = new Set(['the', 'a', 'an', 'of', 'and', 'brand', 'logo', 'official']);
 
 /**
- * First distinctive token of a brand-like name ("Spalding NBA basketball" ->
- * "spalding", "Cannondale CAAD8" -> "cannondale"). The guardrails' lexicon
- * version (P1) supersedes this when it sets `corroborated`; this one only
- * backs the text check below.
+ * The brand's own word, as G-BRAND-CORROBORATE reads it: the guardrails'
+ * lexicon-based brandHeadToken ("Spalding NBA basketball" -> "spalding",
+ * "Cannondale CAAD8" -> "cannondale"), so the token Qloo is searched for is
+ * the token that was transcribed in the photo. Falls back to the first
+ * distinctive token when the lexicon finds none.
  */
 export function headToken(name: string): string | null {
+  const head = brandHeadToken(name);
+  if (head && head.length >= 3 && !HEAD_SKIP.has(head) && !/^\d+$/.test(head)) return head;
   for (const t of nameTokens(name)) if (t.length >= 3 && !HEAD_SKIP.has(t) && !/^\d+$/.test(t)) return t;
   return null;
 }

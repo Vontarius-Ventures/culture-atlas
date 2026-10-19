@@ -1,50 +1,95 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { captures, type ServiceContext } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb } from '@culture-atlas/domain/testing';
-import { VlmAnalysis, type QlooEntity, type QlooInsightsRequest, type QlooTag } from '@culture-atlas/providers';
+import {
+  VlmEnrichment,
+  VlmQuickRead,
+  toVlmAnalysis,
+  type CapabilityEntry,
+  type QlooEntity,
+  type QlooInsightsRequest,
+  type QlooTag,
+  type VlmEnricher,
+  type VlmEnrichInput,
+  type VlmEnrichResult,
+  type VlmProvider,
+  type VlmResult,
+} from '@culture-atlas/providers';
 import { FakeQloo } from '@culture-atlas/providers/testing';
 import { anonCtx, runJobs, testJpeg, world } from './test-world';
 
 /**
  * Qloo grounding in the compiler (docs/quality-plan.md §5) on the real Worker
- * and database: which candidates reach Qloo, which results are accepted, what
- * a doubtful match is stored as, and what is recorded. The reading and every
- * Qloo result are hand-written FIXTURES shaped like the recorded live
- * failures; nothing here is provider output.
+ * and database, behind the reading guardrails (§4) exactly as production runs
+ * them: a two-stage reading, brand claims held at stage 1 and searched in Qloo
+ * only after stage 2 transcribed their name (G-BRAND-CORROBORATE). Covers
+ * which candidates reach Qloo, which results are accepted, what a doubtful
+ * match is stored as, and what is recorded. The readings and every Qloo
+ * result are hand-written FIXTURES shaped like the recorded live failures;
+ * nothing here is provider output.
  */
 const db = getTestDb();
 afterAll(closeTestDb);
 
+const AVAILABLE: CapabilityEntry = { status: 'available', provider: 'fake' };
 const ent = (id: string, name: string, type: string, extra: Partial<QlooEntity> = {}): QlooEntity => ({ entity_id: id, name, types: [type], properties: {}, tags: [], ...extra });
-const candidate = (id: string, name: string, type: string, relation: 'depicted' | 'resembles', certainty: number, categories: string[], tagQueries: string[] = []) => ({
-  id,
-  name,
-  type,
-  relation,
-  rationale: 'fixture',
-  certainty,
-  region_ids: [],
-  suggested_categories: categories,
-  tag_queries: tagQueries,
-});
 
-const READING = VlmAnalysis.parse({
+const QUICK = VlmQuickRead.parse({
   title: 'A bicycle by a palace',
   interpretation: 'A bicycle leans on railings in front of a neoclassical palace.',
-  observations: [{ id: 'o1', text: 'Road bicycle with a white frame', kind: 'object', region_ids: [] }],
-  visible_text: [{ text: 'FIXTUREDALE', region_id: null }],
   candidates: [
-    candidate('c1', 'Fixturedale', 'brand', 'depicted', 0.9, ['play']), // read on the frame: searched, suffix accepted
-    candidate('c2', 'Fixture Palais', 'place', 'depicted', 0.9, ['watch']), // two same-named places: doubt
-    candidate('c3', 'Neoclassicism', 'style', 'resembles', 0.8, ['wear', 'watch'], ['neoclassical']), // decor, not the music genre
-    candidate('c4', 'Road bicycle', 'object', 'depicted', 0.95, ['play']), // objects never reach /search
-    candidate('c5', 'Fixturo Civic', 'brand', 'resembles', 0.35, ['wear']), // a make guessed from shape: not searched
+    // Read on the frame: held at stage 1, searched once stage 2 transcribes it, suffix accepted.
+    { name: 'Fixturedale', type: 'brand', relation: 'depicted', certainty: 0.9, domain: 'sport', evidence: 'logo', evidence_text: 'FIXTUREDALE', tag_query: null },
+    // Two same-named places: doubt.
+    { name: 'Fixture Palais', type: 'place', relation: 'resembles', certainty: 0.9, domain: 'place', evidence: 'distinctive_form', evidence_text: null, tag_query: null },
+    // Decor, not the music genre.
+    { name: 'Neoclassicism', type: 'style', relation: 'resembles', certainty: 0.8, domain: 'architecture', evidence: 'distinctive_form', evidence_text: null, tag_query: 'neoclassical' },
+    // A generic object: an observation, never a reference, never searched.
+    { name: 'Road bicycle', type: 'object', relation: 'depicted', certainty: 0.95, domain: 'sport', evidence: 'distinctive_form', evidence_text: null, tag_query: null },
+    // A make guessed from shape: held, "supported" by stage 2 but never transcribed, so dropped and never searched.
+    { name: 'Fixturo Civic', type: 'brand', relation: 'resembles', certainty: 0.4, domain: 'vehicle', evidence: 'context', evidence_text: null, tag_query: null },
   ],
-  regions: [],
-  uncertainty: { overall: 'medium', notes: [] },
-  competing_subjects: [],
   quality: { usable: true, issue: null },
 });
+
+const ENRICHMENT = VlmEnrichment.parse({
+  observations: [{ text: 'White frame with thin tubes', kind: 'object' }],
+  visible_text: ['FIXTUREDALE'],
+  illegible_text_present: false,
+  confirmed: [
+    { name: 'Fixture Palais', rationale: 'Colonnaded facade', verdict: 'supported' },
+    { name: 'Neoclassicism', rationale: 'Columns and pediment', verdict: 'supported' },
+    { name: 'Fixturedale', rationale: 'Wordmark on the down tube', verdict: 'supported' },
+    { name: 'Fixturo Civic', rationale: 'The car behind has that shape', verdict: 'supported' },
+  ],
+  additional_candidates: [],
+  regions: [],
+  uncertainty: { overall: 'low', notes: [] },
+  competing_subjects: [],
+});
+
+class QuickVlm implements VlmProvider {
+  readonly id = 'vlm:fake-quick-v2';
+  capability() {
+    return AVAILABLE;
+  }
+  async analyzeImage(): Promise<VlmResult> {
+    const quick = VlmQuickRead.parse(structuredClone(QUICK));
+    return { analysis: toVlmAnalysis(quick), quick, model: 'fake-quick-v2', durationMs: 1 };
+  }
+}
+
+class FixedEnricher implements VlmEnricher {
+  readonly id = 'vlm-enrich:fake-v2';
+  readonly calls: VlmEnrichInput[] = [];
+  capability() {
+    return AVAILABLE;
+  }
+  async enrichImage(input: VlmEnrichInput): Promise<VlmEnrichResult> {
+    this.calls.push(input);
+    return { enrichment: VlmEnrichment.parse(structuredClone(ENRICHMENT)), model: 'fake-enrich-v2', durationMs: 1 };
+  }
+}
 
 function groundingQloo(insightCalls: QlooInsightsRequest[]) {
   return new FakeQloo(
@@ -86,10 +131,15 @@ describe('Qloo grounding in the compiler (quality plan §5)', () => {
   it('asks Qloo only about evidenced, type-compatible candidates and accepts only exact names', async () => {
     const insightCalls: QlooInsightsRequest[] = [];
     const qloo = groundingQloo(insightCalls);
-    const { providers } = world({ vlm: READING, overrides: { qloo } });
+    const enricher = new FixedEnricher();
+    const { providers } = world({ overrides: { vlm: new QuickVlm(), vlmEnrich: enricher, qloo } });
     const ctx = await anonCtx(providers);
     const { capture_id, job_id } = await submit(ctx);
     await runJobs(ctx, [job_id]);
+
+    // Stage 2 was asked about the published candidates and both held brand claims.
+    expect(enricher.calls).toHaveLength(1);
+    expect(enricher.calls[0]!.stage1.candidates).toEqual(['Fixture Palais', 'Neoclassicism', 'Fixturedale', 'Fixturo Civic']);
 
     // Q-TYPE / Q-EVIDENCE: the object and the uncorroborated make were never sent.
     const lookups = qloo.calls.filter((c) => c.op === 'search' || c.op === 'tags').map((c) => c.req as { query: string; types?: string[]; tagTypes?: string[] });
@@ -106,14 +156,15 @@ describe('Qloo grounding in the compiler (quality plan §5)', () => {
       [capture_id],
     );
     const byName = new Map(refs.map((r) => [r.name, r]));
-    // Accepted: the brand with a corporate suffix, and the decor tag (not the music genre).
-    expect(byName.get('Fixturedale Bicycles')).toMatchObject({ resolution_status: 'resolved', is_anchor: true, canonical_key: 'qloo:FIXTURE-BRAND-0201' });
+    // Accepted: the brand with a corporate suffix (appended after stage 2, so not a stage-1 anchor),
+    // and the decor tag (not the music genre).
+    expect(byName.get('Fixturedale Bicycles')).toMatchObject({ resolution_status: 'resolved', is_anchor: false, canonical_key: 'qloo:FIXTURE-BRAND-0201' });
     expect(byName.get('Neoclassical')).toMatchObject({ resolution_status: 'resolved', is_anchor: true, canonical_key: 'qloo_tag:urn:tag:decor:qloo:fixture_neoclassical' });
     // Q-PLACE doubt: stored under the candidate's own name, no Qloo id, never an anchor.
     expect(byName.get('Fixture Palais')).toMatchObject({ resolution_status: 'unmatched', is_anchor: false, canonical_key: 'place:fixture-palais', external_ids: {} });
-    // Not searched: kept as the candidate's own reference.
-    expect(byName.get('Road bicycle')).toMatchObject({ resolution_status: 'unmatched', is_anchor: false });
-    expect(byName.get('Fixturo Civic')).toMatchObject({ resolution_status: 'unmatched', is_anchor: false });
+    // Never references: the generic object is an observation, the shape-guessed make was dropped.
+    expect(byName.has('Road bicycle')).toBe(false);
+    expect(byName.has('Fixturo Civic')).toBe(false);
     // No look-alike name was ever stored.
     expect(refs.some((r) => /Sessions|Racing Club/.test(r.name))).toBe(false);
 
@@ -129,20 +180,31 @@ describe('Qloo grounding in the compiler (quality plan §5)', () => {
     expect(accept['Fixture Palais']).toEqual({ matched: false, rule: 'Q-PLACE', reason: 'same_name_in_several_places', grounding_version: 'ground-v1' });
     expect(accept['Neoclassicism']).toMatchObject({ matched: true, rule: 'Q-NAME' });
 
-    // Skipped lookups write no provider query; their reason is in the resolve trace.
+    // The resolve trace records each grounding decision; the guard trace says why the others never got there.
     const { rows: trace } = await db.query<{ data: { grounding: { candidate: string; lookup: string; rule: string; reason: string; doubt: boolean }[] } }>(
       `SELECT data FROM trace_events WHERE job_id = $1 AND name = 'resolve' ORDER BY created_at DESC LIMIT 1`,
       [job_id],
     );
     const g = Object.fromEntries(trace[0]!.data.grounding.map((x) => [x.candidate, x]));
-    expect(g['Road bicycle']).toMatchObject({ lookup: 'none', rule: 'Q-EVIDENCE', reason: 'object_not_searched', doubt: false });
-    expect(g['Fixturo Civic']).toMatchObject({ lookup: 'none', reason: 'brand_not_corroborated' });
     expect(g['Fixture Palais']).toMatchObject({ lookup: 'search', rule: 'Q-PLACE', doubt: true });
+    expect(g['Road bicycle']).toBeUndefined();
+    const { rows: guard } = await db.query<{ data: { stage: number; decisions: { name: string; action: string; rules: string[] }[] } }>(
+      `SELECT data FROM trace_events WHERE job_id = $1 AND name = 'guard' ORDER BY created_at, id`,
+      [job_id],
+    );
+    const decided = (stage: number, name: string) => guard.find((t) => t.data.stage === stage)!.data.decisions.find((d) => d.name === name);
+    expect(decided(1, 'Road bicycle')).toMatchObject({ action: 'demote' });
+    expect(decided(1, 'Fixturedale')).toMatchObject({ action: 'hold' });
+    expect(decided(2, 'Fixturedale')).toMatchObject({ action: 'publish', rules: expect.arrayContaining(['G-BRAND-CORROBORATE']) });
+    expect(decided(2, 'Fixturo Civic')).toMatchObject({ action: 'drop', rules: expect.arrayContaining(['G-BRAND-CORROBORATE']) });
 
-    // Wear insights ask for fashion brands only; the other categories are unfiltered.
-    const wear = insightCalls.find((r) => r.filterType === 'urn:entity:brand')!;
-    expect(wear.filterTags).toEqual(['urn:tag:genre:brand:fashion']);
-    expect(wear.signalEntities).toEqual(['FIXTURE-BRAND-0201']);
+    // Wear insights ask for fashion brands only; the other categories are unfiltered. Stage 1 signals
+    // with the decor tag; the stage-2 fill of thin categories signals with the corroborated brand.
+    const wear = insightCalls.filter((r) => r.filterType === 'urn:entity:brand');
+    expect(wear.length).toBeGreaterThan(0);
+    for (const r of wear) expect(r.filterTags).toEqual(['urn:tag:genre:brand:fashion']);
+    expect(wear[0]!.signalTags).toEqual([{ id: 'urn:tag:decor:qloo:fixture_neoclassical' }]);
+    expect(wear.some((r) => r.signalEntities?.includes('FIXTURE-BRAND-0201'))).toBe(true);
     for (const r of insightCalls.filter((x) => x.filterType !== 'urn:entity:brand')) expect(r.filterTags).toBeUndefined();
   });
 });

@@ -4,8 +4,11 @@ import path from 'node:path';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import type { ModelProfile } from '../../packages/providers/src/index';
 import { fetchCatalog, qualifyProfile } from '../qualify-concentrate-lib';
+import { readFile } from 'node:fs/promises';
 import { TEXT_V1_DIR } from './build-text-fixtures';
+import { runtimeTextScorer } from './golden-photos';
 import { TEXT_FIXTURE_SCHEMAS } from './text-schemas';
+import { TEXT_SCORER_VERSION } from './text-scorer';
 
 /**
  * Offline: the text-v1 golden set runs through the operator qualification
@@ -14,6 +17,7 @@ import { TEXT_FIXTURE_SCHEMAS } from './text-schemas';
  * qualified on another role's prompts. Not a qualification of any live model.
  */
 const KEY = 'synthetic-operator-key-never-written';
+const manifest = JSON.parse(await readFile(path.join(TEXT_V1_DIR, 'manifest.json'), 'utf8')) as { golden_sha256: string };
 const dirs: string[] = [];
 afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true });
@@ -116,12 +120,22 @@ describe('text-v1 through the qualification harness (fake gateway)', () => {
       outDir,
       profile: base,
       fixturesDir: path.join(TEXT_V1_DIR, 'composer'),
+      textScorer: runtimeTextScorer,
       maxRequests: 11,
       spendCapMicros: 1_000_000,
       confirmPaidRequests: true,
       fetch: fetchImpl as unknown as typeof fetch,
     });
-    expect(run.artifact).toMatchObject({ result: 'pass', role: 'composer', requests_sent: 11, fixtures: { total: 11, passed: 11 } });
+    // Every request went through and parsed (transport), but the placeholder replies say
+    // nothing the content checks accept, so the role is not qualified on them.
+    expect(run.artifact).toMatchObject({
+      result: 'fail',
+      role: 'composer',
+      requests_sent: 11,
+      fixtures: { total: 11, passed: 11 },
+      eval: { golden_set: 'text-v1', golden_sha256: manifest.golden_sha256, scorer_version: TEXT_SCORER_VERSION, pass: false },
+    });
+    expect(run.artifact!.eval!.metrics.fixtures_content_passed).toBeLessThan(11);
     const caps = new Map<string, Set<number>>();
     for (const b of bodies) {
       const set = caps.get(b.text.format.name) ?? new Set<number>();
@@ -146,12 +160,14 @@ describe('text-v1 through the qualification harness (fake gateway)', () => {
       outDir,
       profile: research,
       fixturesDir: path.join(TEXT_V1_DIR, 'research_text'),
+      textScorer: runtimeTextScorer,
       maxRequests: 6,
       spendCapMicros: 1_000_000,
       confirmPaidRequests: true,
       fetch: fetchImpl as unknown as typeof fetch,
     });
-    expect(run.artifact).toMatchObject({ result: 'pass', role: 'research_text', requests_sent: 6 });
+    // One interpretive placeholder claim: transport passes, T4 (two kept claims) fails the content checks.
+    expect(run.artifact).toMatchObject({ result: 'fail', role: 'research_text', requests_sent: 6, fixtures: { passed: 6 }, eval: { golden_set: 'text-v1', pass: false } });
     expect(bodies.every((b) => b.text.format.name === 'reference_notes' && b.max_output_tokens === 4000)).toBe(true);
   });
 
@@ -165,6 +181,7 @@ describe('text-v1 through the qualification harness (fake gateway)', () => {
           outDir,
           profile: research,
           fixturesDir: path.join(TEXT_V1_DIR, 'composer'),
+          textScorer: runtimeTextScorer,
           maxRequests: 20,
           spendCapMicros: 1_000_000,
           confirmPaidRequests,
@@ -182,6 +199,7 @@ describe('text-v1 through the qualification harness (fake gateway)', () => {
       outDir,
       profile: base,
       fixturesDir: path.join(TEXT_V1_DIR, 'composer'),
+      textScorer: runtimeTextScorer,
       maxRequests: 11,
       spendCapMicros: 1_000_000,
       confirmPaidRequests: false,
