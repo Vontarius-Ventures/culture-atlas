@@ -77,7 +77,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   // v1 surfaces (design/cultural-atlas-v1 mockups 01–07) keep Capture in the
   // mobile header, top right, as in mockup 04. Library and uploads follow the
   // v2 reference 08 (Capture pill above the bottom bar, Settings in the header).
-  const headerCapture = active === 'discover' || active === 'collections' || active === 'plans';
+  // Settings -> Taste (amendment 2.2 mockup 18) is drawn with the v1 header pill too.
+  const headerCapture =
+    active === 'discover' ||
+    active === 'collections' ||
+    active === 'plans' ||
+    pathname === '/settings/taste';
   useEffect(() => {
     recordRouteChange();
   }, [pathname]);

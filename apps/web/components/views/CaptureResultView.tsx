@@ -309,6 +309,22 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
             <>
               <h1 className="display display--medium">{analysis?.title ?? 'Your photo'}</h1>
               {analysis?.interpretation && <p className="lede">{analysis.interpretation}</p>}
+              {capture.references.length > 0 && (
+                // Screen 16 mockup: the first references as quiet pills under the reading.
+                <ul className="reference-pills" aria-label="References">
+                  {capture.references.slice(0, 3).map((ref) => (
+                    <li key={ref.id}>
+                      {ref.has_page ? (
+                        <Link href={`/references/${ref.id}?capture=${captureId}`}>
+                          {referencePhrase(ref)}
+                        </Link>
+                      ) : (
+                        <span>{referencePhrase(ref)}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </>
           )}
           {capture?.is_example && <p className="example-label">Example result</p>}

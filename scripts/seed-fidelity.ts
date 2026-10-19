@@ -154,6 +154,14 @@ async function main() {
       email,
       await hashPassword(FIXTURE_PASSWORD),
     ]);
+    // Amendment 2.2: both fixture people already went through the taste questionnaire, so
+    // sign-in opens the app (the settings account has only two saves and would otherwise be
+    // sent to /welcome/taste, ONB-06). The questionnaire itself is covered by the v22 runs.
+    await db.query(
+      `INSERT INTO onboarding_states (account_id, required, origin, started_at, completed_at, trigger_checked_at)
+       VALUES ($1, false, 'sign_up', now(), now(), now())`,
+      [id],
+    );
     const principal: Principal = { kind: 'account', accountId: id, sessionId: null, isDemoOwner: false };
     return { id, ctx: createServiceContext(principal, { surface: 'web' }) };
   };
