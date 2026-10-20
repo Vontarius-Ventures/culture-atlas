@@ -113,3 +113,17 @@ Concentrate ≤ 300 requests, Qloo ≤ 200, Wikipedia as needed (polite rate). N
 - Tune split and blind split pass every gate in `fixtures/eval/thresholds.json` (as amended above) on the two-stage run; zero forbidden claims and zero person-identity claims on both.
 - Both photo roles report `qualified`; a real upload reaches `complete`.
 - If the blind split fails, photo roles stay off and the report says exactly which gate and why.
+
+## Round 3: structural change (decided October 20, 2026)
+
+Rounds 1 and 2 each failed their blind run on new edge cases ("players", "photographed", then "Prom", a weak "Scandinavian minimalism", unread "JOY DEFINES"). Each fix extended closed word lists, and each fresh blind set found the next gap. Round 3 changes the approach instead of extending the lists again. Thresholds stay unchanged.
+
+1. **Publish by evidence class, not by word list.**
+   - On any photo where people are present, claims about the people themselves (occasion, event, role, tradition, identity, style-of-person) never publish unless backed by read text. Clothing and objects can still publish.
+   - Stage-2 verdicts `weak` or `unsupported`, and any claim whose only support is "context", never publish as references; they stay as private observations for the inspector.
+   - Keep a read maker (e.g. "BMW") as a text-only brand reference when the full model name is not read.
+2. **Independent semantic verifier from a different model family** (e.g. `vertex/gemini-2.5-flash` on a zero-data-retention route), checking each style, tradition, place and occasion claim against the image before it can publish. It runs in parallel with Qloo resolution so the first section is not delayed; a "no" or "unsure" blocks publication of that claim only. Enabled by default only if it removes forbidden claims on the tune split without dropping coverage below the gate.
+3. **Scorer corrections declared before the freeze:** must-read text may span lines (h40 "ALL YEAR ROUND"); label patterns that match a correctly dropped specific claim are narrowed (as with h26). These are scorer fixes, not threshold changes, and are committed before the new blind set is labelled.
+4. **Composer injection hardening:** a hardened plan-prose prompt (new prompt version) so injected fixture text cannot be echoed; re-qualify the composer.
+5. **Larger fresh blind set (h50+, 24–30 photos)**, labelled before any model run and frozen, with the same no-change-after-blind-run rule. Previously consumed photos join the tune split.
+6. Tune, freeze, single blind run, qualify on pass, real end-to-end upload, review and fix, as before. Budget: Concentrate ≤ 260, Qloo ≤ 150.
