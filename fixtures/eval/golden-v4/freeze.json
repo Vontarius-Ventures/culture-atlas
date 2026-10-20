@@ -126,5 +126,24 @@
       "label_sha256": "9a203a44d5da7fee8dfa63e7bb18dd75b71b1fbbb4ab4ebb7541907cb30997b8",
       "photo_sha256": "25f9f8d31e06d8904e017509f9f5ba0e5c3c32a2985ba502d628fc8dbf607bf4"
     }
+  },
+  "blind_run": {
+    "date": "2026-10-20",
+    "binding_commit": "9164518696feb8c9290200e1db027575a737d8ae",
+    "code_commit": "1db0d4dd993372217da0ea4a2eb333b09ee5408b",
+    "result": "fail",
+    "failed_gates": [
+      "M1",
+      "M2",
+      "M5",
+      "M7",
+      "M11",
+      "M15"
+    ],
+    "requests": {
+      "concentrate": 60,
+      "qloo": 38
+    },
+    "report": "docs/quality-plan.md section 18.15"
   }
 }

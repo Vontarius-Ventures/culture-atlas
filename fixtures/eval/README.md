@@ -20,7 +20,7 @@ fixtures/eval/
   golden-v3/         round 2: tune = every golden-v2 photo (h14-h29 included), h26 label fixed;
                      held-out = h30-h49 (no longer blind: its blind run failed; FREEZE.md, freeze.json as in golden-v2)
   golden-v4/         round 3: tune = every golden-v3 photo, label fixes on h31, h43, h46, h01;
-                     held-out = h50-h79 (fresh blind split; FREEZE.md, freeze.json as in golden-v2)
+                     held-out = h50-h79 (no longer blind: its blind run failed; FREEZE.md, freeze.json as in golden-v2)
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -218,10 +218,11 @@ the wrong way, each change recorded in the label's `history`:
   (`brand_without_text`): it is not written on the vehicle.
 
 The round-3 blind held-out split `h50`–`h79` was added on `r3/blind` and
-merged into this tune set (see "golden-v4 blind split" below). Only when the
-round-3 rules are final is golden-v4 bound for the photo roles
-(`REQUIRED_GOLDEN_SET` moves from golden-v3 to golden-v4) and its blind split
-read once. golden-v2 and golden-v3 are not edited.
+merged into this tune set (see "golden-v4 blind split" below). golden-v4 was
+bound for the photo roles (`REQUIRED_GOLDEN_SET` → golden-v4, `9164518`) and
+its blind split read once (2026-10-20): it failed (M1, M2, M5, M7, M11, M15;
+docs/quality-plan.md §18.15), so it is consumed like golden-v2 and golden-v3
+and the photo roles stay unqualified. golden-v2 and golden-v3 are not edited.
 
 ## golden-v4 blind split (round 3)
 
@@ -243,4 +244,9 @@ transcribed lines (score-v7). The held-out entries were appended unchanged to
 `pnpm test`. The photos and `SOURCES.md` live outside git (`blind-v4/`), and
 nobody tuning rules opens them or the held-out labels. Open licence questions
 (h57, h66, h76, h78 without a licence file; research-only dataset terms on
-several mmpose images) are listed in `golden-v4/FREEZE.md`.
+several mmpose images) are listed in `golden-v4/FREEZE.md`. The one blind run
+failed and is recorded in `golden-v4/freeze.json` (`blind_run`); h50–h79 are
+`"blind": false` and the binding marks golden-v4 `blind_consumed`. A label
+artifact found afterwards (the word "tall" in the person-descriptor patterns
+matched observations about things) is reported in `golden-v4/FREEZE.md`, not
+fixed in place.

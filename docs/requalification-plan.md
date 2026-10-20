@@ -214,3 +214,45 @@ Details in [quality-plan §18.7–18.14](quality-plan.md#187-tune-plan-item-6-li
   `golden-v4/FREEZE.md` and h33; ZDR confirmation for the vertex route only if
   the verifier is ever enabled. Round spend so far: 139 of 260 Concentrate, 0
   of 150 Qloo, 0 Wikipedia.
+
+## Round 3 freeze and blind run (2026-10-20): FAIL
+
+Details in [quality-plan §18.15–18.19](quality-plan.md#1815-freeze-and-blind-run-on-h50h79-once-fail).
+
+- **Freeze.** golden-v4 bound for `vision_photo`, `vision_photo_enrich` and
+  `vision_verify` at `9164518` (binding up to date: golden, photo code and
+  thresholds digests unchanged); recorded in `golden-v4/FREEZE.md` at
+  `1db0d4d`. Held-out labels and `freeze.json` unchanged since `0427041`.
+- **Blind run, once: FAIL.** h50–h79, two-stage, verifier off (Tune
+  decision), live Qloo, guard-v9, score-v7, thr-v2: M1 7, M2 0.1026, M5
+  0.5926, M7 0.75, M11 8, M15 0.5926 fail; M3, M4 (0.20, at the gate), M6, M8,
+  M9 (0.95), M10, M12, M13, latency (stage 1 p50 2.1 s, p95 2.8 s;
+  enrichment p95 4.6 s) and Qloo forbidden accepts (0) pass. 60 Concentrate,
+  38 Qloo, all 200. Nothing changed after the run.
+- **Root cause.** Every forbidden claim was published at stage 1 and hedged
+  by stage 2, which cannot retract a shown claim: two context-only claims
+  (h72 "Little League baseball", h58 "Scandinavian minimalist design": the
+  stage-1 deviation named open after Tune) and two people claims the model
+  filed under thing domains (h73 a national team as a sport tradition, h74
+  "Wedding cake" as food), which G-PEOPLE-CLAIM does not see (**rule gap**).
+  Coverage (M5, M15) fails mostly because the model never offered the
+  expected claim (8 of 11 misses; on people photos it names the people's
+  event or unit, not the clothes or objects) and partly from three rule
+  over-drops (**model limitation**). The word "tall" in eleven held-out
+  person-descriptor patterns matched observations about things (3 of M1, 6 of
+  M11), and h78's label counts a paraphrase of the injected instruction
+  (**label/scorer artifacts**); without them the run still fails M1, M2, M5,
+  M7, M11 and M15.
+- **Enforced:** golden-v4 `freeze.json` records the failed `blind_run`,
+  h50–h79 are `"blind": false`, the binding marks golden-v4
+  `blind_consumed`; the qualification script and `evalGateFailure()` refuse
+  it. Qualification, the end-to-end upload, the v2 media analysis and the
+  composer plan were not run (they follow only a pass). Photo roles stay
+  `catalog-compatible`; photos fail closed. Text roles stay qualified.
+- **Round 3 spend:** 199 of 260 Concentrate (122 Tune, 17 text, 60 blind),
+  38 of 150 Qloo, 0 Wikipedia. No Elorian.
+- **Open owner items:** the golden-v4 and h33 licence questions; ZDR
+  confirmation for the photo route (and the vertex route if the verifier is
+  ever enabled).
+- **Next attempt** needs the changes listed in quality-plan §18.16 and a fresh
+  blind set (h80+).
