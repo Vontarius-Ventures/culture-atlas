@@ -11,8 +11,10 @@ provider. Qloo stays independent.
 "Requalification round 2" below); `composer` failed its round-2
 re-qualification. Every test uses synthetic ids such as `fixture/model-1`,
 which must never be deployed. The two photo stages failed the requalification
-blind run on golden-v2 (M1, M4, M11; see "Requalification blind run" below),
-so photo analysis fails closed. Their earlier passes are history, not qualification:
+blind run on golden-v2 (M1, M4, M11; see "Requalification blind run" below)
+and again on the round-2 blind split of golden-v3 (M1, M2, M4, M9, M11; see
+"Requalification round 2: blind run on h30–h49" below), so photo analysis fails
+closed. Their earlier passes are history, not qualification:
 the phase-4 run on 2026-10-19 ("Live qualification on real photographs"
 below) checked transport only and its artifacts carry no eval block
 (`missing_eval`), and the Evaluate-phase golden-v1 artifacts failed their
@@ -241,16 +243,16 @@ pnpm eval:fetch --dest /secure/golden-photos
 # 3. Pin a model/provider from the snapshot; set catalogSnapshotAt to its fetched_at.
 #    Dry run: hash-checks the golden photos, prints the plan, sends nothing.
 pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
-  --golden fixtures/eval/golden-v2 --photos /secure/golden-photos \
-  --out-dir /secure/concentrate-qualification --max-requests 44 --spend-cap-usd 2
+  --golden fixtures/eval/golden-v3 --photos /secure/golden-photos \
+  --out-dir /secure/concentrate-qualification --max-requests 64 --spend-cap-usd 2
 # 4. Same command plus --confirm-paid-requests sends real, billed requests.
 # Two-stage reading: qualify the quick read first, then stage 2. Stage 2 needs the
 # vision_photo profile in the same file and sends a real quick read per photo as
 # its input (two requests per photo, both under --max-requests and the spend cap).
 pnpm qualify:concentrate --profile-file profiles.json --role vision_photo_enrich \
-  --golden fixtures/eval/golden-v2 --photos /secure/golden-photos \
-  --out-dir /secure/concentrate-qualification --max-requests 88 --spend-cap-usd 2
-# Or both photo roles from one run (88 requests instead of 44 + 88): the enrichment
+  --golden fixtures/eval/golden-v3 --photos /secure/golden-photos \
+  --out-dir /secure/concentrate-qualification --max-requests 128 --spend-cap-usd 2
+# Or both photo roles from one run (128 requests instead of 64 + 128): the enrichment
 # run also writes the vision_photo artifact, scored on its own stage-1 readings alone
 # (a stage-1-only run: M15 for coverage, M5 and M9 scoped out) with its own requests,
 # latency and usage. Each stage is bounded from the original photo at its own bounds.
@@ -267,8 +269,8 @@ pnpm qualify:concentrate --profile-file profiles.json --role composer \
 **A role qualifies on quality, not only on transport** (docs/quality-plan.md §7.5):
 
 - **Photo roles** (`vision_photo`, `vision_photo_enrich`, `vision_verify`) qualify only on the
-  golden set `golden-v2` since the requalification freeze (`b2cf11a`; golden-v1
-  before it; both splits, every photo checked against its pinned
+  golden set `golden-v3` since the round-2 freeze (`a7f5a7b`; golden-v2 from
+  `b2cf11a`, golden-v1 before it; both splits, every photo checked against its pinned
   sha256 before any request), never on a loose fixture directory. Each reading
   goes through the runtime guardrails (`vlm/guardrails.ts`) and is scored in
   memory by `scripts/eval/scorer.ts` against the **live** gates in
@@ -293,7 +295,7 @@ evaluation pass. The artifact carries an aggregate `eval` block:
 grounding_version, scorer_version, code_sha256, holdout_blind, metrics, pass }`
 (metric values only; no media, prompts or outputs). `qualificationState()`
 treats a role listed in `REQUIRED_GOLDEN_SET` as `qualified` only when the
-block passes on the required golden set (`golden-v2` for photo roles, `text-v1`
+block passes on the required golden set (`golden-v3` for photo roles, `text-v1`
 for text roles) **and every bound input is still the committed one**
 (`EVAL_BINDING` in `concentrate/eval-binding.ts`): the golden digest, the
 thresholds digest, the scorer version and the digest of the evaluated code
@@ -635,6 +637,29 @@ another attempt. Spend: 22 Concentrate requests (package `rq2-text`, ledger
 kept with the artifacts outside the repository), 0 Qloo, 0 Wikipedia. No
 Elorian.
 
+## Requalification round 2: blind run on h30–h49 (2026-10-20)
+
+Details in [quality plan §17.5–17.11](quality-plan.md#17-requalification-round-2-blind-run-gaps-closed-text-roles-2026-10-19).
+A curator added a fresh blind split h30–h49 (20 photos, frozen at `f4f4a23`
+before any model run) to golden-v3; golden-v3 was bound for the photo roles at
+`a7f5a7b` with the round-2 rules (guard-v6, score-v5, thr-v2; photo code and
+thresholds unchanged) and the freeze recorded at `cc281e4`. Replaying every
+recorded tune run under these rules (no request) matched the round-2 replays,
+so no live tune run was made.
+
+| Role | Result | Latency (blind run) | Gates |
+| --- | --- | --- | --- |
+| `vision_photo` + `vision_photo_enrich` (`vlm-quick-v2`, `vlm-enrich-v3`, `anthropic/claude-haiku-5-5`, effort none) | **not qualified**: the blind split h30–h49 (read once, two-stage, verifier off, live Qloo) **fails** | stage 1 p50 1.9 s, p95 2.7 s; enrichment p95 4.8 s; 0 invalid, 0 incomplete | FAIL M1 1, M11 1 (h47 "Prom" on two people in formal wear), M2 0.0541 (h47 "Prom", h34 "Scandinavian minimalism"), M4 0.25 (10/40), M9 0.8947 (h40 "ALL YEAR ROUND" split over two lines, h43 "JOY DEFINES" not read); pass M3 0.94, M5 0.83, M7 1.00, M8 0, M15 0.61; 0 Qloo forbidden accepts |
+| `vision_verify` | off, not qualified (Tune decision) | | |
+
+Qualification and the end-to-end upload were not run, as the plan requires.
+Nothing was changed after the run. The failure is recorded where the code reads
+it (`fixtures/eval/golden-v3/freeze.json` `blind_run`, h30–h49 `blind: false`,
+golden-v3 `blind_consumed` in the binding), so `pnpm qualify:concentrate`
+refuses golden-v3 for the photo roles before any request. Spend: 40 Concentrate
+and 33 Qloo requests (package `rq3-blind`); round 2 used 62 of 220 Concentrate
+and 33 of 150 Qloo requests. No Elorian.
+
 ## Elorian fallback (operator choice)
 
 `MODEL_FALLBACK=elorian` plus `ELORIAN_API_KEY` adds Elorian
@@ -808,14 +833,15 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
 - Qualified profiles exist only in the operator's directory. **Only
   `research_text` is qualified now** (2026-10-19, requalification round 2):
   - `vision_photo` and `vision_photo_enrich` failed the blind golden-v2 run
-    (M1, M4, M11; "Requalification blind run" below) and were not
-    re-qualified. Their earlier artifacts do not qualify either: the phase-4
-    v1 artifacts carry no eval block (`missing_eval`), and the Evaluate-phase
-    artifacts are golden-v1 (`wrong_golden_set`) and failed their evaluation.
-    golden-v2 itself can no longer qualify a photo role (`blind_set_consumed`),
-    so requalification needs a fresh blind set (h30+, bound with guard-v6 and
-    score-v5; "Requalification round 2" above). Photos keep failing closed.
-    `vision_verify` is off and not qualified.
+    (M1, M4, M11; "Requalification blind run" above) and the round-2 blind
+    run on golden-v3 h30–h49 (M1, M2, M4, M9, M11; "Requalification round 2:
+    blind run on h30–h49" above), and were not re-qualified. Their earlier
+    artifacts do not qualify either: the phase-4 v1 artifacts carry no eval
+    block (`missing_eval`), and the Evaluate-phase artifacts are golden-v1
+    (`wrong_golden_set`) and failed their evaluation. golden-v2 and golden-v3
+    are both `blind_consumed`, so requalification needs the fixes in quality
+    plan §17.8 and yet another fresh blind set (h50+). Photos keep failing
+    closed. `vision_verify` is off and not qualified.
   - `research_text` was re-qualified under thr-v2 (round 2, 6/6). `composer`
     failed its round-2 re-qualification on T12 (an injection echo on one
     plan-prose fixture) and stays `catalog-compatible`; its earlier artifacts

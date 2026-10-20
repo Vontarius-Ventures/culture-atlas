@@ -84,12 +84,16 @@ Results are in [quality-plan §16](quality-plan.md#16-requalification-blind-run-
 
 ## Round 2 record (2026-10-19)
 
-Details in [quality-plan §17](quality-plan.md#17-requalification-round-2-blind-run-gaps-closed-text-roles-2026-10-19). Round budget: Concentrate ≤ 220, Qloo ≤ 150; used 22 and 0.
+Details in [quality-plan §17](quality-plan.md#17-requalification-round-2-blind-run-gaps-closed-text-roles-2026-10-19). Round budget: Concentrate ≤ 220, Qloo ≤ 150; used 62 and 33.
 
 - **The three blind-run gaps are closed in general (guard-v6, score-v5).** The people test counts players, athletes, crowds, spectators and other people words (headline and observations); role nouns match singular and plural, never a playback device; G-MEDIUM matches every inflection of a medium word ("photographed", "photography", "rendered" …) and keeps the "painted" decoration exception. The scorer's copies got the plurals and people words (stricter only).
 - **golden-v3** is the new tune set: golden-v2's 44 photos, all tune, with h26's expected pattern narrowed (label history entry). golden-v2 is untouched and stays consumed; the photo roles still require it, so they cannot qualify until a fresh blind split (h30+) is curated, frozen and bound. No threshold changed.
 - **Offline replay of the round-1 blind recordings:** M1 0 and M11 0 under both label sets; M4 0.2105 on golden-v2 labels, 0.1892 on golden-v3, where the split passes every (tune) gate. All earlier replays score exactly as before.
 - **Text roles:** `research_text` re-qualified (6/6, `qualified`); `composer` failed T12 on the plan-prose injection fixture (10/11 content) and stays `catalog-compatible`. It needs an injection-hardened prose prompt before another run.
+- **Fresh blind split and freeze (steps 4–6, second attempt).** A curator added h30–h49 (20 photos, 12 new repositories, labels frozen at `f4f4a23` before any model run) to golden-v3; the fixes and the blind set were merged (`2c6cf56`, `420ec8c`), golden-v3 was bound for the photo roles at `a7f5a7b` (photo code and thresholds unchanged) and the freeze recorded at `cc281e4`. A replay of every recorded tune run under the final rules (no request) matched §17.2, so no live tune run was made.
+- **Blind run, once: FAIL.** On h30–h49, two-stage, verifier off, live Qloo: M1 1 and M11 1 (h47: "Prom" published as a tradition on context about two people in formal wear), M2 0.0541 (h47 "Prom" and h34 "Scandinavian minimalism", both context-only claims stage 2 called weak), M4 0.25 (10 of 40 label-good claims dropped) and M9 0.8947 (h40 "ALL YEAR ROUND" split over two transcribed lines; h43 "JOY DEFINES" not transcribed). M5 0.83, M7 1.00, M8 0, latency and M15 (0.611) pass; 0 Qloo forbidden accepts. Nothing was changed after the run.
+- **Enforced:** golden-v3's `freeze.json` records the failed `blind_run`, h30–h49 are `"blind": false`, and the binding marks golden-v3 `blind_consumed`, so the qualification script and `evalGateFailure()` refuse it. Qualification and the end-to-end upload were not run; both photo roles stay `catalog-compatible` and photos stay off. Another attempt needs the fixes listed in quality-plan §17.8 and yet another fresh blind set (h50+).
+- **Open owner items:** h33's licence (no licence file upstream) is unconfirmed; the ZDR/content-logging confirmation in the Concentrate dashboard is still pending.
 
 ## Budget
 

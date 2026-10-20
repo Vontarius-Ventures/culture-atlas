@@ -374,11 +374,21 @@ describe('golden-v3 (fixtures/eval/golden-v3): round-2 blind held-out set h30+',
   });
 
   it('the held-out labels and manifest entries are exactly the frozen ones (golden-v3/FREEZE.md)', async () => {
+    // Only permitted change since the freeze: after the recorded failed blind run, every held-out entry's
+    // blind flag went from true to false (scripts/eval/freeze.ts, freezeViolations).
     const { freeze, violations } = await checkFreeze(v3Dir);
     expect(freeze?.golden_set).toBe('golden-v3');
     expect(freeze?.model_runs_before_freeze).toBe(0);
     expect(violations).toEqual([]);
-    // Frozen before any model run: no blind run is recorded yet (FREEZE.md step 5 adds one, once).
-    expect(freeze?.blind_run).toBeUndefined();
+    // The record of the one blind run (FREEZE.md step 5, "Record"): binding a7f5a7b, code cc281e4,
+    // failed M1, M2, M4, M9 and M11. The split is consumed: no photo role qualifies on golden-v3.
+    expect(blindConsumed(freeze)).toBe(true);
+    expect(freeze?.blind_run).toMatchObject({
+      binding_commit: 'a7f5a7bae5b281dece956109a6bc2ef53ce68e44',
+      code_commit: 'cc281e43f96670b9e58d373ac01125309ee57eb3',
+      result: 'fail',
+      failed_gates: ['M1', 'M2', 'M4', 'M9', 'M11'],
+      requests: { concentrate: 40, qloo: 33 },
+    });
   });
 });

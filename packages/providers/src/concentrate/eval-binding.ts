@@ -29,10 +29,10 @@ export const EVAL_BINDING = {
       blind_consumed: true,
     },
     'golden-v3': {
-      golden_sha256: '2bd7ff1a92f2ab4dc788c27d23f505dcfac7564b6fd9a542eead6c43d732257f',
+      golden_sha256: '12edf9323aa65b674a95a55aa0f3effe46039fe1de5385a93bfbfd86d72f8ad3',
       scorer_version: 'score-v5',
       code_sha256: '978d8f2b01fea2200468f5e3b6ec3978b39b17ccf7de49e24e8f37be1f5ea1ca',
-      blind_consumed: false,
+      blind_consumed: true,
     },
     'text-v1': {
       golden_sha256: '8d171b14201054d1b2ef175c7f8606d2ac07c1726ca64df76e667c0216e917dc',

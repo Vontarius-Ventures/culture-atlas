@@ -26,9 +26,11 @@ describe('evaluation binding (qualification gate, quality plan §7.5)', () => {
     // The photo roles' set binds the same photo code as golden-v1.
     expect(BOUND_CODE['golden-v2']).toEqual(BOUND_CODE['golden-v1']);
     expect(EVAL_BINDING.sets).toHaveProperty('golden-v2');
-    // Round 2's set (tune + the fresh h30+ blind split) binds the same photo code; no blind run of it has failed, so it is not consumed.
+    // Round 2's set (tune + the h30+ blind split) binds the same photo code; its blind run failed and is recorded
+    // (golden-v3/freeze.json), so it is consumed like golden-v2.
     expect(BOUND_CODE['golden-v3']).toEqual(BOUND_CODE['golden-v1']);
-    expect(EVAL_BINDING.sets['golden-v3'].blind_consumed).toBe(false);
+    expect(EVAL_BINDING.sets['golden-v2'].blind_consumed).toBe(true);
+    expect(EVAL_BINDING.sets['golden-v3'].blind_consumed).toBe(true);
     expect(BOUND_CODE['text-v1']).toEqual(expect.arrayContaining(['scripts/eval/text-scorer.ts', 'scripts/eval/build-text-fixtures.ts']));
   });
 

@@ -304,6 +304,30 @@ Wikipedia is now reachable, so the next qualified round can measure the
 whole path. The text roles also need re-qualification first: thr-v2 made
 their artifacts `stale_thresholds` ([concentrate.md](concentrate.md#remaining-release-gates)).
 
+## Requalification round 2 blind run (2026-10-20)
+
+Round 2 read a second fresh blind split (golden-v3 h30–h49, 20 public test
+photos) once, two-stage, with the same profiles (`anthropic/claude-haiku-5-5`,
+effort none; verifier off) and the round-2 rules (guard-v6).
+
+| Measure | Target | Blind run (20 photos) |
+| --- | --- | --- |
+| Stage-1 quick read, model time | p50 ≤ 3 s, p95 ≤ 6 s | p50 1.9 s, p95 2.7 s |
+| Enrichment, model time | p95 ≤ 12 s | p95 4.8 s |
+| Incomplete or invalid replies | 0 | 0 of 40 |
+| Stage-1 publishable share (M15) | ≥ 0.60 | 0.61 |
+| Grounding (live Qloo, one in flight, 1 s apart) | | 33 lookups, all 200, 0 forbidden accepts |
+
+Latency passes again, but the run **fails quality gates** (M1 1, M11 1, M2
+0.0541, M4 0.25, M9 0.8947; [quality plan §17.7–17.8](quality-plan.md#177-blind-run-on-h30h49-once-fail)),
+so the photo roles were not qualified and **no end-to-end upload and no v2
+media photo analysis were run**. FAST-01 and the end-to-end `complete` state
+remain **unmeasured and unmet** on this branch; there is no first-useful-section
+time or stage timing from a real upload this round. M15 (stage-1 publishable
+share) dropped from 0.87 on round 1's blind split to 0.61, just above its gate:
+on this set fewer photos had a publishable claim before enrichment (signs,
+labels and brand photos wait for stage 2).
+
 ## Recommended reading format
 
 ### Stage 1: `VlmQuickRead` (interactive)
@@ -416,5 +440,7 @@ Totals: steps 1–5 about 5–6 d; steps 6–7 about 2–3 d; step 8 about 2–3
 | Qloo, Evaluate phase | 118 GET: 107 grounding, 11 seed (team total 195 of 300) | n/a | n/a |
 | Concentrate, requalification (2026-10-19) | 169 inference of the round's 300: 137 tune split, 32 blind run | not recorded by `eval:live` (its ledger holds endpoint, status and ms only) | not computed; not reconciled |
 | Qloo, requalification | 32 GET (blind-run grounding), of 200 | n/a | n/a |
+| Concentrate, requalification round 2 (2026-10-19/20) | 62 inference of the round's 220: 22 text roles, 40 blind run | not recorded (ledger holds endpoint, status and ms only) | not computed; not reconciled |
+| Qloo, requalification round 2 | 33 GET (blind-run grounding), of 150 | n/a | n/a |
 
 The 2026-10-17 per-call estimates above (for example $0.0017 for a quick read) match the catalog's long-context rate ($0.50 / $2.50 per M). The 2026-10-19 snapshot lists $0.10 / $0.50 per M for prompts under 100k tokens, which puts a quick read at about $0.0003 and an enrichment at about $0.0007. Billing evidence will decide.

@@ -351,6 +351,32 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('the review probe: the committed golden-v3 (round-2 blind run failed) refuses both photo stages before any request', async () => {
+    const fetchImpl = responses();
+    const photos = await tmp('ca-qphotos-');
+    for (const [p, stage1] of [
+      [profile, undefined],
+      [enrich, profile],
+    ] as const) {
+      await expect(
+        realQualifyProfile({
+          apiKey: KEY,
+          outDir: await preparedOutDir(),
+          profile: p,
+          stage1Profile: stage1,
+          stage1Artifact: !!stage1,
+          pipeline: versionedTestPipeline,
+          golden: { dir: path.resolve(import.meta.dirname, '../fixtures/eval/golden-v3'), photosDir: photos },
+          maxRequests: 100,
+          spendCapMicros: 5_000_000,
+          confirmPaidRequests: true,
+          fetch: fetchImpl as unknown as typeof fetch,
+        }),
+      ).rejects.toThrow(/golden-v3's blind held-out split was consumed by a failed blind run \(2026-10-20, code cc281e4, failed M1, M2, M4, M9, M11\)/);
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('refuses, before any request, inputs that differ from the committed binding (the artifact could never qualify)', async () => {
     const fetchImpl = responses();
     const g = await syntheticGolden(ids(10));
