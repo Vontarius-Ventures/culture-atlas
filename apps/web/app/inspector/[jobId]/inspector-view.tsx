@@ -71,9 +71,14 @@ export const DECISION_NOTE_LABEL: Record<string, string> = {
   duplicate: 'Dropped: same name as another reference',
   replaced_by_tag_query: 'Replaced by the style it names',
   style_of_attribution: 'Dropped: attributes a style to a named person',
-  verifier_no: 'Verifier: not supported by the photo; certainty lowered and shown as a resemblance',
-  verifier_unsure: 'Verifier: unsure; shown as a resemblance',
-  verifier_yes: 'Verifier: supported; unchanged',
+  // guard-v8 / vlm-verify-v3 (requalification round 3): withheld claims stay here only, as private observations.
+  context_only: 'Kept private: rests only on context, with nothing to confirm it',
+  people_claim: 'Kept private: a claim about the people in the photo that no text in it backs',
+  read_maker_text_only: 'Text-only reference: the maker is read in the photo, the full model name is not',
+  verifier_no: 'Verifier: not supported by the photo; not shown',
+  verifier_unsure: 'Verifier: unsure; not shown',
+  verifier_unanswered: 'Verifier: no answer for this claim; not shown',
+  verifier_yes: 'Verifier: supported; shown',
 };
 
 export interface ReadingDecisionRow {

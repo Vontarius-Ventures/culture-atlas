@@ -78,7 +78,7 @@ const role = arg('role');
 const fixturesDir = arg('fixtures');
 const goldenDir = arg('golden');
 const photosDir = arg('photos');
-const photoRole = role === 'vision_photo' || role === 'vision_photo_enrich';
+const photoRole = role === 'vision_photo' || role === 'vision_photo_enrich' || role === 'vision_verify';
 if (!profileFile || !role || (photoRole ? !goldenDir || !photosDir : !fixturesDir)) {
   console.error(
     '--profile-file and --role are required, plus --golden and --photos for photo roles or --fixtures otherwise (or use --catalog).',
@@ -98,9 +98,15 @@ if (!profile) {
 }
 // Stage 2 (amendment 2.2) is qualified on real stage-1 readings: the same profile
 // file must hold the vision_photo quick-read profile, whose requests count too.
-const stage1Profile = role === 'vision_photo_enrich' ? profiles.vision_photo : undefined;
-if (role === 'vision_photo_enrich' && !stage1Profile) {
-  console.error(`Qualifying vision_photo_enrich needs the vision_photo profile in ${profileFile}.`);
+// The verifier (round 3) is qualified on the full two-stage reading it guards: both photo profiles.
+const stage1Profile = role === 'vision_photo_enrich' || role === 'vision_verify' ? profiles.vision_photo : undefined;
+const enrichProfile = role === 'vision_verify' ? profiles.vision_photo_enrich : undefined;
+if ((role === 'vision_photo_enrich' || role === 'vision_verify') && !stage1Profile) {
+  console.error(`Qualifying ${role} needs the vision_photo profile in ${profileFile}.`);
+  process.exit(2);
+}
+if (role === 'vision_verify' && !enrichProfile) {
+  console.error(`Qualifying vision_verify needs the vision_photo_enrich profile in ${profileFile}.`);
   process.exit(2);
 }
 const maxRequests = Number(arg('max-requests') ?? 0);
@@ -122,6 +128,7 @@ const run = await qualifyProfile({
   spendCapMicros: Math.floor(spendCapUsd * 1_000_000),
   confirmPaidRequests: flag('confirm-paid-requests'),
   stage1Profile,
+  enrichProfile,
   stage1Artifact: flag('with-stage1-artifact'),
   ledgerFile: arg('ledger'),
   ledgerPackage: arg('package'),

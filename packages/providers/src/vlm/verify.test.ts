@@ -1,88 +1,87 @@
 import { describe, expect, it } from 'vitest';
 import { SECURITY_RULES } from './prompt';
-import { VlmCandidate } from './types';
+import { MERGED_CANDIDATES_MAX, VlmCandidate } from './types';
 import {
   VERIFY_READING_VERSION,
-  VERIFIER_CERTAINTY_FACTOR,
   VERIFY_MAX_CLAIMS,
   VLM_VERIFY_SYSTEM_PROMPT,
   VlmVerification,
   applyVerification,
+  blockedIds,
   buildVlmVerifyUserText,
   conflictsWithReadText,
-  verifiedCertainty,
-  verifierTargets,
+  verifyTargets,
 } from './verify';
 
 /*
  * The independent verifier (vision_verify), pure parts: which claims it
- * checks, what its answers may do, and the prompt's safety rules. Names are
- * FIXTURE data shaped like the recorded wrong attributions (Iznik under
- * Nishapur labels, Yuyuan Garden under 愚园路, Georgian under a Victorian street
- * sign); none is a model output.
+ * checks, what its answers do (vlm-verify-v3: binding, before publication),
+ * and the prompt's safety rules. Names are FIXTURE data shaped like the
+ * recorded wrong attributions (Iznik under Nishapur labels, Yuyuan Garden
+ * under 愚园路, an occasion on two people in formal wear); none is a model
+ * output.
  */
 
 const cand = (c: Partial<VlmCandidate> & { name: string; id: string }): VlmCandidate =>
   VlmCandidate.parse({ type: 'style', relation: 'resembles', rationale: '', certainty: 0.6, region_ids: [], suggested_categories: [], tag_queries: [], ...c });
 
-describe('verifier targets', () => {
-  it('checks style, place and tradition claims that stage 2 hedged', () => {
-    const t = verifierTargets({
-      candidates: [cand({ id: 'c1', name: 'Fixture lustreware' }), cand({ id: 'c2', name: 'Persian ceramics' })],
-      verdicts: { 'fixture lustreware': 'weak', 'persian ceramics': 'supported' },
-      texts: [],
-    });
-    expect(t).toEqual([{ candidateId: 'c1', name: 'Fixture lustreware', type: 'style', reason: 'hedged' }]);
+describe('verifier targets (vlm-verify-v3: every attribution and every context-only claim, before publication)', () => {
+  it('checks every style, place and tradition claim, whatever stage 2 said, and any other claim resting only on context', () => {
+    const t = verifyTargets([
+      cand({ id: 'c1', name: 'Fixture lustreware', evidence: 'distinctive_form' }),
+      cand({ id: 'c2', name: 'Fixture Harbour', type: 'place', evidence: 'read_text', evidence_text: 'FIXTURE HARBOUR' }),
+      cand({ id: 'c3', name: 'Fixture Prom', type: 'tradition', evidence: 'context' }),
+      cand({ id: 'c4', name: 'Fixture corsage', type: 'object', evidence: 'context' }),
+      cand({ id: 'c5', name: 'Fixture noodle dish', type: 'cuisine', evidence: 'distinctive_form' }),
+      cand({ id: 'c6', name: 'Fixture stool', type: 'object', evidence: 'distinctive_form' }),
+    ]);
+    expect(t.map((x) => [x.candidateId, x.reason])).toEqual([
+      ['c1', 'attribution'],
+      ['c2', 'attribution'],
+      ['c3', 'attribution'],
+      ['c4', 'context_only'],
+    ]);
   });
 
-  it('checks claims the read text does not bear out, and leaves those it names', () => {
+  it('never sends a text-only reference, a brand, a creator or a people-domain claim, and checks a name once', () => {
+    const t = verifyTargets([
+      cand({ id: 'b', name: 'Fixture Brand', type: 'brand', evidence: 'context' }),
+      cand({ id: 'p', name: 'Fixture Person', type: 'creator', evidence: 'context' }),
+      cand({ id: 'q', name: 'Fixture look', type: 'style', domain: 'people' }),
+      cand({ id: 't', name: 'Read style', text_only: true }),
+      cand({ id: 's1', name: 'Fixture style' }),
+      cand({ id: 's2', name: 'FIXTURE STYLE' }),
+    ]);
+    expect(t.map((x) => x.candidateId)).toEqual(['s1']);
+  });
+
+  it('is not capped below what a reading can hold, so no claim goes unasked', () => {
+    expect(VERIFY_MAX_CLAIMS).toBeGreaterThanOrEqual(MERGED_CANDIDATES_MAX);
+    const many = Array.from({ length: MERGED_CANDIDATES_MAX }, (_, i) => cand({ id: `s${i}`, name: `Fixture style ${i}` }));
+    expect(verifyTargets(many)).toHaveLength(MERGED_CANDIDATES_MAX);
+    const data = JSON.parse(buildVlmVerifyUserText({ claims: many.map((c) => ({ name: c.name, type: c.type })), visibleText: [] }).split('\n').slice(2, -1).join('\n'));
+    expect(data.claims).toHaveLength(MERGED_CANDIDATES_MAX);
+  });
+
+  it('still reports read text that does not bear an attribution out (inspector)', () => {
     expect(conflictsWithReadText('Iznik pottery', ['NISHAPUR, 10TH CENTURY'])).toBe(true);
     expect(conflictsWithReadText('Nishapur slipware', ['NISHAPUR, 10TH CENTURY'])).toBe(false);
     expect(conflictsWithReadText('Yuyuan Garden', ['愚园路'])).toBe(true);
     expect(conflictsWithReadText('愚园路', ['愚园路 Yuyuan Rd.'])).toBe(false);
-    expect(conflictsWithReadText('Georgian terraced houses', ['STOCKWELL'])).toBe(true);
-    // Text that names nothing (numbers, stop words, generic or lexicon words only) never conflicts, and no text never does.
-    // The test is deliberately broad otherwise: a wrongly selected claim costs one check, never a removal.
     expect(conflictsWithReadText('Georgian terraced houses', ['NO. 17'])).toBe(false);
     expect(conflictsWithReadText('Mid-century modern', [])).toBe(false);
-    const t = verifierTargets({
-      candidates: [cand({ id: 'c1', name: 'Iznik pottery' }), cand({ id: 'c2', name: 'Fixture Harbour', type: 'place' })],
-      verdicts: {},
-      texts: ['NISHAPUR', 'FIXTURE HARBOUR'],
-    });
-    expect(t.map((x) => [x.name, x.reason])).toEqual([['Iznik pottery', 'text_conflict']]);
-  });
-
-  it('never checks anchors, text-only references, brands, people, works or objects, and caps the batch', () => {
-    const many = Array.from({ length: 9 }, (_, i) => cand({ id: `s${i}`, name: `Fixture style ${i}` }));
-    const verdicts = Object.fromEntries(many.map((c) => [c.name.toLowerCase(), 'weak' as const]));
-    const others = [
-      cand({ id: 'a', name: 'Anchored style' }),
-      cand({ id: 'b', name: 'Fixture Brand', type: 'brand' }),
-      cand({ id: 'p', name: 'Fixture Person', type: 'creator' }),
-      cand({ id: 'w', name: 'Fixture Work', type: 'work' }),
-      cand({ id: 'o', name: 'Fixture object', type: 'object' }),
-      cand({ id: 't', name: 'Read style', text_only: true }),
-    ];
-    const t = verifierTargets({
-      candidates: [...others, ...many],
-      verdicts: { ...verdicts, 'anchored style': 'weak', 'fixture brand': 'weak', 'fixture person': 'weak', 'fixture work': 'weak', 'fixture object': 'weak', 'read style': 'weak' },
-      texts: [],
-      anchors: new Set(['anchored style']),
-    });
-    expect(t).toHaveLength(VERIFY_MAX_CLAIMS);
-    expect(t.map((x) => x.candidateId)).toEqual(['s0', 's1', 's2', 's3', 's4', 's5']);
   });
 });
 
-describe('verifier outcome: it can only lower certainty or mark a reference qualified', () => {
-  const targets = verifierTargets({
-    candidates: [cand({ id: 'c1', name: 'Iznik pottery' }), cand({ id: 'c2', name: 'Persian ceramics' }), cand({ id: 'c3', name: 'Fixture glaze' })],
-    verdicts: { 'iznik pottery': 'weak', 'persian ceramics': 'weak', 'fixture glaze': 'weak' },
-    texts: [],
-  });
+describe('verifier outcome: binding, claim by claim', () => {
+  const targets = verifyTargets([
+    cand({ id: 'c1', name: 'Iznik pottery' }),
+    cand({ id: 'c2', name: 'Persian ceramics' }),
+    cand({ id: 'c3', name: 'Fixture glaze' }),
+    cand({ id: 'c4', name: 'Fixture Prom', type: 'tradition' }),
+  ]);
 
-  it('maps yes to keep, no to lower, unsure or no answer to qualify; never a removal', () => {
+  it('only "yes" publishes; "no", "unsure" and an unanswered claim are blocked; extra and repeated answers are ignored', () => {
     const checks = applyVerification(
       targets,
       VlmVerification.parse({
@@ -90,26 +89,28 @@ describe('verifier outcome: it can only lower certainty or mark a reference qual
           { name: 'IZNIK POTTERY', answer: 'no', reason: 'The label names Nishapur' },
           { name: 'Iznik pottery', answer: 'yes', reason: 'A later contradictory entry is ignored' },
           { name: 'Persian ceramics', answer: 'yes', reason: 'Lustre glaze typical of the style' },
+          { name: 'Fixture Prom', answer: 'unsure', reason: 'Formal wear only suggests it' },
           { name: 'Added by the verifier', answer: 'yes', reason: 'Names that were not asked are ignored' },
         ],
       }),
     );
-    expect(checks.map((c) => [c.name, c.answer, c.action])).toEqual([
-      ['Iznik pottery', 'no', 'lower'],
-      ['Persian ceramics', 'yes', 'keep'],
-      ['Fixture glaze', 'unsure', 'qualify'],
+    expect(checks.map((c) => [c.name, c.answer, c.action, c.note])).toEqual([
+      ['Iznik pottery', 'no', 'block', 'verifier_no'],
+      ['Persian ceramics', 'yes', 'publish', 'verifier_yes'],
+      ['Fixture glaze', null, 'block', 'verifier_unanswered'],
+      ['Fixture Prom', 'unsure', 'block', 'verifier_unsure'],
     ]);
-    expect(checks.every((c) => ['keep', 'lower', 'qualify'].includes(c.action))).toBe(true);
+    expect([...blockedIds(checks)]).toEqual(['c1', 'c3', 'c4']);
   });
 
-  it('only ever lowers certainty, by the advisory factor, never raises it', () => {
-    expect(verifiedCertainty(0.8, { action: 'lower' })).toBe(0.8 * VERIFIER_CERTAINTY_FACTOR);
-    expect(verifiedCertainty(0.8, { action: 'qualify' })).toBe(0.8);
-    expect(verifiedCertainty(0.8, { action: 'keep' })).toBe(0.8);
+  it('a failed call blocks every target (fail closed)', () => {
+    const checks = applyVerification(targets, null);
+    expect(checks.every((c) => c.action === 'block' && c.answer === null && c.note === 'verifier_unanswered')).toBe(true);
+    expect(blockedIds(checks).size).toBe(targets.length);
   });
 
-  it('changes nothing when the call failed', () => {
-    expect(applyVerification(targets, null)).toEqual([]);
+  it('no targets, nothing to block', () => {
+    expect(applyVerification([], null)).toEqual([]);
   });
 });
 
@@ -122,10 +123,12 @@ describe('verifier prompt (security rules, image text is data)', () => {
     expect(VLM_VERIFY_SYSTEM_PROMPT).toMatch(/Never identify people/);
   });
 
-  it('vlm-verify-v2 asks for a feature specific to the claim and treats a named site as evidence (tune step)', () => {
-    expect(VERIFY_READING_VERSION.prompt).toBe('vlm-verify-v2');
+  it('vlm-verify-v3: the answer is binding, a specific feature is needed, a named site is evidence, an occasion needs text', () => {
+    expect(VERIFY_READING_VERSION.prompt).toBe('vlm-verify-v3');
+    expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('only a claim you answer "yes" is shown');
     expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('a feature specific to the claim must be visible');
     expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('a style or period that the named place does not have is "no"');
+    expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('is "yes" only when legible text in the photo names it');
     expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('Being unsure is never a reason to answer "yes".');
   });
 
@@ -142,7 +145,7 @@ describe('verifier prompt (security rules, image text is data)', () => {
   });
 
   it('sends at most the capped number of claims', () => {
-    const claims = Array.from({ length: 10 }, (_, i) => ({ name: `Fixture ${i}`, type: 'style' }));
+    const claims = Array.from({ length: VERIFY_MAX_CLAIMS + 3 }, (_, i) => ({ name: `Fixture ${i}`, type: 'style' }));
     const data = JSON.parse(buildVlmVerifyUserText({ claims, visibleText: [] }).split('\n').slice(2, -1).join('\n'));
     expect(data.claims).toHaveLength(VERIFY_MAX_CLAIMS);
   });

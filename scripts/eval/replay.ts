@@ -54,9 +54,14 @@ const RecordingFileSchema = z
     enrichment: z.unknown().optional(),
     quick_ms: z.number().nonnegative().optional(),
     enrich_ms: z.number().nonnegative().optional(),
-    /** The verifier's reply (vision_verify) when eval:live ran it. */
+    /** Legacy verifier reply (vlm-verify-v1/v2, after stage 2, advisory) when eval:live ran it. */
     verification: z.unknown().optional(),
     verify_ms: z.number().nonnegative().optional(),
+    /** vlm-verify-v3: the stage-1 and stage-2 checks (null: the call failed, which blocks its targets). */
+    verification1: z.unknown().optional(),
+    verify1_ms: z.number().nonnegative().optional(),
+    verification2: z.unknown().optional(),
+    verify2_ms: z.number().nonnegative().optional(),
   })
   .strict();
 
@@ -79,6 +84,8 @@ export async function loadReplayFixtures(dir: string): Promise<{ manifest: Repla
       quickMs: body.quick_ms,
       enrichMs: body.enrich_ms,
       ...(body.verification !== undefined ? { verification: body.verification, verifyMs: body.verify_ms } : {}),
+      ...(body.verification1 !== undefined ? { verification1: body.verification1, verify1Ms: body.verify1_ms } : {}),
+      ...(body.verification2 !== undefined ? { verification2: body.verification2, verify2Ms: body.verify2_ms } : {}),
       gate: r.gate,
       shape: r.shape,
       covers: r.covers,
@@ -148,7 +155,7 @@ export function runReplay(
   const runs: ScoredRun[] = [];
   const decisions: Record<string, GuardDecisionLike[]> = {};
   for (const rec of recordings) {
-    const { decisions: d, finalCandidates: _f, verifyTargets: _t, ...run } = pipeline.run(rec);
+    const { decisions: d, finalCandidates: _f, verify: _v, ...run } = pipeline.run(rec);
     runs.push(run);
     decisions[`${rec.photoId}/${rec.runId}`] = d;
   }

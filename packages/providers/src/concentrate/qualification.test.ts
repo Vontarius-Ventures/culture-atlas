@@ -11,6 +11,9 @@ import {
   REQUIRED_GUARDRAIL_VERSION,
   catalogCompatible,
   evalGateFailure,
+  catalogFamily,
+  catalogZdrListed,
+  VERIFIER_EVAL_METRICS,
   profileHash,
   qualificationState,
   QualificationArtifactSchema,
@@ -53,7 +56,8 @@ function evalBlock(role: QualificationArtifact['role'], overrides: Partial<EvalB
     scorer_version: bound.scorer_version,
     code_sha256: bound.code_sha256,
     holdout_blind: photo ? true : null,
-    metrics: { tune_M1: 0, holdout_M1: 0 },
+    // A verifier artifact also records its independence and use (VERIFIER_EVAL_METRICS).
+    metrics: role === 'vision_verify' ? { tune_M1: 0, holdout_M1: 0, verifier_independent_family: 1, verifier_checked_photos: 12 } : { tune_M1: 0, holdout_M1: 0 },
     pass: true,
     ...overrides,
   };
@@ -324,6 +328,44 @@ describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
     expect(QualificationArtifactSchema.safeParse(a).success).toBe(true);
     expect(QualificationArtifactSchema.safeParse({ ...a, eval: { ...a.eval, outputs: ['raw'] } }).success).toBe(false);
     expect(QualificationArtifactSchema.safeParse({ ...a, eval: { ...a.eval, metrics: { M1: 'zero' } } }).success).toBe(false);
+  });
+});
+
+describe('vision_verify: an independent model family, actually exercised (requalification round 3)', () => {
+  it('needs the independence and use metrics in its eval block, whatever else passes', () => {
+    const b = FRESH_BLIND_BINDING;
+    const ok = evalBlock('vision_verify');
+    expect(evalGateFailure('vision_verify', ok, b)).toBeNull();
+    const without = (k: string) => ({ ...ok, metrics: Object.fromEntries(Object.entries(ok.metrics).filter(([m]) => m !== k)) });
+    expect(evalGateFailure('vision_verify', without(VERIFIER_EVAL_METRICS.independentFamily), b)).toBe('verifier_same_family');
+    expect(evalGateFailure('vision_verify', { ...ok, metrics: { ...ok.metrics, verifier_independent_family: 0 } }, b)).toBe('verifier_same_family');
+    expect(evalGateFailure('vision_verify', without(VERIFIER_EVAL_METRICS.checkedPhotos), b)).toBe('verifier_unexercised');
+    expect(evalGateFailure('vision_verify', { ...ok, metrics: { ...ok.metrics, verifier_checked_photos: 9 } }, b)).toBe('verifier_unexercised');
+    // The photo roles carry no such metrics and need none.
+    expect(evalGateFailure('vision_photo', evalBlock('vision_photo'), b)).toBeNull();
+  });
+
+  it('reads the family from the catalog author (who trained it, not who serves it) and the ZDR policy per route', () => {
+    // FIXTURE entries in the live catalog shape (GET /v1/models): Claude served by Vertex is still Anthropic's.
+    const snap = {
+      kind: 'concentrate-catalog-snapshot' as const,
+      fetched_at: profile.catalogSnapshotAt,
+      pages: 1,
+      models: [
+        { id: 'claude-fixture', author: { slug: 'anthropic' }, providers: { anthropic: { zdr: { policy_url: 'x' } }, vertex: { zdr: null } } },
+        { id: 'gemini-fixture', author: { slug: 'google' }, providers: { vertex: { zdr: { policy_url: 'y' } }, 'ai-studio': {} } },
+        { id: 'unauthored-fixture', providers: { fixture: {} } },
+      ],
+    };
+    const at = (model: string, provider: string) => ({ model: provider + '/' + model, provider });
+    expect(catalogFamily(at('claude-fixture', 'anthropic'), snap)).toBe('anthropic');
+    expect(catalogFamily(at('claude-fixture', 'vertex'), snap)).toBe('anthropic');
+    expect(catalogFamily(at('gemini-fixture', 'vertex'), snap)).toBe('google');
+    expect(catalogFamily(at('unauthored-fixture', 'fixture'), snap)).toBeNull();
+    expect(catalogZdrListed(at('gemini-fixture', 'vertex'), snap)).toBe(true);
+    expect(catalogZdrListed(at('gemini-fixture', 'ai-studio'), snap)).toBe(false);
+    expect(catalogZdrListed(at('claude-fixture', 'vertex'), snap)).toBe(false);
+    expect(catalogZdrListed(at('missing', 'vertex'), snap)).toBe(false);
   });
 });
 

@@ -1004,7 +1004,9 @@ function evaluate(
   // as a private observation). A stage-1 claim on context is the first section's content
   // (FAST-01): it publishes there only through the independent verifier when that is on (a "yes"
   // is the second, independent support; verifyTargets), and as in guard-v7 when it is off.
-  if (c.evidence === 'context' && opts.stage === 2 && opts.addition) {
+  // Only the model's own evidence (reading v2) counts, as for G-DEPICTED: a legacy reading's
+  // inferred "context" only means no text matched, which is not the model's claim.
+  if (input.evidence === 'context' && opts.stage === 2 && opts.addition) {
     rules.push('G-EVIDENCE');
     hold = true;
   }

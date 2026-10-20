@@ -72,7 +72,7 @@ export const enrichProfileV2: ModelProfile = {
 export const verifyProfile: ModelProfile = {
   ...profile,
   role: 'vision_verify',
-  promptVersion: 'vlm-verify-v2',
+  promptVersion: 'vlm-verify-v3',
   schemaVersion: 'atlas_verify_v1',
   reasoningEffort: 'none',
   maxOutputTokens: 600,

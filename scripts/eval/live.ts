@@ -15,9 +15,7 @@ import {
   brandCorroboratedIds,
   catalogCompatible,
   createConcentrateTransport,
-  guardQuickRead,
   readingForProfile,
-  stage2Request,
   type ModelProfile,
   type ModelProfiles,
   type QlooEntity,
@@ -81,8 +79,9 @@ export interface LiveEvalOptions {
   profiles: ModelProfiles;
   /**
    * vision_photo alone (stage 1), with vision_photo_enrich (both stages), and
-   * optionally vision_verify (the verifier after stage 2, on the compiler's own
-   * target selection; requires both stages).
+   * optionally vision_verify (vlm-verify-v3: the binding check of the first
+   * section's claims after stage 1 and of what stage 2 would publish, on the
+   * compiler's own target selection; requires both stages).
    */
   roles: readonly ('vision_photo' | 'vision_photo_enrich' | 'vision_verify')[];
   /** Holds the catalog snapshot the profiles name; raw outputs and the scorecard are written here. */
@@ -180,7 +179,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   if (opts.roles.includes('vision_photo_enrich') && !enrichProfile) throw new Error('Need the vision_photo_enrich profile.');
   const verifyProfile = opts.roles.includes('vision_verify') ? opts.profiles.vision_verify : undefined;
   if (opts.roles.includes('vision_verify') && (!verifyProfile || !enrichProfile))
-    throw new Error('vision_verify needs its profile and both photo stages (it runs only after stage 2).');
+    throw new Error('vision_verify needs its profile and both photo stages (it checks the claims of both).');
   if (opts.pipeline.guardrailVersion === null) throw new Error('eval:live scores through the guarded pipeline only.');
 
   const snapshot = CatalogSnapshotSchema.parse(JSON.parse(await readFile(path.join(opts.outDir, CATALOG_SNAPSHOT_FILE), 'utf8')));
@@ -195,10 +194,11 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     golden = { ...golden, manifest: { ...golden.manifest, photos: golden.manifest.photos.filter((p) => opts.only!.includes(p.id)) } };
   }
   const photos = await verifiedGoldenPhotos(golden, opts.photosDir, opts.split);
-  // The verifier is called only when a reading has targets; the plan reserves it for every photo (worst case).
-  const perPhoto = 1 + (enrichProfile ? 1 : 0) + (verifyProfile ? 1 : 0);
+  // The verifier is called only when a reading has targets: at most twice per photo (stage 1 and stage 2),
+  // and the plan reserves both for every photo (worst case).
+  const perPhoto = 1 + (enrichProfile ? 1 : 0) + (verifyProfile ? 2 : 0);
   const plannedRequests = photos.length * perPhoto;
-  const worstCase = photos.length * (stage1.reservationMicros + (enrichProfile?.reservationMicros ?? 0) + (verifyProfile?.reservationMicros ?? 0));
+  const worstCase = photos.length * (stage1.reservationMicros + (enrichProfile?.reservationMicros ?? 0) + 2 * (verifyProfile?.reservationMicros ?? 0));
   if (plannedRequests > opts.maxRequests)
     throw new Error(`The run needs ${plannedRequests} requests; --max-requests is ${opts.maxRequests}.`);
   if (worstCase > opts.spendCapMicros) throw new Error('Worst-case reservation exceeds --spend-cap-usd.');
@@ -284,18 +284,48 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
       continue;
     }
     const rec: Recording = { photoId: photo.id, runId: `LIVE-${photo.id}`, quick: quick.quick, quickMs: Date.now() - started };
-    if (enricher && enrichProfile) {
+    /** One binding verifier check (vlm-verify-v3) on exactly the claims the compiler would send; a failed call is recorded as null. */
+    const check = async (stage: 1 | 2): Promise<void> => {
+      if (!verifier || !verifyProfile || stoppedBy) return;
+      const pre = opts.pipeline.run(rec).verify;
+      const targets = stage === 1 ? pre.targets1 : pre.targets2;
+      if (!targets.length) return;
+      const t0 = Date.now();
+      try {
+        const bounded = await boundJpegForProfile(bytes, verifyProfile.image);
+        const res = await verifier.verifyImage(
+          {
+            image: { bytes: bounded.bytes, mediaType: 'image/jpeg' },
+            claims: targets.map((t) => ({ name: t.name, type: t.type })),
+            visibleText: stage === 1 ? [] : [...pre.stage2Text],
+          },
+          { maxRetries: 0, ...identity(photo.id, `verify${stage}`) },
+        );
+        if (stage === 1) {
+          rec.verification1 = res.verification;
+          rec.verify1Ms = Date.now() - t0;
+        } else {
+          rec.verification2 = res.verification;
+          rec.verify2Ms = Date.now() - t0;
+        }
+      } catch (error) {
+        if (stage === 1) rec.verification1 = null;
+        else rec.verification2 = null;
+        fail(photo.id, 'verify', error, Date.now() - t0);
+      }
+    };
+    // Stage-1 check: the first section's claims (production runs it in parallel with Qloo).
+    if (enricher) await check(1);
+    if (enricher && enrichProfile && !stoppedBy) {
       started = Date.now();
       try {
         const bounded = await boundJpegForProfile(bytes, enrichProfile.image);
         const res = await enricher.enrichImage(
           {
             image: { bytes: bounded.bytes, mediaType: 'image/jpeg' },
-            // Exactly what production sends: the guarded title, published names, then held names.
-            stage1: (() => {
-              const g1 = guardQuickRead(quick.analysis, { twoStage: true });
-              return stage2Request(g1.analysis, g1.held);
-            })(),
+            // Exactly what production sends: the guarded title, published names (after the
+            // verifier's stage-1 check when it ran), then held names.
+            stage1: opts.pipeline.run(rec).verify.stage2Input,
           },
           { maxRetries: 0, ...identity(photo.id, 'stage2') },
         );
@@ -305,28 +335,8 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
         fail(photo.id, 'enrich', error, Date.now() - started);
       }
     }
-    // The verifier, after stage 2, on exactly the claims the compiler would send it.
-    if (verifier && verifyProfile && rec.enrichment !== undefined && !stoppedBy) {
-      const pre = opts.pipeline.run(rec);
-      if (pre.verifyTargets.length) {
-        started = Date.now();
-        try {
-          const bounded = await boundJpegForProfile(bytes, verifyProfile.image);
-          const res = await verifier.verifyImage(
-            {
-              image: { bytes: bounded.bytes, mediaType: 'image/jpeg' },
-              claims: pre.verifyTargets.map((t) => ({ name: t.name, type: t.type })),
-              visibleText: [...pre.final.visible_text],
-            },
-            { maxRetries: 0, ...identity(photo.id, 'verify') },
-          );
-          rec.verification = res.verification;
-          rec.verifyMs = Date.now() - started;
-        } catch (error) {
-          fail(photo.id, 'verify', error, Date.now() - started);
-        }
-      }
-    }
+    // Stage-2 check: what stage 2 would publish.
+    if (rec.enrichment !== undefined) await check(2);
     recordings.push(rec);
   }
 
@@ -358,7 +368,20 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   for (const r of recordings)
     await writeFile(
       path.join(opts.outDir, 'recordings', `${r.runId}.json`),
-      JSON.stringify({ quick: r.quick, enrichment: r.enrichment, quick_ms: r.quickMs, enrich_ms: r.enrichMs, verification: r.verification, verify_ms: r.verifyMs }, null, 2),
+      JSON.stringify(
+        {
+          quick: r.quick,
+          enrichment: r.enrichment,
+          quick_ms: r.quickMs,
+          enrich_ms: r.enrichMs,
+          verification1: r.verification1,
+          verify1_ms: r.verify1Ms,
+          verification2: r.verification2,
+          verify2_ms: r.verify2Ms,
+        },
+        null,
+        2,
+      ),
       { mode: 0o600 },
     );
 
@@ -366,7 +389,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   // Each final candidate carries its G-BRAND-CORROBORATE result, as the compiler passes it to grounding.
   const finals = new Map<string, (VlmAnalysis['candidates'][number] & { corroborated: boolean })[]>();
   for (const r of recordings) {
-    const { decisions, finalCandidates, verifyTargets: _t, ...run } = opts.pipeline.run(r);
+    const { decisions, finalCandidates, verify: _v, ...run } = opts.pipeline.run(r);
     runs.push(run);
     const corroborated = brandCorroboratedIds(decisions);
     finals.set(

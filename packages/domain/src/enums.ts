@@ -172,7 +172,7 @@ export const LIMITS = {
    * enrichment + the background verifier (vision_verify, off by default).
    * The verifier's call is reserved separately and only when it is enabled.
    */
-  visionCallsPerAnalysis: 3,
+  visionCallsPerAnalysis: 4,
   anchorsMax: 5,
   researchedReferencesMax: 5,
   qlooRequestsPerJob: 12,
