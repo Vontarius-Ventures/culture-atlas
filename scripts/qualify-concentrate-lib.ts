@@ -258,7 +258,7 @@ export async function qualifyProfile(
     /** vision_video_frame and text roles: the fixture directory. Photo roles use `golden` instead. */
     fixturesDir?: string;
     /**
-     * Photo roles (required): the golden set (fixtures/eval/golden-v2 since requalification) and the
+     * Photo roles (required): the golden set (fixtures/eval/golden-v3 since requalification round 2) and the
      * directory holding its photos outside git. Every photo of both splits is
      * hash-checked before any request; outputs are scored in memory against
      * the live gates and never written.
@@ -324,7 +324,7 @@ export async function qualifyProfile(
     );
   // The verifier is scored on the two-stage readings it checks (eval:live --roles ...,vision_verify);
   // its qualification run is added only if the tune-split evaluation enables it. Until then it stays
-  // unqualified (qualificationState requires a golden-v2 eval block), so production never dispatches it.
+  // unqualified (qualificationState requires a golden-v3 eval block), so production never dispatches it.
   if (profile.role === 'vision_verify')
     throw new Error('vision_verify is not qualified by this script yet: the tune-split evaluation kept it off (docs/quality-plan.md §15), so it is not qualified this round.');
   const enrich = profile.role === 'vision_photo_enrich';

@@ -9,7 +9,7 @@
  *   #    to the snapshot's fetched_at. Dry run (hash-checks the golden photos,
  *   #    prints the plan, sends nothing):
  *   pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
- *     --golden fixtures/eval/golden-v2 --photos /secure/golden-photos \
+ *     --golden fixtures/eval/golden-v3 --photos /secure/golden-photos \
  *     --out-dir /secure/concentrate-qualification --max-requests 30 --spend-cap-usd 2
  *
  *   # Photo roles qualify only on the golden set (both splits, sha256-pinned),

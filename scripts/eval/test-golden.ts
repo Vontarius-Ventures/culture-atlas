@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { EvalBindingLike } from '../../packages/providers/src/concentrate/profiles';
+import { REQUIRED_GOLDEN_SET, type EvalBindingLike } from '../../packages/providers/src/concentrate/profiles';
 import { solidJpeg } from '../../packages/providers/src/testing/images';
 import { GUARDRAIL_VERSION } from '../../packages/providers/src/vlm/guardrails';
 import { BOUND_CODE, codeDigest } from './binding';
@@ -35,9 +35,12 @@ export function label(id: string, overrides: Partial<PhotoLabel> = {}): PhotoLab
   };
 }
 
+/** The golden set the photo roles must qualify on; synthetic sets carry its name so the set gate is exercised past the name check. */
+export const PHOTO_GOLDEN_SET = REQUIRED_GOLDEN_SET.vision_photo!;
+
 export async function syntheticGolden(ids: readonly string[], prefix = 'ca-golden-'): Promise<{ dir: string; photosDir: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), prefix));
-  const dir = path.join(root, 'golden-v2');
+  const dir = path.join(root, PHOTO_GOLDEN_SET);
   const photosDir = path.join(root, 'photos');
   await mkdir(path.join(dir, 'labels'), { recursive: true });
   await mkdir(photosDir, { recursive: true });
@@ -63,7 +66,7 @@ export async function syntheticGolden(ids: readonly string[], prefix = 'ca-golde
       },
     });
   }
-  await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ version: 'golden-v2', photos }));
+  await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ version: PHOTO_GOLDEN_SET, photos }));
   return { dir, photosDir };
 }
 

@@ -296,7 +296,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     await writeFile(
       path.join(recorded.dir, 'freeze.json'),
       JSON.stringify({
-        golden_set: 'golden-v2',
+        golden_set: 'golden-v3',
         split: 'holdout',
         labelled_on: '2026-10-19',
         labelled_from: '0'.repeat(40),
@@ -320,12 +320,12 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     // The committed binding's record alone (a copy of the set without its freeze.json) is enough.
     const copy = await syntheticGolden(ids(12));
     const committed = (await syntheticBinding({ golden: copy }))!;
-    const consumed: EvalBindingLike = { ...committed, sets: { 'golden-v2': { ...committed.sets['golden-v2']!, blind_consumed: true } } };
+    const consumed: EvalBindingLike = { ...committed, sets: { 'golden-v3': { ...committed.sets['golden-v3']!, blind_consumed: true } } };
     await expect(qualifyProfile({ ...base, outDir: await preparedOutDir(), golden: copy, binding: consumed })).rejects.toThrow('consumed by a failed blind run');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('the review probe: the committed golden-v2 refuses both photo stages before any request, with the default binding', async () => {
+  it('the review probe: the committed golden-v2 (consumed) refuses both photo stages before any request, with the default binding', async () => {
     const fetchImpl = responses();
     const photos = await tmp('ca-qphotos-');
     for (const [p, stage1] of [
@@ -346,7 +346,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
           confirmPaidRequests: true,
           fetch: fetchImpl as unknown as typeof fetch,
         }),
-      ).rejects.toThrow(/golden-v2's blind held-out split was consumed by a failed blind run \(2026-10-19, code 303b29b, failed M1, M4, M11\)/);
+      ).rejects.toThrow(`${p.role} must qualify on golden-v3; got golden-v2.`);
     }
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -355,7 +355,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     const fetchImpl = responses();
     const g = await syntheticGolden(ids(10));
     const binding = (await syntheticBinding({ golden: g }))!;
-    const set = binding.sets['golden-v2']!;
+    const set = binding.sets['golden-v3']!;
     const run = async (b?: EvalBindingLike) =>
       realQualifyProfile({
         apiKey: KEY,
@@ -370,9 +370,9 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
         ...(b ? { binding: b } : {}),
       });
     await expect(run({ ...binding, thresholds_sha256: '1'.repeat(64) })).rejects.toThrow('thresholds.json differs');
-    await expect(run({ ...binding, sets: { 'golden-v2': { ...set, golden_sha256: '0'.repeat(64) } } })).rejects.toThrow('golden-v2 differs');
-    await expect(run({ ...binding, sets: { 'golden-v2': { ...set, scorer_version: 'score-v0' } } })).rejects.toThrow('differs from the committed score-v0');
-    await expect(run({ ...binding, sets: { 'golden-v2': { ...set, code_sha256: '2'.repeat(64) } } })).rejects.toThrow('the evaluated code');
+    await expect(run({ ...binding, sets: { 'golden-v3': { ...set, golden_sha256: '0'.repeat(64) } } })).rejects.toThrow('golden-v3 differs');
+    await expect(run({ ...binding, sets: { 'golden-v3': { ...set, scorer_version: 'score-v0' } } })).rejects.toThrow('differs from the committed score-v0');
+    await expect(run({ ...binding, sets: { 'golden-v3': { ...set, code_sha256: '2'.repeat(64) } } })).rejects.toThrow('the evaluated code');
     // The committed binding (the default) does not describe a temp golden set either.
     await expect(run()).rejects.toThrow('not the committed ones');
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -400,7 +400,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v2', guardrail_version: 'guard-v6', scorer_version: 'score-v5', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v6', scorer_version: 'score-v5', holdout_blind: true, pass: true },
     });
     expect(run.artifact!.eval!.metrics).toMatchObject({ holdout_M1: 0, holdout_M3: 1, holdout_M13: 1, failed_calls: 0, holdout_photos: 10, holdout_blind_photos: 10 });
     expect(qualificationState(profile, outDir)).toBe('qualified');
@@ -445,7 +445,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     });
     expect(run.artifact).toMatchObject({ result: 'fail', fixtures: { passed: 10, failed: 0 }, eval: { pass: false } });
     expect(run.artifact!.eval!.metrics.holdout_M2).toBe(1);
-    expect(run.artifact!.notes.some((n) => /Evaluation golden-v2 .*: fail/.test(n))).toBe(true);
+    expect(run.artifact!.notes.some((n) => /Evaluation golden-v3 .*: fail/.test(n))).toBe(true);
     expect(qualificationState(profile, outDir)).toBe('catalog-compatible');
   });
 
@@ -522,7 +522,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       requests_sent: 20,
       fixtures: { total: 10, passed: 10, failed: 0 },
       usage: { input_tokens: 16_000, output_tokens: 3000 },
-      eval: { golden_set: 'golden-v2', pass: true },
+      eval: { golden_set: 'golden-v3', pass: true },
     });
     expect(e.artifact!.notes.some((n) => n.startsWith('Stage-1 input from fixture/vision-1 quick read'))).toBe(true);
     expect(qualificationState(enrich, outDir)).toBe('qualified');
@@ -579,7 +579,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       role: 'vision_photo_enrich',
       requests_sent: 20,
       usage: { input_tokens: 16_000, output_tokens: 3000 },
-      eval: { golden_set: 'golden-v2', pass: true },
+      eval: { golden_set: 'golden-v3', pass: true },
     });
     expect(run.stage1Artifact).toMatchObject({
       result: 'pass',
@@ -589,7 +589,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       requests_sent: 10,
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 9000, output_tokens: 1000, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v2', guardrail_version: 'guard-v6', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v6', holdout_blind: true, pass: true },
     });
     // Scored as a stage-1-only run: the same block a separate vision_photo qualification would carry.
     expect(run.stage1Artifact!.eval!.metrics).toMatchObject({ holdout_M13: 1, failed_calls: 0, holdout_photos: 10 });
