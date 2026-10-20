@@ -289,7 +289,7 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
   });
 
   it('is versioned', () => {
-    expect(GROUNDING_VERSION).toBe('ground-v6');
+    expect(GROUNDING_VERSION).toBe('ground-v7');
   });
 });
 
@@ -445,5 +445,22 @@ describe('ground-v6: decor tags for spaces only, place aliases of the same kind'
     expect(acceptMatch(area, searchPlan(area), [quarter]).match).toMatchObject({ entity_id: 'FIXTURE-L1' });
     const venue = ent('V1', 'Fixture Royal Palace Museum', 'urn:entity:place', { popularity: 0.5, properties: { akas: ['Palais Fixture-Royal'] } });
     expect(acceptMatch(palace, searchPlan(palace), [venue]).match).toMatchObject({ entity_id: 'FIXTURE-V1' });
+  });
+});
+
+describe('ground-v7: a dish or an object is not its region, cuisine or style', () => {
+  it('a dish reaching a cuisine tag only through its tag query is not accepted (iteration-6 h05 shape)', () => {
+    const dish = cand({ name: 'Fixture tofu', type: 'cuisine', relation: 'depicted', certainty: 0.8, domain: 'food', tag_query: 'fixturese' });
+    expect(acceptMatch(dish, tagsPlan(dish), [tag('urn:tag:cuisine:qloo', 'fx', 'Fixturese')]).match).toBeNull();
+    // The cuisine named by the claim itself, or a tag that only drops words of the name, still grounds.
+    const cuisine = cand({ name: 'Fixturese cuisine', type: 'cuisine', relation: 'depicted', certainty: 0.8, domain: 'food' });
+    expect(acceptMatch(cuisine, tagsPlan(cuisine), [tag('urn:tag:cuisine:qloo', 'fx', 'Fixturese')]).match).toMatchObject({ name: 'Fixturese' });
+    const home = cand({ name: 'Fixturese home cooking', type: 'cuisine', relation: 'depicted', certainty: 0.8, domain: 'food', tag_query: 'home-style fixturese' });
+    expect(acceptMatch(home, tagsPlan(home), [tag('urn:tag:cuisine:qloo', 'hs', 'Home-Style Fixturese')]).match).toMatchObject({ name: 'Home-Style Fixturese' });
+  });
+
+  it('an object reaching a region or origin style tag through its query is not accepted', () => {
+    const obj = cand({ name: 'Painted wooden fixture stool', type: 'style', domain: 'craft', tag_query: 'fixturese folk' });
+    expect(acceptMatch(obj, tagsPlan(obj), [tag('urn:tag:style:qloo', 'ff', 'Fixturese Folk')]).match).toBeNull();
   });
 });

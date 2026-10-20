@@ -3039,3 +3039,61 @@ unlabelled share. h12's Hangul brand remains a miss. h80+ stays unfrozen; nothin
 | **Total** | **1,977** | **705** | **at most $30.47** (worst-case reservations for the sweeps and smoke, list-rate cost for the seven mix runs) |
 
 0 Wikipedia. Round-4 caps: 2,600 requests and $45.
+
+### 19.25 Offline close of round 4: ground-v7, a tune label, trade-offs, the blind plan (no request)
+
+**ground-v7.** The ground-v5 defining-tag rule now applies to every tag family, not only style tags: a tag
+reached only through the candidate's tag query must add no word to the candidate's name and drop no
+proper name. A dish is not its region's cuisine (iteration-6 h05 "Mapo tofu" with the query "sichuan" →
+"Sichuan" is not accepted), and an object is not the style or region it comes from. A tag equal to the
+candidate's own name grounds as before ("Sichuan cuisine" → Sichuan, "Tex-Mex cuisine" → Tex Mex), and a
+tag that only drops words of the name still does ("Chinese home cooking" → Home-Style Chinese). Tests:
+`grounding.test.ts` "ground-v7" (2).
+
+**Grounding, re-accepted offline under ground-v7** (`r4/tools/reaccept.mts`, which now also finds a G-STYLE-OF
+replacement's domain through its tag query; existing judgements; no newly accepted item):
+
+| Run | Lookups | Accepted | Precision (≥ 1) | End-to-end (≥ 0.9) | Recall (≥ 0.5) | Forbidden accepts |
+| --- | --- | --- | --- | --- | --- | --- |
+| iter3-qloo | 162 | 23 | 1.0 | 1.0 | 0.6571 | 0 |
+| iter4-qloo | 163 | 21 | 1.0 | 0.9524 | 0.6000 | 0 |
+| iter5-qloo | 182 | 25 | 1.0 | 1.0 | 0.6944 | 0 |
+| iter6-qloo | 183 | 27 | 1.0 | 0.9630 | 0.8182 | 0 |
+
+`holdout_candidates` is n/a on all four (tune split). iter4's remaining not-good item is h31 "Neapolitan pizza"
+(unlabelled), iter6's h31 "New York-style pizza" (unlabelled).
+
+**Tune labels (owner decision 2).** Conservative convention kept (unlabelled = not good). h48 gains an
+acceptable entry for "monochrome / all-black casual footwear" (the shoe is entirely black; the claim is as
+specific as the existing alias "Black sneakers"; label history records it), so the iter6 judgement counts it
+as good. h31 is not changed: its label states that the photo does not settle a regional pizza style
+(Neapolitan, New York), so "New York-style pizza" stays unlabelled. Nothing forbidden was widened.
+`pnpm eval:lint-labels --golden fixtures/eval/golden-v5`: 94 labels, the same 6 unresolved overlaps as
+before (h54, h70, h78; none new). Tune replays with the edited label: iteration-6 Qloo run PASS (M4 0.1394),
+iteration-5 Qloo run PASS, iteration-3 PASS.
+
+**Known trade-offs, kept as they are (owner decision 3).**
+- The guard-v16 equipment exemption covers the new occupation lexicon only. A role noun of the older
+  guard-v10 lists inside a garment name is still withheld on a photo with people ("Chef jacket", "Doctor
+  Martens boots"), as in every run since guard-v10.
+- ground-v6 grounds decor and setting tags only for room, space and building style claims, so furniture,
+  tableware and other object style claims stay unresolved under their own names ("Rustic wooden table",
+  "Neoclassical furniture", "Minimalist tableware"), and art-domain style claims ("Dutch Golden Age
+  portraiture") too; the aesthetic `style` family ("Rustic", "Monochrome") is not restricted.
+- The occupation lexicon withholds role nouns that tune labels accept on people photos (h79 "street vendor",
+  "simit vendor"); a blind label must expect the object or activity instead (BLIND-PLAN step 2).
+- Tags reached through a query must not add words, which also rejects some correct looser tags ("striped
+  sofa" → Striped Upholstery); recall falls (iter3 0.7778 → 0.6571) while precision reaches 1.0.
+- h12's Hangul brand ("Tae Yang Mate Tea (태양의 마테차)") remains a miss; p05 "Lustreware" still publishes
+  under M2.
+
+**The blind split (prepared, not run).** `r4/BLIND-PLAN.md` (round scratchpad, outside git) lists the exact
+steps to add h80–h109 as golden-v5's held-out split once photos and independent labels exist: the curator's
+labels, holdout manifest, `freeze.json`, FREEZE.md and freeze test on a separate branch; `pnpm
+eval:lint-labels`; the freeze check; `pnpm eval:binding --write` and the binding commit; `pnpm eval:fetch
+--split holdout`; one `eval:live --split holdout --qloo` run with the mix profile; grounding judgements by a
+separate agent; the record in `freeze.json` and §20, with no change after the run. Nothing was frozen and
+blind-v5 was not opened.
+
+typecheck, lint and `pnpm test` (1461/1461) passed before the commit. No Concentrate, Qloo or Wikipedia
+request in this step; round-4 totals stay as in 19.24 (1,977 Concentrate, 705 Qloo, at most $30.47).

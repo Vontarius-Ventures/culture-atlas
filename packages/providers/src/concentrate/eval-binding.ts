@@ -41,7 +41,7 @@ export const EVAL_BINDING = {
       blind_consumed: true,
     },
     'golden-v5': {
-      golden_sha256: '2c73a8c3e9b9d8e6809124886242111995c22e30cab1416397f181150d9cfbde',
+      golden_sha256: 'e6d8bb66c6bca08a0a4917ae65cc784dc56f21b45e084d2a0b9b4c4d99b33c26',
       scorer_version: 'score-v14',
       code_sha256: 'c2d20f12586dfb9bf9df6e3ea99c3347931e89069f6b62a405cb72023edfee8e',
       blind_consumed: false,

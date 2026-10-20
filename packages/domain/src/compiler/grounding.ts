@@ -13,7 +13,7 @@ export { canonicalTokens } from './text';
  * doubt becomes a reference under the candidate's own name, never a
  * look-alike's name. No I/O; every decision carries a rule id and a reason.
  */
-export const GROUNDING_VERSION = 'ground-v6';
+export const GROUNDING_VERSION = 'ground-v7';
 
 export type GroundingRule = 'Q-TYPE' | 'Q-TAGTYPES' | 'Q-NAME' | 'Q-SUBSET' | 'Q-PLACE' | 'Q-EVIDENCE' | 'Q-DOUBT';
 
@@ -379,13 +379,15 @@ function acceptTag(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'tags'
   const queryTokens = canonicalTokens(plan.query);
   const targets = [queryTokens, nameTokens].filter((s) => s.size > 0);
   if (targets.length === 0) return { match: null, rule: 'Q-NAME', reason: 'empty_canonical_name' };
-  const style = (t: QlooTag) => STYLE_TAG_TYPES.some((f) => tagFamilyMatches(t, f));
   const exact = typed.filter((t) => {
     const tokens = canonicalTokens(t.name);
     if (nameTokens.size && sameTokens(tokens, nameTokens)) return true;
     if (!queryTokens.size || !sameTokens(tokens, queryTokens)) return false;
     // ground-v5: matched only through the tag query: a style tag must be the candidate's defining style.
-    return !style(t) || c.userSelected === true || definingStyleTag(c.name, t.name);
+    // ground-v7: the same for every tag family, cuisine included: a dish is not its region's cuisine
+    // ("Mapo tofu" with the query "sichuan" -> "Sichuan", iteration-6 h05), and an object is not the
+    // style or region it comes from. A tag equal to the candidate's own name is accepted as before.
+    return c.userSelected === true || definingStyleTag(c.name, t.name);
   });
   if (exact.length === 0) {
     const subset = typed.some((t) => targets.some((s) => strictSubset(canonicalTokens(t.name), s)));

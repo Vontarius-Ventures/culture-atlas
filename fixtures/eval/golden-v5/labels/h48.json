@@ -23,6 +23,9 @@
       "pattern": "elevator shoes?|height[- ]increasing|hidden heel|athleisure|mesh|faux leather|patent leather|elastic laces|lace-?less|sock (fit|sneaker)|streetwear"
     },
     {
+      "pattern": "(?:monochrome|all[- ]black)(?: black)?(?: casual| athletic)? (?:footwear|sneakers?|shoes?)|casual footwear"
+    },
+    {
       "pattern": "wing(ed)? (logo|emblem)|stripes",
       "generic": true
     }
@@ -59,5 +62,13 @@
     "forbidden_entity_types": [],
     "forbidden_tag_families": []
   },
-  "notes": "Product photo of a black slip-on sneaker (mesh and glossy panels, elastic laces with a toggle, two raised stripes, a wing emblem on the tongue). No brand word anywhere: clothing without a legible logo."
+  "notes": "Product photo of a black slip-on sneaker (mesh and glossy panels, elastic laces with a toggle, two raised stripes, a wing emblem on the tongue). No brand word anywhere: clothing without a legible logo.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, after iteration 6, tune split only): an acceptable entry for the monochrome or all-black casual footwear the photo shows ('Monochrome black casual footwear', 'casual footwear'); nothing forbidden is widened",
+      "reason": "Iteration 6 published 'Monochrome black casual footwear' and grounded it to the aesthetic style tag 'Monochrome'; the shoe is entirely black, so the claim is correct and as specific as the existing alias 'Black sneakers', but no entry matched it (end-to-end grounding counted it as not good)",
+      "decision": "docs/quality-plan.md §19.25 (round 4, owner decision: extend tune labels only for correct, specific claims they omitted)"
+    }
+  ]
 }
