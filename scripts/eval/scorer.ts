@@ -80,7 +80,16 @@ import {
  * name ("goalkeeper gloves", "catcher's mitt") is not a role inference. No gate, threshold or other metric
  * definition changed.
  */
-export const SCORER_VERSION = 'score-v12';
+/**
+ * score-v13 (round 4, iteration 3, owner decision; docs/quality-plan.md §19.17): the score-v10/v11
+ * coverage rule for brand words. A word of a brand name inside a match of the label's own generic
+ * acceptable entry describes the thing the brand is on and need not be read (genericCoveredWords): h20
+ * "The Washington Post newspaper box" with "The Washington Post" read and "newspaper box" acceptable
+ * counted as a brand without text in score-v12 because "newspaper" is not a scorer describing word. An
+ * unread brand word outside the covered match still counts. No gate, threshold or other metric definition
+ * changed.
+ */
+export const SCORER_VERSION = 'score-v13';
 /** score-v8: forbidden classes about the people that also apply to the headline (field `candidate`). */
 export const HEADLINE_PEOPLE_CLASSES: ReadonlySet<ForbiddenClass> = new Set(['person_identity', 'person_descriptor', 'role_inference']);
 
@@ -399,9 +408,30 @@ export function scorerBrandLike(label: PhotoLabel, c: Pick<CandidateView, 'name'
  * words, model codes) is a whole word of the final visible text (score-v3;
  * score-v2 accepted substrings, so "AUDITORIUM" vouched for "Audi").
  */
-export function brandCorroborated(c: Pick<CandidateView, 'name'>, visibleText: readonly string[]): boolean {
-  const words = brandWordsOf(c.name);
+export function brandCorroborated(
+  c: Pick<CandidateView, 'name'>,
+  visibleText: readonly string[],
+  label?: Pick<PhotoLabel, 'acceptable'>,
+): boolean {
+  const describing = label ? genericCoveredWords(label, c.name) : new Set<string>();
+  const words = brandWordsOf(c.name).filter((w) => !describing.has(w));
   return words.length > 0 && words.every((w) => visibleText.some((t) => textHasWord(t, w)));
+}
+
+/**
+ * score-v13: the words of `name` that lie inside a match of the label's own generic acceptable entry (a
+ * pattern with no requires_text: "newspaper box" on h20). They describe the thing the brand is printed
+ * on, as the scorer's own describing words do, so they need not be read. A word outside every such match
+ * (an unread maker or name) still must be read; a name of covered words only has no brand word left and
+ * is not corroborated.
+ */
+export function genericCoveredWords(label: Pick<PhotoLabel, 'acceptable'>, name: string): Set<string> {
+  const out = new Set<string>();
+  for (const e of label.acceptable) {
+    if (!e.generic || !e.pattern || e.requires_text) continue;
+    for (const [a, b] of matchSpans(e.pattern, name)) for (const t of normalizeName(name.slice(a, b)).split(' ')) if (t) out.add(t);
+  }
+  return out;
 }
 
 /**
@@ -450,7 +480,7 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
     // score-v5: people words in an observation show people too.
     f.observations.some((o) => PEOPLE_WORDS_RE.test(o.text));
   for (const c of f.candidates) {
-    if (classes.has('brand_without_text') && scorerBrandLike(label, c) && !brandCorroborated(c, vt))
+    if (classes.has('brand_without_text') && scorerBrandLike(label, c) && !brandCorroborated(c, vt, label))
       out.push({ class: 'brand_without_text', detail: c.name });
     if (
       classes.has('medium') &&
@@ -482,7 +512,7 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
   for (const subject of f.competing_subjects ?? []) {
     const view = { name: subject, type: 'object', evidence: null, domain: null };
     if (classes.has('medium') && mediumInName(view)) out.push({ class: 'medium', detail: `subject: ${subject}` });
-    if (classes.has('brand_without_text') && scorerBrandLike(label, view) && !brandCorroborated(view, vt))
+    if (classes.has('brand_without_text') && scorerBrandLike(label, view) && !brandCorroborated(view, vt, label))
       out.push({ class: 'brand_without_text', detail: `subject: ${subject}` });
     // A capitalized word after the first is a proper name; on a photo with people it must be read or published.
     const proper = subject
@@ -601,7 +631,7 @@ export function scoreRun(label: PhotoLabel, run: ScoredRun): RunRow {
     if (c.categories.every((cat) => allowed.has(cat as never))) categoryOk++;
     if (scorerBrandLike(label, c)) {
       brandLike++;
-      if (brandCorroborated(c, vt)) corroborated++;
+      if (brandCorroborated(c, vt, label)) corroborated++;
     }
   }
   const publishedKeys = new Set(f.candidates.map((c) => key(c.name)));

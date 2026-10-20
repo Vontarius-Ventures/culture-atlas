@@ -7,6 +7,7 @@ import {
   candidateStatus,
   forbiddenClassViolations,
   forbiddenCovered,
+  genericCoveredWords,
   makerUsedAsBrand,
   mediumCovered,
   roleCovered,
@@ -645,9 +646,6 @@ describe('score-v11 (round 4, iteration 2): the medium class yields to a name th
 });
 
 describe('score-v12 (round 4, iteration 3): a maker word counts only when it is used as a brand', () => {
-  it('is the current scorer version', () => {
-    expect(SCORER_VERSION).toBe('score-v12');
-  });
 
   // h15 shape: a doughnut label that expects doughnuts and forbids brands without text.
   const doughnuts = label('h89', {
@@ -708,5 +706,45 @@ describe('score-v12 (round 4, iteration 3): a maker word counts only when it is 
         class: 'role_inference',
         detail: name,
       });
+  });
+});
+
+describe('score-v13 (round 4, iteration 3): a brand word inside the label\'s own generic match describes', () => {
+  it('is the current scorer version', () => {
+    expect(SCORER_VERSION).toBe('score-v13');
+  });
+
+  // h20 shape: the label expects the read brand and accepts "newspaper box" as a generic name.
+  const box = label('h86', {
+    expected: [{ name: 'The Washington Post', aliases: [], pattern: 'washington post', type: 'brand', requires_text: 'Washington', generic: false }],
+    acceptable: [{ pattern: 'newspaper (box|vending|dispenser|rack)|news ?box', aliases: [], generic: true }],
+    forbidden_classes: ['brand_without_text'],
+  });
+  const read = ['NOTICE', 'The Washington Post'];
+
+  it('the read brand on an accepted generic object is corroborated (score-v12 counted it in M1 and M7)', () => {
+    const claim = c('The Washington Post newspaper box', { type: 'brand', evidence: 'read_text', evidence_text: 'The Washington Post' });
+    expect([...genericCoveredWords(box, claim.name)].sort()).toEqual(['box', 'newspaper']);
+    expect(brandCorroborated(claim, read, box)).toBe(true);
+    const r = run('h86', { candidates: [claim], visible_text: read });
+    expect(forbiddenClassViolations(box, r)).toEqual([]);
+    expect(scoreRun(box, r)).toMatchObject({ brandLike: 1, brandCorroborated: 1 });
+  });
+
+  it('a genuinely unread brand word still counts, and a name of covered words only is not corroborated', () => {
+    // "Post" read but not "Washington": the unread naming word is outside the generic match.
+    const unread = c('The Washington Post newspaper box', { type: 'brand' });
+    expect(brandCorroborated(unread, ['POST'], box)).toBe(false);
+    expect(forbiddenClassViolations(box, run('h86', { candidates: [unread], visible_text: ['POST'] }))).toContainEqual({
+      class: 'brand_without_text',
+      detail: 'The Washington Post newspaper box',
+    });
+    // An unread maker next to the generic name: "USA Today" is not read, "newspaper box" does not vouch for it.
+    expect(brandCorroborated(c('USA Today newspaper box', { type: 'brand' }), read, box)).toBe(false);
+    // A brand-typed name made only of covered words has no brand word to read.
+    expect(brandCorroborated(c('Newspaper box', { type: 'brand' }), ['NEWSPAPER BOX'], box)).toBe(false);
+    // A requires_text or non-generic entry never covers: the old rule applies.
+    const strict = label('h85', { acceptable: [{ pattern: 'newspaper box', aliases: [], generic: false }] });
+    expect(genericCoveredWords(strict, 'The Washington Post newspaper box').size).toBe(0);
   });
 });
