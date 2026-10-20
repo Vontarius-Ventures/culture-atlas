@@ -2551,3 +2551,91 @@ owner. h80+ stays unfrozen.
 | **Total** | **1,040** | **at most $22.77** (worst-case reservations except the two mix runs, which are list-rate cost) |
 
 0 Qloo, 0 Wikipedia. Round-4 caps: 1,500 requests and $60.
+
+### 19.15 Iteration 3: publishable additions only (`vlm-enrich-v6`), equipment labels, score-v12
+
+Owner decisions after iteration 2 (19.13), applied as given:
+
+| Change | What it decides | Class, not word |
+| --- | --- | --- |
+| `vlm-enrich-v6` (option a) | Stage 2 proposes an additional candidate only when it would rate it 0.5 or more and it rests on read text, a logo or a distinctive form, the guard's own publication rule for additions; context-only or low-certainty additions are not requested. The guard is unchanged (G-ADDITION-FLOOR and G-EVIDENCE still decide); nothing is filtered or relabelled before scoring, and M4 is computed as before (thr-v2) | The prompt states the guard's rule; `ADDITION_MIN` is exported and a test in `two-stage.test.ts` pins the prompt's number to it. Hash pinned; `eval:live` refuses a `vlm-enrich-v5` profile |
+| golden-v5 h72 (and h27) | Equipment named by a role is an object. h72 accepts the catcher's protective equipment generally (gear, equipment, mitt, mask, helmet, leg or shin guards, chest protector; possessive or not, with or without "protective"), and leg guards, shin guards and chest protectors alone; its role pattern no longer matches "catcher" as the modifier of that equipment ("catcher" alone still is a role). `eval:lint-labels` lists one other equipment-vs-role overlap, h27 "goalkeeper gloves": the same logic (goalkeeper's or keeper's gloves, gear or equipment). History recorded on both labels | Equipment nouns after a role word, by negative lookahead; no role word removed |
+| score-v12 | A word of the scorer's own maker list is brand-like only when used as a brand: in a dish name (type cuisine or food domain) only a food or drink maker counts, in a garment name (fashion domain, the name ending in a garment noun) only a fashion, sport or watch maker. Brand-typed claims, logos, other products (devices, vehicles, watches) and the label's own brand patterns count as before. The score-v11 coverage rule also applies to the scorer's own role class (`roleCovered`): equipment the label accepts by a role name ("goalkeeper gloves") is not a role inference | Maker list tagged by trade; h15 "Apple cider doughnut" (apple, a device maker, modifying a dish) no longer counts in M1 and M7; "Guinness stout", "Nike running shoes", "Apple Watch" still do. Tests in `scorer.test.ts` "score-v12" (3) fail on score-v11 |
+
+`roleCovered` goes one step past the h72/h27 label decision: without it the scorer's own role list (which
+has "goalkeepers") would still count h27's accepted "Goalkeeper gloves" whatever the label says. Binding
+regenerated; `replay-v1` names score-v12 and passes. typecheck, lint and `pnpm test` (1435/1435) passed
+before the commit.
+
+**Replays (no request), guard-v13, score-v12.** Recorded readings keep their recorded verdicts and
+additions, so these measure the label and scorer changes only.
+
+| Recordings | guard-v13, score-v11 (19.13) | guard-v13, score-v12, golden-v5 as edited |
+| --- | --- | --- |
+| Iteration-2 mix | FAIL M1 2, M4 0.3214, M7 0.9714, M11 1 | FAIL M4 0.3214 only (M1 0, M7 1, M11 0) |
+| Iteration-1 mix | FAIL M1 2, M4 0.3345, M11 1 | FAIL M1 1 (p02), M4 0.3345 |
+| Sweep haiku | FAIL M1 2, M4 0.226, M8 1, M11 1 | FAIL M1 1 (h28 "Wilson"), M4 0.226, M8 1 |
+| Sweep sonnet | FAIL M4 0.318, stage-1 p50 | same |
+| Sweep gpt-5.4-mini | FAIL M1 3, M11 1, M4 0.251, M9, M10 2, M12 | same |
+| Smoke haiku (2 photos) | — | FAIL (M4, M6, M15 on 2 photos, p50); M1 0 |
+| Round-3 and older recordings (94 tune, h14-h79 blind readings, §15 runs) | as 19.10 | unchanged (M1 0 on all) |
+| `replay-v1` (CI) | PASS | PASS |
+
+The gemini sweep (stopped by hand) has no complete recording to replay.
+
+**The mix, live, once (haiku stage 1 `vlm-quick-v3`, sonnet stage 2 `vlm-enrich-v6`): FAIL.** Profile
+`r4/profiles/mix.json` (the iteration-2 pair with the enrich prompt raised; the old file kept as
+`mix-iter2.json`), out-dir `r4/iter3`, ledger `r4/ledger-iter3.jsonl`, package `r4-iter3-mix`, 94 tune
+photos, no Qloo, no verifier, `--max-requests 200 --spend-cap-usd 8`.
+
+- **Requests**: 188, all 200, 0 invalid, 0 incomplete; $1.534 at list rate (stage 1 $0.043, stage 2
+  $1.491; worst case reserved $5.55).
+- **Gates**: `tune: FAIL runs=94 published=257 M1=1 M2=0.0117 M3=0.9864 M4=0.1872 M5=0.8434 M6=0.9883
+  M7=0.9677 M8=0 M9=0.9359 M10=0 M11=0 M12=0.144 M13=1 M14_stage1_p50=2676 M14_stage1_p95=3676
+  M14_enrich_p95=8611 M14_incomplete=0 M15=0.6627 qloo_forbidden_accepts=0 forbidden_published=3
+  verifier_checked=0 text_only=7`. The offline replay of the recordings reproduces it.
+- **M4 passes** (0.1872 ≤ 0.20; iteration 2: 0.3214). Stage 2 proposed 42 additions (iteration 2: 216),
+  none below 0.5 and none on context (iteration 2: 78 below 0.5, 83 on context); 59 photos got none.
+  Label-good claims dropped fell from 90 to 38.
+- **Both failures are one claim, a scorer artifact.** h20 published "The Washington Post newspaper box"
+  (brand, read text "The Washington Post", transcribed at stage 2, supported). The label expects "The
+  Washington Post" and accepts "newspaper box"; score-v3's brand words are every word of the name not in
+  the scorer's describing list, which has "box" but not "newspaper", so "newspaper" must be read and the
+  claim counts as a brand without text (M1 1, M7 30/31). Simulated offline only (not committed): with
+  "newspaper" treated as describing, the same recordings PASS every gate (M1 0, M7 1, M4 0.1872). Not
+  changed: it is outside the decisions delegated for this iteration, and the fix needs a class (a word
+  covered by the label's own generic acceptable match, as score-v10/v11, or a product-noun rule), not the
+  word.
+- **What option (a) cost.** Published output did not stay unchanged: 257 published claims against 309 in
+  iteration 2 (expected 103 against 121, acceptable 114 against 136, unlabelled 37 against 50). In
+  iteration 2, 115 of sonnet's 216 additions already met the new rule (0.5 or more, not on context);
+  under `vlm-enrich-v6` it proposed 42, so it also stopped proposing most qualifying ones. M5 0.880 → 0.843 and M15 0.711 → 0.663 (stage 1 is a new reading too)
+  still pass; the photos with an expected hit move both ways (lost: p11, h37, h46, h56, h62, h64, h79;
+  gained: p12, h42, h61, h76). Part of the M4 gain is that fewer label-good claims are emitted at all
+  (203 against 280), not only that unpublishable ones are no longer emitted.
+- **Forbidden published, under the gates (M2 0.0117)**: p05 "Lustreware ceramics" (as in 19.4) and h26
+  "Danish registration plate"; plus the h20 claim above.
+- No grounding confirmation run: the tune run did not pass. `eval:live` cannot replay recordings with
+  `--qloo` (it always reads the photos afresh); the confirmation would be a live run with `--qloo
+  --max-qloo-requests 300 --qloo-concurrency 2`, 188 more Concentrate requests (1,416 of 1,500).
+
+**State and the decisions it needs.** On the live mix every gate passes except one scorer artifact on
+h20. The owner decides (1) whether score-v13 treats a word that the label's own generic acceptable entry
+covers ("newspaper box") as describing, by the score-v10/v11 coverage class, and re-scores the iteration-3
+recordings offline (no request; it would pass), and (2) whether the coverage lost with `vlm-enrich-v6`
+(published 309 → 257) is acceptable. The grounding confirmation (188 requests) fits the round cap once.
+h80+ stays unfrozen.
+
+### 19.16 Spend (round 4 to date)
+
+| Package | Concentrate requests | Cost |
+| --- | --- | --- |
+| r4-smoke-haiku | 4 | worst case $0.03 |
+| r4-sweep-haiku / sonnet / gptmini | 188 / 188 / 188 | worst case $1.32 / $7.99 / $3.57 |
+| r4-sweep-gemini | 97 (stopped) | worst case about $2.61 |
+| r4-iter1-mix | 187 | $1.63 at list rate (worst case $5.55) |
+| r4-iter2-mix | 188 | $1.70 at list rate (worst case $5.55) |
+| r4-iter3-mix | 188 | $1.53 at list rate (worst case $5.55) |
+| **Total** | **1,228** | **at most $24.30** (worst-case reservations except the three mix runs, which are list-rate cost) |
+
+0 Qloo, 0 Wikipedia. Round-4 caps: 1,500 requests and $60 (272 requests left).
