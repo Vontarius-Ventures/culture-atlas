@@ -372,9 +372,10 @@ describe('reading v2 (quality plan §3)', () => {
     // vlm-quick-v3 (round 4, docs/quality-plan.md §19): was ae79cce2… as vlm-quick-v2.
     expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('d1a308e5631c07c18dead7d4d02823114f845340ec13f1008a2add7d3fbea248');
     expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v3');
-    // vlm-enrich-v4 (round 4): was b8740b2b… as vlm-enrich-v3 (requalification tune, §15), d23612b5… as vlm-enrich-v2.
-    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('8007487d0df03a35a38f1f09f467f7e6c2eccd90bd03cd005a8b2c618a7f208f');
-    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v4');
+    // vlm-enrich-v5 (round 4, iteration 2, §19.13): was 8007487d… as vlm-enrich-v4 (round 4), b8740b2b… as
+    // vlm-enrich-v3 (requalification tune, §15), d23612b5… as vlm-enrich-v2.
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('e682090c14ad315577ac0a2982db7620eb1ce25d1f9a6f6df448b2c0ea993854');
+    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v5');
   });
 
   it('round 4 (vlm-quick-v3, vlm-enrich-v4): people photos name what is worn, held, eaten or played; works by their title', () => {
@@ -388,6 +389,15 @@ describe('reading v2 (quality plan §3)', () => {
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('exactly one entry per first-reading candidate, never skipping one');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('is unsupported unless legible text names it');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('the title of a well-known artwork or landmark');
+  });
+
+  it('vlm-enrich-v5 judges each verdict by the kind of claim: resemblances by their visible features, places by a form found only there', () => {
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('Judge each candidate as the kind of claim it is');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('is a resemblance, never a claim of origin, date or authenticity');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('even though no text names it');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('another named style or type fits them as well or better');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('a vehicle, sign or building form found only in that place');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('A brand, maker or model is supported only when its name or logo is legible');
   });
 
   it('vlm-enrich-v3 lists prominent text first and transcribes partly hidden words as their visible letters', () => {

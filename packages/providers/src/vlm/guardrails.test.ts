@@ -110,7 +110,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v12');
+    expect(GUARDRAIL_VERSION).toBe('guard-v13');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -1814,13 +1814,8 @@ describe('guard-v10: people claims in the headline, read text that names the cla
       const g = read(t, i, c);
       return [g.analysis.title, g.analysis.interpretation];
     });
-    expect(out).toEqual([
-      [NEUTRAL_PEOPLE_TITLE, 'Matching orange tops and denim against brick.'],
-      ['Cafe scene with three women', NEUTRAL_PEOPLE_INTERPRETATION],
-      ['Two men sharing white cake', NEUTRAL_PEOPLE_INTERPRETATION],
-      ['Hand with ring in field', NEUTRAL_PEOPLE_INTERPRETATION],
-      [NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION],
-    ]);
+    // guard-v13: the photo shows people in every case, so the other line is replaced with the one that claimed.
+    expect(out).toEqual(cases.map(() => [NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION]));
   });
 
   it('without people, the same words about things stay: a wedding cake on a stand, a server rack, a couple of chairs', () => {
@@ -2245,5 +2240,36 @@ describe('guard-v12: one people test on every surface, rules that follow the pro
     expect(decisionFor(high.decisions, 'Fixture midway')).toMatchObject({ action: 'drop', note: 'uncertain_second_reading' });
     const medium = stage2(g, enrichment({ confirmed: [ok('Fixture midway')], additional_candidates: [extra], uncertainty: { overall: 'medium', notes: [] } }));
     expect(names(medium.publishNow)).toEqual(['Fixture midway', 'Ferris wheel']);
+  });
+});
+
+/*
+ * guard-v13 (round 4, iteration 2, docs/quality-plan.md §19.13): on a photo that shows people the headline
+ * is one reading. Fails on guard-v12, which replaced only the line that failed the word test. FIXTURE shapes.
+ */
+describe('guard-v13: the headline of a photo with people is replaced as a unit', () => {
+  const read = (title: string, interpretation: string) =>
+    guardQuickRead(
+      toVlmAnalysis({
+        title,
+        interpretation,
+        candidates: [v2({ name: 'Fixture ladder-back chair', type: 'object', domain: 'interior', evidence: 'distinctive_form' })],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+
+  it('a title with no listed people word goes with an interpretation that claimed a role (iteration-1 h54 shape)', () => {
+    const g = read('Table with menu and fixturestaff', 'A café scene with a server taking an order beside seated diners.');
+    expect([g.analysis.title, g.analysis.interpretation]).toEqual([NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION]);
+    expect(g.titleChanged).toBe(true);
+  });
+
+  it('a headline that claims nothing about the people stays whole, and a photo without people keeps its other line', () => {
+    const kept = read('Two people at a wooden table', 'Ladder-back chairs and a menu on a wooden table.');
+    expect([kept.analysis.title, kept.analysis.interpretation]).toEqual(['Two people at a wooden table', 'Ladder-back chairs and a menu on a wooden table.']);
+    // No people shown: a server rack is a thing; nothing is replaced.
+    const things = read('Server rack with blue lights', 'A row of servers in a data centre.');
+    expect([things.analysis.title, things.analysis.interpretation]).toEqual(['Server rack with blue lights', 'A row of servers in a data centre.']);
   });
 });

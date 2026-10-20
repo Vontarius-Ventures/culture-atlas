@@ -151,7 +151,12 @@ import {
  *  - a stage-2 reading whose overall uncertainty is "high" confirms nothing:
  *    no held claim and no addition publishes from it.
  */
-export const GUARDRAIL_VERSION = 'guard-v12';
+/*
+ * guard-v13 (round 4, iteration 2; docs/quality-plan.md §19.13): on a photo that shows people, the
+ * headline is replaced as a unit: when the people test replaces the title or the interpretation, the
+ * other line is replaced too (it was written as the same reading).
+ */
+export const GUARDRAIL_VERSION = 'guard-v13';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -1711,6 +1716,15 @@ function sanitizeHeadline(
   if (headlineClaimsPeople(interpretation, ctx)) {
     peopleClaim = true;
     interpretation = shown ? NEUTRAL_PEOPLE_INTERPRETATION : NEUTRAL_INTERPRETATION;
+  }
+  // guard-v13: on a photo that shows people the headline is one reading: when either line claims
+  // something about the people, both are replaced. The title and the interpretation are written
+  // together, so a line that passed the word test next to one that failed it carries the same
+  // reading in other words (iteration-1 h54: "...a server taking an order beside seated diners" was
+  // replaced while "Café table with menu and waitstaff" stayed).
+  if (peopleClaim && shown) {
+    title = NEUTRAL_PEOPLE_TITLE;
+    interpretation = NEUTRAL_PEOPLE_INTERPRETATION;
   }
   return { title, interpretation, changed: title !== a.title || interpretation !== a.interpretation, peopleClaim };
 }

@@ -18,32 +18,32 @@ export const EVAL_BINDING = {
   sets: {
     'golden-v1': {
       golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
-      scorer_version: 'score-v10',
-      code_sha256: '033f68c0e5f029a2e0a1bb49fb296e352da905623600bcc6cc06880bee378829',
+      scorer_version: 'score-v11',
+      code_sha256: '90f2511b0d368c50892397303b7a8b8815d14420463b6bb2dd6bb6460c9eda4a',
       blind_consumed: false,
     },
     'golden-v2': {
       golden_sha256: 'b429f6190fc688b20b8e8a3d3ff3e287bd3c899cca4c3ebe291de2b69682f930',
-      scorer_version: 'score-v10',
-      code_sha256: '033f68c0e5f029a2e0a1bb49fb296e352da905623600bcc6cc06880bee378829',
+      scorer_version: 'score-v11',
+      code_sha256: '90f2511b0d368c50892397303b7a8b8815d14420463b6bb2dd6bb6460c9eda4a',
       blind_consumed: true,
     },
     'golden-v3': {
       golden_sha256: '12edf9323aa65b674a95a55aa0f3effe46039fe1de5385a93bfbfd86d72f8ad3',
-      scorer_version: 'score-v10',
-      code_sha256: '033f68c0e5f029a2e0a1bb49fb296e352da905623600bcc6cc06880bee378829',
+      scorer_version: 'score-v11',
+      code_sha256: '90f2511b0d368c50892397303b7a8b8815d14420463b6bb2dd6bb6460c9eda4a',
       blind_consumed: true,
     },
     'golden-v4': {
       golden_sha256: '5788b89074f4afe52a18f56746ca9b8fe76cf6c9389083ef35657d5af8916b92',
-      scorer_version: 'score-v10',
-      code_sha256: '033f68c0e5f029a2e0a1bb49fb296e352da905623600bcc6cc06880bee378829',
+      scorer_version: 'score-v11',
+      code_sha256: '90f2511b0d368c50892397303b7a8b8815d14420463b6bb2dd6bb6460c9eda4a',
       blind_consumed: true,
     },
     'golden-v5': {
       golden_sha256: 'd6e884a7e62517a9a41b13c073ecc7b5d660d0e9f81de47a6dc604d1bd5a7466',
-      scorer_version: 'score-v10',
-      code_sha256: '033f68c0e5f029a2e0a1bb49fb296e352da905623600bcc6cc06880bee378829',
+      scorer_version: 'score-v11',
+      code_sha256: '90f2511b0d368c50892397303b7a8b8815d14420463b6bb2dd6bb6460c9eda4a',
       blind_consumed: false,
     },
     'text-v1': {

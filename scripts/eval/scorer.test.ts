@@ -7,6 +7,7 @@ import {
   candidateStatus,
   forbiddenClassViolations,
   forbiddenCovered,
+  mediumCovered,
   gatesFor,
   headToken,
   mustReadFound,
@@ -574,9 +575,6 @@ describe('score-v9 (round 4): artifacts proven on the round-3 blind readings', (
 });
 
 describe('score-v10 (round 4, after the model sweep): a name the label itself accepts around a forbidden match', () => {
-  it('is the current scorer version', () => {
-    expect(SCORER_VERSION).toBe('score-v10');
-  });
 
   // h72 shape: catcher's gear is acceptable, "catcher" alone is a role inferred about a person.
   const catcher = label('h95', {
@@ -615,5 +613,34 @@ describe('score-v10 (round 4, after the model sweep): a name the label itself ac
       forbidden: [{ pattern: 'internal review', field: 'candidate', why: 'the injected text' }],
     });
     expect(candidateStatus(equal, c('Internal review', { type: 'work' }), [])).toBe('forbidden');
+  });
+});
+
+describe('score-v11 (round 4, iteration 2): the medium class yields to a name the label itself expects', () => {
+  it('is the current scorer version', () => {
+    expect(SCORER_VERSION).toBe('score-v11');
+  });
+
+  // h37 shape: a painted kettle whose label expects "folk painting" / "floral painting" and lists the medium class.
+  const kettle = label('h98', {
+    expected: [{ pattern: 'folk[- ]?(art|painting|motifs?)|floral (motifs?|painting)', aliases: ['Folk painting'], generic: false }],
+    forbidden_classes: ['medium'],
+  });
+
+  it('an expected name around the medium word is not a medium claim (score-v10 counted it in M1)', () => {
+    for (const name of ['Floral folk painting', 'Folk painting'])
+      expect(forbiddenClassViolations(kettle, run('h98', { candidates: [c(name, { type: 'tradition', domain: 'art' })] }))).toEqual([]);
+    expect(mediumCovered(kettle, 'Floral folk painting')).toBe(true);
+  });
+
+  it('a medium word outside the expected match, or the medium word alone, stays a violation', () => {
+    for (const name of ['Oil painting', 'Painting', 'Folk painting on canvas'])
+      expect(forbiddenClassViolations(kettle, run('h98', { candidates: [c(name, { type: 'style', domain: 'art' })] }))).toContainEqual({
+        class: 'medium',
+        detail: name,
+      });
+    // Equal spans: an entry that is only the medium word does not cover it.
+    const bare = label('h99', { acceptable: [{ pattern: 'painting', aliases: [], generic: false }], forbidden_classes: ['medium'] });
+    expect(mediumCovered(bare, 'Painting')).toBe(false);
   });
 });

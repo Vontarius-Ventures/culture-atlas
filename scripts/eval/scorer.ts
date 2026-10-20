@@ -58,7 +58,16 @@ import {
  * real conflict and stays forbidden; `pnpm eval:lint-labels` lists both kinds. No gate, threshold or
  * other metric definition changed.
  */
-export const SCORER_VERSION = 'score-v10';
+/**
+ * score-v11 (round 4, iteration 2; docs/quality-plan.md §19.13): the score-v10 rule also applies to the
+ * medium class, which the scorer finds by its own medium words, not by a forbidden pattern: a name whose
+ * every medium-word match lies strictly inside a match of the label's own expected or acceptable entry is
+ * not a medium claim (mediumCovered). h37 expects "folk painting" (pattern and alias) for a painted kettle
+ * and lists the medium class, so score-v10 counted its own expected "Floral folk painting" as a medium
+ * violation (M1). "Oil painting" or a bare "Painting" on the same label stays a violation. No gate,
+ * threshold or other metric definition changed.
+ */
+export const SCORER_VERSION = 'score-v11';
 /** score-v8: forbidden classes about the people that also apply to the headline (field `candidate`). */
 export const HEADLINE_PEOPLE_CLASSES: ReadonlySet<ForbiddenClass> = new Set(['person_identity', 'person_descriptor', 'role_inference']);
 
@@ -157,6 +166,14 @@ const DECORATIVE = new Set(['craft', 'design', 'interior', 'architecture', 'fash
 const DECORATION_RE = /\b(?:(?:hand[- ]?)?painted|(?:hand[- ]?|block[- ]?)?prints?|printed|canvas(?:es)?|engraved|etched)\b/gi;
 function mediumInName(c: Pick<CandidateView, 'name' | 'domain'>): boolean {
   return NAME_MEDIUM_RE.test(c.domain && DECORATIVE.has(c.domain) ? c.name.replace(DECORATION_RE, ' ') : c.name);
+}
+/**
+ * score-v11: every medium word of the name lies strictly inside a match of the label's own expected or
+ * acceptable entry ("Floral folk painting" on a label that expects "folk painting"): the label accepts
+ * the longer name, so the medium class does not apply to it (the score-v10 rule, for a class).
+ */
+export function mediumCovered(label: Pick<PhotoLabel, 'expected' | 'acceptable'>, name: string): boolean {
+  return coveredByGoodEntry(label, name, NAME_MEDIUM_RE.source);
 }
 const PERSON_DESCRIPTOR_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
@@ -377,6 +394,7 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
     if (
       classes.has('medium') &&
       mediumInName(c) &&
+      !mediumCovered(label, c.name) &&
       !((c.type === 'work' || c.type === 'creator') && c.evidence === 'read_text' && hasNameFromText(c, vt))
     )
       out.push({ class: 'medium', detail: c.name });

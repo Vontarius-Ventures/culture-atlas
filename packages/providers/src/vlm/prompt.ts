@@ -87,8 +87,11 @@ export const VLM_READING_VERSIONS = {
    * Reading v2, stage 2. vlm-enrich-v3 (requalification tune): prominent text first, partly hidden words as
    * their visible letters. vlm-enrich-v4 (round 4): the same people and artwork rules for additions, and a
    * claim about the people's identity, team, league, event or occasion is unsupported unless text names it.
+   * vlm-enrich-v5 (round 4, iteration 2, docs/quality-plan.md §19.13): each verdict judged by the kind of
+   * claim: a style, tradition, cuisine or named type is a resemblance, supported by the visible features
+   * that define it without text, date or origin; a place needs a landmark, text or a form found only there.
    */
-  enrichV2: { prompt: 'vlm-enrich-v4', schema: 'atlas_enrichment_v2' },
+  enrichV2: { prompt: 'vlm-enrich-v5', schema: 'atlas_enrichment_v2' },
 } as const;
 
 /** Stage 1 measured as good at 512 px as at 768; stage 2 reads small logos and labels at 768. */
@@ -186,7 +189,12 @@ Content rules:
 - Read the subject as if it were a photo.
 - observations: up to five short, concrete, visually verifiable statements (garments, objects, colors, materials, composition, setting, food). Do not guess at what cannot be seen.
 - visible_text: exact transcriptions of legible text only, at most eight items, including small printed words on objects (badges, decals, labels, packaging); never descriptions of text. When more text is legible than eight items hold, list the most prominent first: headings, names, signs, badges and decals before list entries, prices and repeated lines. Copy only letters you can read; never complete or guess a word: leave out a word you cannot read letter for letter, and transcribe a partly hidden word only as its visible letters. Never transcribe licence plates. Set illegible_text_present to true when text is present but cannot be read, otherwise false.
-- confirmed: exactly one entry per first-reading candidate, never skipping one, using its exact name, with a rationale of at most fifteen words grounded in what is visible, and a verdict: supported (the photo clearly supports it), weak (plausible but not established), or unsupported (the photo does not support it). A brand, maker or model is supported only when its name or logo is legible. A claim about who the people are, their relationship, role, team, league, event or occasion is unsupported unless legible text names it. Do not add a confirmed entry for the title.
+- confirmed: exactly one entry per first-reading candidate, never skipping one, using its exact name, with a rationale of at most fifteen words grounded in what is visible, and a verdict: supported, weak or unsupported. Judge each candidate as the kind of claim it is:
+  - A style, period look, tradition, craft, cuisine or dish, or the named type of a garment, object, vehicle or building, is a resemblance, never a claim of origin, date or authenticity: supported when the visible features that define it are shown (name one or two of them in the rationale), even though no text names it; weak when the visible features fit it only loosely, or another named style or type fits them as well or better; unsupported when the photo does not show those features or contradicts them.
+  - A place (a city, district, region or country) is supported only when a landmark, legible text, or a vehicle, sign or building form found only in that place is visible; a street, skyline or setting that could be in many places is weak.
+  - A brand, maker or model is supported only when its name or logo is legible.
+  - A claim about who the people are, their relationship, role, team, league, event or occasion is unsupported unless legible text names it.
+  Do not add a confirmed entry for the title.
 - additional_candidates: up to four more specific, searchable references the first reading missed, each with a short rationale, and the same fields as the first reading (domain, evidence, evidence_text, tag_query: a taxonomy phrase for a style, tradition or cuisine, otherwise null). Prefer the named types of visible garments, objects, food and instruments, and the title of a well-known artwork or landmark the first reading did not name. Fewer is better than filler.
 ${V2_EVIDENCE_RULES}
 - regions: up to four normalized 0..1 boxes (x, y = top-left) for the main evidence, each labeled with the candidate or object it shows.
