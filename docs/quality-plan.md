@@ -2829,3 +2829,117 @@ grounding rules), not the reading. h80+ stays unfrozen; nothing was frozen.
 | **Total** | **1,601** | **340** | **at most $27.32** (worst-case reservations except the five mix runs, list-rate cost) |
 
 0 Wikipedia. Round-4 caps (raised by the owner): 2,000 requests and $40 (399 requests left).
+
+### 19.21 score-v14, guard-v15, vlm-enrich-v7, ground-v5, and the iteration-5 confirmation
+
+Owner decisions after 19.19: (1) score-v14, describing words by inflection; (2) Tune passes on a single
+run (no mean, nothing loosened); fix only the remaining M4 drops that are wrong by policy; (3) fix the
+Qloo acceptance by class; (4) one live confirmation with Qloo. The grounding judgements of iter3/iter4
+are reviewed independently (`grounding-judgements.review*.json`, not edited here); the reviewer agreed
+with every wrong match. Its two points are applied: an artwork grounds only to an artwork entity
+(otherwise it stays under its own name), and one defining-style rule decides every style tag.
+
+**score-v14.** `isDescribing`: a word describes when it is one of the scorer's describing words or an
+inflection of one, by a light suffix stemmer (-ments, -ment, -ings, -ing, -ed, -es, -s, then a final
+"e", at least four letters kept). h01 "Puschkin advertising billboard" with PUSCHKIN read is corroborated
+("advertising" shares the stem of "advertisement"); "Signet", "Vans", "Boxing" keep their own form and
+still have to be read. The score-v13 coverage of the label's generic entry is unchanged. Tests:
+`scorer.test.ts` "score-v14" (2).
+
+**M4: the iteration-4 drops, class by class** (`r4/tools/drops.mts` prints each drop's decisions and
+verdict). Correct by policy and left alone: 23 "weak" or "unsupported" verdicts on context-only styles,
+places, traditions and cuisines; brands not read in full (h22 "vodaf", h24 Yamaha Maxim, h43, p12);
+h61 "Johannes Vermeer" (a creator without read text is an identity claim, 19.9); G-GENERIC on a colour or
+material plus a generic noun (h39 "Blue plaque", p04, h10 "Double-decker tram"); h45 "Mitre"
+(common-word read text, guard-v12); h79 Istanbul (G-PLACE) and the kiosk (19.1); G-STYLE-OF replacements
+(h31, h48: the replacement publishes, the original name counts as dropped). Wrong by policy, fixed:
+
+| Drop | Cause | Fix (class) |
+| --- | --- | --- |
+| h60 "David by Michelangelo" (held, stage 2 "weak: no label names the work") | vlm-quick-v3 asks for a well-known work by its title on its form, but the stage-2 verdict rules had no clause for works: sonnet judged it like a brand | `vlm-enrich-v7`: a well-known artwork, building or landmark named by its title is supported when the form that identifies that specific work is shown, weak when only its genre, period or style fits. Hash pinned; `eval:live` refuses `vlm-enrich-v6` |
+| h37 "Scandinavian folk painting" (G-MEDIUM drop) | guard-v12's painting-subject hold covered the art domain only; a painted-decoration tradition filed under craft was dropped | guard-v15: `paintingSubject` also in the craft domain (held, published on a supported verdict); any other medium word still drops it |
+| h61 "Tronie" (G-MEDIUM drop, stage-2 addition) | the only medium word was "painting" in its tag query ("... character study painting"), which is never shown | guard-v15: in the art or craft domain, a claim whose name has no medium word and whose query's only medium word is "painting" loses that query, not the claim; "still life" in a query still drops it (the phase-4 case) |
+
+Not fixed, open: h12 "Tae Yang Mate Tea (태양의 마테차)", supported and read in Hangul, is not
+corroborated because the guard checks the romanized words; publishing it would need the scorer to read
+the parenthetical form too (a scorer change not delegated).
+
+**ground-v5 (Qloo acceptance by class).**
+- A work grounds only to an entity of its own kind: film → movie or TV show, music → album, unknown or
+  "other" domain → every media type as before; a work in a visual domain (art, architecture, interior,
+  design, craft, signage, place, vehicle, fashion, food, sport) has no Qloo entity of its kind and is
+  not searched (`work_without_entity_type`; h57 "Stained glass windows" → a movie; h61 "Girl with a
+  Pearl Earring" stays under its own name instead of the novel or film). A visual-domain creator is
+  searched among persons only, a music creator among artists.
+- Decor and setting tags never ground a vehicle, fashion, food, sport, music, film or people claim
+  (`decor_tag_outside_domain`; h43). The aesthetic style family ("Rustic", "Retro") is not restricted.
+- **The defining-style rule, one for all style tags matched through the tag query:** the tag must add no
+  content word to the candidate's name (light stems, so "paneled"/"Paneling",
+  "Neoclassicism"/"Neoclassical") and must not leave out a proper name (a capitalized word after the
+  first). Accepted: Rustic wooden table → Rustic, Minimalist tableware → Minimalist, Neoclassical chair
+  → Neoclassical, Dutch Golden Age portraiture → Dutch Golden Age Style, wood-paneled interior → Wood
+  Paneling. Not accepted: Rustic painted wooden bar stools → Rustic Farmhouse (h07), Mid-century
+  automotive design → Mid Century Modern (h02), striped sofa → Striped Upholstery, Hong Kong neon
+  signage → Neon Signage (h10), wrought iron projecting sign bracket → Wrought Ironwork. A tag equal to
+  the candidate's own name, cuisine tags and music or media genres are not concerned.
+- Tests: `grounding.test.ts` "ground-v5" (3). The worker's fake catalog grounds "1960s motor racing
+  style" to "Vintage Racing", which adds a word; the fixture is now "Vintage motor racing style".
+
+**Offline re-acceptance** (`r4/tools/reaccept.mts`: the recorded lookups under ground-v5; tags re-decided
+from the recorded top results, entity searches kept unless the new plan excludes them; no newly accepted
+item, so the existing judgements apply):
+
+| Run | Lookups | Accepted | Precision | End-to-end | Recall | Change |
+| --- | --- | --- | --- | --- | --- | --- |
+| iter3-qloo | 162 | 26 | **1.0** | **1.0** | 0.7429 | h02, h43, h57, h34, h21 no longer accepted; 11 work lookups no longer made |
+| iter4-qloo | 163 | 24 | **1.0** | **0.9583** | 0.6857 | h07, h10 no longer accepted; 4 work lookups no longer made |
+
+forbidden_accepts 0 on both; `holdout_candidates` n/a (tune split).
+
+**Replays (no request), guard-v15, score-v14.** Iteration 4 (with Qloo): M1 0, M7 1, M4 0.2010 (42 of
+209; the h37 hold and h60 verdict need a new reading). Iteration 3 and its Qloo run PASS. Haiku sweep
+M4 0.2217 (was 0.2261), M1 1 (h28), M8; other round-4 and older recordings as in 19.19; `replay-v1`
+PASS.
+
+**Live confirmation with Qloo (iteration 5): Tune FAIL.** Mix (`vlm-quick-v3` / `vlm-enrich-v7`, profile
+`r4/profiles/mix.json`; the previous one kept as `mix-iter3.json`), guard-v15, score-v14, ground-v5,
+out-dir `r4/iter5-qloo`, ledger `r4/ledger-iter5-qloo.jsonl`, package `r4-iter5-qloo`, `--max-requests 230
+--spend-cap-usd 8 --qloo --max-qloo-requests 300 --qloo-concurrency 2`.
+
+- Requests: 188 Concentrate (all 200, 0 job retries), 182 Qloo (all 200). $1.563 at list rate.
+- Gates: `tune: FAIL runs=94 published=284 M1=2 M2=0.007 M3=0.9919 M4=0.1706 M5=0.8795 M6=0.9859
+  M7=0.9655 M8=0 M9=0.9359 M10=0 M11=1 M12=0.1303 M13=1 M14_stage1_p50=2488 M14_stage1_p95=3450
+  M14_enrich_p95=8095 M14_incomplete=0 M15=0.7108 qloo_forbidden_accepts=0 forbidden_published=2
+  verifier_checked=0 text_only=7`.
+- **M4 0.1706 passes** (36 of 211). h60's work and h61's expected now publish; published claims 284
+  (iteration 4: 251).
+- **M1 2, M7, M11:**
+  - h40 "Robinsons department store", typed place with evidence read_text "ROBINSONS GROUP" at stage 1,
+    published there (a place on read text keeps its stage-1 rule); stage 2 did not transcribe
+    "ROBINSONS" (blurred, verdict weak), so the label's Robinsons brand entry counts it as a brand
+    without text (M1, M7 28/29). Class gap: a chain store or bank named with a proper name and a business
+    noun ("department store") is a brand typed as a place, outside G-BRAND's single-word place rule.
+  - h69 interpretation "... a commercial truck and an instructor gesturing beside it" (role inference in
+    M1 and M11): "instructor" is in no role list of the guard (closed lists; the class is occupational
+    role nouns).
+  - p05 "Lustreware" (forbidden, under M2 as before).
+- **Grounding, judged conservatively** (`r4/iter5-qloo/grounding-judgements.json`): 29 accepted of 182
+  lookups; precision **0.931 FAIL**, end-to-end 0.931 ok, recall 0.75 ok, forbidden_accepts 0,
+  doubtful_name_published 0, holdout_candidates n/a. Wrong: p09 "Palais-Royal" → the locality "Quartier
+  du Palais Royal" (accepted through Qloo's alias list: a quarter named after the palace) and h79
+  "Pedestrian bollard street design" → setting "Pedestrian Street" (passes the defining-style rule, which
+  only checks words; a street type for a street-furniture claim, doubtful).
+
+**State.** Coverage passes on the live reading (M4 0.1706, M5 0.88, M15 0.71); the remaining Tune
+failures are two safety classes the lists do not cover (a business typed as a place, an occupational role
+noun), and grounding precision fails on a place alias and a setting tag. h80+ stays unfrozen.
+
+### 19.22 Spend (round 4 to date)
+
+| Package | Concentrate requests | Qloo | Cost |
+| --- | --- | --- | --- |
+| To 19.20 | 1,601 | 340 | at most $27.32 |
+| r4-iter5-qloo | 188 | 182 | $1.56 at list rate |
+| **Total** | **1,789** | **522** | **at most $28.88** |
+
+0 Wikipedia. Round-4 caps: 2,000 requests and $40 (211 requests left).
