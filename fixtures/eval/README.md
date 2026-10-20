@@ -148,7 +148,15 @@ fixtures/eval/
   counts as a clean drop (M4).
 - `forbidden[].field` is `candidate` (default), `text` (title and
   interpretation: a hard error), `visible_text` (M8) or `observations` (M11).
-  `class` also counts the claim under that forbidden class (M1).
+  `class` also counts the claim under that forbidden class (M1). Since
+  score-v8 a `candidate` entry of a people class (`person_identity`,
+  `person_descriptor`, `role_inference`) also matches the title and the
+  interpretation on a photo with people: the headline is always shown, so an
+  occasion, role or relationship named there is a claim about the people like
+  a published candidate (the h50–h79 blind headlines "a wedding-style cake
+  moment", "Two friends …", "Mounted guardsman …" were not counted by
+  score-v7). Label writers therefore need no `field: "text"` copy of a people
+  pattern; patterns of other classes stay candidate-only.
 - `forbidden_classes` are checked by the scorer itself, independently of the
   guardrails: brands without legible text, medium words, identity claims,
   person descriptors, role inference, cuisines without food, and candidates on
@@ -156,7 +164,7 @@ fixtures/eval/
 
 ## Metrics and gates
 
-`scripts/eval/scorer.ts` (`score-v7`; v5 counts plural role nouns and players, athletes or spectators in the reading as people; v7 lets a must-read string span up to three consecutive transcriptions, so "ALL YEAR" / "ROUND" reads "ALL YEAR ROUND") computes M1–M16 per split; M17 ("scorer
+`scripts/eval/scorer.ts` (`score-v8`; v5 counts plural role nouns and players, athletes or spectators in the reading as people; v7 lets a must-read string span up to three consecutive transcriptions, so "ALL YEAR" / "ROUND" reads "ALL YEAR ROUND"; v8 checks the headline of a photo with people for its own role nouns and the labels' people-class patterns) computes M1–M16 per split; M17 ("scorer
 teeth") requires that the same recordings without guardrails fail M1. The
 replay gates apply to the tune split of `replay-v1` in CI; the live gates apply
 to every split of a live run, with stricter M3/M5 on the tune split

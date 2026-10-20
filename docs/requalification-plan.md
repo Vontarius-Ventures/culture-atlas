@@ -256,3 +256,54 @@ Details in [quality-plan §18.15–18.19](quality-plan.md#1815-freeze-and-blind-
   ever enabled).
 - **Next attempt** needs the changes listed in quality-plan §18.16 and a fresh
   blind set (h80+).
+
+## Round 3 review fixes (2026-10-20): guard-v10, score-v8
+
+Details in [quality-plan §18.20](quality-plan.md#1820-round-3-review-fixes-guard-v10-score-v8-no-request).
+No request was made (0 Concentrate, 0 Qloo, 0 Wikipedia). Thresholds, labels,
+prompts and the verifier are unchanged. The h50–h79 blind run still fails as
+recorded and was not re-run.
+
+- **Headline (major).** The people class now applies to the always-visible
+  title and interpretation. A line naming a relationship or a role of the
+  people, or an occasion, team, league or unit on a photo with people, or
+  repeating a withheld people claim is replaced by a neutral line. This
+  happens at stage 1, and again at stage 2, which the compiler writes as a
+  retraction (analysis and capture card). score-v8 counts people-class label
+  patterns and its own role nouns in the headline. Under score-v8 the
+  recorded run scores M1 18 and M11 19 (11 headline hits that score-v7 missed).
+- **Read text (major).** A people claim rests on read text only when the text
+  names it (`claimReadIn`), at stage 1 (the model's own `evidence_text`) and
+  at stage 2 (the transcriptions), never on the model's evidence label alone.
+- **Type or domain bypass (minor).** A claim naming a relationship, role,
+  occasion, team, league or unit of the people is about them whatever type or
+  domain it was filed under (h73, h74, h72 shapes). This is a closed-list
+  backstop to the class rules; synonyms outside it are a named residual gap.
+- **Media result with the verifier on (minor, latent).** The verifier's
+  targets are left out of the v2 media citations while
+  `ANALYSIS_VERIFIER_ENABLED` is set.
+- **Docs:** `.env.example` now gives 20 label-good blocked claims, not 21.
+  §18.16 now names h27, h29 and h46 for "tall". docs/concentrate.md now says
+  h50–h79 is consumed and that a fresh h80+ split is needed to qualify the
+  verifier.
+- **Replays:** every recorded run gives the same guarded scorecard. The only
+  exception is h50–h79: FAIL M1 4, M11 6 (the "tall" and h78 artifacts), M5
+  0.5926, M15 0.5926; h58 is the one forbidden claim left. Under score-v8,
+  guard-v9 failed the tune split on headline leaks (M1 10); guard-v10 passes
+  it as before.
+- **Binding** regenerated: photo code digest and score-v8 for golden-v1 to
+  golden-v4; `text-v1` is unchanged. The photo roles, unqualified and
+  `catalog-compatible`, would lose any qualification by design. `research_text`
+  and `composer` stay qualified. `vision_verify` is off and its ZDR exception
+  is recorded unchanged.
+- **Next attempt:** the 18.16 list (stage-1 context-only decision, prompting
+  for garments and objects on people photos, the read-model rule, descriptor
+  labels scoped to people) and a fresh blind set h80+.
+- **Gate (hermetic, no provider key):** `pnpm install --frozen-lockfile`,
+  typecheck and lint clean. `pnpm test` passed 1397/1397 (143 files, 63 s).
+  `pnpm build` (including `next build`) took 1 min 58 s. Playwright mock
+  suite: 411 passed, 21 skipped (7.9 min). Real stack without provider keys:
+  v1 and v2 journeys 6/6 at 1440, 390 and 360 px (2.9 min; the v2 fidelity
+  spec was skipped because it needs its own mailbox). Amendment 2.2 journeys
+  with fake Qloo and the fake model transport: 9/9 at 1440, 390 and 320 px
+  (2.5 min). A fresh database applied all 29 migrations.

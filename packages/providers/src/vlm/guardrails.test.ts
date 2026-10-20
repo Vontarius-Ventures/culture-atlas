@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   GUARDRAIL_VERSION,
   MEDIUM_RE,
+  NEUTRAL_INTERPRETATION,
+  NEUTRAL_PEOPLE_INTERPRETATION,
+  NEUTRAL_PEOPLE_TITLE,
   NEUTRAL_TITLE,
+  claimReadIn,
   PEOPLE_RE,
   ROLE_RE,
   brandCorroboratedIds,
@@ -94,7 +98,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v9');
+    expect(GUARDRAIL_VERSION).toBe('guard-v10');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -1304,9 +1308,18 @@ describe('guard-v6: people, roles and medium inflections (requalification round 
       expect(names(g.analysis.candidates), title).toEqual(['Night match atmosphere']);
       expect(g.decisions[0], title).toMatchObject({ name: '[withheld]', action: 'drop', rules: ['G-PERSON-ROLE'] });
     }
-    // The same role word on a reading without people stays (a role is only inferred about people).
+    // The same role word on a reading without people is not dropped (a role is only inferred about people).
+    // guard-v10: "Team" names a group of people (PEOPLE_CLAIM_RE), so without people in the quick read the
+    // claim waits for stage 2's people test instead of publishing at once; with no people there, it publishes.
     const empty = guardQuickRead(reading([{ name: 'Team captains', tag_queries: ['captains'] }], { title: 'An empty pitch at night' }), { twoStage: true });
-    expect(names(empty.analysis.candidates)).toEqual(['Team captains']);
+    expect(empty.decisions.map((d) => [d.name, d.action, d.rules])).toEqual([['Team captains', 'hold', ['G-PEOPLE-CLAIM']]]);
+    const conf = { confirmed: [{ name: 'Team captains', rationale: 'Armbands on a bench', verdict: 'supported' as const }] };
+    const later = stage2(empty, enrichment({ ...conf, observations: [{ text: 'Two armbands on an empty bench.', kind: 'object' }] }));
+    expect(names(later.publishNow)).toEqual(['Team captains']);
+    // With people at stage 2 it is a claim about them: kept private.
+    const people = stage2(empty, enrichment({ ...conf, observations: [{ text: 'Two players shake hands at midfield.', kind: 'object' }] }));
+    expect(later.decisions.some((d) => d.rules.includes('G-PERSON-ROLE'))).toBe(false);
+    expect(people.publishNow).toEqual([]);
   });
 
   it('plural role nouns are roles: "Background players", "Referees", "Sprint coaches", "Rival goalkeepers"', () => {
@@ -1744,5 +1757,141 @@ describe('guard-v9: round-3 Tune fixes', () => {
     // "column sign" was never read: dropped. "FXB Bank card" is read word for word, "FXB Bank" is a published name.
     expect(s2.analysis.competing_subjects.map((s) => s.label)).toEqual(['FXB Bank card', 'FXB Bank']);
     expect(s2.dropped.subjects).toBe(1);
+  });
+});
+
+/*
+ * guard-v10 (round-3 review after the h50-h79 blind run, docs/quality-plan.md §18.20). Each test fails on
+ * guard-v9: the people class did not reach the headline, the read_text exemption trusted the model's own
+ * label, and a people claim filed under a thing type or domain skipped G-PEOPLE-CLAIM. FIXTURE shapes only.
+ */
+describe('guard-v10: people claims in the headline, read text that names the claim, claims under any type', () => {
+  const read = (title: string, interpretation: string, cands: VlmQuickCandidate[]) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates: cands, quality: { usable: true, issue: null } }), { twoStage: true });
+
+  it('a people claim withheld as a candidate does not stay in the title or interpretation (review probe: "Couple at their prom")', () => {
+    const g = read('Couple at their prom', 'Two teenagers dressed for prom night.', [
+      v2({ name: 'Prom', type: 'tradition', certainty: 0.8, domain: 'other', evidence: 'context' }),
+    ]);
+    expect(decisionFor(g.decisions, 'Prom')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    expect(g.analysis.title).toBe(NEUTRAL_PEOPLE_TITLE);
+    expect(g.analysis.interpretation).toBe(NEUTRAL_PEOPLE_INTERPRETATION);
+    expect(g.titleChanged).toBe(true);
+  });
+
+  it('relationships, roles, occasions and units of the people are replaced in the headline (h54, h70, h74, h75, h76 shapes)', () => {
+    const cases: [string, string, VlmQuickCandidate[]][] = [
+      // A relationship word means people by itself ("Two friends" with no other people word).
+      ['Two friends in orange sweatshirts on bench', 'Matching orange tops and denim against brick.', [v2({ name: 'Streetwear', domain: 'fashion' })]],
+      ['Cafe scene with three women', 'A casual cafe with a server taking an order from two seated guests.', []],
+      ['Two men sharing white cake', 'It resembles a wedding-style cake moment with two men in dark suits.', []],
+      ['Hand with ring in field', 'A ring held toward a smiling man, resembling an engagement-style portrait.', []],
+      ['Mounted guardsman in red tunic', 'A ceremonial mounted parade, a rider in a plumed helmet.', []],
+    ];
+    const out = cases.map(([t, i, c]) => {
+      const g = read(t, i, c);
+      return [g.analysis.title, g.analysis.interpretation];
+    });
+    expect(out).toEqual([
+      [NEUTRAL_PEOPLE_TITLE, 'Matching orange tops and denim against brick.'],
+      ['Cafe scene with three women', NEUTRAL_PEOPLE_INTERPRETATION],
+      ['Two men sharing white cake', NEUTRAL_PEOPLE_INTERPRETATION],
+      ['Hand with ring in field', NEUTRAL_PEOPLE_INTERPRETATION],
+      [NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION],
+    ]);
+  });
+
+  it('without people, the same words about things stay: a wedding cake on a stand, a server rack, a couple of chairs', () => {
+    for (const [title, interpretation] of [
+      ['A wedding cake on a silver stand', 'A three-tier cake with sugar flowers.'],
+      ['Server rack with blue lights', 'A row of servers in a data centre.'],
+      ['A couple of chairs by a window', 'Two chairs and a family-style table.'],
+    ]) {
+      const g = read(title!, interpretation!, [v2({ name: 'Fixture cake style', domain: 'food', evidence: 'distinctive_form' })]);
+      expect([g.analysis.title, g.analysis.interpretation], title).toEqual([title, interpretation]);
+    }
+  });
+
+  it("the headline may not repeat a withheld people claim's words, except words a published claim also uses", () => {
+    const g = read('Professional fixtureball game', 'A fixtureball game at a ceremonial fixture parade.', [
+      v2({ name: 'Professional fixtureball', type: 'style', domain: 'sport', certainty: 0.8 }),
+      v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'distinctive_form' }),
+      v2({ name: 'Ceremonial fixture parade', type: 'tradition', domain: 'other', certainty: 0.6 }),
+    ]);
+    // No people word at stage 1: the people claims are held for stage 2; their own words leave the headline.
+    expect(names(g.held)).toEqual(['Ceremonial fixture parade']);
+    expect(names(g.analysis.candidates)).toEqual(['Professional fixtureball', 'Fixtureball']);
+    expect(g.analysis.title).toBe('Professional fixtureball game');
+    expect(g.analysis.interpretation).toBe(NEUTRAL_INTERPRETATION);
+    const kept = read('Fixtureball game', 'A crowd at a fixtureball game.', [
+      v2({ name: 'Professional fixtureball', type: 'style', domain: 'sport', certainty: 0.8 }),
+      v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'distinctive_form' }),
+    ]);
+    expect(decisionFor(kept.decisions, 'Professional fixtureball')).toMatchObject({ action: 'observe' });
+    // "Fixtureball" is also a published claim: the headline keeps it.
+    expect([kept.analysis.title, kept.analysis.interpretation]).toEqual(['Fixtureball game', 'A crowd at a fixtureball game.']);
+  });
+
+  it('stage 2 re-checks the published headline with the people it shows: a role seen as a role only then is retracted', () => {
+    const g = read('Youth fixtureball batter and catcher', 'A batter swings on a dirt infield.', [
+      v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'distinctive_form' }),
+    ]);
+    // Nothing in the quick read is a people word ("batter" alone can be tempura batter): the headline stays.
+    expect(g.analysis.title).toBe('Youth fixtureball batter and catcher');
+    const conf = { confirmed: [{ name: 'Fixtureball', rationale: 'Bat and diamond', verdict: 'supported' as const }] };
+    const players = stage2(g, enrichment({ ...conf, observations: [{ text: 'Two players on a dirt infield.', kind: 'object' }] }));
+    expect(players.headlineChanged).toBe(true);
+    expect([players.analysis.title, players.analysis.interpretation]).toEqual([NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION]);
+    const empty = stage2(g, enrichment({ ...conf, observations: [{ text: 'A bat leans on a fence.', kind: 'object' }] }));
+    expect(empty.headlineChanged).toBe(false);
+    expect(empty.analysis.title).toBe('Youth fixtureball batter and catcher');
+  });
+
+  it("read text backs a people claim only when the text names it (review probe: 'Wedding ceremony' read off 'EXIT')", () => {
+    expect(claimReadIn('Wedding ceremony', ['EXIT'])).toBeNull();
+    expect(claimReadIn('Wedding ceremony', ['WEDDING', 'CEREMONY 2026'])).toBe('WEDDING');
+    const probe = read('Two people in formal wear', 'A man and a woman dressed up.', [
+      v2({ name: 'Wedding ceremony', type: 'tradition', domain: 'other', certainty: 0.8, evidence: 'read_text', evidence_text: 'EXIT' }),
+    ]);
+    expect(decisionFor(probe.decisions, 'Wedding ceremony')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    // People only at stage 2: held at stage 1; a supported verdict without a transcription that names it stays private.
+    const g = read('A hall with a long table', 'A table set for an evening event.', [
+      v2({ name: 'Wedding ceremony', type: 'tradition', domain: 'other', certainty: 0.8, evidence: 'read_text', evidence_text: 'EXIT' }),
+    ]);
+    expect(names(g.held)).toEqual(['Wedding ceremony']);
+    const conf = { confirmed: [{ name: 'Wedding ceremony', rationale: 'formal wear', verdict: 'supported' as const }] };
+    const people = [{ text: 'A man in a black suit stands beside a woman in a white gown.', kind: 'garment' as const }];
+    const s2 = stage2(g, enrichment({ ...conf, observations: people, visible_text: ['EXIT'] }));
+    expect(s2.publishNow).toEqual([]);
+    expect(decisionFor(s2.decisions, 'Wedding ceremony')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    // A banner that names it, transcribed at stage 2, does back it.
+    const banner = stage2(g, enrichment({ ...conf, observations: people, visible_text: ['WEDDING CEREMONY'] }));
+    expect(names(banner.publishNow)).toEqual(['Wedding ceremony']);
+  });
+
+  it('a people claim filed under a thing type or domain is still about the people (h73, h74, h72 shapes)', () => {
+    const g = read('Two men in suits sharing cake', 'A cake shared at a table.', [
+      v2({ name: 'Wedding cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixtureland national football team', type: 'tradition', domain: 'sport', certainty: 0.5, evidence: 'distinctive_form' }),
+      v2({ name: 'White buttercream cake', type: 'cuisine', domain: 'food', certainty: 0.5, evidence: 'distinctive_form' }),
+    ]);
+    expect(decisionFor(g.decisions, 'Wedding cake')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    expect(decisionFor(g.decisions, 'Fixtureland national football team')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    expect(names(g.analysis.candidates)).toEqual(['White buttercream cake']);
+    // No people in the quick read: a league claim waits for stage 2's people test.
+    const league = read('Fixtureball on a field', 'A game on a dirt infield.', [
+      v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'distinctive_form' }),
+      v2({ name: 'Little Fixture League fixtureball', type: 'tradition', domain: 'sport', certainty: 0.5 }),
+    ]);
+    expect(names(league.analysis.candidates)).toEqual(['Fixtureball']);
+    expect(names(league.held)).toEqual(['Little Fixture League fixtureball']);
+    const conf = { confirmed: [{ name: 'Little Fixture League fixtureball', rationale: 'Youth uniforms', verdict: 'supported' as const }] };
+    const s2 = stage2(league, enrichment({ ...conf, observations: [{ text: 'Two players in matching uniforms.', kind: 'garment' }] }));
+    expect(decisionFor(s2.decisions, 'Little Fixture League fixtureball')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    // A wedding cake with no people anywhere is a cake: held at stage 1, published on a supported second reading.
+    const shelf = read('Tiered cake on a stand', 'A white tiered cake.', [v2({ name: 'Wedding cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' })]);
+    expect(names(shelf.held)).toEqual(['Wedding cake']);
+    const cake = stage2(shelf, enrichment({ confirmed: [{ name: 'Wedding cake', rationale: 'Tiers and sugar flowers', verdict: 'supported' }], observations: [{ text: 'Sugar flowers on white tiers.', kind: 'food' }] }));
+    expect(names(cake.publishNow)).toEqual(['Wedding cake']);
   });
 });

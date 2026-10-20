@@ -135,3 +135,14 @@ export function getDomainConfig(): DomainConfig {
 export function setDomainConfigForTesting(config: DomainConfig | undefined): void {
   cached = config;
 }
+
+/**
+ * ANALYSIS_VERIFIER_ENABLED as the operator set it ("true" or "1"). The
+ * compiler still needs a usable vision_verify role, no kill and budget to run
+ * the verifier; the v2 media result leaves the verifier's targets out whenever
+ * the operator opted in (publishableCitations), since it is written before the
+ * compile job's check.
+ */
+export function verifierOptedIn(value: string | undefined | null): boolean {
+  return value === 'true' || value === '1';
+}

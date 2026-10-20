@@ -9,6 +9,7 @@ import {
   VIDEO_ANALYSIS_NOTE,
   aggregateFrameReadings,
   publishableCitations,
+  verifierOptedIn,
   captures,
   createCaptureV2Context,
   type AnalysisAssetKind,
@@ -512,7 +513,8 @@ export class MediaAnalysisWorker {
           height: meta.height ?? 1,
         },
         // Only what the guardrails publish; the raw frame candidates never reach the owner API.
-        result: result(frames, publishableCitations(aggregate), quickReading),
+        // With the verifier opted in, its targets wait for the compile job's check (fail closed).
+        result: result(frames, publishableCitations(aggregate, { verifierEnabled: verifierOptedIn(config.ANALYSIS_VERIFIER_ENABLED) }), quickReading),
         compile: {
           compilerVersion: config.COMPILER_VERSION,
           maxAttempts: config.JOB_MAX_ATTEMPTS,

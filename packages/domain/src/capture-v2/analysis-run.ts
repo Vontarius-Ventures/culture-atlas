@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { VlmAnalysis, candidateNameKey, guardQuickRead, type VlmCandidate } from '@culture-atlas/providers';
+import { VlmAnalysis, candidateNameKey, guardQuickRead, verifyTargets, type VlmCandidate } from '@culture-atlas/providers';
 import { normalizeName } from '../compiler/text';
 import type { Db } from '../db/pool';
 import { AppError } from '../errors';
@@ -57,12 +57,25 @@ const UNCERTAINTY_RANK = { low: 0, medium: 1, high: 2 } as const;
  * claim the compiler would never publish must not reach the client through
  * GET /v2/media/{id}/analysis/{analysisId} either. Held claims are left out
  * too: only the compile job's stage 2 can publish them, as references.
+ *
+ * With the verifier opted in (`verifierEnabled`: ANALYSIS_VERIFIER_ENABLED),
+ * the compiler publishes a style, place or tradition claim, or a claim on
+ * context alone (verifyTargets), only on the verifier's "yes", and that check
+ * runs later, in the compile job. The media result is written before it, so
+ * those claims are left out here (fail closed); the compile job's references
+ * carry the ones the verifier lets through (round-3 review: h58 "Scandinavian
+ * minimalist design" would otherwise reach the owner API although the
+ * verifier blocked it from the references).
  */
 export function publishableCitations(
   aggregate: { observation: VlmAnalysis; citations: readonly CandidateCitation[] },
+  opts: { verifierEnabled?: boolean } = {},
 ): CandidateCitation[] {
   const guarded = guardQuickRead(aggregate.observation, { twoStage: true });
-  const published = new Set(guarded.analysis.candidates.map((c) => `${candidateNameKey(c.name)}|${c.type}`));
+  const unverified = new Set(opts.verifierEnabled ? verifyTargets(guarded.analysis.candidates).map((t) => t.candidateId) : []);
+  const published = new Set(
+    guarded.analysis.candidates.filter((c) => !unverified.has(c.id)).map((c) => `${candidateNameKey(c.name)}|${c.type}`),
+  );
   const relation = new Map(guarded.analysis.candidates.map((c) => [candidateNameKey(c.name), c.relation]));
   // The guard's relation wins (G-DEPICTED downgrades "depicted" claimed without evidence).
   return aggregate.citations

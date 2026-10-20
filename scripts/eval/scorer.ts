@@ -25,7 +25,21 @@ import {
  * (verifier_blocked, verifier_blocked_forbidden, verifier_blocked_good, no
  * gate). No gate, threshold or metric definition changed otherwise.
  */
-export const SCORER_VERSION = 'score-v7';
+/**
+ * score-v8 (round-3 review, after the h50–h79 blind run): the title and the
+ * interpretation are always shown, so on a photo with people a claim about
+ * the people there counts like a published claim: the scorer's own role nouns
+ * (ROLE_RE) and every forbidden pattern of a people class (person_identity,
+ * person_descriptor, role_inference) whose field is `candidate` (the default)
+ * are also checked against the title and the interpretation (M1 when the label
+ * lists the class, M11 always on a photo with people). score-v7 checked the
+ * headline only for `field: "text"` entries and medium words, so "Two friends
+ * in orange sweatshirts" (h70) or "a wedding-style cake moment" (h74) was never
+ * counted. No gate, threshold or other metric definition changed.
+ */
+export const SCORER_VERSION = 'score-v8';
+/** score-v8: forbidden classes about the people that also apply to the headline (field `candidate`). */
+export const HEADLINE_PEOPLE_CLASSES: ReadonlySet<ForbiddenClass> = new Set(['person_identity', 'person_descriptor', 'role_inference']);
 
 export interface CandidateView {
   name: string;
@@ -355,6 +369,10 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
       out.push({ class: 'person_identity', detail: `subject: ${subject}` });
     if (classes.has('role_inference') && people && ROLE_RE.test(subject)) out.push({ class: 'role_inference', detail: `subject: ${subject}` });
   }
+  // score-v8: a role named in the always-visible headline of a photo with people is a role inference too.
+  if (classes.has('role_inference') && people)
+    for (const field of ['title', 'interpretation'] as const)
+      if (ROLE_RE.test(f[field])) out.push({ class: 'role_inference', detail: `${field}: ${f[field]}` });
   if (classes.has('person_descriptor'))
     for (const o of f.observations)
       if (PERSON_DESCRIPTOR_RE.test(o.text)) out.push({ class: 'person_descriptor', detail: o.text });
@@ -369,15 +387,22 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
   };
   for (const entry of label.forbidden) {
     const re = new RegExp(entry.pattern, 'iu');
+    const headline = (['title', 'interpretation'] as const).map((k) => `${k}: ${f[k]}`);
     const hits: string[] =
       entry.field === 'candidate'
-        ? [...f.candidates.map((c) => c.name), ...(f.competing_subjects ?? [])]
+        ? [
+            ...f.candidates.map((c) => c.name),
+            ...(f.competing_subjects ?? []),
+            // score-v8: a people-class pattern also applies to the headline of a photo with people.
+            ...(people && entry.class && HEADLINE_PEOPLE_CLASSES.has(entry.class) ? headline : []),
+          ]
         : entry.field === 'text'
           ? (['title', 'interpretation'] as const).map((k) => `${k}: ${f[k]}`)
           : entry.field === 'visible_text'
             ? [...vt]
             : f.observations.map((o) => o.text);
-    const matching = hits.filter((h) => re.test(entry.field === 'text' ? h.replace(/^\w+: /, '') : h));
+    const isHeadline = (h: string) => headline.includes(h);
+    const matching = hits.filter((h) => re.test(entry.field === 'text' || isHeadline(h) ? h.replace(/^\w+: /, '') : h));
     if (entry.class && classes.has(entry.class)) for (const h of matching) add(entry.class, h);
     // A forbidden statement in the always-visible title or interpretation is a hard error.
     else if (entry.field === 'text') for (const h of matching) add('forbidden_text', h);

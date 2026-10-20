@@ -7,6 +7,7 @@ import {
   PlanProse,
 } from '../composer/creative';
 import { DishIdeas } from '../compiler/dishes';
+import { verifierOptedIn } from '../config';
 import { aggregateFrameReadings, publishableCitations, type FrameReading } from './analysis-run';
 
 function reading(
@@ -15,6 +16,8 @@ function reading(
   candidates: Array<{
     name: string;
     type?: 'style' | 'brand' | 'object' | 'creator';
+    evidence?: 'read_text' | 'logo' | 'distinctive_form' | 'context';
+    domain?: 'design' | 'craft' | 'other';
     relation?: 'depicted' | 'resembles';
     certainty?: number;
   }>,
@@ -40,6 +43,8 @@ function reading(
         region_ids: ['r1'],
         suggested_categories: ['wear'],
         tag_queries: [],
+        ...(c.evidence ? { evidence: c.evidence, evidence_text: null } : {}),
+        ...(c.domain ? { domain: c.domain } : {}),
       })),
       regions: [{ id: 'r1', label: 'x', box: { x: 0, y: 0, w: 0.5, h: 0.5 } }],
       uncertainty: { overall: 'medium', notes: [] },
@@ -153,5 +158,18 @@ describe('media result citations (review finding: unguarded candidate names reac
     expect(publishableCitations(aggregate)).toEqual([
       { name: 'Bauhaus', type: 'style', relation: 'resembles', cited_frames: [{ frame_id: 'd-a', timestamp_ms: 1000 }] },
     ]);
+  });
+  it('with the verifier opted in, its targets (styles, places, traditions, context-only claims) wait for the compile job (round-3 review)', () => {
+    const aggregate = aggregateFrameReadings([
+      reading('a', 1000, [
+        { name: 'Scandinavian minimalist design', type: 'style', certainty: 0.6, evidence: 'context', domain: 'design' },
+        { name: 'Fixture stoneware mug', type: 'object', relation: 'depicted', certainty: 0.8, evidence: 'distinctive_form', domain: 'craft' },
+      ]),
+    ]);
+    const off = publishableCitations(aggregate).map((c) => c.name);
+    expect(off).toEqual(['Scandinavian minimalist design', 'Fixture stoneware mug']);
+    // The compiler publishes a style only on the verifier's "yes", later: the media result leaves it out.
+    expect(publishableCitations(aggregate, { verifierEnabled: true }).map((c) => c.name)).toEqual(['Fixture stoneware mug']);
+    expect(verifierOptedIn('true') && verifierOptedIn('1') && !verifierOptedIn(undefined) && !verifierOptedIn('false')).toBe(true);
   });
 });

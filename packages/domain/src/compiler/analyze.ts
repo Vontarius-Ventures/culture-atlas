@@ -30,6 +30,7 @@ import {
   validateVision,
   verifyTargets,
 } from '@culture-atlas/providers';
+import { verifierOptedIn } from '../config';
 import { activeKills } from '../flags/feature-flags';
 import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionStatus, type SectionStatus } from '../enums';
 import { AppError } from '../errors';
@@ -1110,8 +1111,7 @@ export class CaptureCompiler {
     const { ctx } = this;
     const off = (reason: string) => ({ enabled: false, reason });
     if (!this.twoStage.enabled) return off('two_stage_off');
-    const opted = ctx.config.ANALYSIS_VERIFIER_ENABLED;
-    if (opted !== 'true' && opted !== '1') return off('not_enabled');
+    if (!verifierOptedIn(ctx.config.ANALYSIS_VERIFIER_ENABLED)) return off('not_enabled');
     if (!isUsable(ctx.providers.vlmVerify.capability())) return off('verify_unavailable');
     if (await this.verifierKilled()) return off('killed');
     const gateway = ctx.providers.modelGateway;
@@ -1309,8 +1309,9 @@ export class CaptureCompiler {
   /**
    * Publishes a stage-2 enrichment (FAST-02). Strictly additive:
    *  - the inspector reading gains observations, regions, visible text and
-   *    rationales (title and interpretation stay); visible text and
-   *    observations pass G-VTEXT and G-PERSON-OBS first;
+   *    rationales (title and interpretation stay, unless guard-v10's people
+   *    test retracts a claim about the people from them: headlineChanged);
+   *    visible text and observations pass G-VTEXT and G-PERSON-OBS first;
    *  - an unsupported verdict (v1 keep=false) on a published candidate only
    *    lowers the reference's certainty and moves it out of "Explore the
    *    references"; its cards and anchor role stay (advisory veto);
@@ -1344,7 +1345,11 @@ export class CaptureCompiler {
     } catch {
       return { status: 'failed', reason: 'invalid_enrichment', model: out.model };
     }
-    await this.traceGuard(2, stage2, { advisory_vetoes: stage2.advisoryVetoes.length, published: stage2.publishNow.length });
+    await this.traceGuard(2, stage2, {
+      advisory_vetoes: stage2.advisoryVetoes.length,
+      published: stage2.publishNow.length,
+      headline_changed: stage2.headlineChanged,
+    });
     // guard-v8: with the verifier on, what stage 2 would publish is checked first; a blocked claim
     // stays a private observation (never a reference, a card or a candidate of the reading).
     let verifierBlocked = 0;
@@ -1443,13 +1448,29 @@ export class CaptureCompiler {
           }
         : null;
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
-      // Title and interpretation are never rewritten; a question is only added, never replaced.
+      // Title and interpretation are never rewritten to say more; a question is only added, never replaced.
       await tx.query(
         `UPDATE analyses SET observations = $2::jsonb, candidates = $3::jsonb,
                 clarifying_question = COALESCE(clarifying_question, $4::jsonb)
           WHERE id = $1`,
         [this.analysisId, JSON.stringify(observations), JSON.stringify(candidates), question ? JSON.stringify(question) : null],
       );
+      // guard-v10: a retraction only. With what stage 2 shows (people seen only now, a claim about them
+      // withheld only now), the published headline claims something about the people: it is replaced
+      // by the guard's neutral line, and so is the capture card's title when it came from this analysis.
+      if (stage2.headlineChanged) {
+        const { rows: prev } = await tx.query<{ title: string }>('SELECT title FROM analyses WHERE id = $1', [this.analysisId]);
+        await tx.query('UPDATE analyses SET title = $2, interpretation = $3 WHERE id = $1', [
+          this.analysisId,
+          merged.title.slice(0, 120),
+          merged.interpretation.slice(0, 300),
+        ]);
+        if (prev[0])
+          await tx.query(
+            `UPDATE discovery_items SET title = $2, updated_at = now() WHERE capture_id = $1 AND kind = 'capture' AND title = $3`,
+            [this.capture.id, merged.title.slice(0, 120), prev[0].title],
+          );
+      }
       for (const r of vetoedRefs) {
         r.certainty = Math.round(r.certainty * ENRICHMENT_VETO_CERTAINTY_FACTOR * 1000) / 1000;
         await tx.query(

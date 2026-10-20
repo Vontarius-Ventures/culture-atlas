@@ -77,13 +77,33 @@ import {
  *  - a maker read in the photo ("BMW") is kept as a text-only brand
  *    reference when the longer model name it was claimed with was not read.
  * Every guard-v7 safety rule stays.
+ *
+ * guard-v10 (round-3 review, after the failed h50–h79 blind run; docs/quality-plan.md §18.20):
+ *  - the headline (title, interpretation) passes the people test too: it may
+ *    not name a relationship or role of the people, an occasion, team, league
+ *    or unit on a photo with people, or a claim withheld as being about them;
+ *    such a line is replaced (stage 1, and again at stage 2 with what stage 2
+ *    shows: `headlineChanged`);
+ *  - a claim about the people "rests on read text" only when the text names
+ *    it (claimReadIn): the model's own evidence label is not enough;
+ *  - a claim naming a relationship, role, occasion, team, league or unit of
+ *    the people (PEOPLE_CLAIM_RE) is about them whatever type or domain the
+ *    model filed it under (a backstop to the class rules, a closed list).
  */
-export const GUARDRAIL_VERSION = 'guard-v9';
+export const GUARDRAIL_VERSION = 'guard-v10';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
 /** Neutral interpretation when G-MEDIUM leaves too little of the model's sentence. */
 export const NEUTRAL_INTERPRETATION = 'A few references stood out in this photo.';
+/**
+ * guard-v10: the neutral title and interpretation that replace a headline line
+ * claiming something about the people in a photo that shows people. They say
+ * only that people are in it, which keeps that fact for stage 2's people test
+ * (it reads the published headline) without the claim.
+ */
+export const NEUTRAL_PEOPLE_TITLE = 'People in your photo';
+export const NEUTRAL_PEOPLE_INTERPRETATION = 'A few references stood out in this photo of people.';
 
 /**
  * `observe` (guard-v8): the claim never publishes; it is kept only as a
@@ -150,7 +170,7 @@ export interface Stage1Guard {
   /** Generic objects kept only as `object` observations; never resolved or anchored. */
   demoted: VlmCandidate[];
   decisions: GuardDecision[];
-  /** The title or the interpretation was rewritten by G-MEDIUM. */
+  /** The title or the interpretation was rewritten by G-MEDIUM or (guard-v10) the people test. */
   titleChanged: boolean;
   /** Visible-text entries, observations and competing subjects removed (counts only; their text never reaches the trace). */
   dropped: { visibleText: number; observations: number; subjects: number };
@@ -169,9 +189,17 @@ export interface Stage2Guard {
    * with the text they were read from (their evidence_text).
    */
   textOnlyIds: string[];
-  /** Published candidates, then publishNow; sanitized visible text and observations; title unchanged. */
+  /**
+   * Published candidates, then publishNow; sanitized visible text and observations; the published
+   * title and interpretation, unless guard-v10's people test replaced them (`headlineChanged`).
+   */
   analysis: VlmAnalysis;
   decisions: GuardDecision[];
+  /**
+   * guard-v10: stage 2 replaced the published title or interpretation because, with what stage 2
+   * shows, it claims something about the people (G-PEOPLE-CLAIM on the headline). A retraction only.
+   */
+  headlineChanged: boolean;
   dropped: { visibleText: number; observations: number; subjects: number };
 }
 
@@ -336,6 +364,57 @@ export function aboutPeople(c: Pick<VlmCandidate, 'type'> & { domain?: VlmDomain
  */
 export function playStyleOfPeople(c: Pick<VlmCandidate, 'type'> & { domain?: VlmDomain | null }, mentionsPeople: boolean): boolean {
   return mentionsPeople && c.type === 'style' && c.domain === 'sport';
+}
+
+/**
+ * guard-v10 (round-3 review, after the h50–h79 blind run): words that name a
+ * relationship between the people in a photo. They always mean people ("Two
+ * friends in orange sweatshirts" says there are people and what they are to
+ * each other), so a headline or a claim using them is a claim about the
+ * people. "A couple of chairs" and "family-style" dining are not.
+ */
+const RELATIONSHIP_WORDS = String.raw`couples?(?![- ]of\b)|friends?|best[- ]friends?|girlfriends?|boyfriends?|husbands?|wi(?:fe|ves)|spouses?|fianc[eé]e?s?|newlyweds?|brides?|bridesmaids?|bride-?grooms?|grooms?|groomsm[ae]n|siblings?|brothers|sisters|twins|colleagues?|co-?workers?|classmates?|bandmates?|famil(?:y|ies)(?![- ](?:style|size[d]?|room|car|run|owned|restaurant)\b)`;
+/**
+ * guard-v10: roles of a person that name nothing else (a waiter, a guardsman),
+ * beyond ROLE_RE's sports and public roles. They also mean people.
+ */
+const PERSON_ROLE_WORDS = String.raw`waiters?|waitress(?:es)?|baristas?|bartenders?|employees?|customers?|patrons?|nurses?|doctors?|surgeons?|teachers?|students?|guardsm[ae]n|cavalrym[ae]n|troopers?|horsem[ae]n|horsewom[ae]n|policem[ae]n|policewom[ae]n|firefighters?|monks?|nuns?|priests?|influencers?|rappers?`;
+/**
+ * guard-v10: words that name a claim about people only when the photo shows
+ * people: an occasion or life event ("wedding", "prom"), a group, team, league
+ * or unit the people belong to, the sideline (on a photo with people it casts
+ * them as a team's staff: tune p11), and roles whose word also names a thing
+ * ("a server", "the staff"; "a chef's knife" is excluded). On a photo without
+ * people a "Wedding cake" or a "server rack" is about the thing.
+ */
+const PEOPLE_CONTEXT_WORDS = String.raw`weddings?|proms?|engagements?|marriage|proposals?|anniversar(?:y|ies)|birthdays?|graduations?|quincea[ñn]eras?|mitzvahs?|baptisms?|christenings?|funerals?|honeymoons?|reunions?|homecomings?|formal dances?|school dances?|winter formals?|bachelor(?:ette)?s?|retirements?|sidelines?|teams?|squads?|leagues?|regiments?|battalions?|platoons?|brigades?|cavalry|infantry|fraternit(?:y|ies)|sororit(?:y|ies)|servers?|staff|chefs?(?!(?:'s|’s)?[- ]knife|[- ]knives)`;
+/** guard-v10: a relationship or a person's role: always about people (headline and claims). */
+export const PEOPLE_NOUN_RE = new RegExp(String.raw`\b(?:${RELATIONSHIP_WORDS}|${PERSON_ROLE_WORDS})\b`, 'i');
+/**
+ * guard-v10: a claim about the people in a photo, by word, whatever the
+ * model's type or domain for it (finding: h73 "Croatia national football
+ * team" typed as a sport tradition, h74 "Wedding cake" typed as food, both
+ * outside aboutPeople()). Applied only when the reading shows people. This is
+ * a closed list and a backstop to the class rules (aboutPeople,
+ * playStyleOfPeople), not a replacement: a synonym it does not name still
+ * reaches the class rules only.
+ */
+export const PEOPLE_CLAIM_RE = new RegExp(String.raw`\b(?:${RELATIONSHIP_WORDS}|${PERSON_ROLE_WORDS}|${PEOPLE_CONTEXT_WORDS})\b`, 'i');
+
+/**
+ * guard-v10: a claim about the people rests on read text only when the text
+ * names it: every naming word of the claim (3+ letters, 2 for non-Latin, no
+ * generic or describing word) is a whole token of one of `texts`. The model's
+ * own evidence label ("read_text") is not enough: a "Wedding ceremony" read
+ * off an "EXIT" sign is not backed by what was read.
+ */
+export function claimReadIn(name: string, texts: readonly (string | null | undefined)[]): string | null {
+  const read = texts.filter((t): t is string => !!t && !!t.trim());
+  const words = contentTokens(stripParens(name)).filter(
+    (t) => !isGenericToken(t) && !/^\d+$/.test(t) && (t.length >= 3 || (isNonLatin(t) && t.length >= 2)),
+  );
+  if (!words.length || !words.every((w) => read.some((t) => textHasToken(t, w)))) return null;
+  return read.find((t) => textHasToken(t, words[0]!)) ?? null;
 }
 
 /** Inspector reason codes of guard-v8 (decision notes). */
@@ -921,10 +1000,20 @@ function evaluate(
     // The stage-1 quick read has no observations, so people may only show at stage 2 (h47:
     // "Formal dance attire" at stage 1, "A young man wears ..." at stage 2): a claim about
     // people is held until stage 2 can tell, never published from stage 1 on context.
-    if (playStyleOfPeople({ type: c.type, domain: input.domain }, facts.mentionsPeople) && c.evidence !== 'read_text')
+    // guard-v10: "rests on read text" means the text names the claim (claimReadIn), not only that
+    // the model labelled its evidence read_text: stage 1 checks the model's own evidence_text (the
+    // claim is then held by G-TEXT-ECHO for a second reading), a stage-2 addition the transcriptions.
+    const readBacked =
+      c.evidence === 'read_text' && claimReadIn(c.name, opts.stage === 1 ? [c.evidence_text, ...facts.texts] : facts.texts) !== null;
+    if (playStyleOfPeople({ type: c.type, domain: input.domain }, facts.mentionsPeople) && !readBacked)
       return observe('G-PEOPLE-CLAIM', EVIDENCE_NOTES.peopleClaim);
-    if (aboutPeople({ type: c.type, domain: input.domain }) && c.evidence !== 'read_text') {
-      if (facts.mentionsPeople) return observe('G-PEOPLE-CLAIM', EVIDENCE_NOTES.peopleClaim);
+    // guard-v10: a claim that names a relationship, a role, an occasion, a team, a league or a unit
+    // of the people (PEOPLE_CLAIM_RE) is about them whatever type and domain the model gave it
+    // ("Wedding cake" as food, "… national football team" as a sport tradition). Brands, creators
+    // and people-domain names have their own rules (G-BRAND, G-IDENTITY).
+    const namesPeople = c.type !== 'brand' && c.type !== 'creator' && input.domain !== 'people' && PEOPLE_CLAIM_RE.test(c.name);
+    if ((aboutPeople({ type: c.type, domain: input.domain }) || namesPeople) && !readBacked) {
+      if (facts.mentionsPeople || PEOPLE_NOUN_RE.test(c.name)) return observe('G-PEOPLE-CLAIM', EVIDENCE_NOTES.peopleClaim);
       if (opts.stage === 1) {
         rules.push('G-PEOPLE-CLAIM');
         hold = true;
@@ -1179,7 +1268,52 @@ function nextObservationId(used: readonly { id: string }[]): string {
   return `o${n}`;
 }
 
-function sanitizeHeadline(a: VlmAnalysis, publishable: readonly VlmCandidate[]): { title: string; interpretation: string; changed: boolean } {
+/**
+ * guard-v10, G-PEOPLE-CLAIM on the headline: the title and the interpretation
+ * are always shown, so they may not carry a claim about the people that the
+ * candidate rules withhold (round-3 review: "Couple at their prom" stayed in
+ * the headline while the "Prom" candidate was kept private; the h50–h79 blind
+ * headlines said "wedding-style", "engagement-style", "Two friends",
+ * "guardsman", "a server taking an order"). A headline line claims something
+ * about the people when
+ *  - it names a relationship or a person's role (PEOPLE_NOUN_RE), or
+ *  - the reading shows people and it names a role (ROLE_RE) or an occasion,
+ *    team, league or unit (PEOPLE_CLAIM_RE), or
+ *  - it repeats a naming word of a claim withheld as being about the people
+ *    (`withheld`: G-PEOPLE-CLAIM, a people-domain G-IDENTITY drop), other than
+ *    a word a published claim also uses ("Basketball game" next to a withheld
+ *    "Professional basketball" and a published "Basketball").
+ * Such a line is replaced, not edited (removing the word leaves the inference
+ * in the sentence: "a person taking an order"): on a photo that shows people
+ * by NEUTRAL_PEOPLE_TITLE / NEUTRAL_PEOPLE_INTERPRETATION, otherwise the
+ * title by the first publishable name or NEUTRAL_TITLE and the interpretation
+ * by NEUTRAL_INTERPRETATION.
+ */
+function headlineClaimsPeople(
+  text: string,
+  ctx: { mentionsPeople: boolean; withheld: readonly Pick<VlmCandidate, 'name'>[]; publishable: readonly Pick<VlmCandidate, 'name'>[] },
+): boolean {
+  if (PEOPLE_NOUN_RE.test(text)) return true;
+  if (ctx.mentionsPeople && (ROLE_RE.test(text) || PEOPLE_CLAIM_RE.test(text))) return true;
+  const kept = new Set(ctx.publishable.flatMap((c) => contentTokens(stripParens(c.name))));
+  return ctx.withheld.some((c) =>
+    contentTokens(stripParens(c.name)).some(
+      (t) => (t.length >= 3 || (isNonLatin(t) && t.length >= 2)) && !/^\d+$/.test(t) && !knownWord(t) && !kept.has(t) && textHasToken(text, t),
+    ),
+  );
+}
+
+interface HeadlineContext {
+  mentionsPeople: boolean;
+  /** Claims withheld because they are about the people (their naming words may not stay in the headline). */
+  withheld: readonly Pick<VlmCandidate, 'name'>[];
+}
+
+function sanitizeHeadline(
+  a: Pick<VlmAnalysis, 'title' | 'interpretation'>,
+  publishable: readonly VlmCandidate[],
+  people: HeadlineContext = { mentionsPeople: false, withheld: [] },
+): { title: string; interpretation: string; changed: boolean; peopleClaim: boolean } {
   let title = a.title;
   let interpretation = a.interpretation;
   if (MEDIUM_RE.test(title)) {
@@ -1190,7 +1324,33 @@ function sanitizeHeadline(a: VlmAnalysis, publishable: readonly VlmCandidate[]):
     const stripped = stripMedium(interpretation);
     interpretation = wordCount(stripped) >= 2 ? stripped : NEUTRAL_INTERPRETATION;
   }
-  return { title, interpretation, changed: title !== a.title || interpretation !== a.interpretation };
+  const ctx = { ...people, publishable };
+  // The replacement says that people are in the photo when the reading shows them (the people test
+  // of stage 2 reads the published headline), and nothing about them.
+  const shown = people.mentionsPeople || PEOPLE_NOUN_RE.test(`${a.title} ${a.interpretation}`);
+  let peopleClaim = false;
+  if (headlineClaimsPeople(title, ctx)) {
+    peopleClaim = true;
+    title = shown ? NEUTRAL_PEOPLE_TITLE : (publishable.find((c) => !headlineClaimsPeople(c.name, ctx))?.name.slice(0, 60) ?? NEUTRAL_TITLE);
+  }
+  if (headlineClaimsPeople(interpretation, ctx)) {
+    peopleClaim = true;
+    interpretation = shown ? NEUTRAL_PEOPLE_INTERPRETATION : NEUTRAL_INTERPRETATION;
+  }
+  return { title, interpretation, changed: title !== a.title || interpretation !== a.interpretation, peopleClaim };
+}
+
+/** guard-v10: candidates a decision withheld as claims about the people (their words may not stay in the headline). */
+function peopleWithheldBy(decisions: readonly GuardDecision[], candidates: readonly VlmCandidate[]): VlmCandidate[] {
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  return decisions
+    .filter(
+      (d) =>
+        d.rules.includes('G-PEOPLE-CLAIM') ||
+        (d.action === 'drop' && d.rules.includes('G-IDENTITY') && byId.get(d.candidateId)?.type !== 'creator'),
+    )
+    .map((d) => byId.get(d.candidateId))
+    .filter((c): c is VlmCandidate => !!c);
 }
 
 // ---- stage 1 -------------------------------------------------------------------
@@ -1215,7 +1375,8 @@ export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stag
   // G-QUAL: an unusable or flawed photo publishes no candidates at all.
   if (!a.quality.usable || a.quality.issue !== null) {
     for (const c of a.candidates) decisions.push(decision(c, 'drop', ['G-QUAL']));
-    const headline = sanitizeHeadline(base, []);
+    // guard-v10: an unusable photo's headline is still shown, so it passes the people test too.
+    const headline = sanitizeHeadline(base, [], { mentionsPeople: readingFacts(base, texts.kept, false, a.observations).mentionsPeople, withheld: [] });
     const subjects = guardCompetingSubjects(base, [], texts.kept, [], a.observations);
     const dropped = { visibleText: texts.dropped.length, observations: obs.dropped.length, subjects: subjects.dropped };
     return {
@@ -1270,7 +1431,10 @@ export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stag
 
   const observations = [...base.observations];
   for (const c of demoted) observations.push(demotedObservation(c, nextObservationId(observations)));
-  const headline = sanitizeHeadline(base, publish);
+  const headline = sanitizeHeadline(base, publish, {
+    mentionsPeople: facts.mentionsPeople,
+    withheld: peopleWithheldBy(decisions, base.candidates),
+  });
   const subjects = guardCompetingSubjects(base, publish, texts.kept, [], a.observations);
   const dropped = { visibleText: texts.dropped.length, observations: obs.dropped.length, subjects: subjects.dropped };
   return {
@@ -1390,6 +1554,7 @@ export function guardEnrichment(input: {
   const nonAnchorIds: string[] = [];
   const textOnlyIds: string[] = [];
   const withheldPersons: string[] = [];
+  const peopleWithheld: VlmCandidate[] = [];
   const demotedObs: VlmCandidate[] = [];
   const names = new Set(kept.map((c) => candidateNameKey(c.name)));
   const accept = (c: VlmCandidate, rules: GuardRule[], note?: string) => {
@@ -1477,7 +1642,13 @@ export function guardEnrichment(input: {
     const person = c.type === 'creator' || guarded.domain === 'people';
     // G-PEOPLE-CLAIM (guard-v8): people seen only at stage 2 make a held claim about them
     // (an occasion, a role, a style of the person) a private observation unless it rests on read text.
-    if (!person && facts.mentionsPeople && (aboutPeople(c) || playStyleOfPeople(c, true)) && guarded.evidence !== 'read_text') {
+    // guard-v10: read text backs it only when stage 2 transcribed the claim's words (claimReadIn), never on
+    // the model's own read_text label (a "supported" verdict published it with any evidence_text), and the
+    // claim is about the people by class or by word (PEOPLE_CLAIM_RE), whatever its type and domain.
+    const aboutThePeople =
+      aboutPeople(c) || playStyleOfPeople(c, true) || (c.type !== 'brand' && PEOPLE_CLAIM_RE.test(c.name));
+    if (!person && facts.mentionsPeople && aboutThePeople && !(guarded.evidence === 'read_text' && claimReadIn(c.name, stage2Texts))) {
+      peopleWithheld.push(guarded);
       decisions.push(decision(guarded, 'observe', ['G-PEOPLE-CLAIM'], EVIDENCE_NOTES.peopleClaim));
       continue;
     }
@@ -1603,10 +1774,17 @@ export function guardEnrichment(input: {
   const candidates = [...kept.map((c) => ({ ...c })), ...publishNow];
   // G-SUBJECT: stage-2 competing subjects become "What caught your eye?" choices; they pass the guard too.
   const subjects = guardCompetingSubjects(merged, usable ? candidates : [], texts.kept, withheldPersons);
+  // guard-v10: the published headline passes the people test again with what stage 2 shows (people seen
+  // only now, claims withheld only now). A headline that now claims something about the people is
+  // replaced (a retraction; nothing is added): `headlineChanged`, written by the compiler.
+  const headline = sanitizeHeadline(published, usable ? candidates : [], {
+    mentionsPeople: facts.mentionsPeople,
+    withheld: [...peopleWithheld, ...peopleWithheldBy(decisions, merged.candidates)],
+  });
   const analysis: VlmAnalysis = {
     ...structuredClone(merged),
-    title: published.title,
-    interpretation: published.interpretation,
+    title: headline.title,
+    interpretation: headline.interpretation,
     quality: { ...published.quality },
     visible_text: merged.visible_text.filter((t) => keptText.has(t.text)).map((t) => ({ ...t })),
     observations,
@@ -1620,6 +1798,7 @@ export function guardEnrichment(input: {
     textOnlyIds,
     analysis,
     decisions,
+    headlineChanged: headline.changed,
     dropped: { visibleText: texts.dropped.length, observations: obs.dropped.length, subjects: subjects.dropped },
   };
 }

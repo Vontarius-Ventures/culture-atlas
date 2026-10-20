@@ -174,8 +174,8 @@ describe('reading guardrails in the compiler', () => {
 
     const trace = await guardTrace(job_id);
     expect(trace.map((t) => [t.stage, t.version])).toEqual([
-      [1, 'guard-v9'],
-      [2, 'guard-v9'],
+      [1, 'guard-v10'],
+      [2, 'guard-v10'],
     ]);
     expect(trace[0]!.decisions.map((d) => [d.name, d.action])).toEqual([
       ['Vintage Racing', 'publish'],
@@ -284,5 +284,62 @@ describe('reading guardrails in the compiler', () => {
     expect(qloo.calls).toEqual([]);
     expect(enricher.calls).toEqual([]);
     expect((await guardTrace(job_id))[0]!.decisions.every((d) => d.action === 'drop' && d.rules[0] === 'G-QUAL')).toBe(true);
+  });
+  it('guard-v10: a role in the headline is retracted once stage 2 shows people; the capture card follows (headlineChanged)', async () => {
+    const quick = VlmQuickRead.parse({
+      title: 'Youth fixtureball batter and catcher',
+      interpretation: 'A batter swings on a dirt infield.',
+      candidates: [
+        { name: 'Vintage Racing', type: 'style', relation: 'resembles', certainty: 0.7, domain: 'fashion', evidence: 'distinctive_form', evidence_text: null, tag_query: 'vintage racing' },
+      ],
+      quality: { usable: true, issue: null },
+    });
+    let captureId = '';
+    let before: { title: string; card: string } | null = null;
+    const cardTitle = async () =>
+      (await db.query<{ title: string }>(`SELECT title FROM discovery_items WHERE capture_id = $1 AND kind = 'capture'`, [captureId])).rows[0]?.title;
+    const enricher = new ScriptedEnricher(async () => {
+      before = { title: (await snapshot(captureId)).analysis.title, card: (await cardTitle())! };
+      return VlmEnrichment.parse({
+        ...ENRICHMENT,
+        observations: [{ text: 'Two players on a dirt infield', kind: 'object' }],
+        visible_text: [],
+        confirmed: [{ name: 'Vintage Racing', rationale: 'Racing stripes', verdict: 'supported' }],
+        regions: [],
+      });
+    });
+    const { providers } = world({ overrides: { vlm: new QuickVlm(quick), vlmEnrich: enricher, qloo: fakeQloo() } });
+    const ctx = await accountCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    captureId = capture_id;
+    await runJobs(ctx, [job_id]);
+    // Stage 1 had no people word ("batter" alone can be tempura batter): the headline was published as read.
+    expect(before).toEqual({ title: 'Youth fixtureball batter and catcher', card: 'Youth fixtureball batter and catcher' });
+    const after = await snapshot(capture_id);
+    expect([after.analysis.title, after.analysis.interpretation]).toEqual(['People in your photo', 'A few references stood out in this photo of people.']);
+    expect(await cardTitle()).toBe('People in your photo');
+    // The inspector's stage-2 guard trace records the retraction.
+    expect((await guardTrace(job_id))[1]).toMatchObject({ stage: 2, headline_changed: true });
+    // Nothing else is removed (FAST-02): the published candidate stays.
+    expect(after.analysis.candidates.map((c) => c.name)).toContain('Vintage Racing');
+  });
+
+  it('guard-v10: a relationship in the quick-read title never reaches the analysis or the capture card', async () => {
+    const quick = VlmQuickRead.parse({
+      title: 'Two friends in orange sweatshirts on a bench',
+      interpretation: 'Matching orange tops and denim against brick.',
+      candidates: [
+        { name: 'Road bicycle', type: 'object', relation: 'depicted', certainty: 0.9, domain: 'sport', evidence: 'distinctive_form', evidence_text: null, tag_query: null },
+      ],
+      quality: { usable: true, issue: null },
+    });
+    const { providers } = world({ overrides: { vlm: new QuickVlm(quick), vlmEnrich: new ScriptedEnricher(async () => ENRICHMENT), qloo: fakeQloo() } });
+    const ctx = await accountCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    const after = await snapshot(capture_id);
+    expect(after.analysis.title).toBe('People in your photo');
+    const card = await db.query<{ title: string }>(`SELECT title FROM discovery_items WHERE capture_id = $1 AND kind = 'capture'`, [capture_id]);
+    expect(card.rows.map((r) => r.title)).toEqual(['People in your photo']);
   });
 });

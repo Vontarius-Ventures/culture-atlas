@@ -168,7 +168,11 @@ role is unavailable; during a credit or rate pause it accepts and queues.
    enrichment on it (see `docs/pipeline.md`, "Two-stage photo reading").
    `GET /v2/media/{id}/analysis/{analysis_id}` adds
    `waiting_reason`, `error_code` and `result` (`note: “We explore selected
-   moments, not every frame.”`, per-frame states, cited candidates).
+   moments, not every frame.”`, per-frame states, cited candidates). The
+   cited candidates are only what the stage-1 guardrails publish; with
+   `ANALYSIS_VERIFIER_ENABLED` set they also leave out the claims the
+   verifier checks (styles, places, traditions, context-only claims), which
+   only the compile job's verifier can let through (round-3 review).
 6. 402 / 429 return the work to the queue **without** consuming an attempt;
    media stays `ready`. Deleting the asset fences publication and a trigger
    removes stored readings.
@@ -788,8 +792,12 @@ read, the stage-1 check, the enrichment and the stage-2 check; a check is sent
 only when the reading has claims to check). The profile file must hold the
 `vision_photo` and `vision_photo_enrich` profiles too; the artifact qualifies
 only the verifier, scored through the guarded pipeline with its replies
-applied, on the photo roles' golden set (a blind split that has not been
-consumed: none exists until the round-3 blind set, h50+, is frozen and bound).
+applied, on the photo roles' golden set with a blind split that has not been
+consumed. None exists now: golden-v4's h50–h79 split was frozen, bound
+(`9164518`) and consumed by the failed blind run ("Requalification round 3:
+blind run on h50–h79" below; `freeze.json` `blind_run`, `blind_consumed` in
+the binding), so `qualify:concentrate` refuses golden-v4. The next eligible
+split is a fresh h80+ set, frozen and bound before any model run.
 
 ```sh
 pnpm qualify:concentrate --profile-file profiles.json --role vision_verify   --golden fixtures/eval/<round-3 set> --photos /secure/golden-photos   --out-dir /secure/concentrate-qualification --max-requests <running total + 4 per photo> --spend-cap-usd 2
@@ -898,6 +906,47 @@ needed only if the verifier is enabled.
 
 Spend: 60 Concentrate and 38 Qloo requests, 0 Wikipedia. Round 3 total: 199
 of 260 Concentrate, 38 of 150 Qloo. No Elorian.
+
+## Round-3 review fixes (guard-v10, score-v8, 2026-10-20)
+
+Details in [quality plan §18.20](quality-plan.md#1820-round-3-review-fixes-guard-v10-score-v8-no-request).
+No request was made (0 Concentrate, 0 Qloo, 0 Wikipedia).
+
+- **guard-v10.** The people class now applies to the headline as well. On a
+  photo with people, a title or interpretation that names a relationship,
+  role, occasion, team, league or unit of the people, or repeats a withheld
+  people claim, is replaced by a neutral line. This happens at stage 1, and at
+  stage 2 as a retraction that the compiler writes to the analysis and to the
+  capture card. A people claim rests on read text only when the text names it,
+  never on the model's `evidence: read_text` label alone. A claim naming such
+  a word is about the people whatever type or domain the model gave it ("Wedding
+  cake" as food, a national team as a sport tradition); this is a closed-list
+  backstop to the class rules.
+- **score-v8.** People-class label patterns and the scorer's role nouns also
+  count in the headline of a photo with people (M1, M11). The h50–h79 run as
+  recorded scores M1 18 and M11 19 under it; it failed either way.
+- **v2 media result.** With `ANALYSIS_VERIFIER_ENABLED` set, the verifier's
+  targets are left out of the media citations (step 5 of "v2 media
+  analysis"), so a claim the verifier would block never reaches
+  `GET /v2/media/{id}/analysis/{analysisId}`.
+- **Binding** regenerated: photo code digest and scorer version for
+  golden-v1 to golden-v4; `text-v1` is unchanged. The photo roles
+  (`catalog-compatible`, golden-v4 consumed) would lose any qualification by
+  design. They have none, and the blind set was not re-run. `research_text`
+  and `composer` stay qualified.
+- **Verifier route, ZDR (recorded again for this change).**
+  `vision_verify` stays off and unqualified on `vertex/gemini-2.5-flash`
+  (family google). The catalog snapshot of 2026-10-19T01:11:29.472Z lists a
+  ZDR policy for the `vertex` provider route
+  (`https://ai.google.dev/gemini-api/docs/zdr`) and none for `ai-studio`, so
+  only the vertex route is ZDR-eligible. The profile pins `requireZdr: true`,
+  `providerZdrEligible: true` and `contentLoggingEnabled: false`. The
+  owner-accepted `privacyVerifiedAt` exception applies to this route
+  explicitly, as an exception and not as a dashboard confirmation. Before the
+  verifier is enabled, the operator confirms ZDR and no content logging for
+  the vertex route in the dashboard and sets the confirmed `privacyVerifiedAt`.
+  That changes the profile hash and needs a new qualification on a fresh
+  blind split (h80+).
 
 ## Elorian fallback (operator choice)
 
