@@ -6,10 +6,10 @@ rollbacks (`LLM_PROVIDER=featherless|anthropic`); nothing ever falls back to
 them automatically, and v2 media analysis is unavailable under a rollback
 provider. Qloo stays independent.
 
-**No qualified profile ships in this repository.** Of the model roles only
-`research_text` has a qualifying artifact now (in the operator's directory;
-"Requalification round 2" below); `composer` failed its round-2
-re-qualification. Every test uses synthetic ids such as `fixture/model-1`,
+**No qualified profile ships in this repository.** Of the model roles
+`research_text` and `composer` (`composer-v2`) have qualifying artifacts now
+(in the operator's directory; "Requalification round 3: Tune" below);
+`composer` had failed its round-2 re-qualification on the injection fixture. Every test uses synthetic ids such as `fixture/model-1`,
 which must never be deployed. The two photo stages failed the requalification
 blind run on golden-v2 (M1, M4, M11; see "Requalification blind run" below)
 and again on the round-2 blind split of golden-v3 (M1, M2, M4, M9, M11; see
@@ -816,6 +816,54 @@ binding was regenerated. **Side effect:** `research_text`'s artifact was scored
 on the old `text-v1` digest and now reads `stale_golden_set`, although its
 fixtures are byte-identical; re-qualifying it costs 6 requests and the composer
 11 (17 in a fresh out-dir). The composer was not run live in this build.
+
+## Requalification round 3: Tune (2026-10-20)
+
+Details in [quality plan §18.7–18.14](quality-plan.md#187-tune-plan-item-6-live-2026-10-20).
+The blind split h50–h79 was merged into golden-v4 and frozen (not read by any
+model); Tune ran on the 64 tune photos only.
+
+**Verifier route, live.** 52 `vlm-verify-v3` requests went to
+`vertex/gemini-2.5-flash` (effort none) on the profile in the previous
+section, under the `privacyVerifiedAt` exception recorded there: catalog ZDR
+listed for the `vertex` provider route (policy
+`https://ai.google.dev/gemini-api/docs/zdr`; none for `ai-studio`),
+`requireZdr: true`, `providerZdrEligible: true`, `contentLoggingEnabled:
+false`, `privacyVerifiedAt` set to the owner-accepted exception value
+(`2026-10-19T01:11:57.000Z`, the same as the other roles). The dashboard
+confirmation for the vertex route is still pending; it is needed only if the
+verifier is enabled. They split as 1 smoke, 39 on recorded readings and 12
+in the fresh verifier-on run (whose other 40 requests were the photo stages);
+the photo route served 70 of the 122 Tune requests (40 + 30). Every call
+returned 200; verifier p50 1.9 s, p95 2.6 s.
+
+**Result: the verifier stays off by default.** It answered "yes" 57 times and
+"unsure" 21 times, never "no"; "unsure" blocks. On the tune split it removed
+the one remaining forbidden claim (Lustreware) and blocked 20 label-good ones
+(M4 0.321, M5 0.786: outside their gates), and it said "yes" to h46
+"Professional basketball", which guard-v9 now keeps private by class. Off,
+the same readings pass every live gate. `ANALYSIS_VERIFIER_ENABLED` stays
+unset; `vision_verify` is not qualified and its qualification was not
+prepared.
+
+**Rules for the blind run:** guard-v9 (play style in the sport domain is a
+claim about the people when people are shown; brand-like competing subjects
+repeat only read words; "in a <word> script" is a description of text),
+score-v7, thr-v2; golden-v4 tune label h31 corrected (with history). Binding
+regenerated.
+
+**Text roles, live** (`anthropic/claude-haiku-5-5`, effort none, accepted
+`privacyVerifiedAt` carried over, text-v1, text-score-v2, thr-v2; fresh
+out-dir, 17 requests):
+
+| Role | Profile | Artifact | Result | Latency p50 / p95 |
+| --- | --- | --- | --- | --- |
+| `research_text` | `research-1` (unchanged) | `rt-haiku55-none-20261020` | **qualified**, 6/6, T1–T13 pass | 5.9 / 7.2 s |
+| `composer` | `composer-2`, `promptVersion` `composer-v2` | `co2-haiku55-none-20261020` | **qualified**, 11/11; T12 0 forbidden strings (the injection fixture included) | 2.5 / 4.4 s |
+
+Spend: 139 Concentrate requests (122 Tune, 17 text roles), 0 Qloo, 0
+Wikipedia, every call in the round's ledger outside the repository. No
+Elorian.
 
 ## Elorian fallback (operator choice)
 

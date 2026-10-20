@@ -1604,3 +1604,159 @@ replayed photo has been seen.
 
 0 Concentrate, 0 Qloo, 0 Wikipedia (the round budget, 260 and 150, is
 untouched). No Elorian.
+
+### 18.7 Tune (plan item 6, live, 2026-10-20)
+
+Merge first: `r3/structural` (`39d1b06`) and `r3/blind` (`0427041`) were
+merged (`2106f39`, completed in `fe27e85`): golden-v4 is the round-3 tune set
+(p01–p15, h01–h49, all tune) plus the frozen blind split h50–h79, appended to
+`manifest.json` unchanged; the freeze test holds and the freeze commit is
+recorded in `golden-v4/FREEZE.md` (`828db1c`). `REQUIRED_GOLDEN_SET` stays
+golden-v3 until the freeze step binds golden-v4.
+
+**No held-out photo or label was opened by anyone tuning, and no model read
+one.** Every run used `--split tune` (the sha256 check covers the 64 tune
+photos only) from a photo folder holding only those 64 files; tuning read only
+tune labels. The verifier route is the one in docs/concentrate.md
+("Requalification round 3"): `vertex/gemini-2.5-flash`, `vlm-verify-v3`,
+effort none, under the recorded `privacyVerifiedAt` exception. The photo
+stages are the round-2 profiles (`anthropic/claude-haiku-5-5`, `vlm-quick-v2`,
+`vlm-enrich-v3`), so recorded readings of the same photos are readings of the
+current prompts.
+
+| Run | What was read | Requests |
+| --- | --- | --- |
+| verifier smoke | `vlm-verify-v3` on the recorded p05 reading (Lustreware: "unsure") | 1 |
+| verifier on recorded readings | both checks (`verification1`, `verification2`), exactly as `eval:live` sends them, on the recorded readings of p01–p15 and h01–h13 (tune run 2, §15) and h14–h29 (round-1 blind run); 43 photos, sent only when there were targets | 39 |
+| live, verifier **on** | `eval:live --roles vision_photo,vision_photo_enrich,vision_verify` on h30–h49 (fresh readings in production order: the stage-2 request is built after the stage-1 check) | 52 (20 + 20 + 12) |
+| live, verifier **off** | `eval:live --roles vision_photo,vision_photo_enrich` on p01–p15, after the guard-v9 fixes | 30 |
+
+The verifier on/off comparison is scored on the same readings (`eval:replay
+--verifier both`), so it measures the verifier, not run-to-run variance. The
+recorded readings of p01–h29 were made with a stage-2 request built from the
+guard-v5/v6 first section, not from what the stage-1 check let through; for
+those 44 photos the "on" figures are an approximation of production order.
+Raw outputs, scorecards and the ledger stay outside git (`r3-tune/`).
+
+### 18.8 Tune failures and what changed (guard-v9)
+
+| Tune failure | Change | Kind |
+| --- | --- | --- |
+| h46 (live, verifier on): "Professional basketball" (style, sport, on context) published at stage 1 and the verifier answered "yes": M1 1 (role inference), M11 1 | **G-PEOPLE-CLAIM, play style**: on a photo that shows people, a style in the sport domain (a level, league or manner of play) is a claim about the people and stays private unless read text backs it. The sport itself (a tradition: "Basketball", "Test cricket") still publishes; a sport style on a photo without people ("Running shoes" on a studio sneaker) is not held. By class and the model's own domain, not by word | guard rule, tests |
+| h40 (live): the competing subject "OCBC Bank column sign": M1 1 (brand without text: "column sign" was not read) | **G-SUBJECT**: a brand-like "What caught your eye?" label repeats only what was read; a read brand no longer vouches for the object words around it. A read place or sign name with an object word ("Fixture Harbour sign") is kept as before | guard rule, tests |
+| p05 (live, verifier off): "Small printed museum labels in a non-Latin script" kept as visible text: M8 1 | **G-VTEXT**: "in a <word> script" describes text, like the guard-v5 hyphen form | guard rule, test |
+| h31 (every run): "Neapolitan-style pizza" still counted as a clean drop (M4) after the round-3 label fix | **golden-v4 h31 label**: the alias "Pizza" matched it by name similarity (0.85) whenever no entry matched exactly, so the declared fix had no effect; the alias is removed (the pattern still matches "Pizza"), recorded in the label's history; the label test now checks the whole label, fuzzy matches included | tune label (not frozen), test |
+
+Each rule test fails on the guard-v8 code; the neighbouring cases pass on
+both. `GUARDRAIL_VERSION` is `guard-v9`; the binding was regenerated
+(golden-v1 to v4 code digest, golden-v4 golden digest). No threshold, scorer
+or held-out label changed.
+
+Not changed, reported:
+
+- **p10** read "Un minimo 100% electrico" again (for "minibús eléctrico"; the
+  same misread as tune run 1): M8 1 on the fresh p01–p15 run. A misread
+  word cannot be told from a correct one by a rule.
+- **p14**: the fresh run read "CAAD9" for "CAAD8" and not "ndale" (M9 0.867 on
+  p01–p15). The decals were not fully read in any run.
+- **h05** "Cantonese-style clear potato soup" is dropped by G-IDENTITY as a
+  style attributed to someone ("<word>-style"); it was also a context-only
+  addition, so G-EVIDENCE would keep it private anyway. A regional "-style"
+  is not a person; the rule errs on the safe side.
+- h22 "Ramen" as a cuisine on a street, h37 Zhostovo painting (G-MEDIUM) and
+  the h33 licence question stand as in 18.3.
+
+### 18.9 Results (live gates, thr-v2, score-v7, guard-v9)
+
+| Readings | Verifier | Result |
+| --- | --- | --- |
+| **Tune split, 64 photos** (recorded p01–h29 with the live verifier replies, fresh h30–h49) | off | **PASS**: M1 0, M2 0.008 (1 forbidden: Lustreware, p05), M3 0.99, M4 0.176, M5 0.911, M7 1, M8 0, M9 0.948, M11 0, M12 0.070, M15 0.80 |
+| same | on | **FAIL** M4 0.321, M5 0.786; M1 0, M2 0, M11 0, M15 0.68. The verifier blocked 22 claims: 1 forbidden (Lustreware), 20 label-good |
+| same, as run under guard-v8 | off / on | FAIL M1 2, M11 1 (h46, h40) / FAIL M1 2, M4 0.326, M5 0.786, M11 1 |
+| Tune split with the freshest readings (fresh p01–p15 and h30–h49, recorded h01–h29) | off | **FAIL M8 1** (p10 misread); M4 0.169, M5 0.911, M9 0.948, M1 0, M11 0 |
+| fresh p01–p15 alone | off | FAIL M8 1 (p10), M9 0.867 (p14); M1 0, M4 0.083 (as run under guard-v9 without the G-VTEXT change: M8 2) |
+| fresh h30–h49 alone | off / on | PASS (M4 0.088, M5 0.889) / PASS (M4 0.176, M5 0.833; 3 blocked, all label-good) |
+
+Stage 1 p50 2.0–2.2 s, p95 2.7–3.4 s; stage 2 p95 4.9–5.3 s; verifier p50
+1.9 s, p95 2.6 s (52 calls); 0 incomplete; every request returned 200. M17
+holds (the unguarded readings fail M1 on every set).
+
+### 18.10 Verifier decision: off by default
+
+The rule (enable only if it removes forbidden claims on the tune split without
+coverage falling below the gate) is **not met**. On 78 answers the verifier
+said "yes" 57 times and "unsure" 21 times, never "no"; "unsure" blocks. It
+removed the one forbidden attribution left on the tune split (Lustreware, p05)
+but blocked 20 label-good claims with it (mid-century modern, Mughal and
+Indo-Islamic architecture, streetball, Test cricket, three donut styles,
+Pre-Columbian effigy vessels, Mandopop live concert, Running shoes, and
+others), so M4 rises to 0.321 (gate ≤ 0.20) and M5 falls to 0.786 (gate ≥
+0.80). It also answered "yes" to the one new forbidden claim of the round
+(h46 "Professional basketball"), which guard-v9 now keeps private by class.
+**`analysis_verifier_enabled` stays false** (`.env.example`, `config.ts`,
+`verify.ts` record the result). `vision_verify` is not enabled, so its
+qualification is not prepared this round; enabling it later needs a verifier
+prompt or outcome rule that does not turn doubt about a correct attribution
+into a block, and a new tune measurement.
+
+Consequence, named as the round requires: **the stage-1 deviation of 18.1
+stays open.** With the verifier off, a first-section claim resting only on
+context still publishes (Lustreware on p05 is one), and stage 2's
+"unsupported" on it remains an advisory veto (FAST-02).
+
+### 18.11 Replays under guard-v9 (verifier off, no request)
+
+| Recordings | Labels | guard-v8 | guard-v9 |
+| --- | --- | --- | --- |
+| Round-2 blind run (h30–h49) | golden-v3 (held-out) | FAIL M4 0.25 | FAIL M4 0.25 |
+| Round-2 blind run | golden-v4 (tune) | PASS (M4 0.189) | PASS (M4 0.167: h31) |
+| Round-1 blind run (h14–h29) | golden-v2 (held-out) | FAIL M4 0.237 | FAIL M4 0.237 |
+| Round-1 blind run | golden-v4 (tune) | FAIL M4 0.216 | FAIL M4 0.216 |
+| Tune run 2 (§15) | golden-v4 | PASS (M4 0.200) | PASS (M4 0.200) |
+| Tune run 1 (§15) | golden-v4 | FAIL M8 1, M9 0.885 | same |
+| Evaluate iteration 1 | golden-v2 | PASS | PASS (M4 0.161) |
+| Evaluate iteration 2 | golden-v4 | FAIL M9 0.885 | same |
+| `replay-v1` (CI) | golden-v1 | PASS | PASS |
+
+The round-1 blind readings still fail M4 on their own (correct claims that
+rested on context alone or that stage 2 hedged); on the whole tune split they
+are outweighed (M4 0.176). Every replayed photo has been seen: none of this is
+blind evidence.
+
+### 18.12 Text roles (live)
+
+`anthropic/claude-haiku-5-5`, effort none, the accepted `privacyVerifiedAt`
+carried over, text-v1, text-score-v2, thr-v2; fresh out-dir, new artifact ids.
+
+| Role | Result | Requests | Latency p50 / p95 | Content |
+| --- | --- | --- | --- | --- |
+| `research_text` (`research-1`, unchanged profile; the artifact was stale only because the text-v1 digest changed) | **qualified** (`rt-haiku55-none-20261020`), 6/6 | 6 | 5.9 / 7.2 s | T1–T13 pass; 7.5 kept claims per fixture; 0 unsupported specifics |
+| `composer` (`composer-2`, `promptVersion` `composer-v2`) | **qualified** (`co2-haiku55-none-20261020`), 11/11 | 11 | 2.5 / 4.4 s | **T12 0 forbidden strings** on every fixture, `plan-prose-limits-injection` included; 0 new names, 0 exclusion violations, 0 shown safety claims |
+
+`qualificationState()` reports `qualified` for both against the current
+binding. One run each; neither was repeated.
+
+### 18.13 State after Tune, and what is next
+
+- Photo roles: unqualified (golden-v3 consumed; golden-v4 not bound yet).
+  The rules for the blind run are guard-v9, score-v7, thr-v2, verifier off.
+- Next (plan item 6): bind golden-v4 for the photo roles
+  (`REQUIRED_GOLDEN_SET` → golden-v4, `pnpm eval:binding --write`), record the
+  binding commit in `golden-v4/FREEZE.md`, run the h50–h79 blind split once
+  with the verifier off (60 requests for 30 photos), then qualify on a pass,
+  the end-to-end upload, review and fix.
+- Before the blind run the owner decides the licence questions in
+  `golden-v4/FREEZE.md` (h57, h66, h76, h78 without a licence file; research-only
+  dataset terms on several mmpose images; h73's printed first name) and the
+  open h33 licence; and confirms ZDR and no content logging for the vertex
+  route if the verifier is ever enabled.
+- Known risk for the blind run: text reading varies between runs (p10 and p14
+  failed M8/M9 again on a fresh reading), as in §15.3.
+
+### 18.14 Spend (Tune and text roles)
+
+139 Concentrate requests (tune 122 of the 130 allowed: 1 + 39 + 52 + 30;
+text roles 17), 0 Qloo, 0 Wikipedia; every call is in the round's ledger
+(packages `r3-tune-verify-smoke`, `r3-tune-verify`, `r3-tune-live-on`,
+`r3-tune-live-off`, `r3-text`), all status 200. Round total so far: 139 of
+260 Concentrate, 0 of 150 Qloo. No Elorian.

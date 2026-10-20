@@ -102,7 +102,10 @@ fixtures/eval/
   allowed it). p14 is the first: its must-read text and expected reference
   were changed to what is legible at 768 px (docs/requalification-plan.md
   decision 1). h26 in golden-v3 is the second (its roadster pattern, round 2);
-  h31, h43, h46 and h01 in golden-v4 follow (round 3).
+  h31, h43, h46 and h01 in golden-v4 follow (round 3); h31 has a second
+  entry from round-3 Tune (its alias "Pizza" matched "Neapolitan-style pizza"
+  by name similarity, so the first fix had no effect). Only tune labels are
+  edited this way; held-out labels are frozen.
 - **thr-v2** (docs/requalification-plan.md decisions 3 and 4). `two_stage_only`
   lists the metrics gated only on a two-stage scorecard (M5, M9): a split
   scored on stage 1 alone reports them but is gated on M15 ≥ 0.60 for
@@ -204,6 +207,8 @@ the wrong way, each change recorded in the label's `history`:
 - **h31**: the expected pattern accepts pepperoni or a pizza with only
   describing words before it, so a regional style named from context alone
   ("Neapolitan-style pizza") is no longer label-good through the word "pizza".
+  Round-3 Tune removed the alias "Pizza" too: the scorer's similarity match
+  (used when no entry matches exactly) still made the regional style expected.
 - **h43**: the acceptable "BMW Vision EfficientDynamics" is split into "BMW
   Vision" (requires "Vision") and the full name (requires "EfficientDynamics"),
   so dropping the full name when only "Vision" is read is not a lost claim.

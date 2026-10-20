@@ -177,3 +177,40 @@ frozen before any model run, `REQUIRED_GOLDEN_SET` moved to golden-v4 at the
 freeze, the single blind run, then qualification of the photo roles and the
 verifier, `research_text` and `composer` (17 requests), and the end-to-end
 upload.
+
+## Round 3 merge and Tune record (2026-10-20)
+
+Details in [quality-plan §18.7–18.14](quality-plan.md#187-tune-plan-item-6-live-2026-10-20).
+
+- **Item 5 (blind set) merged.** `r3/blind` added a fresh blind split
+  h50–h79 (30 photos, labelled before any model run, frozen at `0427041`);
+  it was merged with the round-3 tune set (`2106f39`, `fe27e85`), the
+  held-out entries appended to golden-v4's manifest unchanged, and the freeze
+  recorded in `golden-v4/FREEZE.md`. No held-out photo or label was opened
+  while tuning; every model run used `--split tune`.
+- **Tune, live** (122 Concentrate requests of the 130 set aside for it): the
+  different-family verifier on the recorded readings of p01–h29 and in a fresh
+  production-order run on h30–h49, and a fresh verifier-off run on p01–p15.
+  Two forbidden claims the guard-v8 classes did not catch (h46 "Professional
+  basketball", h40 subject "OCBC Bank column sign"), one text description
+  (p05) and one label artifact (h31's fuzzy alias) were fixed with tests
+  (**guard-v9**; tune label h31 with history). Thresholds, scorer and held-out
+  labels are unchanged.
+- **Verifier: off by default.** On the 64-photo tune split it removed the one
+  remaining forbidden claim but blocked 20 label-good ones ("unsure" blocks),
+  so M4 (0.321) and M5 (0.786) fall outside their gates; verifier off, the
+  same readings pass every gate (M4 0.176, M5 0.911, M2 0.008). The stage-1
+  deviation (a first-section claim on context alone publishes when the
+  verifier is off) therefore stays open and is named here as the plan
+  requires.
+- **Text roles qualified:** `research_text` (6/6) and `composer` with
+  `composer-v2` (11/11; T12 passes on the injection fixture). 17 requests.
+- **Not yet passing on every fresh reading:** the freshest p01–p15 readings
+  fail M8 on p10's misread "minimo" and M9 on p14's decals (text-reading
+  variance, §15.3); the blind run may fail on the same class.
+- **Next:** bind golden-v4 (`REQUIRED_GOLDEN_SET` → golden-v4), record the
+  binding commit, run the h50–h79 blind split once (verifier off), qualify on a
+  pass, end-to-end upload. Owner decisions pending: the licence questions in
+  `golden-v4/FREEZE.md` and h33; ZDR confirmation for the vertex route only if
+  the verifier is ever enabled. Round spend so far: 139 of 260 Concentrate, 0
+  of 150 Qloo, 0 Wikipedia.
