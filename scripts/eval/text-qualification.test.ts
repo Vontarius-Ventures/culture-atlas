@@ -41,7 +41,7 @@ const base: ModelProfile = {
   providerZdrEligible: true,
   contentLoggingEnabled: false,
   privacyVerifiedAt: '2026-10-15T00:00:00Z',
-  promptVersion: 'composer-test',
+  promptVersion: 'composer-v2',
   schemaVersion: 'composer-test',
   catalogSnapshotAt: '2026-10-16T12:00:00.000Z',
   qualificationArtifactId: 'composer-offline-test',

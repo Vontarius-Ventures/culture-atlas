@@ -18,7 +18,14 @@ import {
  * brand evidence from the final visible text itself. A guard bug therefore
  * shows up as a failing metric instead of being trusted by the yardstick.
  */
-export const SCORER_VERSION = 'score-v6';
+/**
+ * score-v7 (requalification round 3, declared before the next blind set is
+ * labelled): must-read text may span lines (consecutive visible_text entries,
+ * mustReadFound); the verifier's blocked claims are reported
+ * (verifier_blocked, verifier_blocked_forbidden, verifier_blocked_good, no
+ * gate). No gate, threshold or metric definition changed otherwise.
+ */
+export const SCORER_VERSION = 'score-v7';
 
 export interface CandidateView {
   name: string;
@@ -85,6 +92,12 @@ export interface ScoredRun {
   final: ReadingView;
   calls?: readonly CallRecord[];
   qloo?: readonly QlooAcceptRecord[];
+  /**
+   * score-v7: claims the verifier (vlm-verify-v3) blocked before publication;
+   * present only when it ran. Blocked claims are not published, so a
+   * label-good one also counts as a clean drop (M4).
+   */
+  verifierBlocked?: readonly CandidateView[];
 }
 
 // Independent copies of the plan's patterns (§4.2), broadened where a scorer can afford to be strict.
@@ -266,6 +279,21 @@ export interface Violation {
   detail: string;
 }
 
+/**
+ * score-v7: how many must-read strings the final visible text holds. A string
+ * counts when one transcription contains it, or when up to three consecutive
+ * transcriptions joined by a space do (a sign printed over two lines, h40
+ * "ALL YEAR" / "ROUND" for "ALL YEAR ROUND"). score-v6 matched within one
+ * entry only.
+ */
+export const MUST_READ_SPAN = 3;
+export function mustReadFound(mustRead: readonly string[], visibleText: readonly string[]): number {
+  const windows: string[] = [];
+  for (let i = 0; i < visibleText.length; i++)
+    for (let n = 1; n <= MUST_READ_SPAN && i + n <= visibleText.length; n++) windows.push(visibleText.slice(i, i + n).join(' '));
+  return mustRead.filter((m) => windows.some((w) => textContains(w, m))).length;
+}
+
 /** Forbidden-class claims in one run (M1), restricted to the classes the label lists. */
 export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Violation[] {
   const out: Violation[] = [];
@@ -386,6 +414,10 @@ export interface RunRow {
   expectedHitUncontested: boolean | null;
   /** score-v4: candidates published only as text-only references. */
   textOnly: number;
+  /** score-v7: claims the verifier blocked (null when it did not run), and how many of them the label forbids or calls good. */
+  verifierBlocked: number | null;
+  verifierBlockedForbidden: number;
+  verifierBlockedGood: number;
 }
 
 function key(name: string): string {
@@ -431,7 +463,7 @@ export function scoreRun(label: PhotoLabel, run: ScoredRun): RunRow {
   }
   const mustRead =
     run.twoStage && label.must_read_text.length
-      ? { found: label.must_read_text.filter((m) => vt.some((t) => textContains(t, m))).length, total: label.must_read_text.length }
+      ? { found: mustReadFound(label.must_read_text, vt), total: label.must_read_text.length }
       : null;
 
   const violations = forbiddenClassViolations(label, run);
@@ -493,6 +525,12 @@ export function scoreRun(label: PhotoLabel, run: ScoredRun): RunRow {
     forbiddenUncontested,
     expectedHitUncontested,
     textOnly: f.candidates.filter((c) => c.text_only === true).length,
+    verifierBlocked: run.verifierBlocked ? run.verifierBlocked.length : null,
+    verifierBlockedForbidden: (run.verifierBlocked ?? []).filter((c) => candidateStatus(label, c, vt) === 'forbidden').length,
+    verifierBlockedGood: (run.verifierBlocked ?? []).filter((c) => {
+      const s = candidateStatus(label, c, vt);
+      return (s === 'expected' || s === 'acceptable') && !isGeneric(label, c);
+    }).length,
   };
 }
 
@@ -563,6 +601,10 @@ export function aggregate(rows: readonly RunRow[], runs: readonly ScoredRun[], f
     forbidden_uncontested: verified ? sum((r) => r.forbiddenUncontested) : null,
     M5_uncontested: verified ? ratio(expectedRows.filter((r) => r.expectedHitUncontested).length, expectedRows.length) : null,
     text_only: sum((r) => r.textOnly),
+    // score-v7, report only: what the binding verifier kept from publication.
+    verifier_blocked: rows.some((r) => r.verifierBlocked !== null) ? sum((r) => r.verifierBlocked ?? 0) : null,
+    verifier_blocked_forbidden: rows.some((r) => r.verifierBlocked !== null) ? sum((r) => r.verifierBlockedForbidden) : null,
+    verifier_blocked_good: rows.some((r) => r.verifierBlocked !== null) ? sum((r) => r.verifierBlockedGood) : null,
   };
 }
 

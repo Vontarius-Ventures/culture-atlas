@@ -6,14 +6,18 @@ import {
   ConcentrateTextModel,
   ConcentrateVlm,
   ConcentrateVlmEnricher,
+  ConcentrateVlmVerifier,
   MemorySpendStore,
   ModelSpendLedger,
   ProviderError,
   QUALIFICATION_MINIMUM_FIXTURES,
   QualificationArtifactSchema,
   StructuredResponseRunner,
+  VERIFIER_EVAL_METRICS,
   boundJpegForProfile,
   catalogCompatible,
+  catalogFamily,
+  catalogZdrListed,
   createConcentrateTransport,
   fetchCatalogSnapshot,
   guardQuickRead,
@@ -35,6 +39,7 @@ import { SCORER_VERSION } from './eval/scorer';
 import type { ReadingPipeline, Recording } from './eval/pipeline';
 import { verifiedTextGolden, type VerifiedTextGolden } from './eval/text-golden';
 import { summarizeTextRun, type TextRunRow } from './eval/text-scorer';
+import { COMPOSER_PROMPT_VERSION } from '../packages/domain/src/composer/creative';
 
 /** Pass thresholds of the evaluation (docs/quality-plan.md §7.2). */
 export const DEFAULT_THRESHOLDS = path.resolve(import.meta.dirname, '../fixtures/eval/thresholds.json');
@@ -227,7 +232,29 @@ export function expectFileFor(fixturePath: string): string {
   return fixturePath.replace(/\.json$/, '.expect.json');
 }
 
-const PHOTO_ROLES: readonly ModelProfile['role'][] = ['vision_photo', 'vision_photo_enrich'];
+const PHOTO_ROLES: readonly ModelProfile['role'][] = ['vision_photo', 'vision_photo_enrich', 'vision_verify'];
+
+/**
+ * vision_verify (requalification round 3): the verifier must come from a
+ * different model family than both photo roles (catalog author), on a route
+ * whose catalog entry lists a zero-data-retention policy. Returns why not, or
+ * null. Checked before any request.
+ */
+export function verifierIndependence(
+  verifier: ModelProfile,
+  photoProfiles: readonly ModelProfile[],
+  snapshot: CatalogSnapshot,
+): string | null {
+  const family = catalogFamily(verifier, snapshot);
+  if (!family) return `the catalog names no author for ${verifier.model}, so its model family cannot be told apart from the photo roles'`;
+  for (const p of photoProfiles) {
+    const other = catalogFamily(p, snapshot);
+    if (!other) return `the catalog names no author for ${p.model} (${p.role})`;
+    if (other === family) return `${verifier.model} is from the same model family (${family}) as the ${p.role} profile ${p.model}; the verifier must be independent`;
+  }
+  if (!catalogZdrListed(verifier, snapshot)) return `the catalog lists no zero-data-retention policy for the ${verifier.provider} route of ${verifier.model}`;
+  return null;
+}
 const TEXT_ROLES: readonly ModelProfile['role'][] = ['research_text', 'composer'];
 
 export interface QualificationRun {
@@ -278,12 +305,20 @@ export async function qualifyProfile(
     spendCapMicros: number;
     confirmPaidRequests: boolean;
     /**
-     * vision_photo_enrich only: the stage-1 (quick read) vision_photo profile
-     * whose real reading is the enrichment's input, exactly as in production.
-     * Its requests count against the same request cap and spend cap; the
-     * artifact qualifies only the enrichment profile.
+     * vision_photo_enrich and vision_verify: the stage-1 (quick read)
+     * vision_photo profile whose real reading is the input, exactly as in
+     * production. Its requests count against the same request cap and spend
+     * cap; the artifact qualifies only the profile under qualification.
      */
     stage1Profile?: ModelProfile;
+    /**
+     * vision_verify only: the stage-2 (enrichment) profile. Every golden photo
+     * is read as production reads it with the verifier on: stage 1, the
+     * stage-1 check, stage 2 on what the check let publish, the stage-2 check
+     * (up to four requests per photo). The artifact qualifies only the
+     * verifier, scored through the guarded pipeline with its replies applied.
+     */
+    enrichProfile?: ModelProfile;
     /**
      * vision_photo_enrich only: also write the stage-1 profile's own artifact
      * from this run. Every photo's stage-1 call is exactly the call a separate
@@ -322,13 +357,25 @@ export async function qualifyProfile(
     throw new Error(
       'Profile is not catalog-compatible: pin a model/provider from the snapshot and set catalogSnapshotAt to its fetched_at.',
     );
-  // The verifier is scored on the two-stage readings it checks (eval:live --roles ...,vision_verify);
-  // its qualification run is added only if the tune-split evaluation enables it. Until then it stays
-  // unqualified (qualificationState requires a golden-v3 eval block), so production never dispatches it.
-  if (profile.role === 'vision_verify')
-    throw new Error('vision_verify is not qualified by this script yet: the tune-split evaluation kept it off (docs/quality-plan.md §15), so it is not qualified this round.');
   const enrich = profile.role === 'vision_photo_enrich';
-  const stage1 = enrich ? opts.stage1Profile : undefined;
+  const verifyRole = profile.role === 'vision_verify';
+  const stage1 = enrich || verifyRole ? opts.stage1Profile : undefined;
+  const enrichP = verifyRole ? opts.enrichProfile : undefined;
+  if (verifyRole) {
+    // Round 3: the verifier is qualified on the full two-stage reading it guards, with both photo
+    // profiles in the same file, and only as an independent model family on a listed ZDR route.
+    if (!stage1 || stage1.role !== 'vision_photo' || readingForProfile(stage1) !== 'quick')
+      throw new Error('Qualifying vision_verify needs the stage-1 vision_photo quick-read profile (same profile file).');
+    if (!enrichP || enrichP.role !== 'vision_photo_enrich' || readingForProfile(enrichP) !== 'enrich')
+      throw new Error('Qualifying vision_verify needs the vision_photo_enrich profile (same profile file).');
+    for (const p of [stage1, enrichP])
+      if (!catalogCompatible(p, snapshot)) throw new Error(`The ${p.role} profile is not catalog-compatible with this snapshot.`);
+    const why = verifierIndependence(profile, [stage1, enrichP], snapshot);
+    if (why) throw new Error(`vision_verify is not independent: ${why}. Nothing was sent.`);
+    if (opts.stage1Artifact) throw new Error('A stage-1 artifact is written only when qualifying vision_photo_enrich with its stage-1 profile.');
+  } else if (opts.enrichProfile) {
+    throw new Error('An enrichment profile only applies when qualifying vision_verify.');
+  }
   if (enrich) {
     if (!stage1 || stage1.role !== 'vision_photo' || readingForProfile(stage1) !== 'quick')
       throw new Error(
@@ -336,10 +383,10 @@ export async function qualifyProfile(
       );
     if (!catalogCompatible(stage1, snapshot))
       throw new Error('The stage-1 profile is not catalog-compatible with this snapshot.');
-  } else if (opts.stage1Profile) {
-    throw new Error('A stage-1 profile only applies when qualifying vision_photo_enrich.');
+  } else if (opts.stage1Profile && !verifyRole) {
+    throw new Error('A stage-1 profile only applies when qualifying vision_photo_enrich or vision_verify.');
   }
-  if (opts.stage1Artifact && !stage1)
+  if (opts.stage1Artifact && (!stage1 || verifyRole))
     throw new Error('A stage-1 artifact is written only when qualifying vision_photo_enrich with its stage-1 profile.');
   if (opts.stage1Artifact && stage1!.qualificationArtifactId === profile.qualificationArtifactId)
     throw new Error('The stage-1 and enrichment profiles need different qualificationArtifactId values.');
@@ -376,6 +423,10 @@ export async function qualifyProfile(
     fixtures = await discoverFixtures(opts.fixturesDir, profile.role);
   }
   if (textRole) {
+    // The text fixtures are built from the current composer prompts; a profile naming an older
+    // prompt version would qualify a prompt production no longer sends (round 3: composer-v2).
+    if (profile.role === 'composer' && profile.promptVersion !== COMPOSER_PROMPT_VERSION)
+      throw new Error(`The composer profile names promptVersion ${profile.promptVersion}; the composer prompts are ${COMPOSER_PROMPT_VERSION}. Nothing was sent.`);
     if (!opts.textScorer)
       throw new Error('Text roles need the content checks (scripts/eval/text-scorer.ts); refusing to qualify without them.');
     // A fixture for another role's schema is refused first (e.g. composer prompts under research_text).
@@ -430,9 +481,12 @@ export async function qualifyProfile(
     throw new Error(
       `Need at least ${minimum} fixtures for ${profile.role}; found ${fixtures.length}.`,
     );
-  // Enrichment: one stage-1 quick read plus one enrichment per photo.
-  const perFile = stage1 ? 2 : 1;
-  const perFileMicros = profile.reservationMicros + (stage1?.reservationMicros ?? 0);
+  // Enrichment: one stage-1 quick read plus one enrichment per photo. Verifier: quick read, stage-1
+  // check, enrichment, stage-2 check (a check is sent only when a reading has targets; planned for all).
+  const perFile = verifyRole ? 4 : stage1 ? 2 : 1;
+  const perFileMicros = verifyRole
+    ? 2 * profile.reservationMicros + stage1!.reservationMicros + enrichP!.reservationMicros
+    : profile.reservationMicros + (stage1?.reservationMicros ?? 0);
   const files = fixtures.reduce((n, f) => n + f.files.length, 0);
   const plannedRequests = files * perFile;
   if (plannedRequests > opts.maxRequests)
@@ -497,6 +551,12 @@ export async function qualifyProfile(
       },
     },
   );
+  // The verifier's stage-2 input comes from a real enrichment of a real stage-1 reading.
+  const enrichRunner = enrichP
+    ? new StructuredResponseRunner(enrichP, createConcentrateTransport({ apiKey: opts.apiKey, fetch: countedFetch }), ledger, { allowTestStore: true })
+    : undefined;
+  // Verifier run accounting (eval-block metrics).
+  const verifyStats = { calls: 0, checkedPhotos: 0, blocked: 0 };
   // Enrichment input comes from a real stage-1 quick read, never a made-up one.
   const stage1Runner = stage1
     ? new StructuredResponseRunner(
@@ -568,6 +628,65 @@ export async function qualifyProfile(
             latencyMs: Date.now() - started,
             score: { ...verdict, metrics: { t1_schema_valid: 1, ...verdict.metrics } },
           });
+        } else if (verifyRole && stage1Runner && enrichRunner && opts.pipeline) {
+          // The full reading with the verifier on, as the compiler runs it; latency and usage in the
+          // artifact are the verifier's own calls.
+          const original = await readFile(file.path);
+          const { bytes: quickBytes } = await boundJpegForProfile(original, stage1!.image);
+          inStage1 = true;
+          sent++;
+          const quick = await new ConcentrateVlm(stage1Runner).analyzeImage(
+            { image: { bytes: quickBytes, mediaType: 'image/jpeg' } },
+            { maxRetries: 0, modelIdentity: { ...identity, attemptKey: `${identity.attemptKey}:stage1` } },
+          );
+          inStage1 = false;
+          const photoId = photoIds.get(file.path) ?? fixture.name;
+          const rec: Recording = { photoId, runId: 'qualification', quick: quick.quick, quickMs: Date.now() - started };
+          const verifier = new ConcentrateVlmVerifier(runner);
+          let answered = false;
+          const check = async (stage: 1 | 2) => {
+            const pre = opts.pipeline!.run(rec).verify;
+            const targets = stage === 1 ? pre.targets1 : pre.targets2;
+            if (!targets.length) return;
+            const { bytes } = await boundJpegForProfile(original, profile.image);
+            sent++;
+            verifyStats.calls++;
+            const t0 = Date.now();
+            const res = await verifier.verifyImage(
+              { image: { bytes, mediaType: 'image/jpeg' }, claims: targets.map((t) => ({ name: t.name, type: t.type })), visibleText: stage === 1 ? [] : [...pre.stage2Text] },
+              { maxRetries: 0, modelIdentity: { ...identity, attemptKey: `${identity.attemptKey}:verify${stage}` } },
+            );
+            latencies.push(Date.now() - t0);
+            if (res.usage?.inputTokens !== undefined && res.usage.outputTokens !== undefined) {
+              inputTokens += res.usage.inputTokens;
+              outputTokens += res.usage.outputTokens;
+            } else unknownUsage++;
+            if (res.verification.checks.length) answered = true;
+            if (stage === 1) {
+              rec.verification1 = res.verification;
+              rec.verify1Ms = Date.now() - t0;
+            } else {
+              rec.verification2 = res.verification;
+              rec.verify2Ms = Date.now() - t0;
+            }
+          };
+          await check(1);
+          // The enrichment request is the one counted when the fixture started.
+          const { bytes: enrichBytes } = await boundJpegForProfile(original, enrichP!.image);
+          const e0 = Date.now();
+          const res = await new ConcentrateVlmEnricher(enrichRunner).enrichImage(
+            // Exactly what production sends: the guarded title, what the stage-1 check let publish, then held names.
+            { image: { bytes: enrichBytes, mediaType: 'image/jpeg' }, stage1: opts.pipeline.run(rec).verify.stage2Input },
+            { maxRetries: 0, modelIdentity: { ...identity, attemptKey: `${identity.attemptKey}:stage2` } },
+          );
+          rec.enrichment = res.enrichment;
+          rec.enrichMs = Date.now() - e0;
+          await check(2);
+          if (answered) verifyStats.checkedPhotos++;
+          verifyStats.blocked += opts.pipeline.run(rec).verify.blocked.length;
+          recordings.push(rec);
+          count('complete');
+          continue;
         } else if (stage1Runner) {
           // Stage 1 at its own bounds, then stage 2 on the same photo at the enrichment bounds,
           // each bounded from the original photo (as eval:live and a vision_photo qualification do).
@@ -677,6 +796,17 @@ export async function qualifyProfile(
       failedCalls: total - recordings.length,
       codeSha256: codeSha256!,
     }).block;
+    if (verifyRole) {
+      // Checked before any request (verifierIndependence); recorded so the artifact carries it.
+      evalBlock.metrics[VERIFIER_EVAL_METRICS.independentFamily] = 1;
+      evalBlock.metrics[VERIFIER_EVAL_METRICS.checkedPhotos] = verifyStats.checkedPhotos;
+      evalBlock.metrics[VERIFIER_EVAL_METRICS.calls] = verifyStats.calls;
+      evalBlock.metrics[VERIFIER_EVAL_METRICS.blocked] = verifyStats.blocked;
+      if (verifyStats.checkedPhotos < QUALIFICATION_MINIMUM_FIXTURES.vision_verify) {
+        evalBlock.pass = false;
+        log(`verifier answered on ${verifyStats.checkedPhotos} photo(s); it qualifies only after at least ${QUALIFICATION_MINIMUM_FIXTURES.vision_verify}.`);
+      }
+    }
   } else if (textRole && textGolden) {
     // T1, T9 (p95 under the profile timeout, no timeouts) and T10 (every fixture passed, enough fixtures).
     const run = summarizeTextRun(textRows, {
@@ -739,6 +869,11 @@ export async function qualifyProfile(
       ...(stage1
         ? [
             `Stage-1 input from ${stage1.model} quick read (profile ${profileHash(stage1).slice(0, 12)}); its requests are counted in requests_sent, its latency and usage are not.`,
+          ]
+        : []),
+      ...(enrichP
+        ? [
+            `Verifier (family ${catalogFamily(profile, snapshot)}) checked readings of ${stage1!.model} and ${enrichP.model} (family ${catalogFamily(enrichP, snapshot)}); ${verifyStats.calls} verifier call(s), ${verifyStats.blocked} claim(s) blocked.`,
           ]
         : []),
       ...(stoppedBy ? [`Stopped early: ${stoppedBy}.`] : []),

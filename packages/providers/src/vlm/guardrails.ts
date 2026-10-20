@@ -51,15 +51,48 @@ import {
  * or fails, held claims are dropped (fail closed). A card that is already
  * published is never removed (FAST-02): a stage-2 "unsupported" on it stays
  * an advisory veto.
+ *
+ * guard-v8 (docs/requalification-plan.md, round 3, "Publish by evidence
+ * class, not by word list"): what may publish is decided by the class of
+ * evidence a claim rests on and by what the claim is about, not by extending
+ * closed word lists:
+ *  - G-EVIDENCE: a stage-2 addition whose only support is "context" never
+ *    publishes. A stage-1 claim on context publishes in the first section
+ *    only with independent support: the different-family verifier's "yes"
+ *    when vision_verify is on (verify.ts); with the verifier off (the
+ *    default until Tune decides) it publishes as in guard-v7, because
+ *    holding every context claim for stage 2 empties the first section
+ *    (FAST-01, M15; docs/quality-plan.md §18);
+ *  - a stage-2 "weak" or "unsupported" verdict on a held claim never
+ *    publishes (guard-v7 published a weak style or tradition as a
+ *    non-anchor resemblance);
+ *  - G-PEOPLE-CLAIM: on a photo with people, a tradition or style claim
+ *    whose subject is the people themselves (an occasion, an event, a role,
+ *    a tradition, an identity or a style of the person; the model's own
+ *    domain says so: "people" or "other", no thing domain) publishes only
+ *    when it rests on read text. Clothing and objects still publish;
+ *  - claims withheld this way are kept as private observations (action
+ *    `observe`): recorded in the analysis trace for the inspector, never
+ *    shown as a reference, a card or an observation;
+ *  - a maker read in the photo ("BMW") is kept as a text-only brand
+ *    reference when the longer model name it was claimed with was not read.
+ * Every guard-v7 safety rule stays.
  */
-export const GUARDRAIL_VERSION = 'guard-v7';
+export const GUARDRAIL_VERSION = 'guard-v8';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
 /** Neutral interpretation when G-MEDIUM leaves too little of the model's sentence. */
 export const NEUTRAL_INTERPRETATION = 'A few references stood out in this photo.';
 
-export type GuardAction = 'publish' | 'hold' | 'demote' | 'drop';
+/**
+ * `observe` (guard-v8): the claim never publishes; it is kept only as a
+ * private observation in the analysis trace (the inspector's "Reading
+ * decisions"), for claims withheld by evidence class (context only, a weak or
+ * unsupported stage-2 verdict, a claim about the people in the photo, a
+ * verifier "no" or "unsure").
+ */
+export type GuardAction = 'publish' | 'hold' | 'demote' | 'drop' | 'observe';
 export type GuardRule =
   | 'G-QUAL'
   | 'G-MEDIUM'
@@ -85,6 +118,12 @@ export type GuardRule =
    * dropped as a single read.
    */
   | 'G-TEXT-ONLY'
+  /** guard-v8: a claim whose only support is context waits for a second reading; never published on context alone. */
+  | 'G-EVIDENCE'
+  /** guard-v8: on a photo with people, a claim about the people themselves needs read text. */
+  | 'G-PEOPLE-CLAIM'
+  /** guard-v8: the independent verifier (vision_verify) answered "no" or "unsure", or could not answer: not published. */
+  | 'G-VERIFY'
   // Additive (not candidate rules): visible_text and observation filters, counted in `dropped`.
   | 'G-VTEXT'
   | 'G-PERSON-OBS';
@@ -122,7 +161,7 @@ export interface Stage2Guard {
   publishNow: VlmCandidate[];
   /** Names of published stage-1 candidates stage 2 does not support: advisory only (certainty x 0.5), never removed. */
   advisoryVetoes: string[];
-  /** Ids in publishNow that publish only as a resembling, non-anchor reference (a weak verdict on a held style). */
+  /** Ids in publishNow that publish only as a resembling, non-anchor reference. Always empty since guard-v8 (a weak verdict never publishes). */
   nonAnchorIds: string[];
   /**
    * guard-v4: ids in publishNow that publish only as text-only references
@@ -257,6 +296,35 @@ export const PEOPLE_RE = new RegExp(
  * such as "Empire style" (a real style the plan keeps, §4.5) does not match.
  */
 export const STYLE_OF_RE = /^(\S+)(?:-(?:style|inspired)\b|\s(?:style|inspired)\s+\S)/i;
+
+/**
+ * guard-v8, G-PEOPLE-CLAIM: the claim's subject is the people in the photo,
+ * by claim class and domain rather than by word: a tradition or style (the
+ * classes an occasion, an event, a custom, a role or a person's look arrive
+ * as) whose domain names no thing: "people", or "other" (no garment, food,
+ * craft, building, vehicle, sport, music, film, art, place or sign). "Prom"
+ * on two people in formal wear (tradition, other) is about them; "Test
+ * cricket" (sport), "Streetwear" (fashion) or "Victorian terraced houses"
+ * (architecture) are about what they do, wear or stand in front of. Creators
+ * and people-domain names are identity claims (G-IDENTITY). Only the model's
+ * own domain counts (reading v2): a legacy reading's inferred domain falls
+ * back to "other" for anything outside the category lexicons, which says
+ * nothing about its subject.
+ */
+export const PERSON_SUBJECT_DOMAINS: ReadonlySet<string> = new Set(['people', 'other']);
+export function aboutPeople(c: Pick<VlmCandidate, 'type'> & { domain?: VlmDomain | null }): boolean {
+  return (c.type === 'tradition' || c.type === 'style') && !!c.domain && PERSON_SUBJECT_DOMAINS.has(c.domain);
+}
+
+/** Inspector reason codes of guard-v8 (decision notes). */
+export const EVIDENCE_NOTES = {
+  contextOnly: 'context_only',
+  peopleClaim: 'people_claim',
+  readMaker: 'read_maker_text_only',
+  verifierNo: 'verifier_no',
+  verifierUnsure: 'verifier_unsure',
+  verifierUnanswered: 'verifier_unanswered',
+} as const;
 
 const FLOOR = 0.25;
 const DEPICTED_MIN = 0.5;
@@ -796,6 +864,13 @@ function evaluate(
   });
   let hold = false;
   let demote = false;
+  const observe = (rule: GuardRule, note: string): Verdict => ({
+    action: 'observe',
+    rules: [...rules, rule],
+    candidate: c,
+    ...(replacement ? { replacement } : {}),
+    note,
+  });
 
   // G-MEDIUM, G-PERSON-ROLE and G-IDENTITY run on the candidate and again on a G-STYLE-OF replacement.
   const personRules = (): Verdict | null => {
@@ -816,6 +891,18 @@ function evaluate(
       if (opts.stage === 1) {
         if (!opts.twoStage) return drop('G-IDENTITY', 'no_stage_2');
         rules.push('G-IDENTITY');
+        hold = true;
+      }
+    }
+    // G-PEOPLE-CLAIM (guard-v8): on a photo with people, a claim about the people themselves
+    // (an occasion, event, role, tradition or style of the person) publishes only on read text.
+    // The stage-1 quick read has no observations, so people may only show at stage 2 (h47:
+    // "Formal dance attire" at stage 1, "A young man wears ..." at stage 2): a claim about
+    // people is held until stage 2 can tell, never published from stage 1 on context.
+    if (aboutPeople({ type: c.type, domain: input.domain }) && c.evidence !== 'read_text') {
+      if (facts.mentionsPeople) return observe('G-PEOPLE-CLAIM', EVIDENCE_NOTES.peopleClaim);
+      if (opts.stage === 1) {
+        rules.push('G-PEOPLE-CLAIM');
         hold = true;
       }
     }
@@ -911,6 +998,17 @@ function evaluate(
     // with no name legible); nothing after stage 2 can confirm it, so it is dropped (a held
     // one is dropped as held_at_stage_2 by the caller).
     if (c.type === 'place' && input.evidence === 'context' && !hold) return drop('G-PLACE', 'context_addition');
+  }
+  // G-EVIDENCE (guard-v8): a claim whose only support is context never publishes on that alone.
+  // A stage-2 addition on context alone has nothing left to confirm it (guardEnrichment keeps it
+  // as a private observation). A stage-1 claim on context is the first section's content
+  // (FAST-01): it publishes there only through the independent verifier when that is on (a "yes"
+  // is the second, independent support; verifyTargets), and as in guard-v7 when it is off.
+  // Only the model's own evidence (reading v2) counts, as for G-DEPICTED: a legacy reading's
+  // inferred "context" only means no text matched, which is not the model's claim.
+  if (input.evidence === 'context' && opts.stage === 2 && opts.addition) {
+    rules.push('G-EVIDENCE');
+    hold = true;
   }
   // A generic thing is never a reference, whatever stage 2 would say about it: demote beats hold.
   const action: GuardAction = demote ? 'demote' : hold ? 'hold' : 'publish';
@@ -1099,8 +1197,8 @@ export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stag
       decisions.push(decision(original, 'drop', ['G-STYLE-OF'], 'replaced_by_tag_query'));
       rules = rules.filter((r) => r !== 'G-STYLE-OF');
     }
-    if (v.action === 'drop') {
-      decisions.push(decision(v.candidate, 'drop', rules, v.note));
+    if (v.action === 'drop' || v.action === 'observe') {
+      decisions.push(decision(v.candidate, v.action, rules, v.note));
       continue;
     }
     // A replacement that repeats another candidate's name adds nothing.
@@ -1170,6 +1268,26 @@ export function brandCorroboratedIds(
 /** Decision note of a G-TEXT-ONLY publication (the inspector's reason code). */
 export const TEXT_ONLY_NOTE = 'single_read_text_only';
 
+/**
+ * guard-v8: a maker named in a brand claim (MAKERS: "bmw" of "BMW Vision
+ * EfficientDynamics", "nissan" of "Nissan X-Trail") whose word is a whole
+ * token of a stage-2 transcription. Returns the maker as it is written there
+ * ("BMW") and the transcription, or null. Used when the full name was not
+ * read, so the reading still lists what the photo says (a text-only brand
+ * reference), never the model name it could not read.
+ */
+export function readMaker(name: string, texts: readonly string[]): { maker: string; text: string } | null {
+  for (const token of contentTokens(stripParens(name))) {
+    if (!MAKERS.has(token)) continue;
+    for (const text of texts) {
+      if (!textHasToken(text, token)) continue;
+      const written = text.split(/[^\p{L}\p{N}]+/u).find((w) => foldText(w) === token);
+      if (written) return { maker: written, text };
+    }
+  }
+  return null;
+}
+
 // ---- stage 2 -------------------------------------------------------------------
 
 /**
@@ -1178,13 +1296,17 @@ export const TEXT_ONLY_NOTE = 'single_read_text_only';
  * the result of mergeEnrichmentContext(published, enrichment, held).
  *  - published candidates stay, in order (FAST-02); an unsupported verdict is
  *    reported as an advisory veto;
- *  - held claims: no entry or unsupported -> drop; weak -> drop for
- *    brand-like, place, work and creator (and objects and cuisines), publish
- *    as a resembling non-anchor for styles and traditions; supported ->
+ *  - held claims: no entry -> drop; weak or unsupported -> a private
+ *    observation (guard-v8; never published, whatever the type); supported ->
  *    publish, brand-like only with G-BRAND-CORROBORATE (G-VERDICT);
  *  - additions: the stage-1 rules plus G-ADDITION-FLOOR; a claim that would
- *    be held has nothing left to confirm it and is dropped; brand-like
- *    additions publish only with G-BRAND-CORROBORATE.
+ *    be held has nothing left to confirm it and is dropped (on context alone:
+ *    a private observation, G-EVIDENCE); brand-like additions publish only
+ *    with G-BRAND-CORROBORATE;
+ *  - a brand claim whose full name was not read but whose maker was keeps
+ *    the maker as a text-only brand reference (guard-v8, readMaker).
+ * `nonAnchorIds` stays in the result for compatibility and is always empty
+ * since guard-v8 (a weak verdict no longer publishes).
  */
 export function guardEnrichment(input: {
   published: VlmAnalysis;
@@ -1258,6 +1380,37 @@ export function guardEnrichment(input: {
     textOnlyIds.push(c.id);
     if (person) withheldPersons.push(c.name);
   };
+  /**
+   * guard-v8: a brand claim whose full name was not transcribed at stage 2,
+   * but whose maker was ("BMW" for "BMW Vision EfficientDynamics"): the maker
+   * publishes as a text-only brand reference named as written, and the claim
+   * itself is dropped. Returns false when no maker was read.
+   */
+  const acceptReadMaker = (c: VlmCandidate, rules: GuardRule[]): boolean => {
+    const read = readMaker(c.name, stage2Texts);
+    if (!read) return false;
+    const key = candidateNameKey(read.maker);
+    if (names.has(key)) return false;
+    names.add(key);
+    decisions.push({ candidateId: c.id, name: read.maker, action: 'publish', rules: [...rules, 'G-TEXT-ONLY'], note: EVIDENCE_NOTES.readMaker });
+    publishNow.push({
+      ...c,
+      name: read.maker,
+      type: 'brand',
+      relation: 'depicted',
+      evidence: 'read_text',
+      evidence_text: read.text.slice(0, 60),
+      suggested_categories: [],
+      tag_queries: [],
+      text_only: true,
+    });
+    textOnlyIds.push(c.id);
+    return true;
+  };
+  const notRead = (c: VlmCandidate, rules: GuardRule[], note: string) => {
+    decisions.push(decision(c, 'drop', rules, note));
+    acceptReadMaker(c, rules);
+  };
 
   for (const id of merge.heldIds) {
     const c = byId.get(id);
@@ -1270,17 +1423,21 @@ export function guardEnrichment(input: {
     const verdict = verdictOf(c);
     const brandLike = isBrandLike(guarded, { knownWords: facts.knownWords, brandResidue: facts.brandResidue });
     const person = c.type === 'creator' || guarded.domain === 'people';
-    const strong = brandLike || person || ['place', 'work', 'creator'].includes(c.type);
-    if (!verdict || verdict === 'unsupported') {
-      decisions.push(decision(guarded, 'drop', ['G-VERDICT'], verdict ?? 'no_confirmation'));
+    // G-PEOPLE-CLAIM (guard-v8): people seen only at stage 2 make a held claim about them
+    // (an occasion, a role, a style of the person) a private observation unless it rests on read text.
+    if (!person && facts.mentionsPeople && aboutPeople(c) && guarded.evidence !== 'read_text') {
+      decisions.push(decision(guarded, 'observe', ['G-PEOPLE-CLAIM'], EVIDENCE_NOTES.peopleClaim));
       continue;
     }
-    if (verdict === 'weak') {
-      if (strong || !['style', 'tradition'].includes(c.type)) {
-        decisions.push(decision(guarded, 'drop', ['G-VERDICT'], 'weak'));
-        continue;
-      }
-      if (accept({ ...guarded, relation: 'resembles' }, ['G-VERDICT'], 'weak: resembles, non-anchor')) nonAnchorIds.push(c.id);
+    if (!verdict) {
+      decisions.push(decision(guarded, 'drop', ['G-VERDICT'], 'no_confirmation'));
+      continue;
+    }
+    // guard-v8: a weak or unsupported second reading never publishes a held claim (guard-v7
+    // published a weak style or tradition as a non-anchor resemblance); it stays a private
+    // observation for the inspector. A person's name is still withheld from the trace.
+    if (verdict === 'unsupported' || verdict === 'weak') {
+      decisions.push(decision(guarded, person ? 'drop' : 'observe', person ? ['G-VERDICT', 'G-IDENTITY'] : ['G-VERDICT'], verdict));
       continue;
     }
     if (person) {
@@ -1296,7 +1453,7 @@ export function guardEnrichment(input: {
     if (brandLike) {
       const read = corroboratingText(c.name, stage2Texts);
       if (!read) {
-        decisions.push(decision(guarded, 'drop', ['G-VERDICT', 'G-BRAND-CORROBORATE'], 'not_read_at_stage_2'));
+        notRead(guarded, ['G-VERDICT', 'G-BRAND-CORROBORATE'], 'not_read_at_stage_2');
         continue;
       }
       // Its name is now read in the photo: the claim rests on text, and is depicted when certain enough.
@@ -1323,8 +1480,8 @@ export function guardEnrichment(input: {
     }
     const v = evaluate(c, facts, { stage: 2, twoStage: true, addition: true });
     const candidate = v.candidate;
-    if (v.action === 'drop') {
-      decisions.push(decision(candidate, 'drop', v.rules, v.note));
+    if (v.action === 'drop' || v.action === 'observe') {
+      decisions.push(decision(candidate, v.action, v.rules, v.note));
       continue;
     }
     if (candidate.type === 'creator' || candidate.domain === 'people') {
@@ -1354,7 +1511,7 @@ export function guardEnrichment(input: {
         textHasToken(candidate.evidence_text, head);
       const read = own ? corroboratingText(candidate.name, stage2Texts) : null;
       if (read === null) {
-        decisions.push(decision(candidate, 'drop', [...v.rules, 'G-BRAND-CORROBORATE'], 'not_read_at_stage_2'));
+        notRead(candidate, [...v.rules, 'G-BRAND-CORROBORATE'], 'not_read_at_stage_2');
         continue;
       }
       if (v.action === 'hold') {
@@ -1376,7 +1533,9 @@ export function guardEnrichment(input: {
       continue;
     }
     if (v.action === 'hold') {
-      decisions.push(decision(candidate, 'drop', v.rules, 'held_at_stage_2'));
+      // guard-v8: an addition resting on context alone is a private observation, not a reference.
+      if (v.rules.includes('G-EVIDENCE')) decisions.push(decision(candidate, 'observe', v.rules, EVIDENCE_NOTES.contextOnly));
+      else decisions.push(decision(candidate, 'drop', v.rules, 'held_at_stage_2'));
       continue;
     }
     if (v.action === 'demote') {

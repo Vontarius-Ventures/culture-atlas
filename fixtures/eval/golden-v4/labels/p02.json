@@ -1,0 +1,58 @@
+{
+  "id": "p02",
+  "split": "tune",
+  "file": "02-food-groceries.jpg",
+  "subject_domains": [
+    "vehicle",
+    "other"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [],
+  "acceptable": [
+    {
+      "pattern": "paper (grocery )?bags?|kraft paper",
+      "generic": true
+    },
+    {
+      "pattern": "grocer(y|ies)|supermarket",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "nissan|x-?trail|toyota|honda|ford|kia|hyundai|subaru|mazda|volkswagen|\\bvw\\b",
+      "why": "no badge or model text is visible; make/model from shape",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "american|suburban",
+      "why": "nationality or lifestyle not evidenced"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no dish is visible",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

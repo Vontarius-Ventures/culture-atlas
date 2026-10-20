@@ -14,7 +14,10 @@ export const MODEL_ROLE_VALUES = [
   'composer',
   /** Stage-2 background enrichment of a photo (spec amendment 2.2). */
   'vision_photo_enrich',
-  /** Independent background verifier after stage 2 (docs/requalification-plan.md); off by default. */
+  /**
+   * Independent verifier from a different model family (docs/requalification-plan.md, round 3):
+   * binding checks before publication at stage 1 and stage 2; off by default.
+   */
   'vision_verify',
 ] as const satisfies readonly ModelRole[];
 
@@ -216,8 +219,56 @@ export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined, b
     if (block.guardrail_version !== REQUIRED_GUARDRAIL_VERSION) return 'stale_guardrail_version';
     if (block.holdout_blind !== true) return 'holdout_not_blind';
   }
+  if (role === 'vision_verify') {
+    // Round 3: the verifier qualifies only as a model of another family than the photo
+    // roles (checked against the catalog author before any request) that was actually
+    // exercised on enough golden photos (VERIFIER_EVAL_METRICS).
+    if (block.metrics[VERIFIER_EVAL_METRICS.independentFamily] !== 1) return 'verifier_same_family';
+    if ((block.metrics[VERIFIER_EVAL_METRICS.checkedPhotos] ?? 0) < QUALIFICATION_MINIMUM_FIXTURES.vision_verify) return 'verifier_unexercised';
+  }
   if (!block.pass) return 'eval_failed';
   return null;
+}
+
+/** Eval-block metrics a vision_verify artifact must carry (scripts/qualify-concentrate-lib.ts writes them). */
+export const VERIFIER_EVAL_METRICS = {
+  /** 1 when the verifier's catalog author differs from both photo roles' (0 otherwise; the script refuses first). */
+  independentFamily: 'verifier_independent_family',
+  /** Golden photos on which the verifier answered at least one check. */
+  checkedPhotos: 'verifier_checked_photos',
+  /** Verifier calls made and claims blocked (report only). */
+  calls: 'verifier_calls',
+  blocked: 'verifier_blocked_claims',
+} as const;
+
+/** The catalog entry a profile pins (model id, bare or provider-prefixed), or undefined. */
+export function catalogEntry(profile: Pick<ModelProfile, 'model' | 'provider'>, snapshot: CatalogSnapshot): CatalogSnapshot['models'][number] | undefined {
+  const modelId = profile.model.slice(profile.provider.length + 1);
+  return snapshot.models.find((m) => m.id === modelId || m.id === profile.model);
+}
+
+/**
+ * The model family of a profile: the catalog entry's author (`author.slug`,
+ * else `owned_by`), lower-cased; null when the catalog does not say. A model
+ * family is who trained the model, not who serves it (Claude on Vertex is
+ * still Anthropic's).
+ */
+export function catalogFamily(profile: Pick<ModelProfile, 'model' | 'provider'>, snapshot: CatalogSnapshot): string | null {
+  const entry = catalogEntry(profile, snapshot) as { author?: { slug?: unknown }; owned_by?: unknown } | undefined;
+  const author = typeof entry?.author?.slug === 'string' ? entry.author.slug : typeof entry?.owned_by === 'string' ? entry.owned_by : null;
+  return author ? author.trim().toLowerCase() || null : null;
+}
+
+/**
+ * The catalog lists a zero-data-retention policy for the profile's own
+ * provider route (`providers[<provider>].zdr`). Catalog metadata only: the
+ * operator's dashboard confirmation is still recorded in privacyVerifiedAt.
+ */
+export function catalogZdrListed(profile: Pick<ModelProfile, 'model' | 'provider'>, snapshot: CatalogSnapshot): boolean {
+  const providers = (catalogEntry(profile, snapshot) as { providers?: unknown } | undefined)?.providers;
+  if (!providers || typeof providers !== 'object' || Array.isArray(providers)) return false;
+  const route = (providers as Record<string, { zdr?: unknown } | undefined>)[profile.provider];
+  return !!route && !!route.zdr && typeof route.zdr === 'object';
 }
 
 /** The shape of EVAL_BINDING (tests pass their own). */
@@ -293,8 +344,7 @@ export function catalogCompatible(profile: ModelProfile, snapshot: CatalogSnapsh
   if (Date.parse(snapshot.fetched_at) !== Date.parse(profile.catalogSnapshotAt)) return false;
   // Profiles pin "<provider>/<model>"; catalog entries list the bare model id
   // with its providers keyed underneath.
-  const modelId = profile.model.slice(profile.provider.length + 1);
-  const entry = snapshot.models.find((m) => m.id === modelId || m.id === profile.model);
+  const entry = catalogEntry(profile, snapshot);
   if (!entry) return false;
   const providers = (entry as { providers?: unknown }).providers;
   if (providers && typeof providers === 'object' && !Array.isArray(providers)) {

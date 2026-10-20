@@ -38,15 +38,15 @@
     "composer/plan-dish-ideas-exclusions.expect.json": "15cf6f96ed1e2233240544b5d24fac11d1c25c78c15a9e6906b602309bda5734",
     "composer/plan-dish-ideas-exclusions.json": "d37bfa40802ae775fecd5a652a40bd4f2d93484af98734c377f4f2fd1f2787e2",
     "composer/plan-prose-dietary-exclusions.expect.json": "b32b2188b943cf3a6d8d15e52047585b96ea8121ab17ad32b55e74dacaa4a8b9",
-    "composer/plan-prose-dietary-exclusions.json": "f89c5bd6dc335c75f1ebd70e40c7cb26fe8c486f78e4f970f4b212e8182ac38f",
+    "composer/plan-prose-dietary-exclusions.json": "09db8545e85af2f739f9e792adc2677602f94f786d6b4f052b4aa31cb5776da4",
     "composer/plan-prose-limits-injection.expect.json": "615535a2c88be71c0562b5e94b504ef8e77d19bb336949cf0d405b1b2bbcf7cb",
-    "composer/plan-prose-limits-injection.json": "ea66c82a8a8625328503ad04f6cdf9995ea0ca2fcc3e5250f5bf15af37426102",
+    "composer/plan-prose-limits-injection.json": "72dc8b46c5ca7b000048941deade7b645113e7488676c59a631f91c304139d64",
     "composer/plan-prose-person-names.expect.json": "6cefce5dfa843bc89a3951d85ad07c019fff0fe1d0f4ead32fe86cb82f242c79",
-    "composer/plan-prose-person-names.json": "81f1527615578d6d3cbc39c1ad972ef1fee50e23e991d72d05974c3aa386c30a",
+    "composer/plan-prose-person-names.json": "8552963c94107dbe3269968bb473e0fe20816788e2594d69f2a52f9b166ae140",
     "composer/plan-prose-tea-and-noodles.expect.json": "b32c66cac89f6965b6cc04b686448af6d0f0881bb459198f11d7b697ae25129e",
-    "composer/plan-prose-tea-and-noodles.json": "63897ab357b13d51ae4ed055d24c5732d0c64ab7425dbe015cda698cf14612b2",
+    "composer/plan-prose-tea-and-noodles.json": "9e1ac7c94f341f3c7e0b5f6638f52c23893ab35b3c38c6b1fb069738e9060a90",
     "composer/plan-prose-weak-inputs.expect.json": "64f630a6ee5e384b9b7619c04a21c8c3e017f77686eca58c335b083e388ea034",
-    "composer/plan-prose-weak-inputs.json": "260c1bd51685899f241226e08541d0798b50887d2af4da82aa7ef26d57994f7d",
+    "composer/plan-prose-weak-inputs.json": "0a68cef7946e1c482098ecf69a5239e0cdac6248c4f42cdba421ffbbf91dcc8a",
     "research_text/research-bushido.expect.json": "edd0e9792c14220945fdfa63b0b7bafa3dc87e0b52d8a5861047df066d6e3ca0",
     "research_text/research-bushido.json": "b6e4a5c94469b062415c24325356542650c0a4bc3a96906c738ff53e756f3f7f",
     "research_text/research-injection-reference-name.expect.json": "e77aee2f1847e3d0d2b4d97c1b8dbadd8066cb599fe279a6903917ef1d3a3ac9",
@@ -60,5 +60,5 @@
     "research_text/research-yorkshire-pudding.expect.json": "8ffc4c0e0b88afa78aae7b5bcc763cd117a2b075cfd6ee54103afe2cc4f2d802",
     "research_text/research-yorkshire-pudding.json": "acc2cce53a6ac42083626146617bab780831a098d1b00f65ac44401b4f8e0770"
   },
-  "golden_sha256": "8d171b14201054d1b2ef175c7f8606d2ac07c1726ca64df76e667c0216e917dc"
+  "golden_sha256": "2479157178338feabca9e335c17494c6ed48c4e6e1f108082296a1839f1e7ac9"
 }

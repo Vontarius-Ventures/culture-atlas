@@ -211,6 +211,78 @@ describe('golden-v3 (fixtures/eval/golden-v3): round-2 tune labels', () => {
   });
 });
 
+describe('golden-v4 (fixtures/eval/golden-v4): round-3 tune labels', () => {
+  const v3Dir = path.join(root, 'fixtures/eval/golden-v3');
+  const v4Dir = path.join(root, 'fixtures/eval/golden-v4');
+  const FIXED = ['h01', 'h31', 'h43', 'h46'];
+
+  it('tunes on every golden-v3 photo (h30-h49 joined after their failed blind run), with no held-out split or freeze yet', async () => {
+    const v3 = await loadGoldenSet(v3Dir);
+    const v4 = await loadGoldenSet(v4Dir);
+    expect(v4.manifest.version).toBe('golden-v4');
+    expect(v4.manifest.photos.every((p) => p.split === 'tune' && p.blind === undefined)).toBe(true);
+    // Same photos, files, hashes and sources; only the split and the blind flag differ.
+    expect(v4.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest)).toEqual(v3.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest));
+    expect(await loadFreezeRecord(v4Dir)).toBeNull();
+    // Every label is golden-v3's, moved to tune, except the four fixed ones (each with its history).
+    for (const [id, l4] of v4.labels) {
+      const l3 = v3.labels.get(id)!;
+      expect(l4.split).toBe('tune');
+      expect(l4.blind).toBeUndefined();
+      if (FIXED.includes(id)) continue;
+      const { blind: _b, ...rest3 } = l3;
+      expect({ ...l4, split: l3.split }, id).toEqual(rest3);
+    }
+    for (const id of FIXED) {
+      const history = v4.labels.get(id)!.history!;
+      expect(history.at(-1), id).toMatchObject({ date: '2026-10-20' });
+      expect(history.at(-1)!.decision, id).toContain('round 3');
+    }
+  });
+
+  it('golden-v3 itself is untouched: still consumed, with its frozen held-out labels', async () => {
+    const v3 = await loadGoldenSet(v3Dir);
+    expect(v3.manifest.photos.filter((p) => p.split === 'holdout')).toHaveLength(20);
+    expect(blindConsumed(await loadFreezeRecord(v3Dir))).toBe(true);
+  });
+
+  it('h31: a regional pizza style is unlabelled, as the notes say; pepperoni and plain pizza stay expected', async () => {
+    const v4 = await loadGoldenSet(v4Dir);
+    const entry = v4.labels.get('h31')!.expected[0]!;
+    for (const name of ['Pepperoni pizza', 'Pizza', 'Homemade pizza', 'Sliced pizza', 'Wood-fired pizza']) expect(entryMatches(entry, name, 'exact'), name).toBe(true);
+    for (const name of ['Neapolitan-style pizza', 'New York-style pizza', 'Neapolitan pizza']) expect(entryMatches(entry, name, 'exact'), name).toBe(false);
+    expect(v4.labels.get('h31')!.notes).toContain('Regional styles (Neapolitan, New York) are left unlabelled');
+  });
+
+  it('h43: the full concept name needs "EfficientDynamics" read; "BMW Vision" needs "Vision"', async () => {
+    const v4 = await loadGoldenSet(v4Dir);
+    const h43 = v4.labels.get('h43')!;
+    expect(findEntry(h43.acceptable, 'BMW Vision EfficientDynamics')).toMatchObject({ requires_text: 'EfficientDynamics' });
+    expect(findEntry(h43.acceptable, 'BMW Vision EfficientDynamics concept')).toMatchObject({ requires_text: 'EfficientDynamics' });
+    expect(findEntry(h43.acceptable, 'BMW Vision')).toMatchObject({ name: 'BMW Vision', requires_text: 'Vision' });
+    expect(findEntry(h43.expected, 'BMW')).toMatchObject({ requires_text: 'BMW' });
+  });
+
+  it('h46: "NBA basketball" is judged by the NBA entry (NBA must be read), not by the sport', async () => {
+    const v4 = await loadGoldenSet(v4Dir);
+    const h46 = v4.labels.get('h46')!;
+    const sport = h46.expected[0]!;
+    for (const name of ['Basketball', 'Basketball game', 'Indoor basketball']) expect(entryMatches(sport, name, 'exact'), name).toBe(true);
+    for (const name of ['NBA basketball', 'Lakers basketball']) expect(entryMatches(sport, name, 'exact'), name).toBe(false);
+    expect(findEntry([...h46.expected, ...h46.acceptable], 'NBA basketball')).toMatchObject({ name: 'NBA', requires_text: 'NBA' });
+  });
+
+  it('h01: a generation, mark or phase read off the shape is a brand claim without text', async () => {
+    const v4 = await loadGoldenSet(v4Dir);
+    const h01 = v4.labels.get('h01')!;
+    const re = new RegExp(h01.forbidden.at(-1)!.pattern, 'iu');
+    for (const name of ['Citroën Berlingo (first generation)', 'Berlingo Mk II', 'Citroën Berlingo phase 2']) expect(re.test(name), name).toBe(true);
+    for (const name of ['Citroën Berlingo', 'Berlingo', 'Citroën']) expect(re.test(name), name).toBe(false);
+    expect(h01.forbidden.at(-1)!.class).toBe('brand_without_text');
+    expect(h01.forbidden_classes).toContain('brand_without_text');
+  });
+});
+
 describe('label and manifest schemas', () => {
   it('rejects an entry with neither a name nor a pattern, and an invalid regular expression', () => {
     expect(PhotoLabelSchema.safeParse({ ...label('p01'), expected: [{ aliases: [] }] }).success).toBe(false);

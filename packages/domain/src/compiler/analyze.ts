@@ -15,10 +15,11 @@ import {
   type Stage1Guard,
   type VlmCandidate,
   type VlmEnrichment,
-  type VlmVerdict,
   type VlmVerification,
+  type VerifierCheck,
   type VerifyTarget,
   applyVerification,
+  blockedIds,
   brandCorroboratedIds,
   candidateNameKey,
   confirmationVerdict,
@@ -27,8 +28,7 @@ import {
   mergeEnrichmentContext,
   stage2Request,
   validateVision,
-  verifiedCertainty,
-  verifierTargets,
+  verifyTargets,
 } from '@culture-atlas/providers';
 import { activeKills } from '../flags/feature-flags';
 import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionStatus, type SectionStatus } from '../enums';
@@ -71,6 +71,10 @@ import { humanList, normalizeName, slugify } from './text';
  *   enrich     stage 2 of the two-stage reading (amendment 2.2): merged
  *              deterministically, vetoes advisory, additions appended; never
  *              reorders or removes published cards (FAST-02)
+ *   verify     (vision_verify, off by default; guard-v8) a different-family
+ *              model checks the first section's attribution and context-only
+ *              claims in parallel with resolve, and what stage 2 would
+ *              publish before it does; "no"/"unsure" blocks that claim only
  *   compose    rank fusion + diversity, <= 3 per category, <= 12 total, hidden
  *              items filtered, DiscoveryItem + Recommendation with evidence
  *   research   <= 5 reference pages with sourced claims (public library)
@@ -143,15 +147,13 @@ interface VerifyOutput {
   errorCode: string | null;
 }
 
-interface VerifySummary {
-  status: 'complete' | 'skipped' | 'failed';
+/** One binding verifier check (vlm-verify-v3): its targets' outcomes, or null when the verifier did not run. */
+interface VerifyRun {
+  stage: 1 | 2;
+  status: 'complete' | 'failed' | 'deadline';
   reason?: string | null;
   model?: string | null;
-  targets?: number;
-  lowered?: number;
-  qualified?: number;
-  /** One per checked claim (style, place and tradition names only; never a person). */
-  checks?: { candidateId: string; name: string; answer: string; action: string; reason: string }[];
+  checks: VerifierCheck[];
 }
 
 /** Stage-2 model output, cached by runStage so a retried attempt never dispatches it twice. */
@@ -174,6 +176,8 @@ interface EnrichSummary {
   resolvedAdditions?: number;
   /** Text-only references listed (G-TEXT-ONLY): never resolved, anchored or researched. */
   textOnly?: number;
+  /** guard-v8: stage-2 claims the verifier kept from publication (when it is on). */
+  verifierBlocked?: number;
   appended?: Record<string, number>;
 }
 
@@ -246,6 +250,41 @@ export function buildReason(contributors: readonly ResolvedRef[]): string {
   return resembles ? `Picked for the ${humanList(names)} feel of your photo.` : `Connected to ${humanList(names)} in your photo.`;
 }
 
+/** Verifier calls one analysis may take (vlm-verify-v3): the stage-1 check and the stage-2 check. */
+const VERIFY_CALLS = 2;
+
+/** The reading without the given candidates (verifier-blocked or still pending its check). */
+function withoutCandidates(a: VlmAnalysis, ids: ReadonlySet<string>): VlmAnalysis {
+  return ids.size ? { ...a, candidates: a.candidates.filter((c) => !ids.has(c.id)) } : a;
+}
+
+/**
+ * The resolve output without the references of blocked candidates, with
+ * anchors chosen again from what is left (user selections first, then
+ * depicted, then certainty; at most five), exactly as resolve chooses them.
+ */
+export function withoutBlockedRefs<T extends { refs: ResolvedRef[] }>(out: T, analysis: Pick<VlmAnalysis, 'candidates'>, blocked: ReadonlySet<string>): T {
+  if (!blocked.size) return out;
+  const names = new Set(analysis.candidates.filter((c) => blocked.has(c.id)).map((c) => candidateNameKey(c.name)));
+  const refs = out.refs.filter((r) => r.relation === 'user_selected' || !names.has(candidateNameKey(r.candidateName))).map((r) => ({ ...r, isAnchor: false }));
+  assignAnchors(refs);
+  return { ...out, refs };
+}
+
+/** Anchors: resolved with real provider ids; user selections first, then depicted, then certainty. At most five. */
+function assignAnchors(refs: ResolvedRef[]): void {
+  const anchorable = refs
+    .filter((r) => r.qloo && (r.resolution === 'resolved' || r.resolution === 'user_confirmed'))
+    .sort(
+      (a, b) =>
+        Number(b.relation === 'user_selected') - Number(a.relation === 'user_selected') ||
+        Number(b.relation === 'depicted') - Number(a.relation === 'depicted') ||
+        b.certainty - a.certainty,
+    )
+    .slice(0, LIMITS.anchorsMax);
+  for (const a of anchorable) a.isAnchor = true;
+}
+
 export class CaptureCompiler {
   private readonly startedAt = Date.now();
   private readonly softDeadlineAt: number;
@@ -260,10 +299,8 @@ export class CaptureCompiler {
   private example: ExampleReplay | null = null;
   /** Two-stage plan, decided before stage 1 (both calls reserved together). */
   private twoStage: { enabled: boolean; reason: string | null } = { enabled: false, reason: 'not_planned' };
-  /** Verifier plan (vision_verify), decided with the two-stage plan; its call is reserved up front too. */
+  /** Verifier plan (vision_verify), decided with the two-stage plan; its calls are reserved up front too. */
   private verifierPlan: { enabled: boolean; reason: string | null } = { enabled: false, reason: 'not_planned' };
-  /** The guarded stage-2 reading and its verdicts, kept for the verifier's target selection. */
-  private stage2Final: { analysis: VlmAnalysis; verdicts: Readonly<Record<string, VlmVerdict>> } | null = null;
   constructor(private readonly ctx: JobContext<'analyze_capture'>) {
     this.softDeadlineAt = this.startedAt + Math.floor(ctx.budget.deadlineMs * 0.75);
     this.traceId = ctx.job.trace_id;
@@ -366,8 +403,13 @@ export class CaptureCompiler {
     // Guardrails (docs/quality-plan.md §4): pure and deterministic, so a retried
     // attempt recomputes the same decisions from the cached reading. Only the
     // publish set is published, resolved and anchored; held claims wait for stage 2.
-    const guarded = this.guardObserved(observed);
-    await this.publishObserve(guarded.analysis);
+    let guarded = this.guardObserved(observed);
+    // guard-v8: with the verifier on, the first section's attribution and context-only claims
+    // publish only on its "yes"; they are left out of the first write and added after the check.
+    const targets1 =
+      this.verifierPlan.enabled && !observed.example && guarded.analysis.quality.usable ? verifyTargets(guarded.analysis.candidates) : [];
+    const pending = new Set(targets1.map((t) => t.candidateId));
+    await this.publishObserve(pending.size ? withoutCandidates(guarded.analysis, pending) : guarded.analysis);
     await this.traceStage('observe', t0, {
       model: observed.model,
       candidates: observed.analysis.candidates.length,
@@ -394,9 +436,24 @@ export class CaptureCompiler {
     // Brand-like claims never publish at stage 1, so nothing is brand-corroborated yet; a reviewed
     // example (no guard decisions) falls back to the grounding's own text check.
     const stage1Corroborated = observed.example ? undefined : brandCorroboratedIds(guarded.decisions);
-    const resolved = await ctx.runStage<ResolveOutput>('resolve', () =>
-      this.resolve(guarded.analysis, rejectedNames, rejectedIds, confirmed, correction?.replacement, stage1Corroborated),
-    );
+    // The verifier's stage-1 check runs in parallel with Qloo resolution, so the first section waits
+    // for whichever is slower, not for both in turn.
+    const stage1Analysis = guarded.analysis;
+    const [resolvedAll, verified1] = await Promise.all([
+      ctx.runStage<ResolveOutput>('resolve', () =>
+        this.resolve(stage1Analysis, rejectedNames, rejectedIds, confirmed, correction?.replacement, stage1Corroborated),
+      ),
+      targets1.length ? this.verifyCheck(1, targets1, stage1Analysis) : Promise.resolve(null),
+    ]);
+    let resolved = resolvedAll;
+    if (verified1) {
+      const blocked = blockedIds(verified1.checks);
+      guarded = { ...guarded, analysis: withoutCandidates(guarded.analysis, blocked) };
+      resolved = withoutBlockedRefs(resolvedAll, stage1Analysis, blocked);
+      await this.traceVerify(verified1);
+    }
+    // The verified claims join the first section now (blocked ones never do).
+    if (pending.size) await this.publishObserve(guarded.analysis);
     await this.publishReferences(resolved);
     await this.traceStage('resolve', t0, {
       resolved: resolved.refs.filter((r) => r.qloo).length,
@@ -428,16 +485,11 @@ export class CaptureCompiler {
     await ctx.setStage('enriching');
     const enriched = await this.enrichStage(observed, guarded, resolved, { rejectedNames, rejectedIds }, order, excluded, usedKeys);
     await this.traceStage('enrich', t0, { ...enriched });
+    // The trace says why the verifier did not check this reading.
+    if (enriched.status === 'complete' && !this.verifierPlan.enabled) await this.traceStage('verify', Date.now(), { status: 'skipped', reason: this.verifierPlan.reason });
     // Fail closed: held claims never publish without a binding stage-2 verdict.
     if (enriched.status !== 'complete' && guarded.held.length)
       await this.traceGuardDecisions(2, guarded.held.map((c) => ({ candidateId: c.id, name: c.name, action: 'drop' as const, rules: ['G-VERDICT'], note: `stage_2_${enriched.reason ?? enriched.status}` })));
-
-    // ---- verify (background, after stage 2; lowers or qualifies only) -------
-    if (enriched.status === 'complete') {
-      t0 = Date.now();
-      const verified = await this.verifyStage(resolved);
-      await this.traceStage('verify', t0, { ...verified });
-    }
 
     // ---- research ----------------------------------------------------------
     await ctx.setStage('researching');
@@ -846,18 +898,7 @@ export class CaptureCompiler {
       refs.push(r);
     }
 
-    // Anchors: resolved with real provider ids; user selections first, then
-    // depicted, then certainty. At most five.
-    const anchorable = refs
-      .filter((r) => r.qloo && (r.resolution === 'resolved' || r.resolution === 'user_confirmed'))
-      .sort(
-        (a, b) =>
-          Number(b.relation === 'user_selected') - Number(a.relation === 'user_selected') ||
-          Number(b.relation === 'depicted') - Number(a.relation === 'depicted') ||
-          b.certainty - a.certainty,
-      )
-      .slice(0, LIMITS.anchorsMax);
-    for (const a of anchorable) a.isAnchor = true;
+    assignAnchors(refs);
     return { refs, qloo: q.state };
   }
 
@@ -1059,9 +1100,10 @@ export class CaptureCompiler {
   /**
    * analysis_verifier_enabled for this job (docs/requalification-plan.md):
    * default off. On only with ANALYSIS_VERIFIER_ENABLED, a two-stage plan, a
-   * usable (qualified) vision_verify role, no kill, and room for its call:
-   * reserved now, before stage 1, together with both photo stages in the spend
-   * ledger and in the job's vision-call budget. When it cannot be reserved the
+   * usable (qualified) vision_verify role, no kill, and room for its two
+   * calls (the stage-1 and the stage-2 check, vlm-verify-v3): reserved now,
+   * before stage 1, together with both photo stages in the spend ledger and
+   * in the job's vision-call budget. When they cannot be reserved the
    * two-stage reading still runs, without the verifier.
    */
   private async planVerifier(fromMedia: boolean): Promise<{ enabled: boolean; reason: string | null }> {
@@ -1079,79 +1121,67 @@ export class CaptureCompiler {
       if (!accountId) return off('no_account');
       const stage1 = fromMedia ? undefined : gateway.runners.vision_photo?.profile;
       const enrich = gateway.runners.vision_photo_enrich?.profile;
-      const profiles = [...(stage1 ? [stage1] : []), ...(enrich ? [enrich] : []), verifyRunner.profile];
+      const profiles = [...(stage1 ? [stage1] : []), ...(enrich ? [enrich] : []), verifyRunner.profile, verifyRunner.profile];
       if (!(await gateway.ledger.canReserveAll({ accountId, jobId: ctx.job.id }, profiles))) return off('budget');
     }
-    if (!this.budget.reserveVisionCalls(1)) return off('budget');
+    if (!this.budget.reserveVisionCalls(VERIFY_CALLS)) return off('budget');
     return { enabled: true, reason: null };
   }
 
   /**
-   * The verifier, in the background after stage 2 published. It checks only
-   * published, non-anchor style, place and tradition claims that stage 2
-   * hedged or that the read text does not bear out (verifierTargets), and can
-   * only lower a reference's certainty ("no") or mark it qualified ("no",
-   * "unsure"): no row is removed, no card is touched, an anchor never changes.
-   * A failed call changes nothing.
+   * One binding verifier check (vlm-verify-v3, guard-v8) on the claims about
+   * to publish: stage 1 (in parallel with resolve) or stage 2 (before the
+   * stage-2 claims publish). Only "yes" publishes; "no", "unsure", an
+   * unanswered claim, a failed call or a check the soft deadline left no time
+   * for block the claim (fail closed). A kill switch turns the verifier off:
+   * nothing is blocked (null), as when it was never enabled.
    */
-  private async verifyStage(resolved: ResolveOutput): Promise<VerifySummary> {
+  private async verifyCheck(stage: 1 | 2, targets: readonly VerifyTarget[], analysis: VlmAnalysis): Promise<VerifyRun | null> {
     const { ctx } = this;
-    if (!this.verifierPlan.enabled) return { status: 'skipped', reason: this.verifierPlan.reason };
-    const final = this.stage2Final;
-    if (!final) return { status: 'skipped', reason: 'no_stage_2' };
-    if (this.pastSoftDeadline()) return { status: 'skipped', reason: 'deadline' };
-    if (await this.verifierKilled()) return { status: 'skipped', reason: 'killed' };
-    const anchors = new Set(resolved.refs.filter((r) => r.isAnchor).map((r) => candidateNameKey(r.candidateName)));
-    const targets = verifierTargets({
-      candidates: final.analysis.candidates,
-      verdicts: final.verdicts,
-      texts: final.analysis.visible_text.map((t) => t.text),
-      anchors,
-    });
-    if (!targets.length) return { status: 'skipped', reason: 'no_targets' };
-    const out = await ctx.runStage<VerifyOutput>('verify', () => this.verify(targets, final.analysis));
-    if (!out.verification) return { status: 'failed', reason: out.errorCode, model: out.model, targets: targets.length };
-    const checks = applyVerification(targets, out.verification);
-    let lowered = 0;
-    let qualified = 0;
-    await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
-      for (const check of checks) {
-        const key = candidateNameKey(check.name);
-        const refs = resolved.refs.filter(
-          (r) => !r.isAnchor && !r.textOnly && r.relation !== 'user_selected' && r.resolution !== 'rejected' && candidateNameKey(r.candidateName) === key,
-        );
-        for (const r of refs) {
-          r.certainty = verifiedCertainty(r.certainty, check);
-          // Only ever lowers (LEAST) and records the answer; the published order stays (published_certainty).
-          await tx.query(
-            `UPDATE capture_references SET published_certainty = COALESCE(published_certainty, certainty),
-                    certainty = LEAST(certainty, $4), verifier_check = $5
-              WHERE analysis_id = $1 AND reference_id = $2 AND relation = $3 AND NOT is_anchor AND NOT text_only`,
-            [this.analysisId, r.referenceId, r.relation, r.certainty, check.answer],
-          );
-          if (check.action === 'lower') lowered++;
-          if (check.action !== 'keep') qualified++;
-        }
-      }
-    });
+    if (await this.verifierKilled()) return null;
+    if (this.pastSoftDeadline()) return { stage, status: 'deadline', reason: 'deadline', checks: applyVerification(targets, null) };
+    const out = await ctx.runStage<VerifyOutput>(`verify:${stage}`, () => this.verify(targets, analysis, stage));
     return {
-      status: 'complete',
+      stage,
+      status: out.verification ? 'complete' : 'failed',
+      reason: out.errorCode,
       model: out.model,
-      targets: targets.length,
-      lowered,
-      qualified,
-      checks: checks.map((c) => ({ candidateId: c.candidateId, name: c.name, answer: c.answer, action: c.action, reason: c.reason })),
+      checks: applyVerification(targets, out.verification),
     };
   }
 
+  /**
+   * Verifier outcomes go into the trace: one event per check with each claim's answer, action
+   * (publish or block) and reason code; the inspector lists them under "Reading decisions", and a
+   * blocked claim is kept there only, as a private observation.
+   */
+  private async traceVerify(run: VerifyRun): Promise<void> {
+    const blocked = run.checks.filter((c) => c.action === 'block').length;
+    await this.ctx.trace({
+      kind: 'stage',
+      name: 'verify',
+      data: {
+        stage: run.stage,
+        status: run.status,
+        reason: run.reason ?? null,
+        model: run.model ?? null,
+        targets: run.checks.length,
+        blocked,
+        checks: run.checks.map((c) => ({ candidateId: c.candidateId, name: c.name, answer: c.answer, action: c.action, reason: c.reason, note: c.note })),
+      },
+      durationMs: 0,
+      traceId: this.traceId,
+    });
+  }
+
   /** One verifier call on the analysis image (the same image stage 2 read). */
-  private async verify(targets: readonly VerifyTarget[], analysis: VlmAnalysis): Promise<VerifyOutput> {
+  private async verify(targets: readonly VerifyTarget[], analysis: VlmAnalysis, stage: 1 | 2): Promise<VerifyOutput> {
     const { ctx } = this;
     const object = this.capture.private_object_key ? await ctx.providers.storage.get(this.capture.private_object_key) : null;
     if (!object) return { verification: null, model: null, errorCode: 'image_missing' };
     const counter = attemptCounter();
     const started = Date.now();
-    const request = { model_capability: ctx.providers.vlmVerify.id, claims: targets.length, reasons: targets.map((t) => t.reason) };
+    const request = { model_capability: ctx.providers.vlmVerify.id, stage, claims: targets.length, reasons: targets.map((t) => t.reason) };
     try {
       const res = await ctx.providers.vlmVerify.verifyImage(
         {
@@ -1160,7 +1190,7 @@ export class CaptureCompiler {
           visibleText: analysis.visible_text.map((t) => t.text),
         },
         {
-          ...this.callOptions('verify'),
+          ...this.callOptions(`verify:${stage}`),
           timeoutMs: Math.max(1, Math.min(ENRICH_TIMEOUT_MS, this.softDeadlineAt - Date.now())),
           onAttempt: counter.observer,
         },
@@ -1173,7 +1203,7 @@ export class CaptureCompiler {
         results: { model: res.model, checks: res.verification.checks.map((c) => ({ name: c.name, answer: c.answer })) },
         status: 'ok',
         durationMs: Date.now() - started,
-        queryContext: { stage: 'verify', attempts: counter.count() },
+        queryContext: { stage: `verify:${stage}`, attempts: counter.count() },
         traceId: this.traceId,
       });
       return { verification: res.verification, model: res.model, errorCode: null };
@@ -1189,7 +1219,7 @@ export class CaptureCompiler {
         errorCode: e.code,
         httpStatus: e.status,
         durationMs: Date.now() - started,
-        queryContext: { stage: 'verify', attempts: counter.count() },
+        queryContext: { stage: `verify:${stage}`, attempts: counter.count() },
         traceId: this.traceId,
       });
       return { verification: null, model: null, errorCode: e.code };
@@ -1305,19 +1335,30 @@ export class CaptureCompiler {
     const enrichment = out.enrichment!;
     let merged: VlmAnalysis;
     let stage2: ReturnType<typeof guardEnrichment>;
-    let verdicts: Readonly<Record<string, VlmVerdict>>;
     try {
       const raw = mergeEnrichmentContext(base, enrichment, guarded.held);
       validateVision(raw.analysis, MERGED_CANDIDATES_MAX);
       stage2 = guardEnrichment({ published: base, held: guarded.held, merged: raw.analysis, merge: raw.merge });
       merged = stage2.analysis;
-      verdicts = raw.merge.verdicts;
       validateVision(merged, MERGED_CANDIDATES_MAX);
     } catch {
       return { status: 'failed', reason: 'invalid_enrichment', model: out.model };
     }
-    this.stage2Final = { analysis: merged, verdicts };
     await this.traceGuard(2, stage2, { advisory_vetoes: stage2.advisoryVetoes.length, published: stage2.publishNow.length });
+    // guard-v8: with the verifier on, what stage 2 would publish is checked first; a blocked claim
+    // stays a private observation (never a reference, a card or a candidate of the reading).
+    let verifierBlocked = 0;
+    if (this.verifierPlan.enabled) {
+      const targets2 = verifyTargets(stage2.publishNow);
+      const verified2 = targets2.length ? await this.verifyCheck(2, targets2, merged) : null;
+      if (verified2) {
+        const blocked = blockedIds(verified2.checks);
+        verifierBlocked = blocked.size;
+        stage2 = { ...stage2, publishNow: stage2.publishNow.filter((c) => !blocked.has(c.id)) };
+        merged = withoutCandidates(merged, blocked);
+        await this.traceVerify(verified2);
+      }
+    }
     const rejectedKeys = new Set(rejected.rejectedNames.map(normalizeName));
     const vetoed = new Set(stage2.advisoryVetoes.map(candidateNameKey));
     const heldIds = new Set(guarded.held.map((c) => c.id));
@@ -1478,6 +1519,7 @@ export class CaptureCompiler {
       heldPublished: additions.filter((c) => heldIds.has(c.id)).length,
       resolvedAdditions: newRefs.filter((r) => r.qloo).length,
       textOnly: textRefs.length,
+      ...(this.verifierPlan.enabled ? { verifierBlocked } : {}),
       appended,
     };
   }

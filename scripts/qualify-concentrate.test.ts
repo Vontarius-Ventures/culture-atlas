@@ -9,7 +9,7 @@ import {
   type ModelProfile,
 } from '../packages/providers/src/index';
 import type { TextScorer } from './eval/golden-photos';
-import { unguardedPipeline } from './eval/pipeline';
+import { runtimeGuardedPipeline, unguardedPipeline } from './eval/pipeline';
 import { sha256Hex } from './eval/labels';
 import { textManifestDigest } from './eval/text-golden';
 import { syntheticBinding, syntheticGolden, versionedTestPipeline } from './eval/test-golden';
@@ -255,23 +255,117 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('refuses the verifier role before any request: it stays unqualified (off) until the tune split enables it', async () => {
-    const fetchImpl = responses();
+  /*
+   * vision_verify (requalification round 3): a different-family verifier is qualified on the full
+   * two-stage reading it guards. The catalog below is FIXTURE metadata: two authors, ZDR listed per route.
+   */
+  const verifyProfile: ModelProfile = {
+    ...profile,
+    role: 'vision_verify',
+    model: 'checker/verify-1',
+    provider: 'checker',
+    promptVersion: 'vlm-verify-v3',
+    schemaVersion: 'atlas_verify_v1',
+    image: { maxBytes: 150_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
+    timeoutMs: 20_000,
+    qualificationArtifactId: 'vision-verify-2026-10-20',
+  };
+  async function familyOutDir(opts: { verifierAuthor?: string; verifierZdr?: boolean } = {}) {
+    const outDir = await tmp('ca-qfam-');
+    const catalog = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: 'fixture/vision-1', author: { slug: 'fixturelab' }, providers: { fixture: { zdr: { policy_url: 'https://example.invalid/zdr' } } } },
+            {
+              id: 'checker/verify-1',
+              author: { slug: opts.verifierAuthor ?? 'otherlab' },
+              providers: { checker: opts.verifierZdr === false ? {} : { zdr: { policy_url: 'https://example.invalid/zdr' } } },
+            },
+          ],
+          has_more: false,
+        }),
+      ),
+    );
+    await fetchCatalog({ apiKey: KEY, outDir, fetch: catalog as unknown as typeof fetch, now: () => new Date('2026-10-16T12:00:00Z') });
+    return outDir;
+  }
+  /** Quick reads and enrichments as before; the verifier answers "yes" to every claim it is asked. */
+  function verifyingResponses(answer: 'yes' | 'no' = 'yes') {
+    return vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { model: string; text: { format: { name: string } }; input: { content: { type: string; text?: string }[] }[] };
+      const name = body.text.format.name;
+      let output: unknown;
+      if (name === 'atlas_verify_v1') {
+        const text = body.input[0]!.content.find((c) => c.type === 'input_text')!.text!;
+        const data = JSON.parse(text.split('\n').slice(2, -1).join('\n')) as { claims: { name: string }[] };
+        output = { checks: data.claims.map((c) => ({ name: c.name, answer, reason: 'Fixture answer' })) };
+      } else output = reading(name);
+      return new Response(
+        JSON.stringify({ id: 'resp', model: body.model, status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(output) }] }], usage: { input_tokens: 900, output_tokens: 80 } }),
+      );
+    });
+  }
+
+  it('vision_verify: refuses, before any request, a verifier without both photo profiles, of the same family, or without a listed ZDR route', async () => {
+    const fetchImpl = verifyingResponses();
     const g = await syntheticGolden(ids(10));
+    const base = {
+      apiKey: KEY,
+      profile: verifyProfile,
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: runtimeGuardedPipeline,
+      maxRequests: 40,
+      spendCapMicros: 5_000_000,
+      confirmPaidRequests: true,
+      fetch: fetchImpl as unknown as typeof fetch,
+    };
+    await expect(qualifyProfile({ ...base, outDir: await familyOutDir(), enrichProfile: enrich })).rejects.toThrow('stage-1 vision_photo quick-read profile');
+    await expect(qualifyProfile({ ...base, outDir: await familyOutDir(), stage1Profile: profile })).rejects.toThrow('vision_photo_enrich profile');
     await expect(
-      qualifyProfile({
-        apiKey: KEY,
-        outDir: await preparedOutDir(),
-        profile: { ...profile, role: 'vision_verify', promptVersion: 'vlm-verify-v2', schemaVersion: 'atlas_verify_v1' },
-        golden: { dir: g.dir, photosDir: g.photosDir },
-        pipeline: versionedTestPipeline,
-        maxRequests: 30,
-        spendCapMicros: 2_000_000,
-        confirmPaidRequests: true,
-        fetch: fetchImpl as unknown as typeof fetch,
-      }),
-    ).rejects.toThrow('vision_verify is not qualified by this script yet');
+      qualifyProfile({ ...base, outDir: await familyOutDir({ verifierAuthor: 'FixtureLab' }), stage1Profile: profile, enrichProfile: enrich }),
+    ).rejects.toThrow(/same model family \(fixturelab\).*Nothing was sent/);
+    await expect(
+      qualifyProfile({ ...base, outDir: await familyOutDir({ verifierZdr: false }), stage1Profile: profile, enrichProfile: enrich }),
+    ).rejects.toThrow('no zero-data-retention policy for the checker route');
+    await expect(
+      qualifyProfile({ ...base, outDir: await familyOutDir(), profile, enrichProfile: enrich }),
+    ).rejects.toThrow('only applies when qualifying vision_verify');
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('vision_verify: reads every photo as production does with the verifier on, and binds family and use into the artifact', async () => {
+    const outDir = await familyOutDir();
+    const fetchImpl = verifyingResponses();
+    const g = await syntheticGolden(ids(10));
+    const base = {
+      apiKey: KEY,
+      outDir,
+      profile: verifyProfile,
+      stage1Profile: profile,
+      enrichProfile: enrich,
+      golden: { dir: g.dir, photosDir: g.photosDir },
+      pipeline: runtimeGuardedPipeline,
+      spendCapMicros: 5_000_000,
+      fetch: fetchImpl as unknown as typeof fetch,
+    };
+    // Planned: quick read, stage-1 check, enrichment and stage-2 check for every photo.
+    await expect(qualifyProfile({ ...base, maxRequests: 40, confirmPaidRequests: false })).resolves.toEqual({ dryRun: true, plannedRequests: 40 });
+    await expect(qualifyProfile({ ...base, maxRequests: 39, confirmPaidRequests: true })).rejects.toThrow('--max-requests');
+    const run = await qualifyProfile({ ...base, maxRequests: 40, confirmPaidRequests: true });
+    // The style is checked before it publishes (stage 1); stage 2 adds nothing, so no stage-2 check is sent.
+    const names = fetchImpl.mock.calls.map((c) => (JSON.parse(c[1].body as string) as { text: { format: { name: string } } }).text.format.name);
+    expect(names.slice(0, 3)).toEqual(['atlas_quick_read_v1', 'atlas_verify_v1', 'atlas_enrichment_v1']);
+    expect(names.filter((n) => n === 'atlas_verify_v1')).toHaveLength(10);
+    const a = run.artifact!;
+    expect(a).toMatchObject({ role: 'vision_verify', model: 'checker/verify-1', requests_sent: 30, fixtures: { total: 10, passed: 10, failed: 0 } });
+    expect(a.eval!.metrics).toMatchObject({ verifier_independent_family: 1, verifier_checked_photos: 10, verifier_calls: 10, verifier_blocked_claims: 0 });
+    expect(a.notes.join(' ')).toContain('family otherlab');
+    expect(a.eval!.guardrail_version).toBe(runtimeGuardedPipeline.guardrailVersion);
+    // Nothing but aggregates is written.
+    const written = await readFile(path.join(outDir, `${a.artifact_id}.json`), 'utf8');
+    expect(written).not.toContain('Fixture answer');
+    expect(written).not.toContain(KEY);
   });
 
   it('refuses, before any request, a golden set without 10 blind held-out photos (a tuned split is no generalization gate)', async () => {
@@ -426,7 +520,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v7', scorer_version: 'score-v6', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v8', scorer_version: 'score-v7', holdout_blind: true, pass: true },
     });
     expect(run.artifact!.eval!.metrics).toMatchObject({ holdout_M1: 0, holdout_M3: 1, holdout_M13: 1, failed_calls: 0, holdout_photos: 10, holdout_blind_photos: 10 });
     expect(qualificationState(profile, outDir)).toBe('qualified');
@@ -615,7 +709,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       requests_sent: 10,
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 9000, output_tokens: 1000, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v7', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v8', holdout_blind: true, pass: true },
     });
     // Scored as a stage-1-only run: the same block a separate vision_photo qualification would carry.
     expect(run.stage1Artifact!.eval!.metrics).toMatchObject({ holdout_M13: 1, failed_calls: 0, holdout_photos: 10 });
@@ -722,7 +816,7 @@ describe('text roles: content checks gate qualification (plan §8)', () => {
     role: 'composer',
     image: { maxBytes: 0, maxPixels: 0, maxDimension: 0, maxCount: 0 },
     timeoutMs: 15_000,
-    promptVersion: 'composer-v1',
+    promptVersion: 'composer-v2',
     schemaVersion: 'plan_prose',
     qualificationArtifactId: 'composer-2026-10-19',
   };
@@ -779,6 +873,24 @@ describe('text roles: content checks gate qualification (plan §8)', () => {
     await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(5) })).rejects.toThrow('content checks');
     await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(5, false), textScorer: scorer(true) })).rejects.toThrow('expect.json');
     await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(4), textScorer: scorer(true) })).rejects.toThrow('at least 5');
+  });
+
+  it('refuses a composer profile that names an older prompt version (round 3: composer-v2), before any request', async () => {
+    const fetchImpl = textResponses();
+    await expect(
+      qualifyProfile({
+        apiKey: KEY,
+        outDir: await preparedOutDir(),
+        profile: { ...textProfile, promptVersion: 'composer-v1' },
+        fixturesDir: await textFixtures(5),
+        textScorer: scorer(true),
+        maxRequests: 10,
+        spendCapMicros: 2_000_000,
+        confirmPaidRequests: true,
+        fetch: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow('the composer prompts are composer-v2. Nothing was sent.');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('passes only when every fixture passes its content checks; the artifact keeps aggregates only', async () => {

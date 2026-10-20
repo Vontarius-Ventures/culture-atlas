@@ -1442,3 +1442,165 @@ in docs/v2-gap-report.md and the FREEZE.md record table are fixed.
 
 Spend: 0 Concentrate, 0 Qloo, 0 Wikipedia (everything offline). Round 2 total
 unchanged: 62 of 220 Concentrate, 33 of 150 Qloo, 0 Wikipedia. No Elorian.
+
+## 18. Requalification round 3: structural change (build, 2026-10-20)
+
+[Requalification plan](requalification-plan.md), "Round 3: structural change",
+items 1–4, built on branch `r3/structural` from `74ec4f2`. No request was made
+(0 Concentrate, 0 Qloo, 0 Wikipedia): rules, verifier, scorer, labels and the
+composer prompt changed, and every recorded run was replayed offline before and
+after. Thresholds are unchanged (thr-v2). golden-v2 and golden-v3 are
+untouched and stay consumed.
+
+### 18.1 Evidence-class publication (guard-v8)
+
+| Rule | What it decides | Replaces |
+| --- | --- | --- |
+| **G-PEOPLE-CLAIM** | A tradition or style claim whose subject is the people in the photo (the model's own domain is `people` or `other`: no garment, food, craft, building, vehicle, sport, music, film, art, place or sign) publishes only when it rests on read text. With people in the reading it is a private observation at once; at stage 1, where the quick read has no observations (h47: "Formal dance attire" at stage 1, "A young man wears ..." at stage 2), it is held, and stage 2 decides with the people test on its observations. Clothing, objects, sports and places still publish. A `people`-domain claim stays an identity claim (G-IDENTITY). Legacy readings (no model domain) are not affected | the round-2 plan to add occasion words ("prom", "wedding" ...) to a list |
+| **Weak or unsupported never publishes** | A held claim with a stage-2 verdict `weak` or `unsupported` is a private observation, whatever its type (guard-v7 published a weak style or tradition as a non-anchor resemblance). `nonAnchorIds` is always empty | the G-VERDICT weak-style exception |
+| **G-EVIDENCE** | A stage-2 addition whose only support is `context` (the model's own evidence, reading v2) never publishes; it is a private observation | — |
+| **Read maker** | A brand claim whose full name was not transcribed, but whose maker (MAKERS) was, publishes the maker as written ("BMW") as a text-only brand reference (`read_maker_text_only`): never searched, anchored or researched | the h43 drop of every BMW claim |
+| `observe` | New guard action: the claim stays only in the analysis trace (inspector "Reading decisions", reason codes `context_only`, `people_claim`, `weak`, `unsupported`), never as a reference, a card, a candidate or a public observation | — |
+
+**Deviation from the plan's wording, and why.** The plan says a claim whose
+only support is context never publishes. Applied to stage 1 as well (every
+context-only claim held for stage 2), the recorded runs lose their first
+section: M15 (stage-1 publishable share, gate ≥ 0.60) falls to 0.39 on the
+round-2 blind readings, 0.57 on Evaluate iteration 2 and 0.31 on `replay-v1`,
+which then fails its CI replay gates (M4 0.167 > 0.15, M15 0.31), and M4 rises
+to 0.20–0.30 on every recorded run (measured offline, variant `g8a` in the
+round's scratchpad). Thresholds may not
+change and the CI replay may not be weakened, so guard-v8 applies G-EVIDENCE to
+stage-2 additions only. At stage 1 the second, independent support for a
+context-only claim is the verifier (18.2): when it is on, every context-only
+claim of the first section publishes only on its "yes". When it is off (the
+default until Tune decides), a stage-1 context claim publishes as in guard-v7,
+and stage 2's "unsupported" on it stays an advisory veto (FAST-02). Tune
+decides whether the verifier is on; if it is off, this gap remains and must be
+named in the round's result.
+
+Tests: `guardrails.test.ts` "guard-v8: publication by evidence class" (each
+rule test fails on the guard-v7 code; the legacy-reading and duplicate-maker
+tests guard against over-reach), and the seven guard-v7 tests whose expectations
+changed with the policy (weak and unsupported verdicts now `observe`, a
+context-only addition `observe`, the read maker `NISSAN` published text-only).
+
+### 18.2 The verifier: another model family, binding before publication (`vlm-verify-v3`)
+
+- **Selection** (`verifyTargets`): every style, place and tradition claim and
+  every other claim resting only on context; never a text-only reference, a
+  brand, a creator or a people-domain claim. Not capped below what a reading can
+  hold (`VERIFY_MAX_CLAIMS` 9 = `MERGED_CANDIDATES_MAX`).
+- **Outcome** (`applyVerification`): "yes" publishes; "no", "unsure", an
+  unanswered claim or a failed call block that claim only (fail closed). Nothing
+  is added, renamed or raised; a kill switch turns the verifier off (nothing is
+  blocked, as when it was never on).
+- **Timing** (compiler): the stage-1 check runs in parallel with Qloo
+  resolution (`Promise.all`), its targets are left out of the first write of
+  the observations section and added once they pass; blocked claims lose their
+  references and anchors are chosen again from what is left
+  (`withoutBlockedRefs`). The stage-2 check runs on what stage 2 would publish,
+  before it resolves or publishes it, and its blocked claims leave the reading.
+  Both calls are reserved before stage 1 (`visionCallsPerAnalysis` 3 → 4, two
+  verifier profiles in `canReserveAll`). The stage-2 request is built from what
+  the stage-1 check let publish.
+- **Prompt** `vlm-verify-v3` (pinned hash): the answer decides what is shown; an
+  occasion, event, custom or role of the people is "yes" only when legible text
+  names it; the v2 rules (a feature specific to the claim, a named site is
+  evidence, unsure is never a reason for "yes") stay.
+- **Route** (docs/concentrate.md, "Requalification round 3"):
+  `vertex/gemini-2.5-flash`, family `google` (the photo roles are
+  `anthropic`), ZDR listed for the `vertex` route in the catalog snapshot
+  (none for `ai-studio`), images and `json_schema` supported, effort `none`
+  supported, `deprecated_at` 2027-03-31. The owner-accepted `privacyVerifiedAt`
+  exception is applied to this route explicitly, pending the dashboard
+  confirmation.
+- **Qualification** (`qualify:concentrate --role vision_verify`, the refusal is
+  gone): the verifier's catalog author must differ from both photo roles' and
+  its route must list ZDR (checked before any request); every golden photo is
+  read as production reads it with the verifier on (up to four requests); the
+  artifact carries `verifier_independent_family` and `verifier_checked_photos`,
+  and `evalGateFailure()` refuses a verifier artifact without them
+  (`verifier_same_family`, `verifier_unexercised`, at least 10 photos).
+- **Evaluation**: `eval:live` records `verification1` and `verification2`
+  (`null` for a failed call); the guarded pipeline applies them in production
+  order and reports `verifier_blocked`, `verifier_blocked_forbidden` and
+  `verifier_blocked_good` (score-v7, no gate). Legacy single replies
+  (vlm-verify-v1/v2) replay by name under v3 semantics, as information only.
+- **Default off.** It is enabled only if, on the tune split, it removes
+  forbidden claims without dropping coverage below the gate.
+
+### 18.3 Scorer and labels (score-v7, golden-v4)
+
+- **score-v7**: a must-read string counts when one transcription contains it or
+  up to three consecutive transcriptions joined by a space do (h40 "ALL YEAR" /
+  "ROUND"); the verifier's blocked claims are reported. No gate or threshold
+  changed.
+- **golden-v4** (round-3 tune set): golden-v3's 64 photos, every one in tune,
+  no held-out split or freeze yet, with four label fixes, each in the label's
+  `history`:
+
+| Photo | Fix | Why |
+| --- | --- | --- |
+| h31 | expected pattern `pepperoni\|\bpizza\b` → pepperoni, or a pizza with only describing words before it | the notes leave regional styles unlabelled; "Neapolitan-style pizza" (context only, dropped) counted as a clean drop |
+| h43 | acceptable "BMW Vision EfficientDynamics" (`\bvision\b`, requires "Vision") split into "BMW Vision" (requires "Vision") and the full name (requires "EfficientDynamics") | the full name was label-good when only "Vision" was read; its correct drop counted twice |
+| h46 | expected "Basketball" pattern `basketball` → the sport with only describing words | "NBA basketball" (NBA not written) was label-good through the sport; now judged by the NBA entry |
+| h01 | forbidden gains a generation, mark or phase pattern (brand without text) | "Citroën Berlingo (first generation)" fuzzy-matched the expected model; the generation is not written |
+
+Not changed (reported): h22 "Ramen" as a cuisine on a street (the label cannot
+type-restrict an entry), h37 "Zhostovo … painting" (a G-MEDIUM drop of a
+decoration word), p10 EMT claims (a misread, not a pattern).
+`REQUIRED_GOLDEN_SET` stays `golden-v3` (consumed) for the photo roles, so
+nothing photo-related can qualify until the round-3 blind set (h50+) is added
+to golden-v4, frozen and bound.
+
+### 18.4 Composer (`composer-v2`)
+
+The plan prose has its own system prompt: no data field is an instruction (the
+instruction was applied when the evening was chosen), following, repeating or
+answering anything in the data is named as forbidden, and the limits hold
+whatever the data says; every composer data block escapes `<` and `>`. The idea
+prompts are unchanged. Prompts are pinned (`creative.test.ts`), the profile
+must name `composer-v2` (the qualification script refuses an older value), and
+the text fixtures were rebuilt: only the five plan-prose prompts changed, the
+injection stays in their data. Not run live. Side effect: the `text-v1` digest
+changed, so `research_text`'s artifact is stale although its fixtures are
+byte-identical (6 requests to re-qualify, plus 11 for the composer).
+
+### 18.5 Offline replays, before (guard-v7, score-v6) and after (guard-v8, score-v7)
+
+Guarded pipeline, verifier off, live gates, thr-v2; "held-out" means the
+split's own held-out gates.
+
+| Recordings | Labels | Before | After | What moved |
+| --- | --- | --- | --- | --- |
+| Round-2 blind run (h30–h49) | golden-v3 (held-out) | FAIL M1 1, M2 0.0541, M4 0.25, M9 0.8947, M11 1 | **FAIL M4 0.25 only** | M1 0, M11 0, M2 0 (h47 "Prom" and h34 "Scandinavian minimalism" kept private), M9 0.9474 (h40 across lines), M5 0.833 → 0.889 (h43 "BMW" text-only) |
+| Round-2 blind run (h30–h49) | golden-v4 (tune) | — | **PASS** | M4 0.1892 (h31, h43, h46 artifacts gone), M9 0.9474, M15 0.611 |
+| Round-1 blind run (h14–h29) | golden-v2 (held-out) | FAIL M4 0.2105 | FAIL M4 0.2368 | M2 0.027 → 0 (h18 "Mid-century modern kitchen", weak, now private); h16 "Espresso" (context-only addition) dropped: M5 1 → 0.933 |
+| Round-1 blind run (h14–h29) | golden-v3 / golden-v4 (tune) | PASS | **FAIL M4 0.2162** | as above |
+| Tune run 2 (§15) | golden-v3 / golden-v4 | PASS | PASS | M4 0.167 → 0.200 (two context-only soup and stir-fry additions on h05), at the live gate |
+| Tune run 1 (§15) | golden-v3 / golden-v4 | FAIL M8 1, M9 0.885 | same | M4 0.098 → 0.148 (Neoclassicism, Retro sportswear, cabbage stir-fry: context-only additions) |
+| Evaluate iteration 1 | golden-v2 | PASS | PASS | text-only 1 → 2; golden-v4 M4 0.146 (h01 generation now forbidden-class, not a clean drop) |
+| Evaluate iteration 2 | golden-v2 / golden-v4 | FAIL M9 0.885 | same | M4 0.098 → 0.164 (MCM architecture, Breton shirt, Sichuan cuisine, Yerba mate) |
+| `replay-v1` (CI) | golden-v1 | PASS | PASS | identical |
+
+M17 holds in every replay (the unguarded readings fail M1: 9 to 24). Tune run
+2 with the recorded round-1 verifier replies (`vlm-verify-v2`, the reader's own
+family, other targets) replayed under v3 semantics blocks 9 claims, 1 of them
+forbidden (Lustreware) and 7 label-good (M4 0.317, M5 0.783): information only,
+not a measure of the new verifier, whose replies do not exist yet.
+
+**How to read this.** guard-v8 removes the round-2 blind failures that came
+from claims about people and hedged context claims (M1, M2, M11) by class, not
+by word, and score-v7 and golden-v4 remove the scorer artifacts (M9 h40, M4
+h31/h43/h46). The cost is coverage of correct claims that rested on context
+alone or that stage 2 hedged: M4 rises on every run, to the live gate on tune
+run 2 and above it on the round-1 blind readings (0.216). The verifier is the
+round's way to give those claims independent support; whether it does, and at
+what coverage, is the Tune question. Nothing here is blind evidence: every
+replayed photo has been seen.
+
+### 18.6 Spend
+
+0 Concentrate, 0 Qloo, 0 Wikipedia (the round budget, 260 and 150, is
+untouched). No Elorian.

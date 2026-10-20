@@ -8,6 +8,7 @@ import {
   forbiddenClassViolations,
   gatesFor,
   headToken,
+  mustReadFound,
   runKind,
   scoreRun,
   scoreRuns,
@@ -423,5 +424,55 @@ describe('score-v4 (requalification decisions 3, 2 and the verifier)', () => {
     expect(card.splits.tune!.metrics.M7).toBe(1);
     // Without the text, a text-only brand is a brand without text like any other (M1).
     expect(scoreRuns(l, [run('p13', { candidates: [nba] })], thresholds, 'live').splits.tune!.metrics.M1).toBe(1);
+  });
+});
+
+describe('score-v7 (requalification round 3, declared before the next blind set)', () => {
+  it('is the current scorer version', () => {
+    expect(SCORER_VERSION).toBe('score-v7');
+  });
+
+  it('must-read text may span consecutive transcriptions (h40: "ALL YEAR" / "ROUND"), never non-adjacent ones', () => {
+    expect(mustReadFound(['ALL YEAR ROUND', 'OCBC'], ['ALL YEAR', 'ROUND', 'OCBC Bank'])).toBe(2);
+    // score-v6 matched within one entry only: the same reading found one of two.
+    expect(mustReadFound(['ALL YEAR ROUND'], ['ALL YEAR', 'SALE', 'ROUND'])).toBe(0);
+    expect(mustReadFound(['JOY DEFINES'], ['FREUDE', '1.5 l/100 km'])).toBe(0);
+    // Three lines at most; accents and case fold as before.
+    expect(mustReadFound(['A B C D'], ['A', 'B', 'C', 'D'])).toBe(0);
+    expect(mustReadFound(['Café de Flore'], ['CAFE DE', 'FLORE'])).toBe(1);
+    const l = label('p03', { must_read_text: ['ALL YEAR ROUND'] });
+    expect(scoreRun(l, run('p03', { candidates: [], visible_text: ['ALL YEAR', 'ROUND'] })).mustRead).toEqual({ found: 1, total: 1 });
+  });
+
+  it('reports what the binding verifier blocked (report only, no gate); a blocked label-good claim is a clean drop', async () => {
+    const { thresholds } = await loadThresholds(thresholdsFile);
+    const l = new Map<string, PhotoLabel>([
+      [
+        'p05',
+        label('p05', {
+          expected: [{ name: 'Persian ceramics', aliases: [], generic: false }],
+          forbidden: [{ pattern: 'iznik', field: 'candidate', why: 'the labels name Nishapur' }],
+        }),
+      ],
+    ]);
+    const persian = c('Persian ceramics');
+    const iznik = c('Iznik pottery');
+    const off = scoreRuns(l, [run('p05', { candidates: [persian, iznik] })], thresholds, 'live');
+    expect(off.splits.tune!.metrics.verifier_blocked).toBeNull();
+    const blocked = scoreRuns(
+      l,
+      [run('p05', { candidates: [persian] }, { emitted: [persian, iznik], verifierBlocked: [iznik] })],
+      thresholds,
+      'live',
+    );
+    expect(blocked.splits.tune!.metrics).toMatchObject({ verifier_blocked: 1, verifier_blocked_forbidden: 1, verifier_blocked_good: 0, forbidden_published: 0 });
+    const lost = scoreRuns(
+      l,
+      [run('p05', { candidates: [] }, { emitted: [persian], verifierBlocked: [persian] })],
+      thresholds,
+      'live',
+    );
+    expect(lost.splits.tune!.metrics).toMatchObject({ verifier_blocked: 1, verifier_blocked_good: 1, M4: 1, M5: 0 });
+    for (const k of ['verifier_blocked', 'verifier_blocked_forbidden', 'verifier_blocked_good']) expect(Object.keys(thresholds.live)).not.toContain(k);
   });
 });

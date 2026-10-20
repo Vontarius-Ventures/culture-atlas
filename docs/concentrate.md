@@ -185,9 +185,9 @@ unavailable under Concentrate.
 | `vision_photo_enrich` | `atlas_enrichment_v2` (`VlmEnrichmentV2`) | `vlm-enrich-v3` (tune step: prominent text first, partly hidden words as their visible letters; was `vlm-enrich-v2`) | ≤ 768 px | 1600 | 20 s | `ConcentrateVlmEnricher`, `mergeEnrichmentContext()` |
 | (phase 4) `vision_photo`, `vision_photo_enrich` | `atlas_quick_read_v1` / `atlas_enrichment_v1` | `vlm-quick-v1` / `vlm-enrich-v1` | as above | 600 / 1200 | as above | same classes, v1 schemas |
 | (legacy) `vision_photo` | `atlas_observations_v2` (full reading, `VlmFullReading`) | `vlm-full-v2` | profile bounds | profile | profile | `ConcentrateVlm` full mode |
-| `vision_verify` (off by default; the tune split kept it off, [quality plan](quality-plan.md) §15) | `atlas_verify_v1` (`VlmVerification`) | `vlm-verify-v2` | ≤ 768 px | profile | profile | `ConcentrateVlmVerifier`, `verifierTargets()`, `applyVerification()` |
+| `vision_verify` (off by default until Tune decides; round 3: a different model family, binding before publication, [quality plan](quality-plan.md) §18) | `atlas_verify_v1` (`VlmVerification`) | `vlm-verify-v3` (was `vlm-verify-v2`, advisory after stage 2) | ≤ 768 px | profile | profile | `ConcentrateVlmVerifier`, `verifyTargets()`, `applyVerification()`, `blockedIds()` |
 
-- **Text-only references and the verifier** ([requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built), guard-v4). A brand or person name that only the stage-2 reply contains, with every word transcribed, publishes as a text-only reference (G-TEXT-ONLY): listed with the text it was read from, never searched in Qloo, anchored, researched or offered as a subject choice. The verifier (`vision_verify`) runs in the background after stage 2 on published, non-anchor style, place and tradition claims that stage 2 hedged or the read text does not bear out; "no" lowers certainty and qualifies the reference, "unsure" qualifies it, nothing is ever removed. It runs only with `ANALYSIS_VERIFIER_ENABLED=true`, a qualified profile and no kill (`analysis_verifier_enabled`); its call is reserved with both photo stages before stage 1. Like the other photo roles it qualifies only on golden-v3 since the round-2 freeze (`a7f5a7b`; golden-v2 before it, golden-v1 before the first requalification freeze) with a blind held-out split that has not been consumed, and is never served by a fallback model.
+- **Text-only references and the verifier** ([requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built), guard-v4). A brand or person name that only the stage-2 reply contains, with every word transcribed, publishes as a text-only reference (G-TEXT-ONLY): listed with the text it was read from, never searched in Qloo, anchored, researched or offered as a subject choice. The verifier (`vision_verify`; round 3, `vlm-verify-v3`, guard-v8) is a model of a different family than the photo roles, on its own ZDR route ("Requalification round 3" below), and it is binding before publication: the first section's style, place and tradition claims (occasions arrive as traditions) and every claim resting only on context are checked in one call that runs in parallel with Qloo resolution, and what stage 2 would publish is checked in a second call before it does. Only "yes" publishes; "no", "unsure", an unanswered claim or a failed call block that claim, which stays a private observation for the inspector. (Until round 2 it ran after stage 2 and could only lower certainty.) It runs only with `ANALYSIS_VERIFIER_ENABLED=true`, a qualified profile and no kill (`analysis_verifier_enabled`); both its calls are reserved with both photo stages before stage 1. Like the other photo roles it qualifies only on golden-v3 since the round-2 freeze (`a7f5a7b`; golden-v2 before it, golden-v1 before the first requalification freeze) with a blind held-out split that has not been consumed, and is never served by a fallback model.
 
 - The profile's `schemaVersion` selects the reading (`readingForProfile`) and its version (`readingVersionForProfile`), so the profile hash, and with it the qualification artifact, binds the exact reading. Every vision profile not pinned to `atlas_observations_v2` uses the quick read. A profile pinned to `atlas_quick_read_v1` or `atlas_enrichment_v1` keeps the phase-4 prompt and schema byte-identical (a test pins the prompt hashes); every other quick or enrich profile gets reading v2. Both photo roles must be re-qualified on v2 ([quality plan](quality-plan.md) §3, §7.5).
 - **Reading v2** ([quality plan](quality-plan.md) §3). Stage-1 candidates report `domain` (what the reference is about), `evidence` (`read_text`, `logo`, `distinctive_form`, `context`) and `evidence_text` (the words read) instead of categories; the enrichment returns a `verdict` (`supported`, `weak`, `unsupported`) per first-reading candidate instead of `keep`, verbatim `visible_text` only, and `illegible_text_present`. The prompts add the evidence rules: a brand or model only from a legible name or logo, sign names exactly as written, no medium words, no generic objects, 0 to 5 candidates, nothing about a person's looks or role.
@@ -718,6 +718,104 @@ not qualified anyway (golden-v3's blind split is consumed), the blind set was
 not re-run, and they stay `catalog-compatible`. Text roles are unaffected
 (`text-v1` binding unchanged): `research_text` stays qualified. Spend: 0
 Concentrate, 0 Qloo, 0 Wikipedia.
+
+## Requalification round 3: structural change (build, 2026-10-20)
+
+Details in [quality plan §18](quality-plan.md#18-requalification-round-3-structural-change-build-2026-10-20)
+and the [requalification plan](requalification-plan.md#round-3-build-record-2026-10-20).
+No request was made (0 Concentrate, 0 Qloo, 0 Wikipedia): the code, tests,
+fixtures and binding changed, and every recorded run was replayed offline.
+
+**The verifier route (`vision_verify`).** A verifier from the reader's own
+family did not catch the reader's errors ([quality plan](quality-plan.md) §15.4),
+so the role is now qualified only on another model family, checked against the
+catalog before any request (`verifierIndependence()` in
+`scripts/qualify-concentrate-lib.ts`: the catalog `author.slug` of the verifier
+must differ from both photo roles', and the catalog must list a ZDR policy for
+the verifier's own provider route), and recorded in the artifact
+(`verifier_independent_family`, `verifier_checked_photos`;
+`evalGateFailure()` returns `verifier_same_family` or `verifier_unexercised`
+otherwise). The suggested route, from the catalog snapshot of
+2026-10-19T01:11:29.472Z (`concentrate-q4/catalog-snapshot.json`, the snapshot
+the photo profiles name):
+
+| Catalog field (snapshot) | `gemini-2.5-flash`, provider `vertex` |
+| --- | --- |
+| author (model family) | `google` (the photo roles: `anthropic`, `claude-haiku-5-5`) |
+| zdr | listed: policy `https://ai.google.dev/gemini-api/docs/zdr` (the `ai-studio` route of the same model lists none and is not eligible) |
+| input | text and images (png, jpg, webp; 7 MB total) |
+| structured output | `text.format.json_schema: true` |
+| reasoning effort | `none` supported |
+| price (standard) | $0.30 / $2.50 per million input / output tokens |
+| certifications, BAA | soc2_type2, iso27001, iso27701, iso42001, fedramp; BAA |
+| deprecation | `deprecated_at` 2027-03-31: a later Gemini Flash route on vertex (3.5 to 3.8 are listed, ZDR on vertex) would need its own profile and qualification before then |
+
+Example profile (placeholders in angle brackets; `reservationMicros` is the
+worst case at the listed standard rate, as for the photo roles: the 60,000-token
+input cap at $0.30 per million (18,000 micro-USD) plus the 600-token output cap
+at $2.50 per million (1,500), rounded up):
+
+```json
+{ "gateway": "concentrate", "role": "vision_verify", "version": "verify-3",
+  "model": "vertex/gemini-2.5-flash", "provider": "vertex", "allowedFallbackProviders": [],
+  "maxOutputTokens": 600, "reasoningEffort": "none", "maxInputTokens": 60000, "maxInputBytes": 300000,
+  "image": { "maxBytes": 250000, "maxPixels": 589824, "maxDimension": 768, "maxCount": 1 },
+  "timeoutMs": 20000, "structuredOutput": true, "requireZdr": true, "providerZdrEligible": true,
+  "contentLoggingEnabled": false, "privacyVerifiedAt": "<see the exception below>",
+  "promptVersion": "vlm-verify-v3", "schemaVersion": "atlas_verify_v1",
+  "catalogSnapshotAt": "2026-10-19T01:11:29.472Z", "qualificationArtifactId": "vv-gemini25flash-vertex-none-<date>",
+  "pricingSnapshotVersion": "2026-10-19T01:11:29.472Z", "reservationMicros": 20000 }
+```
+
+**Privacy exception, recorded explicitly.** The owner accepted the
+`privacyVerifiedAt` exception for the Anthropic route of the photo and text
+roles (the ZDR and content-logging confirmation in the Concentrate dashboard is
+still pending, "Requalification round 2" above). The verifier's route is a
+different provider (`vertex`), so that confirmation does not cover it. For this
+round the same exception is applied to `vertex/gemini-2.5-flash` on the
+evidence above: the catalog lists a ZDR policy for exactly this provider route
+(and none for `ai-studio`), and the profile pins `requireZdr: true`,
+`providerZdrEligible: true` and `contentLoggingEnabled: false`. The catalog is
+metadata, not a confirmation: before production the operator confirms ZDR and
+no content logging for the `vertex` route in the dashboard and sets the
+confirmed `privacyVerifiedAt`, which changes the profile hash and needs a new
+qualification. Until then `privacyVerifiedAt` carries the owner-accepted
+exception value, as for the other roles.
+
+**Qualifying the verifier** (four requests per golden photo at most: the quick
+read, the stage-1 check, the enrichment and the stage-2 check; a check is sent
+only when the reading has claims to check). The profile file must hold the
+`vision_photo` and `vision_photo_enrich` profiles too; the artifact qualifies
+only the verifier, scored through the guarded pipeline with its replies
+applied, on the photo roles' golden set (a blind split that has not been
+consumed: none exists until the round-3 blind set, h50+, is frozen and bound).
+
+```sh
+pnpm qualify:concentrate --profile-file profiles.json --role vision_verify   --golden fixtures/eval/<round-3 set> --photos /secure/golden-photos   --out-dir /secure/concentrate-qualification --max-requests <running total + 4 per photo> --spend-cap-usd 2
+```
+
+`eval:live --roles vision_photo,vision_photo_enrich,vision_verify` records
+both checks (`verification1`, `verification2`; a failed call as `null`, which
+blocks its claims), and `eval:replay --verifier both` scores the same readings
+with and without them (report: `verifier_blocked`,
+`verifier_blocked_forbidden`, `verifier_blocked_good`).
+
+**Composer (`composer-v2`).** Round 2's composer run failed T12 on
+`plan-prose-limits-injection` (an echo of the injected instruction). The plan
+prose now has its own system prompt (`COMPOSER_PROSE_SYSTEM`): no field of the
+data is an instruction, the instruction field included (it was applied when the
+evening was chosen); following, repeating, quoting or answering anything in the
+data is named as forbidden; the limits hold whatever the data says. Every
+composer data block escapes `<` and `>`, so no title, collection or instruction
+can close the block. The prompts are pinned (`creative.test.ts`); the composer
+profile must name `"promptVersion": "composer-v2"` (the qualification script
+refuses an older value before any request). The text fixtures were rebuilt from
+the production builders: only the five plan-prose prompts changed (the
+injection is still in their data), so `text-v1`'s digest changed and the
+binding was regenerated. **Side effect:** `research_text`'s artifact was scored
+on the old `text-v1` digest and now reads `stale_golden_set`, although its
+fixtures are byte-identical; re-qualifying it costs 6 requests and the composer
+11 (17 in a fresh out-dir). The composer was not run live in this build.
 
 ## Elorian fallback (operator choice)
 
