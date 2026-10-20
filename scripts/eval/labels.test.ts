@@ -216,16 +216,24 @@ describe('golden-v4 (fixtures/eval/golden-v4): round-3 tune labels', () => {
   const v4Dir = path.join(root, 'fixtures/eval/golden-v4');
   const FIXED = ['h01', 'h31', 'h43', 'h46'];
 
-  it('tunes on every golden-v3 photo (h30-h49 joined after their failed blind run), with no held-out split or freeze yet', async () => {
+  it('tunes on every golden-v3 photo (h30-h49 joined after their failed blind run); only the fresh h50+ photos are held out', async () => {
     const v3 = await loadGoldenSet(v3Dir);
     const v4 = await loadGoldenSet(v4Dir);
     expect(v4.manifest.version).toBe('golden-v4');
-    expect(v4.manifest.photos.every((p) => p.split === 'tune' && p.blind === undefined)).toBe(true);
+    const tune = v4.manifest.photos.filter((p) => p.split === 'tune');
+    const v3Ids = new Set(v3.manifest.photos.map((p) => p.id));
+    expect(tune.every((p) => p.blind === undefined)).toBe(true);
+    // Every golden-v3 photo is in tune, and nothing else is: the held-out split is only the fresh h50+ photos.
+    expect(tune.map((p) => p.id)).toEqual([...v3Ids]);
+    expect(v4.manifest.photos.filter((p) => p.split !== 'tune').every((p) => !v3Ids.has(p.id) && Number(p.id.slice(1)) >= 50)).toBe(true);
     // Same photos, files, hashes and sources; only the split and the blind flag differ.
-    expect(v4.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest)).toEqual(v3.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest));
-    expect(await loadFreezeRecord(v4Dir)).toBeNull();
-    // Every label is golden-v3's, moved to tune, except the four fixed ones (each with its history).
+    expect(tune.map(({ split: _s, blind: _b, ...rest }) => rest)).toEqual(v3.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest));
+    // The freeze record covers only the h50+ held-out split (golden-v4/FREEZE.md), never a tune photo.
+    const freeze = await loadFreezeRecord(v4Dir);
+    expect(Object.keys(freeze?.photos ?? {}).filter((id) => v3Ids.has(id))).toEqual([]);
+    // Every tune label is golden-v3's, moved to tune, except the four fixed ones (each with its history).
     for (const [id, l4] of v4.labels) {
+      if (!v3Ids.has(id)) continue;
       const l3 = v3.labels.get(id)!;
       expect(l4.split).toBe('tune');
       expect(l4.blind).toBeUndefined();

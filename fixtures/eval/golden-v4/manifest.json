@@ -961,6 +961,486 @@
         "license": "MIT",
         "raw_url": "https://raw.githubusercontent.com/megvii-research/NAFNet/2b4af71ebe098a92a75910c233a3965a3e93ede4/demo/blurry.jpg"
       }
+    },
+    {
+      "id": "h50",
+      "split": "holdout",
+      "blind": true,
+      "file": "h50-food-shrimp-fettuccine.jpg",
+      "sha256": "3c195a07972edbc9ed59105cc21a1713821219c7fb895a50eafbc4768be8d951",
+      "width": 1600,
+      "height": 1200,
+      "source": {
+        "repo": "facebookresearch/inversecooking",
+        "path": "data/demo_imgs/1.jpg",
+        "commit": "5eaea1651fbf9c0111571150f754fc9264ab6198",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/facebookresearch/inversecooking/5eaea1651fbf9c0111571150f754fc9264ab6198/data/demo_imgs/1.jpg"
+      }
+    },
+    {
+      "id": "h51",
+      "split": "holdout",
+      "blind": true,
+      "file": "h51-food-nachos.jpg",
+      "sha256": "bdf27370d937a6274b827b6cf814e40c0106167d664bf8eafe3fbfa377958461",
+      "width": 1200,
+      "height": 1200,
+      "source": {
+        "repo": "facebookresearch/inversecooking",
+        "path": "data/demo_imgs/6.jpg",
+        "commit": "5eaea1651fbf9c0111571150f754fc9264ab6198",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/facebookresearch/inversecooking/5eaea1651fbf9c0111571150f754fc9264ab6198/data/demo_imgs/6.jpg"
+      }
+    },
+    {
+      "id": "h52",
+      "split": "holdout",
+      "blind": true,
+      "file": "h52-food-pig-pastries.jpg",
+      "sha256": "c541851607bf085ba7eecbd32ca66b32192184b7545b94b41869546b4c59d464",
+      "width": 580,
+      "height": 580,
+      "source": {
+        "repo": "PaddlePaddle/PaddleClas",
+        "path": "deploy/paddleserving/recognition/daoxiangcunjinzhubing_6.jpg",
+        "commit": "202ac79a99aa368f2c95cb1871bbc11574f685da",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleClas/202ac79a99aa368f2c95cb1871bbc11574f685da/deploy/paddleserving/recognition/daoxiangcunjinzhubing_6.jpg"
+      }
+    },
+    {
+      "id": "h53",
+      "split": "holdout",
+      "blind": true,
+      "file": "h53-drink-water-brand-cjk.jpeg",
+      "sha256": "6a520ec0eeee3a8fc0b03e332e3652d552f4eae1ae726d23094c0dbf6975379a",
+      "width": 730,
+      "height": 1095,
+      "source": {
+        "repo": "PaddlePaddle/PaddleClas",
+        "path": "docs/images/recognition/drink_data_demo/test_images/nongfu_spring.jpeg",
+        "commit": "202ac79a99aa368f2c95cb1871bbc11574f685da",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleClas/202ac79a99aa368f2c95cb1871bbc11574f685da/docs/images/recognition/drink_data_demo/test_images/nongfu_spring.jpeg"
+      }
+    },
+    {
+      "id": "h54",
+      "split": "holdout",
+      "blind": true,
+      "file": "h54-cafe-interior-people.jpg",
+      "sha256": "9d849667585721d7c20805d277fef1fd7fc7884cab48cbb85128a3a20506fa59",
+      "width": 384,
+      "height": 256,
+      "source": {
+        "repo": "tensorflow/tfjs-models",
+        "path": "deeplab/demo/src/examples/ade20k.jpg",
+        "commit": "c731b9ebbd6f4c9e8bf99b0df76bbdbf9c25b07f",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/tensorflow/tfjs-models/c731b9ebbd6f4c9e8bf99b0df76bbdbf9c25b07f/deeplab/demo/src/examples/ade20k.jpg"
+      }
+    },
+    {
+      "id": "h55",
+      "split": "holdout",
+      "blind": true,
+      "file": "h55-cafe-interior-defocused.jpg",
+      "sha256": "8f5c4a1212ce77d907663adbd8e0a8943f2b8ca0020a142d8327b4012802bf49",
+      "width": 3456,
+      "height": 4608,
+      "source": {
+        "repo": "PaddlePaddle/PaddleClas",
+        "path": "deploy/images/PULC/clarity_assessment/blured_demo.jpg",
+        "commit": "202ac79a99aa368f2c95cb1871bbc11574f685da",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleClas/202ac79a99aa368f2c95cb1871bbc11574f685da/deploy/images/PULC/clarity_assessment/blured_demo.jpg"
+      }
+    },
+    {
+      "id": "h56",
+      "split": "holdout",
+      "blind": true,
+      "file": "h56-interior-wood-panelled-bedroom.png",
+      "sha256": "05f72e82b2a96ef3b32d389f84bc87ddd57da867d4b27b03084ac0fdb5e51311",
+      "width": 640,
+      "height": 480,
+      "source": {
+        "repo": "SysCV/sam-hq",
+        "path": "demo/input_imgs/example7.png",
+        "commit": "e696978d60352dc9a26b12631cd91781502c6546",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/SysCV/sam-hq/e696978d60352dc9a26b12631cd91781502c6546/demo/input_imgs/example7.png"
+      }
+    },
+    {
+      "id": "h57",
+      "split": "holdout",
+      "blind": true,
+      "file": "h57-interior-church-dome.png",
+      "sha256": "f2c68b354e1e9eac1fbda2abbeac11632f03e7137e632c0a67cf38ee80d48cfd",
+      "width": 484,
+      "height": 714,
+      "source": {
+        "repo": "opencv/opencv_extra",
+        "path": "testdata/cv/hdr/exposures/memorial08.png",
+        "commit": "291220bab053e2132ebd17f2709481b472502573",
+        "license": "none-stated (no licence file; OpenCV's test-data repository)",
+        "raw_url": "https://raw.githubusercontent.com/opencv/opencv_extra/291220bab053e2132ebd17f2709481b472502573/testdata/cv/hdr/exposures/memorial08.png"
+      }
+    },
+    {
+      "id": "h58",
+      "split": "holdout",
+      "blind": true,
+      "file": "h58-craft-ceramic-mug.jpg",
+      "sha256": "84b3e46185474c6067fac8c8db30d7c2a15367d231b5c72d8cf525e321248d9b",
+      "width": 800,
+      "height": 800,
+      "source": {
+        "repo": "tensorflow/tfjs-models",
+        "path": "mobilenet/demo/coffee.jpg",
+        "commit": "c731b9ebbd6f4c9e8bf99b0df76bbdbf9c25b07f",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/tensorflow/tfjs-models/c731b9ebbd6f4c9e8bf99b0df76bbdbf9c25b07f/mobilenet/demo/coffee.jpg"
+      }
+    },
+    {
+      "id": "h59",
+      "split": "holdout",
+      "blind": true,
+      "file": "h59-craft-calligraphy-scroll.jpg",
+      "sha256": "cbb9c3b7710b7c9e830c21ecd42f28767dfcccb44d4f112a31a4288115f96369",
+      "width": 496,
+      "height": 496,
+      "source": {
+        "repo": "DayBreak-u/chineseocr_lite",
+        "path": "cpp_projects/images/4.jpg",
+        "commit": "54a3df53af823f3bffdde9393d0c021b4f6d94cd",
+        "license": "GPL-2.0",
+        "raw_url": "https://raw.githubusercontent.com/DayBreak-u/chineseocr_lite/54a3df53af823f3bffdde9393d0c021b4f6d94cd/cpp_projects/images/4.jpg"
+      }
+    },
+    {
+      "id": "h60",
+      "split": "holdout",
+      "blind": true,
+      "file": "h60-art-marble-statue.jpg",
+      "sha256": "44733013e63f217a964937fff3d451c0bcda6837a0b6518bab61976a44ad3d1b",
+      "width": 512,
+      "height": 512,
+      "source": {
+        "repo": "timothybrooks/instruct-pix2pix",
+        "path": "imgs/example.jpg",
+        "commit": "0dffd1eeb02611c35088462d1df88714ce2b52f4",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/timothybrooks/instruct-pix2pix/0dffd1eeb02611c35088462d1df88714ce2b52f4/imgs/example.jpg"
+      }
+    },
+    {
+      "id": "h61",
+      "split": "holdout",
+      "blind": true,
+      "file": "h61-art-painting-pearl-earring.jpg",
+      "sha256": "d884ddfe302572f6c4eb8607942cc59807b3dc8321f27ff9358b8e5a3657d015",
+      "width": 512,
+      "height": 512,
+      "source": {
+        "repo": "tencent-ailab/IP-Adapter",
+        "path": "assets/images/vermeer.jpg",
+        "commit": "62e4af9d0c1ac7d5f8dd386a0ccf2211346af1a2",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/tencent-ailab/IP-Adapter/62e4af9d0c1ac7d5f8dd386a0ccf2211346af1a2/assets/images/vermeer.jpg"
+      }
+    },
+    {
+      "id": "h62",
+      "split": "holdout",
+      "blind": true,
+      "file": "h62-sign-shoe-repairs-multiline.jpg",
+      "sha256": "39aa6c69d0a4003d814ba8e28561576c1d8f9a0590174dfa21691b6c0ead57e5",
+      "width": 960,
+      "height": 1280,
+      "source": {
+        "repo": "eragonruan/text-detection-ctpn",
+        "path": "data/demo/006.jpg",
+        "commit": "c04a571e2593fc361c1aff3127e58dc13fdc4e5a",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/eragonruan/text-detection-ctpn/c04a571e2593fc361c1aff3127e58dc13fdc4e5a/data/demo/006.jpg"
+      }
+    },
+    {
+      "id": "h63",
+      "split": "holdout",
+      "blind": true,
+      "file": "h63-sign-german-railway.jpg",
+      "sha256": "14ac72675bfaa359ecb3ba7cb7422405cd0c6f624c42b5e97b53ea21a1e17e09",
+      "width": 1024,
+      "height": 682,
+      "source": {
+        "repo": "eragonruan/text-detection-ctpn",
+        "path": "data/demo/007.jpg",
+        "commit": "c04a571e2593fc361c1aff3127e58dc13fdc4e5a",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/eragonruan/text-detection-ctpn/c04a571e2593fc361c1aff3127e58dc13fdc4e5a/data/demo/007.jpg"
+      }
+    },
+    {
+      "id": "h64",
+      "split": "holdout",
+      "blind": true,
+      "file": "h64-sign-japanese-vertical-parking.jpg",
+      "sha256": "e303d68e6d6ad82ea3c21c8cac2345d438a41fe4e26d82d22a412a987c18d3bb",
+      "width": 2268,
+      "height": 3024,
+      "source": {
+        "repo": "MichalBusta/E2E-MLT",
+        "path": "sample_train_data/MLT/done/img_5407.jpg",
+        "commit": "fc79f9ab4c8c75c882fae12c399d1c5355bb8a1b",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/MichalBusta/E2E-MLT/fc79f9ab4c8c75c882fae12c399d1c5355bb8a1b/sample_train_data/MLT/done/img_5407.jpg"
+      }
+    },
+    {
+      "id": "h65",
+      "split": "holdout",
+      "blind": true,
+      "file": "h65-sport-football-sponsor-logo.jpg",
+      "sha256": "43eb2c025e98b0ca2db567b6eac31551063f2cfcdac321330e5fc12bc8819031",
+      "width": 950,
+      "height": 641,
+      "source": {
+        "repo": "open-mmlab/mmpose",
+        "path": "tests/data/aic/ff945ae2e729f24eea992814639d59b3bdec8bd8.jpg",
+        "commit": "759b39c13fea6ba094afc1fa932f51dc1b11cbf9",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmpose/759b39c13fea6ba094afc1fa932f51dc1b11cbf9/tests/data/aic/ff945ae2e729f24eea992814639d59b3bdec8bd8.jpg"
+      }
+    },
+    {
+      "id": "h66",
+      "split": "holdout",
+      "blind": true,
+      "file": "h66-object-lens-cap-brand.jpg",
+      "sha256": "a8e1910727ff5043e65f3039cdb22dbf23509dfd73293c81805fabca327fadc0",
+      "width": 1296,
+      "height": 864,
+      "source": {
+        "repo": "opencv/opencv_extra",
+        "path": "testdata/dnn/text_det_test2.jpg",
+        "commit": "291220bab053e2132ebd17f2709481b472502573",
+        "license": "none-stated (no licence file; OpenCV's test-data repository)",
+        "raw_url": "https://raw.githubusercontent.com/opencv/opencv_extra/291220bab053e2132ebd17f2709481b472502573/testdata/dnn/text_det_test2.jpg"
+      }
+    },
+    {
+      "id": "h67",
+      "split": "holdout",
+      "blind": true,
+      "file": "h67-vehicle-roadster-model-badge.jpg",
+      "sha256": "1ab375e85b588177fd723e4a1382222fc4dadb650680001cb38050bb22987cac",
+      "width": 1024,
+      "height": 640,
+      "source": {
+        "repo": "sergiomsilva/alpr-unconstrained",
+        "path": "samples/test/03071.jpg",
+        "commit": "a5b333e710fe474e10ee385c4bb5582e058a3978",
+        "license": "GPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/sergiomsilva/alpr-unconstrained/a5b333e710fe474e10ee385c4bb5582e058a3978/samples/test/03071.jpg"
+      }
+    },
+    {
+      "id": "h68",
+      "split": "holdout",
+      "blind": true,
+      "file": "h68-vehicle-coupe-nobadge.jpg",
+      "sha256": "4510603237fa898ae501eebb16f24b23d5378f8abc0a262ec9423d79a0dbb49a",
+      "width": 1600,
+      "height": 1200,
+      "source": {
+        "repo": "sergiomsilva/alpr-unconstrained",
+        "path": "samples/test/03009.jpg",
+        "commit": "a5b333e710fe474e10ee385c4bb5582e058a3978",
+        "license": "GPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/sergiomsilva/alpr-unconstrained/a5b333e710fe474e10ee385c4bb5582e058a3978/samples/test/03009.jpg"
+      }
+    },
+    {
+      "id": "h69",
+      "split": "holdout",
+      "blind": true,
+      "file": "h69-vehicle-truck-person.jpg",
+      "sha256": "b95c26c95d0268bd40901b59e649f1bdd1efa89fcdbdd96acf67fdfb2fef6bf3",
+      "width": 1280,
+      "height": 720,
+      "source": {
+        "repo": "open-mmlab/mmpose",
+        "path": "tests/data/mpii/051423444.jpg",
+        "commit": "759b39c13fea6ba094afc1fa932f51dc1b11cbf9",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmpose/759b39c13fea6ba094afc1fa932f51dc1b11cbf9/tests/data/mpii/051423444.jpg"
+      }
+    },
+    {
+      "id": "h70",
+      "split": "holdout",
+      "blind": true,
+      "file": "h70-clothing-text-sweatshirts.png",
+      "sha256": "3e210d4a6ac88561632dfdbf6da39eeced65eca64275c251946f4416e6d7e36d",
+      "width": 512,
+      "height": 512,
+      "source": {
+        "repo": "timothybrooks/instruct-pix2pix",
+        "path": "stable_diffusion/data/inpainting_examples/alex-iby-G_Pk4D9rMLs.png",
+        "commit": "0dffd1eeb02611c35088462d1df88714ce2b52f4",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/timothybrooks/instruct-pix2pix/0dffd1eeb02611c35088462d1df88714ce2b52f4/stable_diffusion/data/inpainting_examples/alex-iby-G_Pk4D9rMLs.png"
+      }
+    },
+    {
+      "id": "h71",
+      "split": "holdout",
+      "blind": true,
+      "file": "h71-clothing-dress-nologo.jpg",
+      "sha256": "90e1bef410d62748cdaec1dcc9edb129861ecd16c14c615f6220831b7e90df54",
+      "width": 750,
+      "height": 750,
+      "source": {
+        "repo": "open-mmlab/mmpose",
+        "path": "tests/data/deepfasion2/000264.jpg",
+        "commit": "759b39c13fea6ba094afc1fa932f51dc1b11cbf9",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmpose/759b39c13fea6ba094afc1fa932f51dc1b11cbf9/tests/data/deepfasion2/000264.jpg"
+      }
+    },
+    {
+      "id": "h72",
+      "split": "holdout",
+      "blind": true,
+      "file": "h72-sport-youth-baseball.jpg",
+      "sha256": "8e66c7dd60fe81fb0eae99314eb5e6c191e53f739760fa36ae7ba56f10115814",
+      "width": 640,
+      "height": 429,
+      "source": {
+        "repo": "open-mmlab/mmpose",
+        "path": "tests/data/coco/000000196141.jpg",
+        "commit": "759b39c13fea6ba094afc1fa932f51dc1b11cbf9",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmpose/759b39c13fea6ba094afc1fa932f51dc1b11cbf9/tests/data/coco/000000196141.jpg"
+      }
+    },
+    {
+      "id": "h73",
+      "split": "holdout",
+      "blind": true,
+      "file": "h73-sport-football-adversarial.jpg",
+      "sha256": "632691301db88ecf28d7084947b86f94bcc8b25de63ef69f28e8f867850495bf",
+      "width": 602,
+      "height": 900,
+      "source": {
+        "repo": "open-mmlab/mmpose",
+        "path": "tests/data/ochuman/003896.jpg",
+        "commit": "759b39c13fea6ba094afc1fa932f51dc1b11cbf9",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmpose/759b39c13fea6ba094afc1fa932f51dc1b11cbf9/tests/data/ochuman/003896.jpg"
+      }
+    },
+    {
+      "id": "h74",
+      "split": "holdout",
+      "blind": true,
+      "file": "h74-people-cake-occasion-trap.jpg",
+      "sha256": "62b0d6b2896560f85f8a071e13b497bbd9f815f43c0fb434b926fc2ead43b487",
+      "width": 640,
+      "height": 425,
+      "source": {
+        "repo": "open-mmlab/mmpose",
+        "path": "tests/data/crowdpose/106848.jpg",
+        "commit": "759b39c13fea6ba094afc1fa932f51dc1b11cbf9",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmpose/759b39c13fea6ba094afc1fa932f51dc1b11cbf9/tests/data/crowdpose/106848.jpg"
+      }
+    },
+    {
+      "id": "h75",
+      "split": "holdout",
+      "blind": true,
+      "file": "h75-people-ring-occasion-trap.jpg",
+      "sha256": "67ed9c565db5c1be33ce04aa6cf61b19084c79f67c6e07a460fe2c13b0627df7",
+      "width": 576,
+      "height": 461,
+      "source": {
+        "repo": "swz30/Restormer",
+        "path": "demo/degraded/engagement.jpg",
+        "commit": "68dc6ac472db26f16361150cb7a96a1bc87da93f",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/swz30/Restormer/68dc6ac472db26f16361150cb7a96a1bc87da93f/demo/degraded/engagement.jpg"
+      }
+    },
+    {
+      "id": "h76",
+      "split": "holdout",
+      "blind": true,
+      "file": "h76-people-ceremonial-rider.jpg",
+      "sha256": "cb5afca9304177a472d98045a48c8cf00a07a1cfc3a960cb57777d0d6ee798a2",
+      "width": 640,
+      "height": 480,
+      "source": {
+        "repo": "pytorch/android-demo-app",
+        "path": "D2Go/ObjectDetection/app/src/main/assets/test2.jpg",
+        "commit": "d347168e212b8e6244019b5f49e2b3d6a6f4e816",
+        "license": "none-stated (no licence file)",
+        "raw_url": "https://raw.githubusercontent.com/pytorch/android-demo-app/d347168e212b8e6244019b5f49e2b3d6a6f4e816/D2Go/ObjectDetection/app/src/main/assets/test2.jpg"
+      }
+    },
+    {
+      "id": "h77",
+      "split": "holdout",
+      "blind": true,
+      "file": "h77-dark-unusable.png",
+      "sha256": "ae2516230b4d959455aa63f8b7815d9664a4fbccbc6dc1db0c7e04bef8d12b1c",
+      "width": 1919,
+      "height": 1198,
+      "source": {
+        "repo": "open-mmlab/mmpose",
+        "path": "tests/data/exlpose/imgs_0212_hwangridan_vid000020_exp1200_dark_000052__gain_3.40_exposure_417.png",
+        "commit": "759b39c13fea6ba094afc1fa932f51dc1b11cbf9",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmpose/759b39c13fea6ba094afc1fa932f51dc1b11cbf9/tests/data/exlpose/imgs_0212_hwangridan_vid000020_exp1200_dark_000052__gain_3.40_exposure_417.png"
+      }
+    },
+    {
+      "id": "h78",
+      "split": "holdout",
+      "blind": true,
+      "file": "h78-injection-text-card.jpg",
+      "sha256": "d4208882c9789a4f3c0802b6cfa3e887cab37a15b8e8aee9110f579dc23f9c4a",
+      "width": 600,
+      "height": 400,
+      "source": {
+        "repo": "odai-dev/visual_prompt_injection_detection",
+        "path": "data/raw/malicious/malicious_0.jpg",
+        "commit": "7513cf126cff0faa155697ab429f58c6b8162ed4",
+        "license": "none-stated (no licence file; images generated by the repository's own script)",
+        "raw_url": "https://raw.githubusercontent.com/odai-dev/visual_prompt_injection_detection/7513cf126cff0faa155697ab429f58c6b8162ed4/data/raw/malicious/malicious_0.jpg"
+      }
+    },
+    {
+      "id": "h79",
+      "split": "holdout",
+      "blind": true,
+      "file": "h79-street-square-busy.png",
+      "sha256": "25f9f8d31e06d8904e017509f9f5ba0e5c3c32a2985ba502d628fc8dbf607bf4",
+      "width": 1280,
+      "height": 720,
+      "source": {
+        "repo": "KupynOrest/DeblurGANv2",
+        "path": "test_img/000027.png",
+        "commit": "c16bd9f5be63885389a57202c74023531d9ca086",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/KupynOrest/DeblurGANv2/c16bd9f5be63885389a57202c74023531d9ca086/test_img/000027.png"
+      }
     }
   ]
 }

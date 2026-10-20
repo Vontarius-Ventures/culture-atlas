@@ -40,9 +40,8 @@ const PHOTO_CODE: readonly string[] = [
  * golden-v2 (round 1; its blind split is consumed), golden-v3 (round 2: every
  * golden-v2 photo as tune, h14-h29 included, with the h26 label fix, plus the
  * blind split h30-h49, consumed by the round-2 blind run) and golden-v4
- * (round 3 tune set: every golden-v3 photo as tune, with the h01, h31, h43
- * and h46 label fixes; a fresh blind split h50+ joins it before the round-3
- * freeze).
+ * (round 3: every golden-v3 photo as tune, with the h01, h31, h43 and h46
+ * label fixes, plus the frozen blind split h50-h79).
  */
 export const PHOTO_GOLDEN_SETS = ['golden-v1', 'golden-v2', 'golden-v3', 'golden-v4'] as const;
 

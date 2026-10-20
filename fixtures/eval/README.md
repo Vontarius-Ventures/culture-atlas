@@ -19,7 +19,8 @@ fixtures/eval/
                      plus the blind_run record that consumes the split (scripts/eval/freeze.ts)
   golden-v3/         round 2: tune = every golden-v2 photo (h14-h29 included), h26 label fixed;
                      held-out = h30-h49 (no longer blind: its blind run failed; FREEZE.md, freeze.json as in golden-v2)
-  golden-v4/         round 3: tune = every golden-v3 photo, label fixes on h31, h43, h46, h01; no held-out split yet
+  golden-v4/         round 3: tune = every golden-v3 photo, label fixes on h31, h43, h46, h01;
+                     held-out = h50-h79 (fresh blind split; FREEZE.md, freeze.json as in golden-v2)
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -211,7 +212,30 @@ the wrong way, each change recorded in the label's `history`:
 - **h01**: a generation, mark or phase of the model is forbidden
   (`brand_without_text`): it is not written on the vehicle.
 
-golden-v4 has no held-out split yet and is not frozen: the round-3 blind set
-(`h50`+) is added, frozen and bound before any model reads it, and only then
-does `REQUIRED_GOLDEN_SET` move from golden-v3 to golden-v4. golden-v2 and
-golden-v3 are not edited.
+The round-3 blind held-out split `h50`–`h79` was added on `r3/blind` and
+merged into this tune set (see "golden-v4 blind split" below). Only when the
+round-3 rules are final is golden-v4 bound for the photo roles
+(`REQUIRED_GOLDEN_SET` moves from golden-v3 to golden-v4) and its blind split
+read once. golden-v2 and golden-v3 are not edited.
+
+## golden-v4 blind split (round 3)
+
+`golden-v4/` adds a fresh blind held-out split `h50`–`h79` (30 photos from 16
+repositories that no earlier golden set, scratchpad source list or candidate
+pool used) to the round-3 tune set (`p01`–`p15`, `h01`–`h49`, all tune). It
+covers food dishes and drinks, cafés and interiors with role and weak-style
+traps, a church interior, ceramics and a calligraphy scroll, a famous
+sculpture and painting with no museum label, Latin and German multi-line
+signage, vertical Japanese signage, clothing with and without logos, vehicles
+with and without legible badges, sport, real well-known people (no one is
+named), occasion traps about people, two unusable frames and a rendered
+prompt-injection card. Labels were written before any model saw the photos
+and are frozen (`golden-v4/freeze.json`, procedure in `golden-v4/FREEZE.md`);
+they use the round-3 scorer convention that a must-read string may span
+transcribed lines (score-v7). The held-out entries were appended unchanged to
+`manifest.json` at the merge (the fragment `holdout-manifest.json` is gone);
+`scripts/eval/golden-v4-blind.test.ts` recomputes the frozen hashes on every
+`pnpm test`. The photos and `SOURCES.md` live outside git (`blind-v4/`), and
+nobody tuning rules opens them or the held-out labels. Open licence questions
+(h57, h66, h76, h78 without a licence file; research-only dataset terms on
+several mmpose images) are listed in `golden-v4/FREEZE.md`.
