@@ -1,0 +1,67 @@
+{
+  "id": "h31",
+  "split": "holdout",
+  "file": "h31-food-pepperoni-pizza.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Pepperoni pizza",
+      "pattern": "pepperoni|\\bpizza\\b",
+      "aliases": [
+        "Pizza"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "italian[- ]american (cuisine|food)|american (cuisine|food)|^italian (cuisine|food)$|homemade pizza"
+    },
+    {
+      "pattern": "mozzarella|cheese|thyme|herbs|crust|cutting board|wooden board",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "domino|pizza hut|papa john|little caesar|sbarro|california pizza kitchen",
+      "why": "no brand is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "margherita|hawaiian|quattro formaggi|marinara pizza|calzone",
+      "why": "the topping is pepperoni on cheese; no other pizza is shown"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A whole pepperoni pizza with a thick, charred crust and thyme leaves, cut into slices on a wooden board. No text. Regional styles (Neapolitan, New York) are left unlabelled: the photo does not settle them."
+}

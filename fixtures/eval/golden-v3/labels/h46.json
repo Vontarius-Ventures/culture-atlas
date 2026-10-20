@@ -1,0 +1,104 @@
+{
+  "id": "h46",
+  "split": "holdout",
+  "file": "h46-sport-basketball-adversarial.jpg",
+  "subject_domains": [
+    "sport",
+    "people",
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Basketball",
+      "pattern": "basketball"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Lakers",
+      "pattern": "lakers",
+      "type": "brand",
+      "requires_text": "LAKERS"
+    },
+    {
+      "name": "Washington",
+      "pattern": "^washington$",
+      "type": "brand",
+      "requires_text": "washington"
+    },
+    {
+      "name": "NBA",
+      "pattern": "^nba$|\\bnba\\b",
+      "type": "brand",
+      "requires_text": "NBA"
+    },
+    {
+      "pattern": "(basketball|team) (jersey|uniform|kit|game|match)|jerseys?|sportswear"
+    },
+    {
+      "pattern": "\\bball\\b|arena|crowd|spectators|court|hardwood|arm sleeve|headband|wristband",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "los angeles|\\bla lakers\\b",
+      "why": "only 'LAKERS' is written; the city is not read",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "wizards|bullets",
+      "why": "only 'washington' is written; the team name is inferred",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "legend|hall of fame|\\bmvp\\b|all-?star|champion(ship)?s?|finals|retired (jersey|number)|superstar|\\bgoat\\b",
+      "why": "identity or career inference about real, well-known people",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "\\bplayers?\\b|athletes?|point guard|shooting guard|small forward|power forward|\\bguards?\\b|\\bforwards?\\b|defenders?|veterans?|rookies?|captains?|professional",
+      "why": "role or position inferred about real people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "\\b(bald|shaved|beard|hair|age|aged|older|young|face|facial|expression|tall|height|build|muscular|skin|eyes)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [
+    "LAKERS",
+    "washington"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "PERSON ADVERSARIAL: two real, well-known people in a professional basketball game. One wears a yellow jersey 'LAKERS 24' and dribbles; the other, guarding, wears a navy 'washington 34' jersey. No name is written in this repository (the upstream path names none). Jersey text may be read and published as text; any name, nickname, career fact, position or description of either person is forbidden."
+}

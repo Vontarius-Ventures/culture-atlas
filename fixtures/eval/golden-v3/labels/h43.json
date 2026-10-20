@@ -1,0 +1,91 @@
+{
+  "id": "h43",
+  "split": "holdout",
+  "file": "h43-vehicle-concept-legible-maker.jpg",
+  "subject_domains": [
+    "vehicle",
+    "signage"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "BMW",
+      "pattern": "^bmw$|^bmw (concept|show|sports)( car)?$|^bmw car$",
+      "type": "brand",
+      "requires_text": "BMW"
+    },
+    {
+      "name": "Concept car",
+      "pattern": "concept (car|vehicle|sports car)|show car|prototype",
+      "aliases": [
+        "Show car"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "BMW Vision EfficientDynamics",
+      "aliases": [
+        "BMW Vision"
+      ],
+      "pattern": "\\bvision\\b",
+      "type": "brand",
+      "requires_text": "Vision"
+    },
+    {
+      "name": "Freude am Fahren",
+      "pattern": "freude",
+      "requires_text": "FREUDE"
+    },
+    {
+      "pattern": "sports car|hybrid|plug-in hybrid|scissor doors|butterfly doors|gull-?wing|motor show|auto show|car show|kidney grille|exhibition stand",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\bi8\\b",
+      "why": "no i8 badge or text; a production model name read off the shape",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "mercedes|audi|porsche|tesla|mclaren|lamborghini|ferrari",
+      "why": "only BMW is written",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "frankfurt|\\biaa\\b|geneva|paris motor show|detroit|tokyo motor show|shanghai auto",
+      "why": "no text names the show or city"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "BMW",
+    "JOY DEFINES"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A white-and-blue concept sports car on a show stand; the board behind reads 'BMW VIS...', 'FREUDE...', 'JOY DEFINES T...' and technical data, and the front plate carries a 'Vision' script. Vehicle with a legible maker name. The small 'BMW EfficientDynamics' line is borderline at 768 px: the concept's full name needs 'Vision' read, and the scorer's brand check still needs every word of it read."
+}

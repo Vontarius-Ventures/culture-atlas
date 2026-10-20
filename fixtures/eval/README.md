@@ -153,3 +153,19 @@ verifier can only contest a claim, never remove it; how Tune uses them is in
 docs/requalification-plan.md). `eval:live --roles ...,vision_verify` stores
 the verifier's reply with each recording, and `eval:replay --verifier both`
 scores the same readings with and without it.
+
+## golden-v3 blind split (round 2)
+
+`golden-v3/` adds a fresh blind held-out split `h30`–`h49` (20 photos from 12
+repositories that golden-v1 and golden-v2 never used) to the round-2 tune set
+(`p01`–`p15`, `h01`–`h29`, all tune). It covers food dishes (one with a legible
+brand), a café table whose overlaid text is a prompt injection, home
+interiors, ceramics and painted metalwork, a garment care label (brand and
+Chinese text), Latin and Chinese signage, a commemorative plaque that names a
+person only in text (standing in for a museum label), a concert with a
+Chinese-text projection, vehicles with and without a legible maker, sport with
+players, two real well-known people, two private people in formal wear, a
+sneaker without a legible logo and a motion-blurred unusable photo. Labels
+were written before any model saw the photos and are frozen
+(`golden-v3/freeze.json`, procedure in `golden-v3/FREEZE.md`); no person is
+named. The photos and `SOURCES.md` live outside git (`blind-v3/`).

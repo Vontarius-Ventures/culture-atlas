@@ -1,0 +1,70 @@
+{
+  "id": "p09",
+  "split": "tune",
+  "file": "09-sign-paris-wayfinding.jpg",
+  "subject_domains": [
+    "signage",
+    "place",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Musée du Louvre",
+      "pattern": "mus[ée]e du louvre|^louvre$",
+      "aliases": [
+        "Louvre Museum",
+        "Louvre"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "palais du louvre"
+    },
+    {
+      "pattern": "arts d[ée]coratifs"
+    },
+    {
+      "pattern": "palais[- ]royal|th[ée][âa]tre du palais"
+    },
+    {
+      "pattern": "mairie du 1"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "art deco",
+      "why": "no Art Deco element; Arts Décoratifs is a museum name"
+    },
+    {
+      "pattern": "haussmann",
+      "why": "the facade is the Louvre's classical stonework, not Haussmann housing"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "LOUVRE",
+    "PALAIS-ROYAL",
+    "ARTS DÉCORATIFS"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

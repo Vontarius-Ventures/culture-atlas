@@ -1,0 +1,64 @@
+{
+  "id": "h37",
+  "split": "holdout",
+  "file": "h37-craft-painted-kettle.jpg",
+  "subject_domains": [
+    "craft",
+    "design"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Folk art",
+      "pattern": "folk[- ]?(art|painting|motifs?|design|style|ornament|painted)|hand[- ]painted|floral (motifs?|ornament|painting|decoration|pattern)",
+      "aliases": [
+        "Hand-painted kettle",
+        "Folk painting"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "kettle|teapot|tea kettle|enamel(ware|led)?|brass|metal kettle|stovetop kettle|wooden table",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "cloisonn[eé]|lustre ?ware|luster ?ware|majolica|maiolica|iznik|delft|chinoiserie|famille rose|samovar",
+      "why": "a painted ribbed metal kettle: none of these wares, techniques or objects"
+    },
+    {
+      "pattern": "le creuset|staub|alessi|bodum|dualit|smeg",
+      "why": "no maker's mark is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A ribbed metal kettle painted dark red with gold and white stylised flowers and tulips, a brass spout and handle with a black grip, on a wooden table. No text. The source does not name the tradition, so named folk-painting traditions are left unlabelled (neither expected nor forbidden)."
+}

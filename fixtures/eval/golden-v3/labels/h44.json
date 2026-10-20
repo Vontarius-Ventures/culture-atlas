@@ -1,0 +1,62 @@
+{
+  "id": "h44",
+  "split": "holdout",
+  "file": "h44-vehicle-pickup-nobadge.jpg",
+  "subject_domains": [
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Pickup truck",
+      "pattern": "pick-?up( truck)?|\\bute\\b|utility vehicle|light truck|single[- ]cab",
+      "aliases": [
+        "Pickup"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "canopy|truck cap|camper shell|steel wheels|parked|street|red wall|kerb|curb|pavement",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "isuzu|d-?max|chevrolet|chevy|holden|colorado|rodeo|toyota|hilux|nissan|navara|mitsubishi|triton|l200|ford|ranger|mazda|bt-?50|gmc",
+      "why": "no badge or model name is visible; make and model from the shape are forbidden",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cape town|bo-?kaap|south africa|havana|cuba",
+      "why": "no text names a place; a coloured wall is not evidence"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A white single-cab pickup with a canopy, side view, parked by a red wall. No badge, plate or text is visible: vehicle without a legible badge."
+}
