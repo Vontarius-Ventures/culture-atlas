@@ -2943,3 +2943,99 @@ noun), and grounding precision fails on a place alias and a setting tag. h80+ st
 | **Total** | **1,789** | **522** | **at most $28.88** |
 
 0 Wikipedia. Round-4 caps: 2,000 requests and $40 (211 requests left).
+
+### 19.23 Structural people and grounding rules (guard-v16, vlm-quick-v4 / vlm-enrich-v8, ground-v6), iteration 6
+
+Owner decisions after 19.21: each live run surfaced one missing word ("instructor", a chain store typed as
+a place), and the blind set will hold more, so the fixes are structural. h12's Hangul brand stays a miss
+this round. Round-4 caps raised to 2,600 Concentrate requests and $45; one live confirmation, then stop.
+
+**guard-v16.**
+- **Occupations and relations by lexicon** (`lexicons.ts`): `OCCUPATIONS`, about 400 one-word nouns
+  condensed from the US BLS Standard Occupational Classification (SOC 2018, its 23 major groups) and the
+  ILO's ISCO-08 unit groups, plus military, religious and service roles; `RELATIONS`, family, household,
+  work and friendship relations. Plurals are generated. Homonyms whose usual sense is a thing or a verb are
+  left out and listed in the source comment (trainer, runner, guard, cleaner, porter, model, fan, designer,
+  tailor, cook, coach, crew, partner, brother ...). Both feed `PEOPLE_CLAIM_RE`, so they apply on every
+  people surface already wired to it (headline as a unit, claims at both stages, observations, "What
+  caught your eye?" labels), only on a photo that shows people, with the read-text exemption unchanged.
+  The guard-v10 closed lists stay as they are.
+- **Equipment-vs-role**, as in score-v10/v12: an occupation word followed by a possessive or by a thing
+  noun (garments, sport equipment and a short object and venue list) names the thing ("Cowboy boots",
+  "Fisherman sweater", "Butcher block", "Mason jar", "the waiter's notepad"), and a claim whose last word
+  is a garment or equipment noun names what is worn or held (`claimNamesPeople`). A sentence such as "an
+  instructor gesturing" is withheld; a role noun of the older lists keeps its older behaviour ("Chef jacket",
+  "Doctor Martens boots" are still withheld, as in guard-v10).
+- **A business typed as a place is a brand** (`businessPlace`): a place named with a business or venue noun
+  (`BUSINESS_NOUNS`: store, shop, bank, hotel, restaurant, café, bar, pharmacy, supermarket, outlet, chain
+  ...) and a proper name (a word no dictionary or lexicon holds and no nationality, or the business noun
+  written with a capital after the first word: "Raffles Hotel", "Agricultural Bank of China") is held at
+  stage 1 (G-BRAND) and published only when stage 2 transcribes its name; a trailing business noun is not
+  a word to read. "Corner café", "Japanese supermarket", landmarks, museums, theatres, markets and malls
+  are not businesses by this rule.
+- Tests: `guardrails.test.ts` "guard-v16" (3, all fail on guard-v15); the lexicon tokenizer test covers
+  the new lists; the guard-v8 fixture "Fixture Café" now needs its sign transcribed.
+
+**vlm-quick-v4 / vlm-enrich-v8.** One shared rule in both prompts: wherever the reading mentions people
+(title, interpretation, observations, candidates, regions, notes), it uses only neutral person nouns
+(person, people, man, woman, child, group) and what is visibly worn, held or done; never a role,
+occupation, relationship or occasion unless legible text names it. Hashes pinned in `two-stage.test.ts`;
+`eval:live` refuses older profiles. Profile `r4/profiles/mix.json` updated (previous kept as
+`mix-iter5.json`).
+
+**ground-v6.**
+- Decor and setting tags ground only a style claim about a room, a space or a building: a candidate in the
+  interior or architecture domain (or of unknown domain) whose name holds no movable object or street
+  furniture noun (table, chair, sofa, tableware, ceramics, bollard, bench, sign, kiosk ...). Iteration-5
+  h79 "Pedestrian bollard street design" → "Pedestrian Street" is not accepted; nor, now, "Rustic wooden
+  table", "Minimalist tableware", "Neoclassical furniture" or "Dutch Golden Age portraiture" to a decor tag
+  (the aesthetic `style` family, "Rustic", is not restricted). This narrows the 19.21 defining-style
+  acceptance by the owner's later rule; the defining-style rule still applies inside it.
+- A place reached only through Qloo's alias list must be the same kind of place as the candidate: a
+  building or landmark (a landmark word in its name, or filed under architecture) only as a venue, an area
+  only as a locality or destination. Iteration-5 p09 "Palais-Royal" → the locality "Quartier du Palais
+  Royal" is not accepted.
+- Tests: `grounding.test.ts` "ground-v6" (2).
+
+typecheck, lint and `pnpm test` (1459/1459) passed before the commit.
+
+**Offline (no request).** Replays under guard-v16 / score-v14: iteration-5 Qloo run **PASS** (M1 0: h40 now
+held as a business, h69's headline replaced; M4 0.1706), iteration-3 and its Qloo run PASS, iteration-4 Qloo
+M4 0.2010 only; the other round-4 and older recordings as in 19.21 (M1 0 except the haiku sweep's h28 and
+gpt-mini's 3); `replay-v1` PASS. Grounding re-accepted under ground-v6 with the existing judgements (no newly
+accepted item): iter3 precision 1.0, end-to-end 1.0, recall 0.6571; iter4 1.0 / 0.9524 / 0.6; iter5 1.0 /
+1.0 / 0.6944 (p09 re-decided through its alias rule, h17, h61, h79 no longer accepted).
+
+**Live confirmation with Qloo (iteration 6): Tune PASS, grounding FAIL.** Mix (`vlm-quick-v4` /
+`vlm-enrich-v8`), guard-v16, score-v14, ground-v6, out-dir `r4/iter6-qloo`, ledger
+`r4/ledger-iter6-qloo.jsonl`, package `r4-iter6-qloo`, `--max-requests 230 --spend-cap-usd 8 --qloo
+--max-qloo-requests 300 --qloo-concurrency 2`.
+
+- Requests: 188 Concentrate (all 200, 0 job retries), 183 Qloo (all 200). $1.592 at list rate.
+- Gates: `tune: PASS runs=94 published=274 M1=0 M2=0.0036 M3=0.9958 M4=0.1401 M5=0.8675 M6=0.9891 M7=1
+  M8=0 M9=0.9231 M10=0 M11=0 M12=0.135 M13=1 M14_stage1_p50=2507 M14_stage1_p95=3509 M14_enrich_p95=8664
+  M14_incomplete=0 M15=0.7349 qloo_forbidden_accepts=0 forbidden_published=1 verifier_checked=0
+  text_only=7`. The one forbidden published claim is p05 "Lustreware" (under M2, as in every run since
+  19.4).
+- Grounding, judged conservatively (`r4/iter6-qloo/grounding-judgements.json`, `r4/tools/judge_iter6.py`):
+  28 accepted of 183 lookups; precision **0.9643 FAIL** (≥ 1), end-to-end **0.8929 FAIL** (≥ 0.9), recall
+  0.8182 ok, forbidden_accepts 0, doubtful_name_published 0; `holdout_candidates` n/a on a tune split.
+  Wrong match: h05 "Mapo tofu" → the cuisine tag "Sichuan", reached through the candidate's tag query (a
+  dish grounded as its region's cuisine; the defining-style rule covers style families, not cuisine
+  tags). Not judged good: h31 "New York-style pizza" and h48 "Monochrome black casual footwear"
+  (unlabelled; correct matches).
+
+**State (round 4 stops here, as the owner asked).** On the 94 tune photos the mix passes Tune live for
+the first time in round 4, with no M1, M7 or M11 failure and M4 0.1401. Grounding fails precision on one
+class not yet covered (a dish matched to a cuisine tag through its tag query) and end-to-end by the
+unlabelled share. h12's Hangul brand remains a miss. h80+ stays unfrozen; nothing was frozen.
+
+### 19.24 Spend (round 4, final)
+
+| Package | Concentrate requests | Qloo | Cost |
+| --- | --- | --- | --- |
+| To 19.22 | 1,789 | 522 | at most $28.88 |
+| r4-iter6-qloo | 188 | 183 | $1.59 at list rate |
+| **Total** | **1,977** | **705** | **at most $30.47** (worst-case reservations for the sweeps and smoke, list-rate cost for the seven mix runs) |
+
+0 Wikipedia. Round-4 caps: 2,600 requests and $45.
