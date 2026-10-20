@@ -2639,3 +2639,68 @@ h80+ stays unfrozen.
 | **Total** | **1,228** | **at most $24.30** (worst-case reservations except the three mix runs, which are list-rate cost) |
 
 0 Qloo, 0 Wikipedia. Round-4 caps: 1,500 requests and $60 (272 requests left).
+
+### 19.17 score-v13 and the grounding confirmation (owner decisions after iteration 3)
+
+Decisions: (1) score-v13 as below; (2) the coverage cost of `vlm-enrich-v6` (19.15) is accepted while M5
+and M15 pass; (3) `roleCovered` (score-v12) is accepted; (4) if the iteration-3 recordings pass under
+score-v13, one live grounding confirmation.
+
+**score-v13.** The score-v10/v11 coverage rule for brand words: a word of a brand name that lies inside a
+match of the label's own generic acceptable entry (no requires_text) describes the thing the brand is
+printed on and need not be read (`genericCoveredWords`). h20 "The Washington Post newspaper box" with "The
+Washington Post" read is corroborated; an unread naming word outside the covered match ("Post" read
+without "Washington", or an unread "USA Today" before "newspaper box") still counts, a name of covered
+words only is not corroborated, and a non-generic or requires_text entry never covers. Tests:
+`scorer.test.ts` "score-v13" (positive fails on score-v12, plus the negative cases). Binding regenerated;
+`replay-v1` names score-v13 and passes. typecheck, lint and `pnpm test` (1437/1437) passed.
+
+**Replays (no request), guard-v13, score-v13, golden-v5.** Iteration-3 mix: **PASS** (`tune: PASS runs=94
+published=257 M1=0 M2=0.0117 M3=0.9864 M4=0.1872 M5=0.8434 M6=0.9883 M7=1 M8=0 M9=0.9359 M10=0 M11=0
+M12=0.144 M13=1 M14_stage1_p50=2676 M14_stage1_p95=3676 M14_enrich_p95=8611 M14_incomplete=0 M15=0.6627
+qloo_forbidden_accepts=0 forbidden_published=3`). Every other round-4 recording (iterations 1-2, the
+haiku, sonnet and gpt-5.4-mini sweeps, the smoke) and every older recording (round-3 Tune, fresh and blind
+readings, §15 runs, Evaluate iterations) scores as under score-v12 (19.15); `replay-v1` PASS.
+
+**Grounding confirmation, live (mix `vlm-quick-v3` / `vlm-enrich-v6`, `--qloo --max-qloo-requests 300
+--qloo-concurrency 2`): Tune FAIL.** `eval:live` cannot replay recordings with `--qloo`, so this was a new
+live reading of the 94 tune photos. Out-dir `r4/iter3-qloo`, ledger `r4/ledger-iter3-qloo.jsonl`, package
+`r4-iter3-qloo`, `--max-requests 200 --spend-cap-usd 8`.
+
+- **Requests**: 185 Concentrate (182 x 200, 3 network errors: stage-1 timeouts on p04, h05 and h06, so
+  those three photos have no reading and no stage 2), 173 Qloo (all 200). $1.494 at list rate (stage 1
+  $0.042, stage 2 $1.451).
+- **Gates**: `tune: FAIL runs=91 published=253 M1=1 M2=0.004 M3=0.9955 M4=0.1658 M5=0.85 M6=0.9921 M7=1
+  M8=0 M9=0.9342 M10=0 M11=1 M12=0.1304 M13=0.9838 M14_stage1_p50=2786 M14_stage1_p95=4568
+  M14_enrich_p95=8576 M14_incomplete=0 M15=0.675 qloo_forbidden_accepts=0 forbidden_published=1
+  verifier_checked=0 text_only=8`. Fails: M1 1, M11 1, M13 0.9838.
+- **M1 and M11, one headline (h74).** The published interpretation "The photo shows two men in dark suits
+  feeding each other white frosted cake, resembling a formal celebration setting." The label forbids
+  "celebration" as an occasion inferred about the people; the guard's occasion list (`PEOPLE_CONTEXT_WORDS`)
+  names specific occasions (wedding, prom, birthday, graduation and others) but not generic occasion
+  words such as "celebration", "party", "reception" or "festivities". In iteration 3 the same photo's
+  headline did not use the word. Not changed: a guard change is outside the decisions delegated here; the
+  class fix (generic occasion nouns alongside the specific ones) needs the owner.
+- **M13**: three stage-1 timeouts (network), not an invalid output; the gate counts them.
+- **Grounding**: `qloo_forbidden_accepts 0`, `forbidden_accepts 0`, `doubtful_name_published 0`,
+  `labelled_candidates 173`. `grounding_precision`, `end_to_end_precision` and `recall` read "n/a, needs
+  hand judgement" (no `--grounding-judgements` file), and `holdout_candidates 0` (the tune split has no
+  held-out photos), so the grounding gate prints FAIL on those four by construction.
+- Coverage on this reading: M4 0.1658, M5 0.85, M15 0.675 (all pass).
+
+**State.** The iteration-3 recordings pass Tune under score-v13. The live confirmation does not pass Tune
+(h74's generic occasion word in the headline, and three network timeouts); Qloo grounding accepted no
+forbidden entity. Open for the owner: the generic-occasion class in the guard's headline test, a re-run
+policy for network timeouts (M13), and hand judgements for the grounding precision and recall. h80+ stays
+unfrozen; nothing was frozen.
+
+### 19.18 Spend (round 4 to date)
+
+| Package | Concentrate requests | Qloo | Cost |
+| --- | --- | --- | --- |
+| Before iteration 3 (19.14) | 1,040 | 0 | at most $22.77 |
+| r4-iter3-mix | 188 | 0 | $1.53 at list rate |
+| r4-iter3-qloo | 185 (3 network errors) | 173 | $1.49 at list rate (Concentrate) |
+| **Total** | **1,413** | **173** | **at most $25.79** (worst-case reservations except the four mix runs, list-rate cost) |
+
+0 Wikipedia. Round-4 caps: 1,500 requests and $60 (87 requests left).
