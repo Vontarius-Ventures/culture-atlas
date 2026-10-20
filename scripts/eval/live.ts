@@ -279,7 +279,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     );
   if (opts.pipeline.guardrailVersion === null)
     throw new Error('eval:live scores through the guarded pipeline only.');
-  // Round 4: a reading-v2 photo profile names the prompt the code sends (vlm-quick-v3, vlm-enrich-v6).
+  // Round 4: a reading-v2 photo profile names the prompt the code sends (vlm-quick-v3, vlm-enrich-v7).
   for (const p of [stage1, enrichProfile].filter((x): x is ModelProfile => !!x)) {
     const stale = stalePhotoPromptVersion(p);
     if (stale) throw new Error(`${stale} Nothing was sent.`);

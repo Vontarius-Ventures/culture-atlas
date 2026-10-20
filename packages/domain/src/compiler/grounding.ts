@@ -13,7 +13,7 @@ export { canonicalTokens } from './text';
  * doubt becomes a reference under the candidate's own name, never a
  * look-alike's name. No I/O; every decision carries a rule id and a reason.
  */
-export const GROUNDING_VERSION = 'ground-v4';
+export const GROUNDING_VERSION = 'ground-v5';
 
 export type GroundingRule = 'Q-TYPE' | 'Q-TAGTYPES' | 'Q-NAME' | 'Q-SUBSET' | 'Q-PLACE' | 'Q-EVIDENCE' | 'Q-DOUBT';
 
@@ -163,6 +163,77 @@ function stripCuisineWords(q: string): string {
   return q.replace(/\b(cuisine|food|foods)\b/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * ground-v5: domains whose subject is seen, not played, watched or read: art, architecture, interior,
+ * design, craft, signage, place, vehicle, fashion, food, sport. A work or creator in one of them has no
+ * Qloo media entity of its kind (a painting is not the novel or film of the same title).
+ */
+const VISUAL_DOMAINS: ReadonlySet<string> = new Set(['art', 'architecture', 'interior', 'design', 'craft', 'signage', 'place', 'vehicle', 'fashion', 'food', 'sport']);
+
+/** ground-v5: the work entity types a candidate's domain allows (any media type when the domain is unknown or "other"). */
+export function workTypesFor(domain: string | null | undefined): QlooEntityType[] {
+  if (domain === 'film') return ['urn:entity:movie', 'urn:entity:tv_show'];
+  if (domain === 'music') return ['urn:entity:album'];
+  if (domain && VISUAL_DOMAINS.has(domain)) return [];
+  return [...WORK_ENTITY_TYPES];
+}
+
+/** ground-v5: the creator entity types a candidate's domain allows (a painter or architect is a person, never a music artist). */
+export function creatorTypesFor(domain: string | null | undefined): QlooEntityType[] {
+  if (domain === 'music') return ['urn:entity:artist'];
+  if (domain === 'film') return ['urn:entity:director', 'urn:entity:person'];
+  if (domain && VISUAL_DOMAINS.has(domain)) return ['urn:entity:person'];
+  return [...CREATOR_ENTITY_TYPES];
+}
+
+/**
+ * ground-v5: the decor and setting tag families describe rooms, buildings and venues. They are accepted
+ * only for a candidate in a spatial or visual-art domain (or an unknown one); a vehicle, garment, dish,
+ * sport, music, film or people claim never grounds to a decor tag ("futuristic hybrid sports car" ->
+ * "Futuristic Design", iteration 3 h43). The aesthetic style family ("Rustic", "Minimalist") is not
+ * restricted.
+ */
+const SPATIAL_TAG_FAMILIES = ['urn:tag:decor:qloo', 'urn:tag:setting:qloo'] as const;
+const NON_SPATIAL_DOMAINS: ReadonlySet<string> = new Set(['vehicle', 'fashion', 'food', 'sport', 'music', 'film', 'people']);
+
+/**
+ * ground-v5: one token form for the inflections and the -ism/-ist/-al forms of a style word
+ * ("paneling"/"paneled", "Neoclassicism"/"Neoclassical", "Minimalism"/"Minimalist"): strip one of -ism,
+ * -ist, -ing, -ed, -al, -s, then a final "e", keeping at least four letters.
+ */
+function lightStem(t: string): string {
+  let w = t;
+  for (const suffix of ['isms', 'ists', 'ism', 'ist', 'ing', 'ed', 'al', 's']) {
+    if (w.endsWith(suffix) && w.length - suffix.length >= 4) {
+      w = w.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return w.length > 4 && w.endsWith('e') ? w.slice(0, -1) : w;
+}
+
+/**
+ * ground-v5, the defining-style rule for style tags matched through the tag query, one rule for all:
+ * the tag must name the candidate's own defining style, so
+ *  (a) every content word of the tag is a word of the candidate's name (a tag adds nothing: "Rustic
+ *      wooden table" -> "Rustic", "Minimalist tableware" -> "Minimalist", "Neoclassical chair" ->
+ *      "Neoclassical", "Dutch Golden Age portraiture" -> "Dutch Golden Age Style" are accepted; "Rustic
+ *      painted wooden bar stools" -> "Rustic Farmhouse", "Mid-century automotive design" -> "Mid Century
+ *      Modern" and "striped sofa" -> "Striped Upholstery" are not), and
+ *  (b) the words it leaves out are not a proper name: a capitalized word after the first ("Hong Kong neon
+ *      signage" -> "Neon Signage" drops the place and is not accepted).
+ * The family must also fit the candidate's domain (SPATIAL_TAG_FAMILIES). Doubt leaves the candidate
+ * unresolved under its own name.
+ */
+export function definingStyleTag(candidateName: string, tagName: string): boolean {
+  const name = new Set([...canonicalTokens(candidateName)].map(lightStem));
+  const tag = [...canonicalTokens(tagName)].map(lightStem);
+  if (!tag.length || !tag.every((t) => name.has(t))) return false;
+  const kept = new Set(tag);
+  const words = candidateName.split(/[\s\-–—/]+/).filter(Boolean);
+  return !words.slice(1).some((w) => /^\p{Lu}/u.test(w) && [...canonicalTokens(w)].map(lightStem).some((t) => !kept.has(t)));
+}
+
 /** Q-TYPE, Q-TAGTYPES and Q-EVIDENCE: what (if anything) to ask Qloo for this candidate. */
 export function planLookup(c: GuardedCandidate): LookupPlan {
   const user = c.userSelected === true;
@@ -186,10 +257,18 @@ export function planLookup(c: GuardedCandidate): LookupPlan {
     case 'brand':
       if (!user && c.corroborated !== true) return { kind: 'none', reason: 'brand_not_corroborated' };
       return { kind: 'search', query: name, types: ['urn:entity:brand'] };
-    case 'creator':
-      return { kind: 'search', query: name, types: [...CREATOR_ENTITY_TYPES] };
-    case 'work':
-      return { kind: 'search', query: name, types: [...WORK_ENTITY_TYPES] };
+    case 'creator': {
+      const types = user ? [...CREATOR_ENTITY_TYPES] : creatorTypesFor(c.domain);
+      return { kind: 'search', query: name, types };
+    }
+    case 'work': {
+      // ground-v5: a work grounds only to an entity of its own kind. Qloo's work entities are films, TV
+      // shows, albums and books; an artwork, building, sign or object filed as a work has none, so it stays
+      // under its own name (iteration-3 h57 "Stained glass windows" resolved to a movie of that title).
+      const types = user ? [...WORK_ENTITY_TYPES] : workTypesFor(c.domain);
+      if (!types.length) return { kind: 'none', reason: 'work_without_entity_type' };
+      return { kind: 'search', query: name, types };
+    }
     case 'place':
       if (!(strong || textEvidence)) return { kind: 'none', reason: 'place_without_evidence' };
       return { kind: 'search', query: name, types: [...PLACE_ENTITY_TYPES] };
@@ -246,11 +325,22 @@ function placeTier(e: QlooEntity): number {
 function acceptTag(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'tags' }>, results: readonly QlooTag[]): AcceptDecision {
   if (results.length === 0) return { match: null, rule: 'Q-NAME', reason: 'no_results' };
   const rank = (t: QlooTag) => plan.tagTypes.findIndex((f) => tagFamilyMatches(t, f));
-  const typed = results.filter((t) => !forbiddenFamily(t) && rank(t) >= 0);
-  if (typed.length === 0) return { match: null, rule: 'Q-TAGTYPES', reason: 'no_allowed_tag_type' };
-  const targets = [canonicalTokens(plan.query), canonicalTokens(c.name)].filter((s) => s.size > 0);
+  const spatialOk = !(c.domain && NON_SPATIAL_DOMAINS.has(c.domain) && !c.userSelected);
+  const spatial = (t: QlooTag) => SPATIAL_TAG_FAMILIES.some((f) => tagFamilyMatches(t, f));
+  const typed = results.filter((t) => !forbiddenFamily(t) && rank(t) >= 0 && (spatialOk || !spatial(t)));
+  if (typed.length === 0) return { match: null, rule: 'Q-TAGTYPES', reason: spatialOk ? 'no_allowed_tag_type' : 'decor_tag_outside_domain' };
+  const nameTokens = canonicalTokens(c.name);
+  const queryTokens = canonicalTokens(plan.query);
+  const targets = [queryTokens, nameTokens].filter((s) => s.size > 0);
   if (targets.length === 0) return { match: null, rule: 'Q-NAME', reason: 'empty_canonical_name' };
-  const exact = typed.filter((t) => targets.some((s) => sameTokens(canonicalTokens(t.name), s)));
+  const style = (t: QlooTag) => STYLE_TAG_TYPES.some((f) => tagFamilyMatches(t, f));
+  const exact = typed.filter((t) => {
+    const tokens = canonicalTokens(t.name);
+    if (nameTokens.size && sameTokens(tokens, nameTokens)) return true;
+    if (!queryTokens.size || !sameTokens(tokens, queryTokens)) return false;
+    // ground-v5: matched only through the tag query: a style tag must be the candidate's defining style.
+    return !style(t) || c.userSelected === true || definingStyleTag(c.name, t.name);
+  });
   if (exact.length === 0) {
     const subset = typed.some((t) => targets.some((s) => strictSubset(canonicalTokens(t.name), s)));
     return { match: null, rule: subset ? 'Q-SUBSET' : 'Q-NAME', reason: subset ? 'shorter_name' : 'no_exact_name' };

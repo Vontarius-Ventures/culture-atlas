@@ -156,7 +156,7 @@ import {
  * headline is replaced as a unit: when the people test replaces the title or the interpretation, the
  * other line is replaced too (it was written as the same reading).
  */
-export const GUARDRAIL_VERSION = 'guard-v14';
+export const GUARDRAIL_VERSION = 'guard-v15';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -637,7 +637,9 @@ const PAINTING_ALL_RE = /\bpaintings?\b/gi;
  * drops it, and so does "painting" in any other domain (G-MEDIUM).
  */
 export function paintingSubject(c: Pick<VlmCandidate, 'name' | 'tag_queries'>, modelDomain: VlmDomain | null | undefined): boolean {
-  if (modelDomain !== 'art') return false;
+  // guard-v15: a painted-decoration tradition filed under craft ("Scandinavian folk painting" on a kettle,
+  // iteration-4 h37) names the painting on the object as much as an art-domain claim does.
+  if (modelDomain !== 'art' && modelDomain !== 'craft') return false;
   const texts = [c.name, ...c.tag_queries];
   return texts.some((t) => PAINTING_RE.test(t)) && texts.every((t) => !hasMediumWord(t.replace(PAINTING_ALL_RE, ' '), 'art'));
 }
@@ -1313,6 +1315,14 @@ function evaluate(
   const personRules = (): Verdict | null => {
     // G-MEDIUM: medium words in the name or tag query, unless a labelled artwork.
     const labelledArt = (c.type === 'work' || c.type === 'creator') && c.evidence === 'read_text';
+    // guard-v15: in the art or craft domain, a claim whose name has no medium word and whose tag query's
+    // only medium word is "painting" names the painting shown (paintingSubject); the query, never shown,
+    // is removed instead of the claim (iteration-4 h61 "Tronie" with "... character study painting"). Any
+    // other medium word in a query ("still life") still drops the claim.
+    if (!labelledArt && !hasMediumWord(c.name, c.domain) && c.tag_queries.some((t) => hasMediumWord(t, c.domain)) && paintingSubject(c, input.domain)) {
+      c = { ...c, tag_queries: c.tag_queries.filter((t) => !hasMediumWord(t, c.domain)) };
+      if (!rules.includes('G-MEDIUM')) rules.push('G-MEDIUM');
+    }
     if (!labelledArt && (hasMediumWord(c.name, c.domain) || c.tag_queries.some((t) => hasMediumWord(t, c.domain)))) {
       // guard-v12: in the art domain "painting" names the painting in the photo ("Plum blossom painting",
       // "Dutch Golden Age painting"): it waits for stage 2 to support it instead of being dropped.

@@ -93,8 +93,11 @@ export const VLM_READING_VERSIONS = {
    * vlm-enrich-v6 (round 4, iteration 3, §19.15, owner option a): additions are proposed only when stage 2
    * would rate them 0.5 or more and they rest on read text, a logo or a distinctive form (the guard's own
    * publication rule for additions); context-only or low-certainty additions are not requested.
+   * vlm-enrich-v7 (round 4, after iteration 4, §19.21): a well-known work, building or landmark named by its
+   * title is judged by the form that identifies it (the stage-1 prompt asks for such names on their form, but
+   * stage 2 judged them as needing a label, iteration-4 h60 "David by Michelangelo" weak).
    */
-  enrichV2: { prompt: 'vlm-enrich-v6', schema: 'atlas_enrichment_v2' },
+  enrichV2: { prompt: 'vlm-enrich-v7', schema: 'atlas_enrichment_v2' },
 } as const;
 
 /** Stage 1 measured as good at 512 px as at 768; stage 2 reads small logos and labels at 768. */
@@ -195,6 +198,7 @@ Content rules:
 - confirmed: exactly one entry per first-reading candidate, never skipping one, using its exact name, with a rationale of at most fifteen words grounded in what is visible, and a verdict: supported, weak or unsupported. Judge each candidate as the kind of claim it is:
   - A style, period look, tradition, craft, cuisine or dish, or the named type of a garment, object, vehicle or building, is a resemblance, never a claim of origin, date or authenticity: supported when the visible features that define it are shown (name one or two of them in the rationale), even though no text names it; weak when the visible features fit it only loosely, or another named style or type fits them as well or better; unsupported when the photo does not show those features or contradicts them.
   - A place (a city, district, region or country) is supported only when a landmark, legible text, or a vehicle, sign or building form found only in that place is visible; a street, skyline or setting that could be in many places is weak.
+  - A well-known artwork, building or landmark named by its title or proper name is supported when the distinctive form that identifies that specific work is shown (name one or two of its features), even though no label names it; weak when only its genre, period or style fits; unsupported when the form differs.
   - A brand, maker or model is supported only when its name or logo is legible.
   - A claim about who the people are, their relationship, role, team, league, event or occasion is unsupported unless legible text names it.
   Do not add a confirmed entry for the title.

@@ -53,7 +53,7 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
       [job_id],
     );
     expect(guardTrace).toHaveLength(1);
-    expect(guardTrace[0]!.data.version).toBe('guard-v14');
+    expect(guardTrace[0]!.data.version).toBe('guard-v15');
     expect(guardTrace[0]!.data.decisions.find((d) => d.name === 'Fixture Denim Co')).toMatchObject({ action: 'drop', rules: ['G-BRAND'], note: 'no_stage_2' });
     // References: resemblances are qualified.
     const racing = view.references.find((r) => r.name === 'Vintage Racing')!;
@@ -152,7 +152,7 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(view.analysis!.warnings).toContainEqual({ code: 'discoveries_delayed', message: 'Related discoveries are taking longer.' });
     // The brand of this single reading is dropped by G-BRAND (no stage 2), the food resemblance by
     // G-CUISINE-FOOD (no food in the photo); the rest stays unmatched.
-    expect(view.references.map((r) => r.name)).toEqual(['1960s motor racing style']);
+    expect(view.references.map((r) => r.name)).toEqual(['Vintage motor racing style']);
     expect(view.references.every((r) => r.qualified)).toBe(true); // unmatched -> qualified
     const rows = await recRows(capture_id);
     expect(rows.filter((r) => r.origin === 'qloo' || r.origin === 'replay')).toHaveLength(0);

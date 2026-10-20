@@ -7,6 +7,7 @@ import {
   candidateStatus,
   forbiddenClassViolations,
   forbiddenCovered,
+  isDescribing,
   genericCoveredWords,
   makerUsedAsBrand,
   mediumCovered,
@@ -710,9 +711,6 @@ describe('score-v12 (round 4, iteration 3): a maker word counts only when it is 
 });
 
 describe('score-v13 (round 4, iteration 3): a brand word inside the label\'s own generic match describes', () => {
-  it('is the current scorer version', () => {
-    expect(SCORER_VERSION).toBe('score-v13');
-  });
 
   // h20 shape: the label expects the read brand and accepts "newspaper box" as a generic name.
   const box = label('h86', {
@@ -746,5 +744,34 @@ describe('score-v13 (round 4, iteration 3): a brand word inside the label\'s own
     // A requires_text or non-generic entry never covers: the old rule applies.
     const strict = label('h85', { acceptable: [{ pattern: 'newspaper box', aliases: [], generic: false }] });
     expect(genericCoveredWords(strict, 'The Washington Post newspaper box').size).toBe(0);
+  });
+});
+
+describe('score-v14 (round 4, after iteration 4): describing words match with their inflections', () => {
+  it('is the current scorer version', () => {
+    expect(SCORER_VERSION).toBe('score-v14');
+  });
+
+  // h01 shape: the label accepts the read brand and has no generic entry for the billboard.
+  const billboard = label('h84', {
+    acceptable: [{ pattern: 'puschkin', aliases: [], type: 'brand', requires_text: 'PUSCHKIN', generic: false }],
+    forbidden_classes: ['brand_without_text'],
+  });
+
+  it('an inflection of a describing word need not be read (score-v13 counted "advertising" as a brand word)', () => {
+    for (const w of ['advertising', 'advertised', 'advertisements', 'posters', 'banners', 'signs']) expect(isDescribing(w), w).toBe(true);
+    const claim = c('Puschkin advertising billboard', { type: 'place', domain: 'signage', evidence: 'read_text', evidence_text: 'PUSCHKIN' });
+    expect(brandCorroborated(claim, ['PUSCHKIN'])).toBe(true);
+    const r = run('h84', { candidates: [claim], visible_text: ['PUSCHKIN'] });
+    expect(forbiddenClassViolations(billboard, r)).toEqual([]);
+  });
+
+  it('an unread brand word with a describing-like ending still counts; short words keep their own form', () => {
+    // "Signet" shares letters with "sign" but is not an inflection of it; "Vans" is not "van"; "Boxing" is not "box".
+    for (const w of ['signet', 'vans', 'boxing', 'puschkin']) expect(isDescribing(w), w).toBe(false);
+    expect(brandCorroborated(c('Signet jewellers billboard', { type: 'brand' }), ['BILLBOARD'])).toBe(false);
+    expect(brandCorroborated(c('Vans billboard', { type: 'brand' }), ['BILLBOARD'])).toBe(false);
+    const r = run('h84', { candidates: [c('Puschkin advertising billboard', { type: 'brand' })], visible_text: ['ADVERTISING'] });
+    expect(forbiddenClassViolations(billboard, r)).toContainEqual({ class: 'brand_without_text', detail: 'Puschkin advertising billboard' });
   });
 });

@@ -3,6 +3,7 @@ import type { QlooEntity, QlooTag } from '@culture-atlas/providers';
 import {
   acceptMatch,
   CUISINE_TAG_TYPES,
+  definingStyleTag,
   FORBIDDEN_TAG_FAMILIES,
   GROUNDING_VERSION,
   headToken,
@@ -206,7 +207,8 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
   it('ground-v2: a film work or creator takes the one exact match of its medium, else stays in doubt', () => {
     const film = cand({ name: 'Fixture Echo', type: 'work', certainty: 0.9, domain: 'film' });
     const results = [ent('W1', 'Fixture Echo', 'urn:entity:book'), ent('W2', 'Fixture Echo', 'urn:entity:movie')];
-    expect(acceptMatch(film, searchPlan(film), results)).toMatchObject({ match: { entity_id: 'FIXTURE-W2' }, rule: 'Q-NAME', reason: 'exact_name_domain_type' });
+    // ground-v5: a film work is searched among films and TV shows only, so the book is not a rival any more.
+    expect(acceptMatch(film, searchPlan(film), results)).toMatchObject({ match: { entity_id: 'FIXTURE-W2' }, rule: 'Q-NAME', reason: 'exact_name' });
     // Two same-named movies: still a doubt.
     const twoMovies = [...results, ent('W3', 'Fixture Echo', 'urn:entity:movie')];
     expect(acceptMatch(film, searchPlan(film), twoMovies)).toMatchObject({ match: null, rule: 'Q-DOUBT' });
@@ -287,7 +289,7 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
   });
 
   it('is versioned', () => {
-    expect(GROUNDING_VERSION).toBe('ground-v4');
+    expect(GROUNDING_VERSION).toBe('ground-v5');
   });
 });
 
@@ -345,5 +347,65 @@ describe('brand corroboration by read text (G-BRAND-CORROBORATE (a))', () => {
     expect(textCorroborates('Fixturo', ['NBA'])).toBe(false);
     expect(textCorroborates('Fixturo', ['FIXTUROS'])).toBe(false);
     expect(textCorroborates('Fixturo', [])).toBe(false);
+  });
+});
+
+/*
+ * ground-v5 (round 4, after iteration 4, docs/quality-plan.md §19.21): an accepted Qloo item must be the
+ * candidate's own kind. FIXTURE shapes of the wrong matches judged in the iteration-3 and -4 grounding runs.
+ */
+describe('ground-v5: acceptance by the candidate\'s kind and domain', () => {
+  it('a work in a visual domain is never searched among films, albums or books (h57, h61 shapes); a film or music work keeps its type', () => {
+    for (const domain of ['art', 'architecture', 'signage', 'craft'])
+      expect(planLookup(cand({ name: 'Fixture stained glass windows', type: 'work', domain, relation: 'depicted', certainty: 0.8 }))).toEqual({
+        kind: 'none',
+        reason: 'work_without_entity_type',
+      });
+    expect(planLookup(cand({ name: 'Girl with a Fixture Earring', type: 'work', domain: 'art', certainty: 0.8 }))).toMatchObject({ kind: 'none' });
+    expect(searchPlan(cand({ name: 'Fixture Rebecca', type: 'work', domain: 'film', certainty: 0.8 })).types).toEqual(['urn:entity:movie', 'urn:entity:tv_show']);
+    expect(searchPlan(cand({ name: 'Fixture LP', type: 'work', domain: 'music', certainty: 0.8 })).types).toEqual(['urn:entity:album']);
+    // Unknown domain (legacy readings): every media type, as before.
+    expect(searchPlan(cand({ name: 'Fixture Title', type: 'work', certainty: 0.8 })).types).toHaveLength(4);
+    // A painter or architect is a person, never a music artist.
+    expect(searchPlan(cand({ name: 'Fixture Vermeer', type: 'creator', domain: 'art', certainty: 0.8 })).types).toEqual(['urn:entity:person']);
+    const movie = ent('M1', 'Fixture Stained Glass Windows', 'urn:entity:movie');
+    const anyWork = cand({ name: 'Fixture Stained Glass Windows', type: 'work', certainty: 0.8 });
+    expect(acceptMatch(anyWork, searchPlan(anyWork), [movie]).match).not.toBeNull();
+  });
+
+  it('a decor or setting tag never grounds a vehicle, garment, dish or sport claim (h43 shape); an aesthetic style tag may', () => {
+    const car = cand({ name: 'Futuristic fixture sports car', type: 'style', domain: 'vehicle', tag_query: 'futuristic design' });
+    expect(acceptMatch(car, tagsPlan(car), [tag('urn:tag:decor:qloo', 'fut', 'Futuristic Design')])).toMatchObject({ match: null, reason: 'decor_tag_outside_domain' });
+    const sneaker = cand({ name: 'Retro fixture sneaker', type: 'style', domain: 'fashion', tag_query: 'retro' });
+    expect(acceptMatch(sneaker, tagsPlan(sneaker), [tag('urn:tag:style:qloo', 'retro', 'Retro')]).match).toMatchObject({ name: 'Retro' });
+  });
+
+  it('one defining-style rule for style tags matched through the tag query: the tag adds no word and drops no proper name', () => {
+    // Accepted: the tag is the candidate's own defining style.
+    for (const [name, t] of [
+      ['Rustic wooden table', 'Rustic'],
+      ['Minimalist tableware', 'Minimalist'],
+      ['Neoclassical chair', 'Neoclassical'],
+      ['Dutch Golden Age portraiture', 'Dutch Golden Age Style'],
+      ['wood-paneled interior', 'Wood Paneling'],
+    ] as const) {
+      expect(definingStyleTag(name, t), `${name} -> ${t}`).toBe(true);
+      const c = cand({ name, type: 'style', domain: 'interior', tag_query: t.toLowerCase() });
+      expect(acceptMatch(c, tagsPlan(c), [tag('urn:tag:decor:qloo', 'x', t)]).match).toMatchObject({ name: t });
+    }
+    // Not accepted: the tag adds a word (h07, h02, a looser upholstery tag) or drops a place (h10).
+    for (const [name, t] of [
+      ['Rustic painted wooden bar stools', 'Rustic Farmhouse'],
+      ['Mid-century automotive design', 'Mid Century Modern'],
+      ['striped sofa', 'Striped Upholstery'],
+      ['Hong Kong neon signage', 'Neon Signage'],
+    ] as const) {
+      expect(definingStyleTag(name, t), `${name} -> ${t}`).toBe(false);
+      const c = cand({ name, type: 'style', domain: 'design', tag_query: t.toLowerCase() });
+      expect(acceptMatch(c, tagsPlan(c), [tag('urn:tag:decor:qloo', 'x', t)]).match).toBeNull();
+    }
+    // A tag equal to the candidate's own name is accepted as before; cuisine tags are not concerned.
+    const loft = cand({ name: 'Industrial loft', type: 'style', domain: 'interior', tag_query: 'industrial' });
+    expect(acceptMatch(loft, tagsPlan(loft), [tag('urn:tag:decor:qloo', 'loft', 'Industrial Loft')]).match).toMatchObject({ name: 'Industrial Loft' });
   });
 });

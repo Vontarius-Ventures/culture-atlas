@@ -373,11 +373,12 @@ describe('reading v2 (quality plan §3)', () => {
     // vlm-quick-v3 (round 4, docs/quality-plan.md §19): was ae79cce2… as vlm-quick-v2.
     expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('d1a308e5631c07c18dead7d4d02823114f845340ec13f1008a2add7d3fbea248');
     expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v3');
-    // vlm-enrich-v6 (round 4, iteration 3, §19.15): was e682090c… as vlm-enrich-v5 (iteration 2, §19.13),
+    // vlm-enrich-v7 (round 4, after iteration 4, §19.21): was 0a942c85… as vlm-enrich-v6 (iteration 3, §19.15),
+    // e682090c… as vlm-enrich-v5 (iteration 2, §19.13),
     // 8007487d… as vlm-enrich-v4 (round 4), b8740b2b… as vlm-enrich-v3 (requalification tune, §15), d23612b5…
     // as vlm-enrich-v2.
-    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('0a942c855e8650d66fd7dd44fd807bc4bc6ca8dbdfb6955f051bcea63f7b9ee1');
-    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v6');
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('c52ea8ef1e25e7a7298c6f660636965713ca209668486dc8ac13496dbc5cd4b6');
+    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v7');
   });
 
   it('round 4 (vlm-quick-v3, vlm-enrich-v4): people photos name what is worn, held, eaten or played; works by their title', () => {
@@ -400,6 +401,13 @@ describe('reading v2 (quality plan §3)', () => {
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('another named style or type fits them as well or better');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('a vehicle, sign or building form found only in that place');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('A brand, maker or model is supported only when its name or logo is legible');
+  });
+
+  it('vlm-enrich-v7 judges a work named by its title by the form that identifies it', () => {
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain(
+      'A well-known artwork, building or landmark named by its title or proper name is supported when the distinctive form that identifies that specific work is shown',
+    );
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('weak when only its genre, period or style fits');
   });
 
   it('vlm-enrich-v6 proposes only additions the guard can publish: certainty at the addition floor, on read text, a logo or a form', () => {

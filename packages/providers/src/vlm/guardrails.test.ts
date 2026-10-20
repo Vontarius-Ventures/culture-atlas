@@ -111,7 +111,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v14');
+    expect(GUARDRAIL_VERSION).toBe('guard-v15');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -2169,10 +2169,12 @@ describe('guard-v12: one people test on every surface, rules that follow the pro
   it('an art-domain claim whose only medium word is "painting" waits for stage 2 instead of being dropped', () => {
     expect(paintingSubject({ name: 'Plum blossom painting', tag_queries: [] }, 'art')).toBe(true);
     expect(paintingSubject({ name: 'Plum blossom illustration painting', tag_queries: [] }, 'art')).toBe(false);
-    expect(paintingSubject({ name: 'Folk floral painting', tag_queries: [] }, 'craft')).toBe(false);
+    // guard-v15: a painted-decoration tradition filed under craft is a painting subject too (iteration-4 h37).
+    expect(paintingSubject({ name: 'Folk floral painting', tag_queries: [] }, 'craft')).toBe(true);
+    expect(paintingSubject({ name: 'Folk floral painting', tag_queries: [] }, 'fashion')).toBe(false);
     const cands = [
       v2({ name: 'Fixture blossom painting', type: 'tradition', domain: 'art', certainty: 0.8, evidence: 'distinctive_form' }),
-      v2({ name: 'Fixture floral painting', type: 'style', domain: 'craft', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture floral painting', type: 'style', domain: 'design', certainty: 0.8, evidence: 'distinctive_form' }),
       v2({ name: 'Fixture blossom illustration', type: 'style', domain: 'art', certainty: 0.8, evidence: 'distinctive_form' }),
     ];
     const g = read('Hanging scroll', 'A scroll with blossoms.', cands);
@@ -2345,5 +2347,36 @@ describe('guard-v14: generic occasion and event nouns in the people test on ever
     expect(decisionFor(g.decisions, 'Fixtureville Lantern Festival')?.action).not.toBe('observe');
     const s2 = stage2(g, enrichment({ visible_text: ['FIXTUREVILLE LANTERN FESTIVAL'], confirmed: [ok('Fixtureville Lantern Festival')] }));
     expect(decisionFor(s2.decisions, 'Fixtureville Lantern Festival')?.note).not.toBe('people_claim');
+  });
+});
+
+/*
+ * guard-v15 (round 4, after iteration 4, docs/quality-plan.md §19.21): two medium-rule over-drops found in the
+ * iteration-4 drops, by class. Each test fails on guard-v14.
+ */
+describe('guard-v15: the medium rule names what is shown, not the search phrase or the domain label', () => {
+  const read = (cands: VlmQuickCandidate[]) =>
+    guardQuickRead(toVlmAnalysis({ title: 'A painted kettle', interpretation: 'A red kettle with gold flowers.', candidates: cands, quality: { usable: true, issue: null } }), {
+      twoStage: true,
+    });
+  const ok = (name: string) => ({ name, rationale: 'Visible', verdict: 'supported' as const });
+
+  it('a painted-decoration tradition filed under craft waits for stage 2 like an art-domain one (iteration-4 h37 shape)', () => {
+    const g = read([v2({ name: 'Fixture folk painting', type: 'tradition', domain: 'craft', certainty: 0.6, evidence: 'distinctive_form', tag_query: 'fixture folk painting' })]);
+    expect(decisionFor(g.decisions, 'Fixture folk painting')).toMatchObject({ action: 'hold', note: 'held_painting_subject' });
+    expect(names(stage2(g, enrichment({ confirmed: [ok('Fixture folk painting')] })).analysis.candidates)).toEqual(['Fixture folk painting']);
+    // Another medium word still drops it, in craft as in art.
+    const other = read([v2({ name: 'Fixture folk illustration', type: 'tradition', domain: 'craft', certainty: 0.6, evidence: 'distinctive_form' })]);
+    expect(decisionFor(other.decisions, 'Fixture folk illustration')).toMatchObject({ action: 'drop', rules: ['G-MEDIUM'] });
+  });
+
+  it('a medium word only in the tag query removes that query, not the claim (iteration-4 h61 "Tronie" shape)', () => {
+    const g = read([v2({ name: 'Fixture tronie', type: 'style', domain: 'art', certainty: 0.7, evidence: 'distinctive_form', tag_query: 'fixture character study painting' })]);
+    expect(names(g.analysis.candidates)).toEqual(['Fixture tronie']);
+    expect(g.analysis.candidates[0]!.tag_queries).toEqual([]);
+    expect(decisionFor(g.decisions, 'Fixture tronie')?.rules).toContain('G-MEDIUM');
+    // A medium word in the name still drops it.
+    const named = read([v2({ name: 'Fixture tronie illustration', type: 'style', domain: 'art', certainty: 0.7, evidence: 'distinctive_form' })]);
+    expect(decisionFor(named.decisions, 'Fixture tronie illustration')?.action).toBe('drop');
   });
 });

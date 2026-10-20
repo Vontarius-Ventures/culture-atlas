@@ -89,7 +89,14 @@ import {
  * unread brand word outside the covered match still counts. No gate, threshold or other metric definition
  * changed.
  */
-export const SCORER_VERSION = 'score-v13';
+/**
+ * score-v14 (round 4, after iteration 4, owner decision; docs/quality-plan.md §19.21): the scorer's
+ * describing words are matched with their inflections (isDescribing, a light suffix stemmer): h01
+ * "Puschkin advertising billboard" with PUSCHKIN read counted as a brand without text in score-v13 because
+ * "advertising" is not listed while "advert", "advertisement" and "billboard" are. The coverage of the
+ * label's own generic entry (score-v13) is unchanged. No gate, threshold or other metric definition changed.
+ */
+export const SCORER_VERSION = 'score-v14';
 /** score-v8: forbidden classes about the people that also apply to the headline (field `candidate`). */
 export const HEADLINE_PEOPLE_CLASSES: ReadonlySet<ForbiddenClass> = new Set(['person_identity', 'person_descriptor', 'role_inference']);
 
@@ -246,6 +253,35 @@ const DESCRIBING = new Set(
    billboard poster sign signage advert advertisement banner storefront shop store label packaging wordmark`.split(/\s+/),
 );
 /**
+ * score-v14: a light suffix stemmer for the describing words (no dictionary, no guard lexicon). It strips one
+ * inflectional or derivational ending (-ments, -ment, -ings, -ing, -ed, -es, -s) and a final "e", and only
+ * when at least four letters remain, so "advertising", "advertised", "advertisements" and "advertisement"
+ * share the stem "advertis", while short words keep their own form ("Vans" is not "van", "Boxing" is not
+ * "box").
+ */
+export function describingStem(word: string): string {
+  let w = word;
+  for (const suffix of ['ments', 'ment', 'ings', 'ing', 'ed', 'es', 's']) {
+    if (w.endsWith(suffix) && w.length - suffix.length >= 4) {
+      w = w.slice(0, -suffix.length);
+      break;
+    }
+  }
+  return w.length > 4 && w.endsWith('e') ? w.slice(0, -1) : w;
+}
+const DESCRIBING_STEMS = new Set([...DESCRIBING].map(describingStem).filter((s) => s.length >= 4));
+/**
+ * score-v14: a word describes when it is a describing word or an inflection of one (same stem of four or
+ * more letters): h01 "Puschkin advertising billboard" with PUSCHKIN read, where score-v13 required the
+ * unlisted "advertising" to be read as a brand word. A word whose stem is not a describing stem still
+ * names ("Signet", "Vans").
+ */
+export function isDescribing(word: string): boolean {
+  if (DESCRIBING.has(word)) return true;
+  const stem = describingStem(word);
+  return stem.length >= 4 && DESCRIBING_STEMS.has(stem);
+}
+/**
  * The scorer's own maker list (independent of the guard's MAKERS): a name with one is brand-like.
  * score-v12: each maker is listed under its trade, so a maker word in the name of a dish or a garment
  * counts only when the maker is of that trade (makerUsedAsBrand).
@@ -304,7 +340,7 @@ export type CandidateStatus = 'expected' | 'acceptable' | 'forbidden' | 'unlabel
 /** The first word that names rather than describes (score-v3 skips qualifiers, colours and product nouns: "Vintage Nissan" heads with "nissan"). */
 export function headToken(name: string): string | null {
   for (const t of normalizeName(name).split(' '))
-    if (t.length >= 3 && !HEAD_SKIP.has(t) && !DESCRIBING.has(t) && !/^\d+$/.test(t)) return t;
+    if (t.length >= 3 && !HEAD_SKIP.has(t) && !isDescribing(t) && !/^\d+$/.test(t)) return t;
   // Non-Latin names (CJK, Hangul, ...) are compared verbatim: first word of two or more letters.
   for (const t of foldText(name).split(' ')) if ([...t].length >= 2 && /\p{L}/u.test(t) && !/[a-z]/.test(t)) return t;
   return null;
@@ -323,7 +359,7 @@ function brandWordsOf(name: string): string[] {
   if (!head) return [];
   const rest = normalizeName(name)
     .split(' ')
-    .filter((t) => t !== head && !HEAD_SKIP.has(t) && !DESCRIBING.has(t) && ((t.length >= 3 && !/^\d+$/.test(t)) || modelCode(t)));
+    .filter((t) => t !== head && !HEAD_SKIP.has(t) && !isDescribing(t) && ((t.length >= 3 && !/^\d+$/.test(t)) || modelCode(t)));
   return [head, ...rest];
 }
 

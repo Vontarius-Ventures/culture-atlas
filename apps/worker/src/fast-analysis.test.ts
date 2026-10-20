@@ -38,7 +38,7 @@ const QUICK = VlmQuickRead.parse({
   candidates: [
     { name: 'Fixture Denim Co', type: 'brand', relation: 'depicted', certainty: 0.9, categories: ['wear'], tag_query: null },
     {
-      name: '1960s motor racing style',
+      name: 'Vintage motor racing style',
       type: 'style',
       relation: 'resembles',
       certainty: 0.6,
@@ -55,7 +55,7 @@ const ENRICHMENT = VlmEnrichmentV1.parse({
   visible_text: ['FIXTURE DENIM'],
   confirmed: [
     { name: 'Fixture Denim Co', rationale: 'Legible chest wordmark', keep: true },
-    { name: '1960s motor racing style', rationale: 'Gloves may be ordinary winter gloves', keep: false },
+    { name: 'Vintage motor racing style', rationale: 'Gloves may be ordinary winter gloves', keep: false },
     { name: 'Italian aperitivo culture', rationale: 'Spritz glass on the table', keep: true },
   ],
   additional_candidates: [
@@ -174,7 +174,7 @@ describe('two-stage photo reading (FAST-02)', () => {
     // never publishes from stage 1 alone).
     expect(enricher.calls[0]!.stage1).toEqual({
       title: 'Vintage racing references',
-      candidates: ['1960s motor racing style', 'Italian aperitivo culture', 'Fixture Denim Co'],
+      candidates: ['Vintage motor racing style', 'Italian aperitivo culture', 'Fixture Denim Co'],
     });
     expect(beforeRefs).not.toContain('Fixture Denim Co');
     expect(enricher.calls[0]!.image.mediaType).toBe('image/jpeg');
@@ -230,7 +230,7 @@ describe('two-stage photo reading (FAST-02)', () => {
     expect(analysis[0]!.title).toBe('Vintage racing references');
     expect(analysis[0]!.observations.map((o) => o.text)).toEqual(['Leather driving gloves', 'FIXTURE DENIM']);
     expect(analysis[0]!.candidates.map((c) => [c.name, c.rationale])).toEqual([
-      ['1960s motor racing style', 'Gloves may be ordinary winter gloves'],
+      ['Vintage motor racing style', 'Gloves may be ordinary winter gloves'],
       ['Italian aperitivo culture', 'Spritz glass on the table'],
       ['Fixture Denim Co', 'Legible chest wordmark'],
       ['Mid-Century Modern', 'Teak side table behind the chair'],
