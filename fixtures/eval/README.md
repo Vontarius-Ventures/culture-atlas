@@ -19,6 +19,7 @@ fixtures/eval/
                      plus the blind_run record that consumes the split (scripts/eval/freeze.ts)
   golden-v3/         round 2: tune = every golden-v2 photo (h14-h29 included), h26 label fixed;
                      held-out = h30-h49 (no longer blind: its blind run failed; FREEZE.md, freeze.json as in golden-v2)
+  golden-v4/         round 3: tune = every golden-v3 photo, label fixes on h31, h43, h46, h01; no held-out split yet
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -99,7 +100,8 @@ fixtures/eval/
   change in its `history` (date, change, reason, and the decision that
   allowed it). p14 is the first: its must-read text and expected reference
   were changed to what is legible at 768 px (docs/requalification-plan.md
-  decision 1). h26 in golden-v3 is the second (its roadster pattern, round 2).
+  decision 1). h26 in golden-v3 is the second (its roadster pattern, round 2);
+  h31, h43, h46 and h01 in golden-v4 follow (round 3).
 - **thr-v2** (docs/requalification-plan.md decisions 3 and 4). `two_stage_only`
   lists the metrics gated only on a two-stage scorecard (M5, M9): a split
   scored on stage 1 alone reports them but is gated on M15 ≥ 0.60 for
@@ -150,7 +152,7 @@ fixtures/eval/
 
 ## Metrics and gates
 
-`scripts/eval/scorer.ts` (`score-v5`; v5 counts plural role nouns and players, athletes or spectators in the reading as people) computes M1–M16 per split; M17 ("scorer
+`scripts/eval/scorer.ts` (`score-v7`; v5 counts plural role nouns and players, athletes or spectators in the reading as people; v7 lets a must-read string span up to three consecutive transcriptions, so "ALL YEAR" / "ROUND" reads "ALL YEAR ROUND") computes M1–M16 per split; M17 ("scorer
 teeth") requires that the same recordings without guardrails fail M1. The
 replay gates apply to the tune split of `replay-v1` in CI; the live gates apply
 to every split of a live run, with stricter M3/M5 on the tune split
@@ -162,11 +164,16 @@ the labels need review before the numbers mean anything.
 
 score-v4 and later also report, without gates: `text_only` (references published only
 as text-only, decision 2) and the verifier measures `verifier_checked`,
-`forbidden_published`, `forbidden_uncontested` and `M5_uncontested` (the
-verifier can only contest a claim, never remove it; how Tune uses them is in
-docs/requalification-plan.md). `eval:live --roles ...,vision_verify` stores
-the verifier's reply with each recording, and `eval:replay --verifier both`
-scores the same readings with and without it.
+`forbidden_published`, `forbidden_uncontested` and `M5_uncontested`. Since
+round 3 (`vlm-verify-v3`, docs/quality-plan.md §18) the verifier is binding:
+only its "yes" publishes a checked claim, so score-v7 also reports
+`verifier_blocked`, `verifier_blocked_forbidden` and `verifier_blocked_good`
+(how Tune uses them is in docs/requalification-plan.md). `eval:live --roles
+...,vision_verify` stores both checks with each recording (`verification1`
+before the first section publishes, `verification2` before stage 2 publishes;
+`null` for a failed call, which blocks its claims); a legacy single
+`verification` reply replays by name under the v3 semantics. `eval:replay
+--verifier both` scores the same readings with and without them.
 
 ## golden-v3 blind split (round 2)
 
@@ -185,3 +192,26 @@ were written before any model saw the photos and are frozen
 named. The photos and `SOURCES.md` live outside git (`blind-v3/`). The one
 blind run failed and is recorded in `golden-v3/freeze.json` (`blind_run`);
 h30–h49 are `"blind": false` and the binding marks golden-v3 `blind_consumed`.
+
+## golden-v4 (round 3 tune set)
+
+`golden-v4/` holds golden-v3's 64 photos, every one `split: "tune"`
+(round 3, docs/requalification-plan.md "Round 3: structural change", item 3).
+Four labels were fixed where the scorer counted a correct drop or a wrong claim
+the wrong way, each change recorded in the label's `history`:
+
+- **h31**: the expected pattern accepts pepperoni or a pizza with only
+  describing words before it, so a regional style named from context alone
+  ("Neapolitan-style pizza") is no longer label-good through the word "pizza".
+- **h43**: the acceptable "BMW Vision EfficientDynamics" is split into "BMW
+  Vision" (requires "Vision") and the full name (requires "EfficientDynamics"),
+  so dropping the full name when only "Vision" is read is not a lost claim.
+- **h46**: "Basketball" matches only the sport with describing words; "NBA
+  basketball" is judged by the NBA entry (NBA is not written).
+- **h01**: a generation, mark or phase of the model is forbidden
+  (`brand_without_text`): it is not written on the vehicle.
+
+golden-v4 has no held-out split yet and is not frozen: the round-3 blind set
+(`h50`+) is added, frozen and bound before any model reads it, and only then
+does `REQUIRED_GOLDEN_SET` move from golden-v3 to golden-v4. golden-v2 and
+golden-v3 are not edited.

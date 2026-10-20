@@ -82,10 +82,10 @@ export const DomainConfigSchema = z.object({
   TASTE_SEED_ENABLED: z.string().optional(),
   WHILE_WE_LOOK_ENABLED: z.string().optional(),
   /**
-   * Photo-role requalification: the independent verifier (vision_verify) runs
-   * only when this is "true"/"1" (default off; the tune-split evaluation kept
-   * it off, docs/quality-plan.md §15) and the role is qualified; the kill switch
-   * analysis_verifier_enabled turns it off.
+   * Photo-role requalification: the verifier (vision_verify; round 3: another
+   * model family, binding before publication, docs/quality-plan.md §18) runs
+   * only when this is "true"/"1" (default off until Tune decides) and the role
+   * is qualified; the kill switch analysis_verifier_enabled turns it off.
    */
   ANALYSIS_VERIFIER_ENABLED: z.string().optional(),
   FEATURE_KILL_SWITCHES: z.string().optional(),

@@ -127,3 +127,53 @@ Rounds 1 and 2 each failed their blind run on new edge cases ("players", "photog
 4. **Composer injection hardening:** a hardened plan-prose prompt (new prompt version) so injected fixture text cannot be echoed; re-qualify the composer.
 5. **Larger fresh blind set (h50+, 24–30 photos)**, labelled before any model run and frozen, with the same no-change-after-blind-run rule. Previously consumed photos join the tune split.
 6. Tune, freeze, single blind run, qualify on pass, real end-to-end upload, review and fix, as before. Budget: Concentrate ≤ 260, Qloo ≤ 150.
+
+## Round 3 build record (2026-10-20)
+
+Items 1–4 built on branch `r3/structural` (from `74ec4f2`). Details and the
+replay table are in [quality-plan §18](quality-plan.md#18-requalification-round-3-structural-change-build-2026-10-20).
+No request was made (0 Concentrate, 0 Qloo, 0 Wikipedia); no threshold changed;
+golden-v2 and golden-v3 are untouched and stay consumed.
+
+1. **Evidence classes (guard-v8).** Claims about the people in a photo (a
+   tradition or style with no thing domain) need read text: held at stage 1,
+   private once stage 2 shows people. A held claim with a weak or unsupported
+   second reading never publishes. A stage-2 addition on context alone never
+   publishes. Withheld claims are private observations (guard action
+   `observe`), shown only in the inspector. A read maker ("BMW") is kept as a
+   text-only brand reference when the model name is not read. **Deviation:**
+   a stage-1 claim on context alone still publishes when the verifier is off,
+   because holding all of them empties the first section (M15 0.31–0.57 on the
+   recorded runs, and the CI replay would fail); with the verifier on it
+   publishes only on the verifier's "yes".
+2. **Different-family verifier (`vlm-verify-v3`).** Binding before
+   publication: the first section's attribution and context-only claims are
+   checked in parallel with Qloo resolution, what stage 2 would publish before
+   it does; "no", "unsure", no answer or a failed call block that claim.
+   Suggested route `vertex/gemini-2.5-flash` (family google, ZDR listed for the
+   vertex route in the snapshot; the `privacyVerifiedAt` exception is recorded
+   for it in docs/concentrate.md). `qualify:concentrate --role vision_verify`
+   now runs (independence and ZDR checked before any request, up to four
+   requests per photo, `verifier_same_family` / `verifier_unexercised` gates).
+   Default off.
+3. **score-v7 and golden-v4.** Must-read text may span up to three consecutive
+   transcriptions. golden-v4 = golden-v3's 64 photos, all tune, with label
+   fixes on h31, h43, h46 and h01 (each in the label's history).
+4. **Composer `composer-v2`.** Injection-hardened plan-prose system prompt,
+   escaped data blocks, pinned prompts, text fixtures rebuilt, binding
+   regenerated. Not run live. `research_text` becomes stale as a side effect
+   (the `text-v1` digest changed; its fixtures did not).
+
+**Replays (verifier off).** The round-2 blind readings now fail only M4 (0.25)
+on their held-out labels and pass every gate on golden-v4 (tune); M1, M2 and
+M11 are 0. The cost is M4 on every run (round-1 blind readings 0.216 on
+golden-v3/v4 tune labels, tune run 2 0.200 at the gate) from correct claims
+that rested on context alone or that stage 2 hedged.
+
+**Next (items 5–6, not started):** Tune with the verifier on the new route
+(live, on golden-v4 tune; it decides the default and whether the stage-1
+deviation closes), a fresh blind set h50+ (24–30 photos) added to golden-v4 and
+frozen before any model run, `REQUIRED_GOLDEN_SET` moved to golden-v4 at the
+freeze, the single blind run, then qualification of the photo roles and the
+verifier, `research_text` and `composer` (17 requests), and the end-to-end
+upload.

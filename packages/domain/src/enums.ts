@@ -169,8 +169,9 @@ export const LIMITS = {
   qlooResolveConcurrency: 3,
   /**
    * Model calls one photo reading may take: stage-1 quick read + stage-2
-   * enrichment + the background verifier (vision_verify, off by default).
-   * The verifier's call is reserved separately and only when it is enabled.
+   * enrichment + two verifier checks (vision_verify, off by default; round 3:
+   * one before the first section publishes, one before stage 2 publishes).
+   * The verifier's calls are reserved separately and only when it is enabled.
    */
   visionCallsPerAnalysis: 4,
   anchorsMax: 5,
