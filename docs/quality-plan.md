@@ -2284,7 +2284,24 @@ is 188 requests on the 94 tune photos (`--split tune`, golden-v5), no Qloo,
 its own out-dir and ledger. The exact commands are in the round's scratchpad
 (`r4/SWEEP.md`).
 
-### 19.6 Not changed, open
+**Smoke (done).** The haiku command on two tune photos (`--only h67,h74`):
+4 requests, all 200, 0 invalid, 0 incomplete; stage 1 3.2 s and 3.6 s, stage 2
+4.7 s and 4.5 s. On h74 (two men sharing a cake) `vlm-quick-v3` named the cake,
+the cake stand, the suit, the necktie and the lantern and no occasion; on h67
+the held "BMW Z4" published "Z4" as a text-only brand (read model), the
+expected hit. Two photos are not a measurement; they show the command works.
+A label caveat for M6 surfaced: several people labels allow no `wear`
+category (h09, h10, h11, h20, h21, h22, h32, h40, h42, h49, h54, h69, h74,
+h79, p04, p12), so garment claims the new prompt asks for count against M6
+there (h74: 4 of 6). It is reported for the sweep, not edited.
+
+### 19.6 Spend (build)
+
+4 Concentrate requests (the smoke, package `r4-smoke-haiku`, ledger outside
+the repository, all 200) and one catalog read (`GET /v1/models`, no model
+call). 0 Qloo, 0 Wikipedia. No Elorian.
+
+### 19.7 Not changed, open
 
 - Thresholds (thr-v2), the verifier (off), held-out labels of earlier sets.
 - p05 "Lustreware" and h78's strict paraphrase rule (§18.16) are unchanged.
