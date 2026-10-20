@@ -2704,3 +2704,128 @@ unfrozen; nothing was frozen.
 | **Total** | **1,413** | **173** | **at most $25.79** (worst-case reservations except the four mix runs, list-rate cost) |
 
 0 Wikipedia. Round-4 caps: 1,500 requests and $60 (87 requests left).
+
+### 19.19 guard-v14, production retries in eval:live, grounding judgements, iteration-4 confirmation
+
+Owner decisions after 19.17: (1) guard-v14; (2) eval:live retries exactly as production does, no more;
+(3) hand judgements for the grounding gate; (4) round-4 caps raised to 2,000 Concentrate requests and
+$40, then one live confirmation with Qloo.
+
+**guard-v14: generic occasion nouns.** The people test's occasion list (`PEOPLE_CONTEXT_WORDS`, read
+through `PEOPLE_CLAIM_RE`) named specific occasions (wedding, prom, birthday, graduation, ...) and missed
+their generic class. `GENERIC_OCCASION_WORDS` adds the nouns of a social occasion or event:
+celebration, party, reception, festivities, ceremony, gathering, get-together, banquet, gala, soirée,
+fête, festival, jubilee, parade, procession, event, occasion (singular and plural). Because the
+existing surfaces all read `PEOPLE_CLAIM_RE`, it applies on every surface of a photo with people: the
+headline (as a unit, guard-v13), claims at stage 1 and stage 2 (G-PEOPLE-CLAIM, a private observation),
+observations and "What caught your eye?" labels. The read-text exemption is unchanged: a claim whose
+words stage 2 transcribed (`claimReadIn`) is still backed ("… Lantern Festival" on a banner). The
+headline never had a read-text exemption and still has none.
+
+- Homonyms that name a thing are excluded the way "a chef's knife" already was: a reception desk, area,
+  counter, hall or room; a banquet hall, room, table or chair (h74 accepts "banquet hall" and "function
+  room"); Gala apples. "Ceremonial" (an adjective: h76's expected "Ceremonial uniform") is not matched;
+  nor are "festive", "eventing".
+- **"Party hat", decided:** an object or food named by an occasion is treated as "Wedding cake" already
+  is. On a photo with people it is withheld (the word assigns the people an occasion); on a photo
+  without people it is held at stage 1 and published on a supported second reading. A named festival or
+  ceremony that is also a tradition ("tea ceremony", "Mid-Autumn Festival") is withheld on a photo with
+  people unless its name is read, which matches h52 and h59 forbidding "spring festival"; no tune label
+  expects such a name.
+- Tests: `guardrails.test.ts` "guard-v14" (4; the headline, claims/observations/labels, and the
+  negative-case tests fail on guard-v13; the read-text test pins the unchanged exemption). Two older
+  fixtures used "celebration" and "ceremony" as filler words ("Fixture celebration cake", "Fixture tea
+  ceremony"); they were renamed so they keep testing their own rules (the hold-by-class and
+  G-CUISINE-FOOD).
+
+**Production retry policy (eval:live now mirrors it).** Found in the code:
+
+| Layer | What production does |
+| --- | --- |
+| `StructuredResponseRunner` | `maxRetries` = the job's `provider_retries` (`JOB_MAX_PROVIDER_RETRIES`, default `LIMITS.providerRetriesPerStage` = 2), capped at **one** in-process retry, and only for a transient provider failure (424, 5xx, a network error that is not a timeout), inside the role's deadline. **A timeout is never retried in-process** (uncertain upstream billing, exhausted deadline). |
+| Analysis job (`apps/worker` `failJob`) | A stage-1 failure leaves `analyze` and fails the job; `ProviderError.retryable` (timeout, server, rate_limited) re-queues it with the queue's backoff while attempts remain (`JOB_MAX_ATTEMPTS`, default 3). The next job attempt reads the photo again from stage 1. |
+| Stage 2, verifier | Caught inside the job (the analysis continues without them): never re-queued. |
+| Operator fallback (`MODEL_FALLBACK=elorian`) | Off by default; not mirrored. |
+
+eval:live sent `maxRetries: 0` on every call and never re-ran a photo, so a stage-1 timeout counted as
+a lost photo (M13) where production would have re-queued the job. It now passes
+`JOB_MAX_PROVIDER_RETRIES` to every call and re-runs a photo's stage 1 after a retryable failure, up to
+`JOB_MAX_ATTEMPTS` job attempts with the queue's `backoffMs`; a 429 still stops the run (the budget
+rule wins over production's re-queue). Every attempt goes through the counted fetch and the ledger, and
+the run reports `stage-1 job retries`. The defaults are read from `DomainConfigSchema`, so a change
+there changes the harness. Tests in `live.test.ts` "production retry policy" (4). The plan's
+worst case still prices one call per stage; retries draw on `--max-requests` and the spend ledger at
+run time. M13 is measured as before: a photo whose three job attempts all fail counts against it.
+
+The iteration-3 grounding run (19.17) predates this: its three stage-1 timeouts (p04, h05, h06) would
+have been re-queued in production.
+
+**Grounding judgements.** `eval:live --grounding-judgements` takes `GroundingJudgement[]`
+(`scripts/eval/release-gates.ts`: `photo`, `candidate`, `correct_match`, `good_candidate`, `findable`),
+not the records shape of `grounding.json`; the judgement files are written in that format, one entry
+per Qloo lookup, outside git (`r4/iter3-qloo/grounding-judgements.json`,
+`r4/iter4-qloo/grounding-judgements.json`, generated by `r4/tools/judge_iter{3,4}.py`, which carry the
+reasons). eval:replay cannot re-score grounding, so the records were re-scored offline with the
+committed `scoreGrounding` (`r4/tools/regrade.mts`). Rules, conservative: `correct_match` when the
+accepted Qloo item is the candidate (a decor tag naming the candidate's defining style or feature
+counts: "Exposed brick wall" → Exposed Brick; a looser or different style, a dropped place, or another
+entity type does not); `good_candidate` when the label expects or accepts the claim (read where it
+requires text); unlabelled → false; `findable` when the correct item is among the returned results.
+
+| Run | Accepted | Precision (≥ 1) | End-to-end (≥ 0.9) | Recall (≥ 0.5) | Wrong matches |
+| --- | --- | --- | --- | --- | --- |
+| iter3-qloo | 31 of 173 lookups | 0.9032 FAIL | 0.8710 FAIL | 0.7778 ok | h02 "Mid-century automotive design" → decor Mid Century Modern; h43 "futuristic hybrid sports car" → Futuristic Design; h57 "Stained glass windows" → a movie of that title |
+| iter4-qloo | 26 of 167 lookups | 0.9231 FAIL | 0.8846 FAIL | 0.6667 ok | h07 "Rustic painted wooden bar stools" → Rustic Farmhouse; h10 "Hong Kong neon signage" → Neon Signage |
+
+Both runs: forbidden_accepts 0, doubtful_name_published 0, text_only_searched 0, labelled_candidates ≥ 40.
+**`holdout_candidates` is n/a on a tune split** (no held-out photos exist in the tune split; it reads 0
+of ≥ 10 by construction and is not a failure of these runs). Not judged good: h21 "wrought iron
+projecting sign bracket" (iter3) and h31 "Neapolitan pizza" (iter4), both unlabelled.
+
+**Replays (no request), guard-v14, score-v13.** Iteration-3 mix PASS (unchanged). The iteration-3
+grounding run's recordings PASS (`M1 0`: h74's interpretation is now replaced; replay sees only the 91
+recorded photos, so its M13 reads 1). Iteration-2 FAIL M4 0.3214 only; iteration 1 M1 1 (p02), M4;
+haiku sweep M1 1 (h28), M4, M8; sonnet sweep M4, p50; gpt-mini sweep unchanged; every round-3 and older
+recording as under score-v13 (M1 0 on all); `replay-v1` PASS.
+
+**Live confirmation with Qloo (iteration 4): Tune FAIL.** Mix (`vlm-quick-v3` / `vlm-enrich-v6`),
+guard-v14, score-v13, `--qloo --max-qloo-requests 300 --qloo-concurrency 2`, out-dir `r4/iter4-qloo`,
+ledger `r4/ledger-iter4-qloo.jsonl`, package `r4-iter4-qloo`, `--max-requests 230 --spend-cap-usd 8`.
+
+- Requests: 188 Concentrate, all 200 (no timeout, 0 job retries), 167 Qloo, all 200. $1.533 at list rate.
+- Gates: `tune: FAIL runs=94 published=251 M1=1 M2=0.008 M3=0.991 M4=0.2057 M5=0.8434 M6=0.996
+  M7=0.9667 M8=0 M9=0.9231 M10=0 M11=0 M12=0.1155 M13=1 M14_stage1_p50=2560 M14_stage1_p95=3750
+  M14_enrich_p95=7986 M14_incomplete=0 M15=0.6988 qloo_forbidden_accepts=0 forbidden_published=2
+  verifier_checked=0 text_only=8`.
+- **M1 1 and M7 0.9667: h01 "Puschkin advertising billboard"** (typed place, read text "PUSCHKIN",
+  transcribed at stage 2, supported). The label accepts "puschkin" with that text. The scorer's describing
+  words have "billboard", "advert" and "advertisement" but not "advertising", so "advertising" must be
+  read: the same scorer class as h20 in 19.15, which score-v13 fixed only where the label's own generic
+  entry covers the word (h01's generic entry names vans). Not changed (outside the delegated decisions).
+- **M4 0.2057 (43 of 209 label-good claims dropped), just over 0.20.** Replaying the same recordings
+  under guard-v13 gives the same 0.2057: guard-v14 dropped nothing label-good here, and the difference
+  from iteration 3 (0.1872) is reading-to-reading variance of the two models. The drops are mostly weak
+  verdicts on context-only styles, places and traditions (p03 Mid-century modern, h13 Lujiazui, h16
+  Italian coffee culture, h22/h23 Japanese street, h79 Istanbul, Ottoman architecture), held brands not
+  read in full (h22 Vodafone, h24 Yamaha Maxim, h43 BMW Vision EfficientDynamics), and titled works
+  (h60 David by Michelangelo, h61 Johannes Vermeer).
+- Grounding (judged, above): precision 0.9231 and end-to-end 0.8846 fail; recall 0.6667, forbidden
+  accepts 0 pass; holdout_candidates n/a.
+
+**State.** Safety holds on the live runs: no forbidden Qloo accept in 340 lookups, M2 at most 0.0117,
+the only M1 in each of the last three live readings a scorer describing-word artifact on a read brand
+(h20, h01) or the occasion class now fixed (h74). Tune passes on the iteration-3 recordings and fails
+on the iteration-4 reading by M4 0.0057 and the h01 artifact. Grounding precision fails on Qloo's tag
+acceptance for loose decor matches and a work matched to a movie: those are Q-rule questions (the
+grounding rules), not the reading. h80+ stays unfrozen; nothing was frozen.
+
+### 19.20 Spend (round 4 to date)
+
+| Package | Concentrate requests | Qloo | Cost |
+| --- | --- | --- | --- |
+| Before iteration 3 | 1,040 | 0 | at most $22.77 |
+| r4-iter3-mix / r4-iter3-qloo | 188 / 185 | 0 / 173 | $1.53 / $1.49 at list rate |
+| r4-iter4-qloo | 188 | 167 | $1.53 at list rate |
+| **Total** | **1,601** | **340** | **at most $27.32** (worst-case reservations except the five mix runs, list-rate cost) |
+
+0 Wikipedia. Round-4 caps (raised by the owner): 2,000 requests and $40 (399 requests left).
