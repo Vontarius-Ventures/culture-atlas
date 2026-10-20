@@ -128,3 +128,5 @@ So the merge has no textual conflict. To complete it, in the merge commit:
 | Event | Commit or run | Date | By |
 | --- | --- | --- | --- |
 | Labels written, freeze candidate | the commit adding this file (on `r3/blind`) | 2026-10-20 | blind-set curator (round 3) |
+| Labels frozen (freeze commit `F`) | `0427041cba6974310eea2b1b5ab1d6d09843e9dc` | 2026-10-20 | build lead (round 3) |
+| Merged into the round-3 branch (tune labels from `r3/structural` `39d1b06`, held-out split from `r3/blind`); held-out entries appended to `manifest.json`, `holdout-manifest.json` removed, binding regenerated | `2106f39` (merge), `fe27e85` (completion) | 2026-10-20 | build lead (round 3) |
