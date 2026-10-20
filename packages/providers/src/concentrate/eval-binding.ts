@@ -18,20 +18,20 @@ export const EVAL_BINDING = {
   sets: {
     'golden-v1': {
       golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
-      scorer_version: 'score-v5',
-      code_sha256: '978d8f2b01fea2200468f5e3b6ec3978b39b17ccf7de49e24e8f37be1f5ea1ca',
+      scorer_version: 'score-v6',
+      code_sha256: '201067863d9ade89f4cf7ed0c9ab8a3ba1ea14033ad503be5e2b0e942af317fd',
       blind_consumed: false,
     },
     'golden-v2': {
       golden_sha256: 'b429f6190fc688b20b8e8a3d3ff3e287bd3c899cca4c3ebe291de2b69682f930',
-      scorer_version: 'score-v5',
-      code_sha256: '978d8f2b01fea2200468f5e3b6ec3978b39b17ccf7de49e24e8f37be1f5ea1ca',
+      scorer_version: 'score-v6',
+      code_sha256: '201067863d9ade89f4cf7ed0c9ab8a3ba1ea14033ad503be5e2b0e942af317fd',
       blind_consumed: true,
     },
     'golden-v3': {
       golden_sha256: '12edf9323aa65b674a95a55aa0f3effe46039fe1de5385a93bfbfd86d72f8ad3',
-      scorer_version: 'score-v5',
-      code_sha256: '978d8f2b01fea2200468f5e3b6ec3978b39b17ccf7de49e24e8f37be1f5ea1ca',
+      scorer_version: 'score-v6',
+      code_sha256: '201067863d9ade89f4cf7ed0c9ab8a3ba1ea14033ad503be5e2b0e942af317fd',
       blind_consumed: true,
     },
     'text-v1': {

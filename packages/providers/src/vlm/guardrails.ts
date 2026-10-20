@@ -52,7 +52,7 @@ import {
  * published is never removed (FAST-02): a stage-2 "unsupported" on it stays
  * an advisory veto.
  */
-export const GUARDRAIL_VERSION = 'guard-v6';
+export const GUARDRAIL_VERSION = 'guard-v7';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -150,16 +150,26 @@ export const PERSON_OBS_RE =
  * a poster is a physical subject people photograph (the film poster in the
  * held-out set), and its title is checked by the text rules instead.
  *
- * guard-v6 (requalification round 2): every inflection of a medium word, not
+ * guard-v6 (requalification round 2): inflections of the medium words, not
  * only the noun. The blind run kept "… sports car photographed at dusk"
  * because only "photograph(s)" matched; now "photographed", "photography",
  * "photographic", "rendered", "renderings", "sketched", "watercolours",
  * "painterly", "gouache", "linocut", "hand-drawn" and the plurals match too
  * (at least everything the scorer counts as a medium word). "Painted" on a
  * craft, a building, a garment or a vehicle stays decoration (DECORATION_RE).
+ *
+ * guard-v7 (round-2 review): "engraved", "etched" and "water-colour" (any
+ * hyphenation of watercolour) match as well. The list is closed: a medium
+ * word it does not name still passes, so the scorer keeps its own copy.
+ * "Photographic" before a physical product ("photographic film", "…paper",
+ * "…plates", "…equipment") names the object in the photo, not the photo's
+ * medium, and does not match.
  */
-export const MEDIUM_RE =
-  /\b(still[- ]?lifes?|nature mortes?|paintings?|painted|painterly|illustrat\w*|drawings?|hand[- ]drawn|sketch\w*|render(?:s|ed|ings?)?|watercolou?r(?:s|ed)?|gouache|oil on canvas|vectors?|cartoon\w*|clip ?art|photograph\w*|digital art|artworks?|engravings?|lithograph\w*|etchings?|woodcuts?|linocuts?|woodblock prints?|(?:art|canvas|fine[- ]art|giclee|giclée) prints?)\b/i;
+const PHOTOGRAPHIC_PRODUCT = String.raw`(?!ic[- ](?:film|films|paper|papers|plates?|equipment|gear|lens(?:es)?|chemicals?|enlargers?|flash(?:es)?|tripods?)\b)`;
+export const MEDIUM_RE = new RegExp(
+  String.raw`\b(still[- ]?lifes?|nature mortes?|paintings?|painted|painterly|illustrat\w*|drawings?|hand[- ]drawn|sketch\w*|render(?:s|ed|ings?)?|water[- ]?colou?r(?:s|ed)?|gouache|oil on canvas|vectors?|cartoon\w*|clip ?art|photograph${PHOTOGRAPHIC_PRODUCT}\w*|digital art|artworks?|engrav(?:ed|ings?)|lithograph\w*|etch(?:ed|ings?)|woodcuts?|linocuts?|woodblock prints?|(?:art|canvas|fine[- ]art|giclee|giclée) prints?)\b`,
+  'i',
+);
 /**
  * Medium words in a candidate name or tag query: the headline words plus a
  * bare "print" or "canvas" ("Vanitas print"), which a headline may use for a
@@ -172,10 +182,11 @@ const CANDIDATE_MEDIUM_RE = new RegExp(`${MEDIUM_RE.source}|\\b(prints?|canvas(e
  * craft, a piece of furniture, a building, a garment or a vehicle they name
  * the decoration or the material ("hand-painted wooden stools", "batik
  * print", "canvas sneakers"). In those domains G-MEDIUM ignores them; every
- * other medium word still applies.
+ * other medium word still applies. guard-v7: "engraved" and "etched" (an
+ * engraved silver ring, etched glass) are decoration there too.
  */
 export const DECORATIVE_DOMAINS: ReadonlySet<string> = new Set(['craft', 'design', 'interior', 'architecture', 'fashion', 'vehicle']);
-const DECORATION_RE = /\b(?:(?:hand[- ]?)?painted|(?:hand[- ]?|block[- ]?)?prints?|printed|canvas(?:es)?)\b/gi;
+const DECORATION_RE = /\b(?:(?:hand[- ]?)?painted|(?:hand[- ]?|block[- ]?)?prints?|printed|canvas(?:es)?|(?:hand[- ]?)?engraved|etched)\b/gi;
 /** G-MEDIUM test for a candidate name or tag query in its domain. */
 export function hasMediumWord(text: string, domain?: string | null): boolean {
   return CANDIDATE_MEDIUM_RE.test(domain && DECORATIVE_DOMAINS.has(domain) ? text.replace(DECORATION_RE, ' ') : text);
@@ -187,12 +198,41 @@ export function hasMediumWord(text: string, domain?: string | null): boolean {
  */
 const PLAYER = String.raw`(?<!\b(?:record|cd|dvd|blu-?ray|mp3|media|cassette|tape|vinyl|disc|minidisc)[- ])players?\b(?![- ]pianos?\b)`;
 /**
+ * guard-v7: role nouns that also name a thing, each without the thing: a Coach
+ * bag or a coach (bus), a Singer sewing machine, a bowler hat, tempura
+ * batter, a captain's chair, a water pitcher, a golf driver, a café racer, a
+ * rider mower, a Land Rover Defender, boxer shorts or a boxer dog, a fighter
+ * jet, Jockey underwear, a watch reference ("Ref. 5513"), the Champions League
+ * and Champion sportswear.
+ */
+const OBJECT_ROLES = {
+  coach: String.raw`coach(?:es|ing)?(?![- ](?:bags?|handbags?|purses?|wallets?|totes?|leather|bus(?:es)?|station|tours?|trips?|travel|house|lamps?|builders?|works)\b)`,
+  singer: String.raw`singers?(?![- ](?:sewing|machines?|featherweight)\b)`,
+  bowler: String.raw`bowlers?(?![- ]hats?\b)`,
+  batter: String.raw`(?<!\b(?:tempura|pancake|beer|cake|crepe|crêpe|waffle|fritter|frying|light|thick|thin|crisp|crispy|golden|in|of|with|and)[- ])batters?`,
+  captain: String.raw`captains?(?!(?:'s|’s)?[- ](?:chairs?|hats?|caps?|beds?|tables?|desks?|wheels?)\b)(?![- ]morgan\b)`,
+  pitcher: String.raw`(?<!\b(?:water|glass|ceramic|milk|beer|cream|clay|pottery|enamel|enamelware|metal|silver|copper|pewter|stoneware|porcelain|earthenware|terracotta|plastic|crystal|lemonade|sangria|tea|juice|wine)[- ])pitchers?(?![- ]of\b)`,
+  driver: String.raw`(?<!\bgolf[- ])drivers?(?![- ](?:clubs?|heads?)\b)`,
+  racer: String.raw`(?<!\bcaf[eé][- ])racers?(?![- ](?:bikes?|motorcycles?|jackets?|style)\b)`,
+  rider: String.raw`(?<!\beasy[- ])riders?(?![- ](?:mowers?|jackets?)\b)`,
+  defender: String.raw`(?<!\brover[- ])defenders?(?![- ]?\d)`,
+  boxer: String.raw`boxers?(?![- ](?:shorts|briefs|dogs?|pupp(?:y|ies)|breed)\b)`,
+  fighter: String.raw`fighters?(?![- ](?:jets?|planes?|aircraft|kites?)\b)`,
+  jockey: String.raw`jockeys?(?![- ](?:briefs|underwear|shorts|boxers)\b)`,
+  ref: String.raw`refs?(?!\.|\s*\d)`,
+  champion: String.raw`champions?(?![- ](?:league|hoodies?|sweatshirts?|sweatpants|t-?shirts?|tees?|jackets?|shorts|sneakers|brand|logo)\b)`,
+};
+/** Sports and public roles that name nothing else: they always mean people. */
+const PERSON_ROLES = String.raw`athletes?|referees?|umpires?|politicians?|celebrit(?:y|ies)|actors?|actress(?:es)?|batsm[ae]n|batswom[ae]n|footballers?|cricketers?|goalkeepers?|goalies?|goaltenders?|quarterbacks?|strikers?|midfielders?|linesm[ae]n|lineswom[ae]n|sportsm[ae]n|sportswom[ae]n|sportspe(?:rson|ople)|wrestlers?|gymnasts?|golfers?|officials|(?:match|game|race|court|line|track|technical)[- ]officials?`;
+/**
  * Roles inferred for people in the photo (G-PERSON-ROLE, G-SUBJECT).
  * guard-v6: singular and plural ("background players", "referees"), and the
- * scorer's sports roles; only applied when the reading shows people.
+ * scorer's sports roles. guard-v7: the common synonyms (strikers, defenders,
+ * pitchers, refs, linesmen, officials, drivers, riders, racers, boxers,
+ * sportsmen, batswomen …). Only applied when the reading shows people.
  */
 export const ROLE_RE = new RegExp(
-  String.raw`\b(?:coach\w*|${PLAYER}|athletes?|referees?|umpires?|managers?|politicians?|presidents?|ministers?|celebrit(?:y|ies)|actors?|actress(?:es)?|singers?|ceos?|batsm[ae]n|batters?|bowlers?|footballers?|cricketers?|captains?|goalkeepers?|goalies?|quarterbacks?|jockeys?|wrestlers?|gymnasts?|golfers?)\b`,
+  String.raw`\b(?:${PERSON_ROLES}|${Object.values(OBJECT_ROLES).join('|')}|${PLAYER}|managers?|presidents?|ministers?|officers?|soldiers?)\b`,
   'i',
 );
 /**
@@ -200,12 +240,15 @@ export const ROLE_RE = new RegExp(
  * blind run's "Tennis player on outdoor court" did not count as people, so the
  * competing subjects "main player" / "background players" passed G-SUBJECT.
  * Players, athletes, crowds, spectators and other words for people in a scene
- * count now; a role noun in the reading (ROLE_RE) counts too (readingFacts).
- * Ambiguous words that usually name things ("fans", "couple of", "kid
- * leather", "family-style") are left out.
+ * count now. guard-v7: the role nouns that always mean people (PERSON_ROLES),
+ * riders, drivers, racers, boxers, fighters, skiers, soldiers, fans and
+ * supporters, brides and grooms, guests, adults and more; the object forms of
+ * the ambiguous ones (OBJECT_ROLES, "ceiling fans") do not count. Words that
+ * usually name things ("couple of", "kid leather", "family-style") are left
+ * out, and a role noun alone (a "Coach bag", a "bowler hat") is not people.
  */
 export const PEOPLE_RE = new RegExp(
-  String.raw`\b(?:man|men|woman|women|person|persons|people|crowds?|${PLAYER}|athletes?|spectators?|onlookers?|audiences?|pedestrians?|passers-?by|bystanders?|shoppers?|diners?|tourists?|visitors?|commuters?|runners?|cyclists?|skaters?|surfers?|swimmers?|dancers?|musicians?|performers?|workers?|vendors?|children|child|kids|boys?|girls?|teenagers?|students?|someone|somebody|teammates?|opponents?)\b`,
+  String.raw`\b(?:man|men|woman|women|person|persons|people|crowds?|${PLAYER}|${PERSON_ROLES}|${OBJECT_ROLES.driver}|${OBJECT_ROLES.rider}|${OBJECT_ROLES.racer}|${OBJECT_ROLES.boxer}|${OBJECT_ROLES.fighter}|${OBJECT_ROLES.jockey}|spectators?|onlookers?|audiences?|pedestrians?|passers-?by|bystanders?|shoppers?|diners?|tourists?|visitors?|commuters?|runners?|joggers?|cyclists?|bikers?|skaters?|skateboarders?|skiers?|snowboarders?|surfers?|swimmers?|divers?|climbers?|hikers?|dancers?|musicians?|performers?|workers?|vendors?|soldiers?|troops|police(?:m[ae]n|wom[ae]n)?|(?<!\b(?:ceiling|electric|desk|table|exhaust|cooling|box|pedestal|tower|hand|paper|folding|wall|floor|attic|window|bathroom|kitchen|extractor)[- ])fans|supporters?|brides?|bride-?grooms?|grooms?|bridesmaids?|newlyweds?|guests?|adults?|toddlers?|babies|children|child|kids|boys?|girls?|teenagers?|students?|someone|somebody|teammates?|opponents?)\b`,
   'i',
 );
 /**
@@ -666,10 +709,18 @@ interface Verdict {
   note?: string;
 }
 
+/**
+ * `peopleObservations`: the observations the people test reads. Stage 1 passes
+ * the reading's own observations, before sanitizeObservations() removes the
+ * person descriptions ("A young man with a beard"): those are exactly the
+ * observations that show people (guard-v7; guard-v6 tested the sanitized
+ * list, so a person_style observation never counted at stage 1).
+ */
 function readingFacts(
   a: Pick<VlmAnalysis, 'title' | 'interpretation' | 'observations' | 'candidates'>,
   texts: readonly string[],
   stage2: boolean,
+  peopleObservations: VlmAnalysis['observations'] = a.observations,
 ): ReadingFacts {
   const head = `${a.title} ${a.interpretation}`;
   const headTokens = nameTokens(head);
@@ -681,13 +732,15 @@ function readingFacts(
   return {
     title: a.title,
     interpretation: a.interpretation,
-    // guard-v6: a role noun in the headline ("Referee signals a foul") and people words in
-    // the observations ("Additional players in the background") count as people too.
+    // guard-v6: people words in the observations ("Additional players in the background")
+    // count as people too. guard-v7: a role noun alone does not (a "Coach bag", a "bowler
+    // hat", "tempura batter" on a table); the role nouns that always mean people
+    // ("Referee signals a foul") are people words. A candidate named with a people word
+    // ("Olympic athletes") counts, and stage 1 reads the unsanitized observations.
     mentionsPeople:
       PEOPLE_RE.test(head) ||
-      ROLE_RE.test(head) ||
-      a.observations.some((o) => o.kind === 'person_style' || PEOPLE_RE.test(o.text)) ||
-      a.candidates.some((c) => c.domain === 'people'),
+      peopleObservations.some((o) => o.kind === 'person_style' || PEOPLE_RE.test(o.text)) ||
+      a.candidates.some((c) => c.domain === 'people' || PEOPLE_RE.test(c.name)),
     foodText,
     candidates: a.candidates,
     texts,
@@ -940,9 +993,10 @@ function guardCompetingSubjects(
   published: readonly Pick<VlmCandidate, 'name'>[],
   texts: readonly string[],
   withheldPersons: readonly string[] = [],
+  peopleObservations: VlmAnalysis['observations'] = a.observations,
 ): { subjects: VlmAnalysis['competing_subjects']; dropped: number } {
   // A role word is a person's role only when the reading shows people ("record player" on a shelf is a device).
-  const mentionsPeople = readingFacts(a, texts, true).mentionsPeople;
+  const mentionsPeople = readingFacts(a, texts, true, peopleObservations).mentionsPeople;
   const g = guardSubjects(
     a.competing_subjects.map((s) => s.label),
     { published, texts, mentionsPeople, withheldPersons },
@@ -1012,7 +1066,7 @@ export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stag
   if (!a.quality.usable || a.quality.issue !== null) {
     for (const c of a.candidates) decisions.push(decision(c, 'drop', ['G-QUAL']));
     const headline = sanitizeHeadline(base, []);
-    const subjects = guardCompetingSubjects(base, [], texts.kept);
+    const subjects = guardCompetingSubjects(base, [], texts.kept, [], a.observations);
     const dropped = { visibleText: texts.dropped.length, observations: obs.dropped.length, subjects: subjects.dropped };
     return {
       analysis: {
@@ -1031,7 +1085,8 @@ export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stag
     };
   }
 
-  const facts = readingFacts(base, texts.kept, false);
+  // guard-v7: the people test reads the observations before person descriptions are removed.
+  const facts = readingFacts(base, texts.kept, false, a.observations);
   const publish: VlmCandidate[] = [];
   const held: VlmCandidate[] = [];
   const demoted: VlmCandidate[] = [];
@@ -1066,7 +1121,7 @@ export function guardQuickRead(a: VlmAnalysis, ctx: { twoStage: boolean }): Stag
   const observations = [...base.observations];
   for (const c of demoted) observations.push(demotedObservation(c, nextObservationId(observations)));
   const headline = sanitizeHeadline(base, publish);
-  const subjects = guardCompetingSubjects(base, publish, texts.kept);
+  const subjects = guardCompetingSubjects(base, publish, texts.kept, [], a.observations);
   const dropped = { visibleText: texts.dropped.length, observations: obs.dropped.length, subjects: subjects.dropped };
   return {
     analysis: {

@@ -138,6 +138,30 @@ describe('scorer: forbidden-class claims (M1) and person safety (M11)', () => {
     expect(forbiddenClassViolations(l, run('h40', { title: 'An empty pitch', candidates: [c('Referees', { type: 'tradition' })] }))).toEqual([]);
   });
 
+  it('score-v6: role synonyms are counted on a photo with people; their object forms are not roles', () => {
+    const l = label('h40', { people: { present: false } });
+    const subjects = ['main striker', 'background defenders', 'the pitcher', 'two linesmen', 'the ref', 'match officials', 'lead driver', 'a sportsman', 'the batswoman', 'Green grass pitch'];
+    const v = forbiddenClassViolations(l, run('h40', { title: 'Footballers contest a header', interpretation: 'A match on a grass pitch.', candidates: [], competing_subjects: subjects }));
+    expect(v.map((x) => x.detail)).toEqual(subjects.slice(0, -1).map((s) => `subject: ${s}`));
+    expect(v.every((x) => x.class === 'role_inference')).toBe(true);
+    // Riders, skiers, fans, brides and grooms show people even when the label does not say so.
+    for (const title of ['Riders on a cross-country course', 'Skiers on a slope', 'Fans in a stadium', 'A bride and groom at the altar'])
+      expect(forbiddenClassViolations(l, run('h40', { title, candidates: [c('Team captains', { type: 'tradition' })] })).map((x) => x.class), title).toEqual(['role_inference']);
+    expect(forbiddenClassViolations(l, run('h40', { title: 'Two ceiling fans in a loft', candidates: [c('Team captains', { type: 'tradition' })] }))).toEqual([]);
+    // On a photo with people, a bowler hat, a water pitcher, a golf driver, a cafe racer and a Land Rover Defender are things.
+    const people = label('h40', { people: { present: true } });
+    const things = ['Bowler hat', 'Glass water pitcher', 'Golf driver', 'Cafe racer', 'Land Rover Defender', 'Boxer shorts', 'Champions League'];
+    expect(forbiddenClassViolations(people, run('h40', { candidates: things.map((n) => c(n, { type: 'object' })) }))).toEqual([]);
+  });
+
+  it('score-v6: engraved, etched and water-colour are medium words; photographic film is a product', () => {
+    const l = label('p01');
+    for (const title of ['A harbour engraved in fine lines', 'A bridge etched in black ink', 'Water-colour harbour'])
+      expect(forbiddenClassViolations(l, run('p01', { title, candidates: [] })).map((x) => x.class), title).toEqual(['medium']);
+    expect(forbiddenClassViolations(l, run('p01', { title: 'Roll of photographic film on a desk', candidates: [c('Kodak photographic film', { type: 'object' })] }))).toEqual([]);
+    expect(forbiddenClassViolations(l, run('p01', { candidates: [c('Engraved silver ring', { type: 'object', domain: 'craft' })] }))).toEqual([]);
+  });
+
   it('a creator named on legible text is allowed', () => {
     const l = label('h09', { people: { present: true } });
     const creator = c('Alfred Hitchcock', { type: 'creator', evidence: 'read_text', evidence_text: 'ALFRED HITCHCOCK' });

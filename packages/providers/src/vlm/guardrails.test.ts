@@ -94,7 +94,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v6');
+    expect(GUARDRAIL_VERSION).toBe('guard-v7');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -1389,5 +1389,124 @@ describe('guard-v6: people, roles and medium inflections (requalification round 
     );
     expect(names(g.analysis.candidates)).toEqual(['Hand-painted wooden stools']);
     expect(decisionFor(g.decisions, 'Studio photography')).toMatchObject({ action: 'drop', rules: ['G-MEDIUM'] });
+  });
+});
+
+describe('guard-v7: role synonyms, people words, stage-1 person observations, medium forms (round-2 review)', () => {
+  const quick = (title: string, interpretation: string, candidates: VlmQuickCandidate[] = []) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates, quality: { usable: true, issue: null } }), { twoStage: true });
+  const ruleSets = (g: Stage1Guard) => g.decisions.map((d) => d.rules);
+
+  it('the h28 failure with synonyms: "main striker", "background defenders", "the pitcher", refs and officials are dropped subjects', () => {
+    const g = quick('Footballers contest a header', 'A match on a grass pitch.', [v2({ name: 'Fixture football', type: 'tradition', domain: 'sport' })]);
+    for (const label of ['main striker', 'background defenders', 'the pitcher', 'two linesmen', 'the ref', 'match officials', 'lead driver', 'the riders', 'trailing racers', 'two boxers', 'a sportsman', 'the batswoman']) {
+      const s2 = stage2(g, enrichment({ competing_subjects: [label, 'Green grass pitch'] }));
+      expect(s2.analysis.competing_subjects.map((s) => s.label), label).toEqual(['Green grass pitch']);
+    }
+  });
+
+  it('ROLE_RE covers the synonyms, singular and plural', () => {
+    for (const s of ['striker', 'strikers', 'defender', 'defenders', 'pitcher', 'pitchers', 'ref', 'refs', 'linesman', 'linesmen', 'officials', 'match official', 'driver', 'drivers', 'rider', 'riders', 'racer', 'racers', 'boxer', 'boxers', 'sportsman', 'sportsmen', 'sportswoman', 'batswoman', 'batswomen', 'midfielders', 'goaltender', 'champions', 'officers', 'soldiers'])
+      expect(ROLE_RE.test(s), s).toBe(true);
+  });
+
+  it('people words cover riders, drivers, boxers, fighters, skiers, soldiers, fans, brides and grooms, guests and the always-people roles', () => {
+    for (const [title, cand] of [
+      ['Riders on a cross-country course', 'Professional athletes'],
+      ['Fans in a stadium', 'Team captains'],
+      ['A bride and groom at the altar', 'Celebrity couple'],
+      ['Skiers on a slope', 'Olympic athletes'],
+      ['Two boxers in a ring', 'Heavyweight champions'],
+      ['Soldiers marching in a parade', 'Military officers'],
+      ['Racing drivers on the grid', 'Formula one drivers'],
+      ['Guests at a long table', 'Celebrity chef'],
+      ['A referee signals at midfield', 'Team captains'],
+    ] as const) {
+      const g = quick(title, 'A scene.', [v2({ name: cand, type: 'style', domain: 'other' })]);
+      expect(names(g.analysis.candidates), title).toEqual([]);
+      expect(ruleSets(g), title).toEqual([['G-PERSON-ROLE']]);
+    }
+    for (const s of ['riders', 'drivers', 'boxers', 'fighters', 'skiers', 'snowboarders', 'soldiers', 'fans', 'supporters', 'bride', 'groom', 'guests', 'adults', 'referees', 'footballers', 'linesmen', 'sportsmen'])
+      expect(PEOPLE_RE.test(s), s).toBe(true);
+    // Object forms are not people.
+    for (const s of ['ceiling fans', 'a golf driver', 'boxer shorts', 'a fighter jet', 'a rider mower', 'a café racer', 'Jockey briefs'])
+      expect(PEOPLE_RE.test(s), s).toBe(false);
+  });
+
+  it('a candidate named with a people word means people ("Olympic athletes" on a slope photo with no people word)', () => {
+    const g = guardQuickRead(reading([{ name: 'Olympic athletes', tag_queries: ['olympics'] }, { name: 'Team captains', tag_queries: ['captains'] }], { title: 'A snowy slope at noon' }), {
+      twoStage: true,
+    });
+    expect(names(g.analysis.candidates)).toEqual([]);
+    expect(ruleSets(g)).toEqual([['G-PERSON-ROLE'], ['G-PERSON-ROLE']]);
+  });
+
+  it('stage 1 tests people on the observations before person descriptions are removed (two-stage, single pass and G-QUAL)', () => {
+    const cands: C[] = [{ name: 'Team captains', tag_queries: ['captains'] }, { name: 'Celebrity chef', tag_queries: ['chef'] }, { name: 'Night match atmosphere', tag_queries: ['stadium'] }];
+    for (const [kind, text] of [
+      ['person_style', 'A young man with a beard'],
+      ['object', 'A young player with long hair serves'],
+    ] as const) {
+      for (const twoStage of [true, false]) {
+        const g = guardQuickRead(reading(cands, { title: 'A stadium at night', observations: [{ id: 'o1', text, kind, region_ids: [] }] }), { twoStage });
+        expect(names(g.analysis.candidates), `${text} ${twoStage}`).toEqual(['Night match atmosphere']);
+        expect(g.analysis.observations, text).toEqual([]);
+        expect(ruleSets(g).slice(0, 2), text).toEqual([['G-PERSON-ROLE'], ['G-PERSON-ROLE']]);
+      }
+    }
+    // An unusable photo still guards its subjects with the same people test.
+    const unusable = guardQuickRead(
+      reading([], {
+        title: 'A blurred stadium',
+        observations: [{ id: 'o1', text: 'A young man with a beard', kind: 'person_style', region_ids: [] }],
+        competing_subjects: [{ id: 's1', label: 'team captain', region_ids: [] }, { id: 's2', label: 'stadium floodlights', region_ids: [] }],
+        quality: { usable: false, issue: 'blurred' },
+      }),
+      { twoStage: true },
+    );
+    expect(unusable.analysis.competing_subjects.map((s) => s.label)).toEqual(['stadium floodlights']);
+  });
+
+  it('object forms of role words publish on a reading without people, and with people they are not a role', () => {
+    const objects: [string, C][] = [
+      ['Vintage Singer sewing machine on a table', { name: 'Singer sewing machine', type: 'object', evidence: 'read_text', evidence_text: 'SINGER', tag_queries: ['sewing machine'] }],
+      ['Black bowler hat on a hook', { name: 'Bowler hat', type: 'object', domain: 'fashion', tag_queries: ['bowler hat'] }],
+      ['Tempura vegetables in a light batter', { name: 'Tempura batter', type: 'cuisine', domain: 'food', tag_queries: ['tempura'] }],
+      ["Wooden captain's chair in a study", { name: "Captain's chair", type: 'object', domain: 'interior', tag_queries: ["captain's chair"] }],
+      ['Leather Coach bag on a table', { name: 'Coach bag', type: 'object', domain: 'fashion', tag_queries: ['leather bag'] }],
+    ];
+    for (const [title, cand] of objects) {
+      for (const t of [title, `A woman beside it: ${title}`]) {
+        const g = guardQuickRead(reading([cand], { title: t, visible_text: [{ text: 'SINGER', region_id: null }] }), { twoStage: true });
+        expect(ruleSets(g).flat(), t).not.toContain('G-PERSON-ROLE');
+      }
+    }
+    for (const s of ['Bowler hat', 'Tempura batter', "Captain's chair", 'Singer sewing machine', 'Coach handbag', 'Glass water pitcher', 'Golf driver', 'Cafe racer', 'Land Rover Defender', 'Boxer shorts', 'Rolex Submariner Ref. 5513', 'UEFA Champions League', 'Champion hoodie', 'Record player'])
+      expect(ROLE_RE.test(s), s).toBe(false);
+  });
+
+  it('G-MEDIUM: engraved, etched and every hyphenation of watercolour; decoration on a craft; photographic products stay', () => {
+    for (const name of ['Engraved silver plate', 'Etched portrait', 'Water-colour landscape', 'Water colour landscape', 'Fixture engraving', 'Etchings of a harbour'])
+      expect(hasMediumWord(name, 'art'), name).toBe(true);
+    const t = guardQuickRead(reading([{ name: 'Wabi-sabi', tag_queries: ['wabi sabi'] }], { title: 'A harbour engraved in fine lines', interpretation: 'A bridge etched in black ink.' }), {
+      twoStage: true,
+    });
+    expect(t.analysis.title).toBe('A harbour in fine lines');
+    expect(t.analysis.interpretation).toBe('A bridge in black ink.');
+    expect(hasMediumWord('Engraved silver ring', 'craft')).toBe(false);
+    expect(hasMediumWord('Etched glass panel', 'design')).toBe(false);
+    for (const name of ['Kodak photographic film', 'Photographic paper', 'Photographic equipment'])
+      expect(hasMediumWord(name, 'other'), name).toBe(false);
+    // "Photographic" as the photo's medium still matches.
+    expect(hasMediumWord('Photographic print', 'art')).toBe(true);
+    expect(MEDIUM_RE.test('A photographic study of a harbour')).toBe(true);
+    const film = guardQuickRead(
+      reading([{ name: 'Kodak photographic film', type: 'object', evidence: 'read_text', evidence_text: 'Kodak', tag_queries: ['photographic film'] }], {
+        title: 'Roll of 35mm film on a desk',
+        visible_text: [{ text: 'Kodak', region_id: null }],
+      }),
+      { twoStage: true },
+    );
+    expect(ruleSets(film).flat()).not.toContain('G-MEDIUM');
   });
 });

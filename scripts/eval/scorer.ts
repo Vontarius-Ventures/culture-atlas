@@ -18,7 +18,7 @@ import {
  * brand evidence from the final visible text itself. A guard bug therefore
  * shows up as a failing metric instead of being trusted by the yardstick.
  */
-export const SCORER_VERSION = 'score-v5';
+export const SCORER_VERSION = 'score-v6';
 
 export interface CandidateView {
   name: string;
@@ -88,9 +88,13 @@ export interface ScoredRun {
 }
 
 // Independent copies of the plan's patterns (§4.2), broadened where a scorer can afford to be strict.
-/** Medium words in titles and interpretations (score-v3: plurals, artwork, engraving, lithograph, etching, woodcut, nature morte, art prints). */
+/**
+ * Medium words in titles and interpretations (score-v3: plurals, artwork, engraving, lithograph,
+ * etching, woodcut, nature morte, art prints). score-v6: "engraved", "etched", "water-colour" and the
+ * other hyphenations; "photographic film" (paper, plates, equipment) is a product in the photo, not a medium.
+ */
 const MEDIUM_RE =
-  /\b(still[- ]?lifes?|nature morte|paintings?|painted|painterly|illustrat\w*|drawings?|sketch\w*|render(ing|ed|s)?|watercolou?rs?|gouache|oil on canvas|vectors?|cartoons?|clip ?art|photograph\w*|digital art|artworks?|engravings?|lithograph\w*|etchings?|woodcuts?|linocuts?|(?:art|canvas|fine[- ]art|giclee|giclée) prints?)\b/i;
+  /\b(still[- ]?lifes?|nature morte|paintings?|painted|painterly|illustrat\w*|drawings?|sketch\w*|render(ing|ed|s)?|water[- ]?colou?rs?|gouache|oil on canvas|vectors?|cartoons?|clip ?art|photograph(?!ic[- ](?:film|paper|plates?|equipment)\b)\w*|digital art|artworks?|engrav(?:ed|ings?)|lithograph\w*|etch(?:ed|ings?)|woodcuts?|linocuts?|(?:art|canvas|fine[- ]art|giclee|giclée) prints?)\b/i;
 /** In a candidate name a bare "print", "canvas" or "poster print" is a medium too. */
 const NAME_MEDIUM_RE = new RegExp(`${MEDIUM_RE.source}|\\b(prints?|canvas(es)?)\\b`, 'i');
 /**
@@ -101,7 +105,8 @@ const NAME_MEDIUM_RE = new RegExp(`${MEDIUM_RE.source}|\\b(prints?|canvas(es)?)\
  * "canvas sneakers").
  */
 const DECORATIVE = new Set(['craft', 'design', 'interior', 'architecture', 'fashion', 'vehicle']);
-const DECORATION_RE = /\b(?:(?:hand[- ]?)?painted|(?:hand[- ]?|block[- ]?)?prints?|printed|canvas(?:es)?)\b/gi;
+// score-v6: "engraved" and "etched" there are decoration (an engraved ring, etched glass).
+const DECORATION_RE = /\b(?:(?:hand[- ]?)?painted|(?:hand[- ]?|block[- ]?)?prints?|printed|canvas(?:es)?|engraved|etched)\b/gi;
 function mediumInName(c: Pick<CandidateView, 'name' | 'domain'>): boolean {
   return NAME_MEDIUM_RE.test(c.domain && DECORATIVE.has(c.domain) ? c.name.replace(DECORATION_RE, ' ') : c.name);
 }
@@ -110,12 +115,22 @@ const PERSON_DESCRIPTOR_RE =
 /**
  * score-v5 (requalification round 2): singular and plural role nouns ("background
  * players", "referees"); score-v4 matched "player" but not "players".
+ * score-v6: the sports synonyms a guard bypass used ("main striker", "background
+ * defenders", "the pitcher", refs, linesmen, officials, drivers, riders, racers,
+ * boxers, sportsmen, batswomen, champions, officers, soldiers). The scorer's own
+ * object exceptions are few and named here: a bowler hat, a water or glass pitcher,
+ * a golf driver, a café racer, a Land Rover Defender, boxer shorts or dog, a watch
+ * reference and the Champions League.
  */
 const ROLE_RE =
-  /\b(coach\w*|players?|athletes?|referees?|umpires?|managers?|politicians?|presidents?|ministers?|celebrit(?:y|ies)|actors?|actress(?:es)?|singers?|ceos?|batsm[ae]n|batters?|bowlers?|footballers?|cricketers?|captains?|goalkeepers?|goalies?|quarterbacks?|jockeys?|wrestlers?|gymnasts?|golfers?)\b/i;
-/** score-v5: words that say a reading shows people, singular or plural (players, athletes, spectators, crowds ...). */
+  /\b(coach\w*|players?|athletes?|referees?|refs?(?!\.|\s*\d)|umpires?|linesm[ae]n|officials|managers?|politicians?|presidents?|ministers?|officers?|soldiers?|celebrit(?:y|ies)|actors?|actress(?:es)?|singers?|ceos?|bats(?:m[ae]n|wom[ae]n)|batters?|bowlers?(?! hats?\b)|footballers?|cricketers?|captains?|goalkeepers?|goalies?|strikers?|(?<!rover )defenders?|midfielders?|(?<!(?:water|glass|ceramic|milk) )pitchers?(?! of\b)|quarterbacks?|jockeys?|wrestlers?|gymnasts?|golfers?|(?<!golf )drivers?|riders?|(?<!caf[eé] )racers?|boxers?(?! (?:shorts|dogs?)\b)|sports(?:m[ae]n|wom[ae]n)|champions?(?! league\b))\b/i;
+/**
+ * score-v5: words that say a reading shows people, singular or plural (players, athletes, spectators,
+ * crowds ...). score-v6: riders, drivers, boxers, skiers, soldiers, fans, brides and grooms, guests and the
+ * role nouns that always mean people (referees, footballers ...).
+ */
 const PEOPLE_WORDS_RE =
-  /\b(man|men|woman|women|persons?|people|crowds?|players?|athletes?|spectators?|onlookers?|audiences?|pedestrians?|passers-?by|bystanders?|shoppers?|diners?|tourists?|visitors?|commuters?|runners?|cyclists?|skaters?|surfers?|swimmers?|dancers?|musicians?|performers?|workers?|vendors?|children|child|kids|boys?|girls?|teenagers?|students?|someone|somebody|teammates?|opponents?)\b/i;
+  /\b(man|men|woman|women|persons?|people|crowds?|players?|athletes?|referees?|umpires?|footballers?|cricketers?|goalkeepers?|strikers?|linesm[ae]n|sports(?:m[ae]n|wom[ae]n)|spectators?|onlookers?|audiences?|pedestrians?|passers-?by|bystanders?|shoppers?|diners?|tourists?|visitors?|commuters?|runners?|cyclists?|riders?|drivers?|racers?|boxers?(?! (?:shorts|dogs?)\b)|skaters?|skiers?|snowboarders?|surfers?|swimmers?|dancers?|musicians?|performers?|workers?|vendors?|soldiers?|(?<!ceiling )fans|supporters?|brides?|grooms?|guests|children|child|kids|boys?|girls?|teenagers?|students?|someone|somebody|teammates?|opponents?)\b/i;
 const DESCRIPTION_RE =
   /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration/i;
 const CUISINE_NAME_RE = /\b(cuisine|food|fare|dishes)$/i;

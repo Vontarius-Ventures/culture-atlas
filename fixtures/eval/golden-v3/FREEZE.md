@@ -108,7 +108,6 @@ because the golden-v3 digest now includes the held-out labels.
 | Labels frozen (freeze commit `F`) | `f4f4a2396f07a84b170ec179004539b0ccb4fb29` | 2026-10-20 | build lead (round 2) |
 | Merged into the round-2 branch (tune labels from `r2/fixes` `34fcc2e`, held-out split from `r2/blind`); binding regenerated | `420ec8c` | 2026-10-20 | build lead (round 2) |
 | Rules frozen, golden-v3 bound for the photo roles (`REQUIRED_GOLDEN_SET` → `golden-v3`; photo code digest `978d8f2b…` and thresholds digest unchanged; golden digest `2bd7ff1a…`) | `a7f5a7bae5b281dece956109a6bc2ef53ce68e44` | 2026-10-20 | build lead (round 2) |
-
 | Blind run, once: **FAIL** (M1 1, M2 0.0541, M4 0.25, M9 0.8947, M11 1); `blind_run` recorded in `freeze.json`, held-out entries `"blind": false`, binding regenerated (`blind_consumed`) | run at `cc281e4`, 40 Concentrate + 33 Qloo requests; report in docs/quality-plan.md §17 | 2026-10-20 | build lead (round 2) |
 
 Step 2 check at the binding commit: `git diff f4f4a23 -- freeze.json labels/h3[0-9].json labels/h4[0-9].json` is
@@ -117,6 +116,12 @@ licence is not confirmed by the owner; the photo stays in the split (its file is
 this internal evaluation), and the open confirmation is reported with the result.
 
 ## After the blind run (reported, not fixed)
+
+Rules changed after the run, in the round-2 review (2026-10-20, guard-v7 and score-v6; docs/quality-plan.md
+§17.12): broader role, people and medium tests and the stage-1 people test on unsanitized observations. They
+change the photo code digest and scorer version bound for golden-v3, so no artifact scored under the frozen rules
+counts. golden-v3 stays `blind_consumed`; no label, manifest entry or `freeze.json` changed, and the held-out split
+was not read again. Replaying the recorded blind run under the new rules gives the same scorecard (FAIL, as above).
 
 No label was edited after the run (step 6). Two observations from reading the failures, for the next set:
 

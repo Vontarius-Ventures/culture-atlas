@@ -1166,16 +1166,19 @@ photo roles stay off.
 
 | Round-1 gap (§16.3) | Change | Version |
 | --- | --- | --- |
-| h28: "main player" / "background players" passed G-SUBJECT because the guard's people test did not count players, and "players" was not a role word | `PEOPLE_RE` counts players, athletes, crowds, spectators, onlookers, audiences, pedestrians, shoppers, diners, tourists, visitors, commuters, runners, cyclists, skaters, surfers, swimmers, dancers, musicians, performers, workers, vendors, children, students and similar words, singular or plural; people words in an observation and a role noun in the headline count as people too. `ROLE_RE` matches singular and plural role nouns and the scorer's sports roles (umpires, captains, footballers, goalkeepers …). "Player" in a playback device ("record player", "DVD players") or a "player piano" is neither. Ambiguous words that usually name things ("fans", "couple", "kid", "family") are left out | guard-v6 |
-| h26: "… photographed at dusk" kept, G-MEDIUM matched only "photograph(s)" | `MEDIUM_RE` matches inflections: `photograph\w*` (photographed, photography, photographic), rendered/renders/renderings, `sketch\w*`, watercolours/watercoloured, painterly, gouache, linocuts, cartoonish, still lifes, hand-drawn (at least every medium word the scorer counts). A participle is removed without its prepositional phrase ("a car photographed in a studio" → "a car in a studio"). "Painted", "print" and "canvas" on a craft, building, garment or vehicle stay decoration | guard-v6 |
+| h28: "main player" / "background players" passed G-SUBJECT because the guard's people test did not count players, and "players" was not a role word | (guard-v6 as built at `34fcc2e`; superseded by guard-v7, §17.12) `PEOPLE_RE` counts players, athletes, crowds, spectators, onlookers, audiences, pedestrians, shoppers, diners, tourists, visitors, commuters, runners, cyclists, skaters, surfers, swimmers, dancers, musicians, performers, workers, vendors, children, students and similar words, singular or plural; people words in an observation and a role noun in the headline count as people too. `ROLE_RE` matches singular and plural role nouns and the scorer's sports roles (umpires, captains, footballers, goalkeepers …). "Player" in a playback device ("record player", "DVD players") or a "player piano" is neither. Ambiguous words that usually name things ("fans", "couple", "kid", "family") are left out | guard-v6 |
+| h26: "… photographed at dusk" kept, G-MEDIUM matched only "photograph(s)" | `MEDIUM_RE` matches inflections of the listed words (not every medium word; "engraved", "etched" and "water-colour" were added in guard-v7, §17.12): `photograph\w*` (photographed, photography, photographic), rendered/renders/renderings, `sketch\w*`, watercolours/watercoloured, painterly, gouache, linocuts, cartoonish, still lifes, hand-drawn (at least every medium word the scorer counts). A participle is removed without its prepositional phrase ("a car photographed in a studio" → "a car in a studio"). "Painted", "print" and "canvas" on a craft, building, garment or vehicle stay decoration | guard-v6 |
 | The scorer's role list had "player" but not "players"; its people test only read the headline | Plural role nouns and the same people words (headline and observations); stricter only, no exception added | score-v5 |
 | h26: the expected "Classic roadster" pattern matched any name with "roadster", so the correct drop of "MG MGA roadster" counted against M4 | New tune set **golden-v3**: golden-v2's 44 photos, every one in tune (h14–h29 with no `blind` flag); h26's expected pattern is anchored to a body type with only describing words before it, so a make or model is judged by the MGA entry (good only when "MG" is read) and the forbidden makes. The label's `history` records the change. golden-v2 and its frozen files are untouched | golden-v3 |
 
-The binding binds golden-v3 with the same photo code; its `blind_consumed` is
-false because it has no held-out split yet. The photo roles still require
-golden-v2 (consumed), so nothing photo-related can qualify until a curator adds
-a fresh blind split (h30+), freezes it and the binding moves the photo roles to
-that set. Thresholds are unchanged (thr-v2).
+State at `34fcc2e` (superseded): the binding bound golden-v3 with the same
+photo code, its `blind_consumed` was false because it had no held-out split
+yet, and the photo roles still required golden-v2 (consumed), so nothing
+photo-related could qualify until a curator added a fresh blind split (h30+),
+froze it and the binding moved the photo roles to that set. That happened at
+`a7f5a7b` (§17.5): `REQUIRED_GOLDEN_SET` is golden-v3 for all three photo
+roles; after the failed blind run (§17.7) the binding marks golden-v3
+`blind_consumed: true` (§17.10). Thresholds are unchanged (thr-v2).
 
 ### 17.2 Offline replays (no request)
 
@@ -1392,3 +1395,50 @@ Blind run: 40 Concentrate requests, 33 Qloo, 0 Wikipedia (package `rq3-blind`,
 ledger outside the repository, 73 lines, every call 200). Round 2 total:
 **62 of 220 Concentrate** (22 text + 40 blind), **33 of 150 Qloo**, 0
 Wikipedia. The tune check and the failure analysis were offline. No Elorian.
+
+### 17.12 Review fixes after the blind run (guard-v7, score-v6)
+
+A review of the round-2 rules after the §17.7 run found that the guard-v6
+people, role and medium tests were closed word lists that close synonyms
+still passed, and that the scorer's copies shared the gaps, so M1/M11 could
+not see them. The run's result stands as measured (§17.7); these are fixes for
+the next attempt, which needs a fresh blind set (h50+) anyway.
+
+| Finding | Fix | Version |
+| --- | --- | --- |
+| h28's failure through a synonym: "main striker", "background defenders", "the pitcher" passed G-SUBJECT, and the scorer did not count them | `ROLE_RE` adds strikers, defenders, midfielders, goaltenders, pitchers, refs, linesmen, officials, drivers, riders, racers, boxers, fighters, champions, sportsmen/sportswomen, batswomen, officers, soldiers (singular and plural) | guard-v7, score-v6 |
+| A role noun in the headline counted as people on its own, so object claims dropped on photos without people ("Singer sewing machine", "Bowler hat", "Tempura batter", "Captain's chair") | A role noun alone is not people. Role words that also name a thing exclude it (Coach bag or coach bus, Singer sewing machine, bowler hat, tempura batter, captain's chair, water pitcher, golf driver, café racer, rider mower, Land Rover Defender, boxer shorts or dog, fighter jet, Jockey underwear, "Ref. 5513", Champions League, Champion sportswear) | guard-v7 |
+| People nouns missing: riders, drivers, boxers, skiers, soldiers, fans, brides and grooms, guests | `PEOPLE_RE` counts them, the role nouns that always mean people (referees, footballers, linesmen …) and adults, toddlers, police, supporters …; not "ceiling fans" and the other object forms. A candidate named with a people word ("Olympic athletes") counts as people | guard-v7, score-v6 (headline and observations) |
+| Stage 1 tested people only on the sanitized observations, so a `person_style` observation ("A young man with a beard") never counted (single-pass, two-stage and frame-aggregate paths; predates guard-v6) | `guardQuickRead` passes the reading's own observations to the people test (and to G-SUBJECT, also on the G-QUAL path); the observations are still removed from the published reading | guard-v7 |
+| G-MEDIUM missed "engraved", "etched", "water-colour" | Added; "engraved" and "etched" are decoration on a craft, garment, building, interior, design or vehicle, like "painted" | guard-v7, score-v6 |
+| G-MEDIUM dropped "Kodak photographic film" (a product in the photo) | "photographic" before film, paper, plates, equipment, gear, lenses, chemicals, enlargers, flashes or tripods does not match | guard-v7, score-v6 |
+
+Each fix has regression tests that fail on the guard-v6/score-v5 code
+(`guardrails.test.ts` "guard-v7 …", `scorer.test.ts` "score-v6 …").
+
+**Offline replays (no request), guard-v7, score-v6, thr-v2, live gates,
+verifier off, both pipelines:** the round-2 blind run (golden-v3), the round-1
+blind run (golden-v2 and golden-v3), tune runs 1 and 2 (golden-v3) and Evaluate
+iterations 1 and 2 (golden-v2) give byte-identical scorecards to guard-v6 and
+score-v5 (every metric, every per-photo violation, guarded and unguarded); the
+round-2 blind run still fails (M1 1, M2 0.0541, M4 0.25, M9 0.8947, M11 1).
+`replay-v1` passes.
+
+**Binding and qualification.** The fixes change bound photo code (guardrails
+and scorer), so the binding was regenerated: golden-v1, golden-v2 and golden-v3
+get the new photo code digest (`20106786…`) and `score-v6`; golden-v2 and
+golden-v3 stay `blind_consumed`; thresholds and `text-v1` are unchanged. By
+design any photo artifact scored on the old inputs is stale. The photo roles
+were not qualified before (golden-v3's blind split is consumed) and stay
+`catalog-compatible`; the blind set was not re-run and no label, manifest or
+`freeze.json` changed. `research_text` stays qualified; `composer` stays
+`catalog-compatible` (`eval_failed`).
+
+**Docs.** The photo runbook in docs/concentrate.md now passes running totals to
+`--max-requests` (the counter is per out-dir and cumulative), as the text
+runbook already did; superseded binding facts in §17.1, docs/concentrate.md and
+the requalification plan are marked as the state at `34fcc2e`; two broken links
+in docs/v2-gap-report.md and the FREEZE.md record table are fixed.
+
+Spend: 0 Concentrate, 0 Qloo, 0 Wikipedia (everything offline). Round 2 total
+unchanged: 62 of 220 Concentrate, 33 of 150 Qloo, 0 Wikipedia. No Elorian.

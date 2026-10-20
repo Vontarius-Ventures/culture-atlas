@@ -187,7 +187,7 @@ unavailable under Concentrate.
 | (legacy) `vision_photo` | `atlas_observations_v2` (full reading, `VlmFullReading`) | `vlm-full-v2` | profile bounds | profile | profile | `ConcentrateVlm` full mode |
 | `vision_verify` (off by default; the tune split kept it off, [quality plan](quality-plan.md) §15) | `atlas_verify_v1` (`VlmVerification`) | `vlm-verify-v2` | ≤ 768 px | profile | profile | `ConcentrateVlmVerifier`, `verifierTargets()`, `applyVerification()` |
 
-- **Text-only references and the verifier** ([requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built), guard-v4). A brand or person name that only the stage-2 reply contains, with every word transcribed, publishes as a text-only reference (G-TEXT-ONLY): listed with the text it was read from, never searched in Qloo, anchored, researched or offered as a subject choice. The verifier (`vision_verify`) runs in the background after stage 2 on published, non-anchor style, place and tradition claims that stage 2 hedged or the read text does not bear out; "no" lowers certainty and qualifies the reference, "unsure" qualifies it, nothing is ever removed. It runs only with `ANALYSIS_VERIFIER_ENABLED=true`, a qualified profile and no kill (`analysis_verifier_enabled`); its call is reserved with both photo stages before stage 1. Like the other photo roles it qualifies only on golden-v2 (golden-v1 before the requalification freeze) with a blind held-out split, and is never served by a fallback model.
+- **Text-only references and the verifier** ([requalification plan](requalification-plan.md#step-1-record-decisions--verifier-built), guard-v4). A brand or person name that only the stage-2 reply contains, with every word transcribed, publishes as a text-only reference (G-TEXT-ONLY): listed with the text it was read from, never searched in Qloo, anchored, researched or offered as a subject choice. The verifier (`vision_verify`) runs in the background after stage 2 on published, non-anchor style, place and tradition claims that stage 2 hedged or the read text does not bear out; "no" lowers certainty and qualifies the reference, "unsure" qualifies it, nothing is ever removed. It runs only with `ANALYSIS_VERIFIER_ENABLED=true`, a qualified profile and no kill (`analysis_verifier_enabled`); its call is reserved with both photo stages before stage 1. Like the other photo roles it qualifies only on golden-v3 since the round-2 freeze (`a7f5a7b`; golden-v2 before it, golden-v1 before the first requalification freeze) with a blind held-out split that has not been consumed, and is never served by a fallback model.
 
 - The profile's `schemaVersion` selects the reading (`readingForProfile`) and its version (`readingVersionForProfile`), so the profile hash, and with it the qualification artifact, binds the exact reading. Every vision profile not pinned to `atlas_observations_v2` uses the quick read. A profile pinned to `atlas_quick_read_v1` or `atlas_enrichment_v1` keeps the phase-4 prompt and schema byte-identical (a test pins the prompt hashes); every other quick or enrich profile gets reading v2. Both photo roles must be re-qualified on v2 ([quality plan](quality-plan.md) §3, §7.5).
 - **Reading v2** ([quality plan](quality-plan.md) §3). Stage-1 candidates report `domain` (what the reference is about), `evidence` (`read_text`, `logo`, `distinctive_form`, `context`) and `evidence_text` (the words read) instead of categories; the enrichment returns a `verdict` (`supported`, `weak`, `unsupported`) per first-reading candidate instead of `keep`, verbatim `visible_text` only, and `illegible_text_present`. The prompts add the evidence rules: a brand or model only from a legible name or logo, sign names exactly as written, no medium words, no generic objects, 0 to 5 candidates, nothing about a person's looks or role.
@@ -246,24 +246,35 @@ pnpm qualify:concentrate --profile-file profiles.json --role vision_photo \
   --golden fixtures/eval/golden-v3 --photos /secure/golden-photos \
   --out-dir /secure/concentrate-qualification --max-requests 64 --spend-cap-usd 2
 # 4. Same command plus --confirm-paid-requests sends real, billed requests.
+# --max-requests is a running total, not a per-role budget: the request counter is
+# per out-dir, cumulative across roles and runs, and never reset; a run stops at
+# request_cap once the out-dir's total reaches it. Every command below uses this
+# out-dir, so each passes the total so far plus its own requests (here starting
+# from an empty out-dir; add whatever an earlier run already used).
 # Two-stage reading: qualify the quick read first, then stage 2. Stage 2 needs the
 # vision_photo profile in the same file and sends a real quick read per photo as
-# its input (two requests per photo, both under --max-requests and the spend cap).
+# its input (two requests per photo, both under --max-requests and the spend cap):
+# 128 of its own after vision_photo's 64, so 192.
 pnpm qualify:concentrate --profile-file profiles.json --role vision_photo_enrich \
   --golden fixtures/eval/golden-v3 --photos /secure/golden-photos \
-  --out-dir /secure/concentrate-qualification --max-requests 128 --spend-cap-usd 2
-# Or both photo roles from one run (128 requests instead of 64 + 128): the enrichment
-# run also writes the vision_photo artifact, scored on its own stage-1 readings alone
-# (a stage-1-only run: M15 for coverage, M5 and M9 scoped out) with its own requests,
-# latency and usage. Each stage is bounded from the original photo at its own bounds.
+  --out-dir /secure/concentrate-qualification --max-requests 192 --spend-cap-usd 2
+# Or both photo roles from one run (128 requests instead of 64 + 128; then the
+# running total after it is 128, not 192): the enrichment run also writes the
+# vision_photo artifact, scored on its own stage-1 readings alone (a stage-1-only
+# run: M15 for coverage, M5 and M9 scoped out) with its own requests, latency and
+# usage. Each stage is bounded from the original photo at its own bounds.
 #   ... --role vision_photo_enrich --with-stage1-artifact
 # Text roles: prompts with content checks (fixtures/eval/text-v1, quality plan §8).
+# research_text has 6 fixtures and composer 11; after the 192 photo requests above
+# that is 198 and then 209 (in a fresh out-dir: 6 and 17).
+pnpm qualify:concentrate --profile-file profiles.json --role research_text \
+  --fixtures fixtures/eval/text-v1/research_text --out-dir /secure/concentrate-qualification \
+  --max-requests 198 --spend-cap-usd 0.5
 pnpm qualify:concentrate --profile-file profiles.json --role composer \
   --fixtures fixtures/eval/text-v1/composer --out-dir /secure/concentrate-qualification \
-  --max-requests 11 --spend-cap-usd 0.5
+  --max-requests 209 --spend-cap-usd 0.5
 # Any run: --ledger <file outside git> [--package <name>] appends one line per
-# request (endpoint, status, ms; never a body, reply or key). The request counter
-# is per out-dir and cumulative across roles: pass the running total as --max-requests.
+# request (endpoint, status, ms; never a body, reply or key).
 ```
 
 **A role qualifies on quality, not only on transport** (docs/quality-plan.md §7.5):
@@ -589,13 +600,18 @@ round is at 169 of 300 Concentrate and 32 of 200 Qloo requests. No Elorian.
 [Requalification plan](requalification-plan.md), "Round 2"; details in
 [quality plan §17](quality-plan.md#17-requalification-round-2-blind-run-gaps-closed-text-roles-2026-10-19).
 
-**Rules (guard-v6, score-v5, golden-v3).** The three round-1 gaps are closed
-in general, not only for the words that failed: the guard's people test counts
+**Rules (guard-v6, score-v5, golden-v3), as they stood at `34fcc2e`.** The
+binding facts in this paragraph are superseded: since `a7f5a7b` the photo roles
+require golden-v3, and since the round-2 blind run golden-v3 is
+`blind_consumed` too (next section); the review fixes after that run changed
+the rules again (guard-v7, score-v6; "Round-2 review fixes" below). The three
+round-1 gaps were closed for the words that failed and some neighbours, not in
+general (the review found synonyms and forms that still passed): the guard's people test counts
 players, athletes, crowds, spectators and other words for people (in the
 headline and in observations), and a role noun in the headline counts as
 people; role nouns match singular and plural ("background players",
 "referees") but not a playback device ("record player", "player piano");
-G-MEDIUM matches every inflection of a medium word ("photographed",
+G-MEDIUM matches the inflections of the medium words it lists ("photographed",
 "photography", "rendered", "sketched", "watercolours", "painterly", "gouache",
 "linocut", "hand-drawn") while "painted" on a craft, building, garment or
 vehicle stays decoration, and a participle is removed without its
@@ -604,9 +620,10 @@ studio"). The scorer's own copies of the role and people tests got the
 plurals and people words too (score-v5; stricter only). h26's label fix is in
 the new tune set **golden-v3** (golden-v2's 44 photos all as tune, h14–h29
 included; the h26 expected pattern no longer matches "MG MGA roadster"; its
-label history records why). golden-v2 is unchanged and stays consumed; the
-photo roles still require golden-v2 (`REQUIRED_GOLDEN_SET`), so no photo role
-can qualify until a fresh blind split (h30+) is curated, frozen and bound.
+label history records why). golden-v2 is unchanged and stays consumed. At
+`34fcc2e` the photo roles still required golden-v2 (`REQUIRED_GOLDEN_SET`), so
+no photo role could qualify until a fresh blind split (h30+) was curated,
+frozen and bound; that happened at `a7f5a7b` (next section).
 
 **Offline replay of the round-1 blind recordings** (no request; guard-v6,
 score-v5, thr-v2, live gates, verifier off): against the golden-v2 labels M1
@@ -659,6 +676,48 @@ golden-v3 `blind_consumed` in the binding), so `pnpm qualify:concentrate`
 refuses golden-v3 for the photo roles before any request. Spend: 40 Concentrate
 and 33 Qloo requests (package `rq3-blind`); round 2 used 62 of 220 Concentrate
 and 33 of 150 Qloo requests. No Elorian.
+
+## Round-2 review fixes (guard-v7, score-v6, 2026-10-20)
+
+Details in [quality plan §17.12](quality-plan.md#1712-review-fixes-after-the-blind-run-guard-v7-score-v6).
+A review of the round-2 rules after the blind run found that the people, role
+and medium tests were closed lists that synonyms still passed. Fixed in
+general, with regression tests that fail on the old rules:
+
+- **Roles (G-PERSON-ROLE, G-SUBJECT).** `ROLE_RE` adds the common sports and
+  official synonyms (strikers, defenders, midfielders, pitchers, refs,
+  linesmen, officials, drivers, riders, racers, boxers, fighters, champions,
+  sportsmen/sportswomen, batswomen, officers, soldiers). Role words that also
+  name a thing exclude the thing: a Coach bag or a coach (bus), a Singer sewing
+  machine, a bowler hat, tempura batter, a captain's chair, a water pitcher, a
+  golf driver, a café racer, a rider mower, a Land Rover Defender, boxer shorts
+  or a boxer dog, a fighter jet, Jockey underwear, a watch "Ref. 5513", the
+  Champions League.
+- **People.** A role noun alone no longer counts as people (guard-v6 let
+  "Black bowler hat on a hook" or "Singer sewing machine" drop a correct
+  claim); `PEOPLE_RE` instead counts the role nouns that always mean people
+  (referees, footballers, linesmen …), riders, drivers, boxers, skiers, soldiers,
+  fans and supporters (not "ceiling fans"), brides and grooms, guests and
+  adults, and a candidate named with a people word ("Olympic athletes") counts.
+  Stage 1 (two-stage, single-pass and frame-aggregate paths) now tests people on
+  the reading's observations **before** person descriptions are removed, so a
+  `person_style` observation counts as it always should have.
+- **Medium.** G-MEDIUM adds "engraved", "etched" and every hyphenation of
+  watercolour ("water-colour"); "engraved" and "etched" are decoration on a
+  craft, garment or building like "painted". "Photographic film" (paper,
+  plates, equipment …) is a product in the photo, not the photo's medium.
+- **Scorer (score-v6).** Its independent copies gained the same role and people
+  words (so M1/M11 can see a synonym bypass) and medium forms, with a few named
+  object exceptions of its own.
+
+Every recorded run replays to exactly the same scorecard as before (no
+request). The binding was regenerated (photo code digest and scorer version for
+golden-v1, golden-v2 and golden-v3). This changes inputs bound for the golden-v3
+photo roles, so by design no earlier photo artifact counts; the photo roles were
+not qualified anyway (golden-v3's blind split is consumed), the blind set was
+not re-run, and they stay `catalog-compatible`. Text roles are unaffected
+(`text-v1` binding unchanged): `research_text` stays qualified. Spend: 0
+Concentrate, 0 Qloo, 0 Wikipedia.
 
 ## Elorian fallback (operator choice)
 
@@ -840,8 +899,10 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
     block (`missing_eval`), and the Evaluate-phase artifacts are golden-v1
     (`wrong_golden_set`) and failed their evaluation. golden-v2 and golden-v3
     are both `blind_consumed`, so requalification needs the fixes in quality
-    plan §17.8 and yet another fresh blind set (h50+). Photos keep failing
-    closed. `vision_verify` is off and not qualified.
+    plan §17.8 and yet another fresh blind set (h50+). The round-2 review
+    fixes (guard-v7, score-v6) changed the bound photo code after that run, so
+    a new attempt is scored under them. Photos keep failing closed.
+    `vision_verify` is off and not qualified.
   - `research_text` was re-qualified under thr-v2 (round 2, 6/6). `composer`
     failed its round-2 re-qualification on T12 (an injection echo on one
     plan-prose fixture) and stays `catalog-compatible`; its earlier artifacts
