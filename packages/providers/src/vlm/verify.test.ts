@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { SECURITY_RULES } from './prompt';
 import { MERGED_CANDIDATES_MAX, VlmCandidate } from './types';
@@ -125,6 +126,8 @@ describe('verifier prompt (security rules, image text is data)', () => {
 
   it('vlm-verify-v3: the answer is binding, a specific feature is needed, a named site is evidence, an occasion needs text', () => {
     expect(VERIFY_READING_VERSION.prompt).toBe('vlm-verify-v3');
+    // Pinned: a prompt edit needs a new promptVersion and a re-qualification.
+    expect(createHash('sha256').update(VLM_VERIFY_SYSTEM_PROMPT).digest('hex')).toBe('d584acc6e480d371e33891ae3c177d9f087ccdb8fb912a1391fd9605ed14d6c1');
     expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('only a claim you answer "yes" is shown');
     expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('a feature specific to the claim must be visible');
     expect(VLM_VERIFY_SYSTEM_PROMPT).toContain('a style or period that the named place does not have is "no"');

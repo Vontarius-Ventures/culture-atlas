@@ -37,17 +37,22 @@ const PHOTO_CODE: readonly string[] = [
 
 /**
  * Photo golden sets in the binding: golden-v1 (replay-v1, earlier artifacts),
- * golden-v2 (round 1; its blind split is consumed) and golden-v3 (round 2,
- * the photo roles' set: every golden-v2 photo as tune, h14-h29 included, with
- * the h26 label fix, plus the fresh blind split h30-h49).
+ * golden-v2 (round 1; its blind split is consumed), golden-v3 (round 2: every
+ * golden-v2 photo as tune, h14-h29 included, with the h26 label fix, plus the
+ * blind split h30-h49, consumed by the round-2 blind run) and golden-v4
+ * (round 3 tune set: every golden-v3 photo as tune, with the h01, h31, h43
+ * and h46 label fixes; a fresh blind split h50+ joins it before the round-3
+ * freeze).
  */
-export const PHOTO_GOLDEN_SETS = ['golden-v1', 'golden-v2', 'golden-v3'] as const;
+export const PHOTO_GOLDEN_SETS = ['golden-v1', 'golden-v2', 'golden-v3', 'golden-v4'] as const;
 
 export const BOUND_CODE: Record<string, readonly string[]> = {
   'golden-v1': PHOTO_CODE,
   'golden-v2': PHOTO_CODE,
   // The round-2 requalification set (docs/requalification-plan.md): the photo roles qualify only on it.
   'golden-v3': PHOTO_CODE,
+  // The round-3 tune set (docs/requalification-plan.md, round 3 item 3).
+  'golden-v4': PHOTO_CODE,
   'text-v1': [
     'scripts/eval/text-scorer.ts',
     'scripts/eval/text-schemas.ts',

@@ -1,0 +1,40 @@
+{
+  "id": "h08",
+  "split": "tune",
+  "file": "h08-lol_780.png",
+  "subject_domains": [
+    "other"
+  ],
+  "quality": {
+    "usable": false,
+    "issue": "too_dark"
+  },
+  "expected": [],
+  "acceptable": [],
+  "forbidden": [
+    {
+      "pattern": ".*",
+      "why": "unusable photo: no candidates at all"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food",
+    "unusable_with_candidates"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Mean brightness 10.9/255; a dark hall is barely discernible."
+}

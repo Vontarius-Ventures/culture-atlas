@@ -39,6 +39,7 @@ import { SCORER_VERSION } from './eval/scorer';
 import type { ReadingPipeline, Recording } from './eval/pipeline';
 import { verifiedTextGolden, type VerifiedTextGolden } from './eval/text-golden';
 import { summarizeTextRun, type TextRunRow } from './eval/text-scorer';
+import { COMPOSER_PROMPT_VERSION } from '../packages/domain/src/composer/creative';
 
 /** Pass thresholds of the evaluation (docs/quality-plan.md §7.2). */
 export const DEFAULT_THRESHOLDS = path.resolve(import.meta.dirname, '../fixtures/eval/thresholds.json');
@@ -422,6 +423,10 @@ export async function qualifyProfile(
     fixtures = await discoverFixtures(opts.fixturesDir, profile.role);
   }
   if (textRole) {
+    // The text fixtures are built from the current composer prompts; a profile naming an older
+    // prompt version would qualify a prompt production no longer sends (round 3: composer-v2).
+    if (profile.role === 'composer' && profile.promptVersion !== COMPOSER_PROMPT_VERSION)
+      throw new Error(`The composer profile names promptVersion ${profile.promptVersion}; the composer prompts are ${COMPOSER_PROMPT_VERSION}. Nothing was sent.`);
     if (!opts.textScorer)
       throw new Error('Text roles need the content checks (scripts/eval/text-scorer.ts); refusing to qualify without them.');
     // A fixture for another role's schema is refused first (e.g. composer prompts under research_text).

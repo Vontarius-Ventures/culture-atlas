@@ -816,7 +816,7 @@ describe('text roles: content checks gate qualification (plan §8)', () => {
     role: 'composer',
     image: { maxBytes: 0, maxPixels: 0, maxDimension: 0, maxCount: 0 },
     timeoutMs: 15_000,
-    promptVersion: 'composer-v1',
+    promptVersion: 'composer-v2',
     schemaVersion: 'plan_prose',
     qualificationArtifactId: 'composer-2026-10-19',
   };
@@ -873,6 +873,24 @@ describe('text roles: content checks gate qualification (plan §8)', () => {
     await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(5) })).rejects.toThrow('content checks');
     await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(5, false), textScorer: scorer(true) })).rejects.toThrow('expect.json');
     await expect(qualifyProfile({ ...base, fixturesDir: await textFixtures(4), textScorer: scorer(true) })).rejects.toThrow('at least 5');
+  });
+
+  it('refuses a composer profile that names an older prompt version (round 3: composer-v2), before any request', async () => {
+    const fetchImpl = textResponses();
+    await expect(
+      qualifyProfile({
+        apiKey: KEY,
+        outDir: await preparedOutDir(),
+        profile: { ...textProfile, promptVersion: 'composer-v1' },
+        fixturesDir: await textFixtures(5),
+        textScorer: scorer(true),
+        maxRequests: 10,
+        spendCapMicros: 2_000_000,
+        confirmPaidRequests: true,
+        fetch: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toThrow('the composer prompts are composer-v2. Nothing was sent.');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('passes only when every fixture passes its content checks; the artifact keeps aggregates only', async () => {

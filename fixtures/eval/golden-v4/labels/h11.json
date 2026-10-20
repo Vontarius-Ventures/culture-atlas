@@ -1,0 +1,54 @@
+{
+  "id": "h11",
+  "split": "tune",
+  "file": "h11-gsam_demo5.jpg",
+  "subject_domains": [
+    "sport",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Cricket",
+      "pattern": "cricket(?!er)",
+      "aliases": [
+        "Test cricket",
+        "First-class cricket"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "cricket whites|whites"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "england|australia|india|pakistan|lord'?s|the oval|ashes|\\bipl\\b|\\bmcc\\b",
+      "why": "no text identifies the teams, ground or competition",
+      "class": "person_identity"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Players and an umpire: no identity, team or role claims about the people."
+}

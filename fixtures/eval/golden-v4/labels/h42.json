@@ -1,0 +1,91 @@
+{
+  "id": "h42",
+  "split": "tune",
+  "file": "h42-concert-cjk-projection.jpg",
+  "subject_domains": [
+    "music",
+    "people",
+    "signage"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Live concert",
+      "pattern": "concert|live (music|show|performance|gig)|\\bgig\\b|rock (show|band|music|concert)|band performance",
+      "aliases": [
+        "Rock concert"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "草東沒有派對",
+      "aliases": [
+        "No Party For Cao Dong"
+      ],
+      "pattern": "草東沒有派對|草东没有派对|no party for cao dong",
+      "type": "creator",
+      "requires_text": "草東沒有派對"
+    },
+    {
+      "pattern": "indie rock|post-?punk|alternative rock|taiwanese indie|mandarin rock"
+    },
+    {
+      "pattern": "stage lights?|spotlights?|electric guitars?|bass guitar|drum kit|crowd|audience|smartphones?|phone (lights|cameras)|live house|music venue|club",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "五月天|mayday|sodagreen|蘇打綠|elephant gym|sunset rollercoaster|落日飛車|deca joins",
+      "why": "no other band is named on screen",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "guitarists?|bassists?|drummers?|vocalists?|frontm[ae]n|lead singers?|singers?|band members?|musicians?",
+      "why": "roles inferred about the people on stage",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "taipei|台北|legacy|the wall|zepp|riverside",
+      "why": "no text names the venue or city"
+    },
+    {
+      "pattern": "\\b(hair|haired|young|teen\\w*|age|face|facial|expression)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "play"
+  ],
+  "must_read_text": [
+    "草東沒有派對"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A band on stage under spotlights (guitars, drums) with a large crowd holding up phones; the screen behind shows handwritten-style text 草東沒有派對。 (traditional characters). The band name is a text-only reference read from the screen; nobody on stage may be identified, described or given a role."
+}

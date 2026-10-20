@@ -18,24 +18,30 @@ export const EVAL_BINDING = {
   sets: {
     'golden-v1': {
       golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
-      scorer_version: 'score-v6',
-      code_sha256: '201067863d9ade89f4cf7ed0c9ab8a3ba1ea14033ad503be5e2b0e942af317fd',
+      scorer_version: 'score-v7',
+      code_sha256: '526e15edab19071559ef2055f9d73264c0c9b20b5136cf9901f2558a530d6f07',
       blind_consumed: false,
     },
     'golden-v2': {
       golden_sha256: 'b429f6190fc688b20b8e8a3d3ff3e287bd3c899cca4c3ebe291de2b69682f930',
-      scorer_version: 'score-v6',
-      code_sha256: '201067863d9ade89f4cf7ed0c9ab8a3ba1ea14033ad503be5e2b0e942af317fd',
+      scorer_version: 'score-v7',
+      code_sha256: '526e15edab19071559ef2055f9d73264c0c9b20b5136cf9901f2558a530d6f07',
       blind_consumed: true,
     },
     'golden-v3': {
       golden_sha256: '12edf9323aa65b674a95a55aa0f3effe46039fe1de5385a93bfbfd86d72f8ad3',
-      scorer_version: 'score-v6',
-      code_sha256: '201067863d9ade89f4cf7ed0c9ab8a3ba1ea14033ad503be5e2b0e942af317fd',
+      scorer_version: 'score-v7',
+      code_sha256: '526e15edab19071559ef2055f9d73264c0c9b20b5136cf9901f2558a530d6f07',
       blind_consumed: true,
     },
+    'golden-v4': {
+      golden_sha256: '26aab46add5b3c9fc65fe1b4157a9df422445cafd1bd362c7f691c7fcdfd12b2',
+      scorer_version: 'score-v7',
+      code_sha256: '526e15edab19071559ef2055f9d73264c0c9b20b5136cf9901f2558a530d6f07',
+      blind_consumed: false,
+    },
     'text-v1': {
-      golden_sha256: '8d171b14201054d1b2ef175c7f8606d2ac07c1726ca64df76e667c0216e917dc',
+      golden_sha256: '2479157178338feabca9e335c17494c6ed48c4e6e1f108082296a1839f1e7ac9',
       scorer_version: 'text-score-v2',
       code_sha256: '72da5e5d65e9c11670db92ca4b8b0c8aebb01f7b56b6bc843faadae8eebb13d6',
     },

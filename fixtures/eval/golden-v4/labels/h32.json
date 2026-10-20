@@ -1,0 +1,77 @@
+{
+  "id": "h32",
+  "split": "tune",
+  "file": "h32-food-nuggets-brand.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Chicken nuggets",
+      "pattern": "chicken nuggets?|nuggets?|popcorn chicken|chicken (bites|pieces)",
+      "aliases": [
+        "Nuggets"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "KFC",
+      "pattern": "^kfc$|\\bkfc\\b",
+      "type": "brand",
+      "requires_text": "KFC"
+    },
+    {
+      "pattern": "fried chicken|fast food|american (cuisine|food|fast food)"
+    },
+    {
+      "pattern": "dipping sauces?|barbecue sauce|bbq sauce|ketchup|mayonnaise|garlic (sauce|mayo)|sauces?|paper box|carton|box",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "mcdonald|mcnuggets?|burger king|popeyes|chick-fil-a|wendy|tyson|church'?s",
+      "why": "only KFC is written; no other brand is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "kentucky fried chicken",
+      "why": "only the initials KFC are written; the expanded name is not read",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|render",
+      "why": "medium word on a real (promotional) photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [
+    "KFC",
+    "$10"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Promotional photo: a hand takes a nugget from a box printed 'KFC' and '20 for $10', with three dipping sauces. Only a hand of a person is visible: no description of the person. 'Kentucky Fried Chicken' is not written, so only 'KFC' counts."
+}
