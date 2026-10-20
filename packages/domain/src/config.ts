@@ -84,7 +84,8 @@ export const DomainConfigSchema = z.object({
   /**
    * Photo-role requalification: the verifier (vision_verify; round 3: another
    * model family, binding before publication, docs/quality-plan.md §18) runs
-   * only when this is "true"/"1" (default off until Tune decides) and the role
+   * only when this is "true"/"1" (default off; the round-3 Tune kept it off,
+   * docs/quality-plan.md §18.7) and the role
    * is qualified; the kill switch analysis_verifier_enabled turns it off.
    */
   ANALYSIS_VERIFIER_ENABLED: z.string().optional(),

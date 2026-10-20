@@ -260,6 +260,14 @@ describe('golden-v4 (fixtures/eval/golden-v4): round-3 tune labels', () => {
     for (const name of ['Pepperoni pizza', 'Pizza', 'Homemade pizza', 'Sliced pizza', 'Wood-fired pizza']) expect(entryMatches(entry, name, 'exact'), name).toBe(true);
     for (const name of ['Neapolitan-style pizza', 'New York-style pizza', 'Neapolitan pizza']) expect(entryMatches(entry, name, 'exact'), name).toBe(false);
     expect(v4.labels.get('h31')!.notes).toContain('Regional styles (Neapolitan, New York) are left unlabelled');
+    // Round-3 Tune: the scorer also matches by name similarity when no entry matches exactly, so the whole
+    // label is checked, not one entry: no alias may make a regional style expected again ("Pizza" in
+    // "Neapolitan-style pizza" scored 0.85). Plain "Pizza" stays expected through the pattern.
+    const h31 = v4.labels.get('h31')!;
+    for (const name of ['Neapolitan-style pizza', 'New York-style pizza', 'Neapolitan pizza'])
+      expect(findEntry([...h31.expected, ...h31.acceptable], name), name).toBeUndefined();
+    expect(findEntry(h31.expected, 'Pizza')?.name).toBe('Pepperoni pizza');
+    expect(h31.history).toHaveLength(2);
   });
 
   it('h43: the full concept name needs "EfficientDynamics" read; "BMW Vision" needs "Vision"', async () => {

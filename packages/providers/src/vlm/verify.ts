@@ -27,6 +27,9 @@ import { candidateNameKey, type VlmAnalyzeInput, type VlmCandidate } from './typ
  * Brands, people and creators are never sent: they are gated by read text.
  * It is off by default (analysis_verifier_enabled) until the tune split
  * shows it removes forbidden claims without dropping coverage below the gate.
+ * Round-3 Tune (docs/quality-plan.md §18.7, vertex/gemini-2.5-flash): it
+ * blocked 1 forbidden claim and 21 label-good ones ("unsure" on 21 of 56
+ * checks, never "no"), so M4 and M5 fell outside their gates; it stays off.
  *
  * Everything here but the provider interface is pure, so the compiler, the
  * live evaluation and the replay apply the same selection and the same

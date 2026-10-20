@@ -78,7 +78,7 @@ import {
  *    reference when the longer model name it was claimed with was not read.
  * Every guard-v7 safety rule stays.
  */
-export const GUARDRAIL_VERSION = 'guard-v8';
+export const GUARDRAIL_VERSION = 'guard-v9';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -177,8 +177,15 @@ export interface Stage2Guard {
 
 // ---- rule patterns (§4.2, exact) -------------------------------------------
 
+/**
+ * G-VTEXT: a visible-text entry that describes text instead of transcribing it.
+ * guard-v9 (round-3 Tune, p05): "... labels in a non-Latin script" names the
+ * script with a space ("in a <word> script"), which the guard-v5 hyphen form
+ * ("Persian-script") missed; a name that merely contains the word ("Script
+ * Fixture Coffee", "Manuscripts") is still a transcription.
+ */
 export const VTEXT_RE =
-  /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration|\blegible\b|transcri|\b\p{L}+-script\b/iu;
+  /illegib|unreadabl|blur|placard|label cards?|resolution|characters are|text (is |on )|appears to|written in|licen[cs]e plate|number plate|registration|\blegible\b|transcri|\b\p{L}+-script\b|\bin (?:an? )?[\p{L}-]+(?: [\p{L}-]+)? script\b/iu;
 /** The plan's list plus mouth/lips/teeth/grimace (the v2 smoke described "his mouth open mid-gesture"). */
 export const PERSON_OBS_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|grimac\w*|mouth|lips|teeth|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
@@ -314,6 +321,21 @@ export const STYLE_OF_RE = /^(\S+)(?:-(?:style|inspired)\b|\s(?:style|inspired)\
 export const PERSON_SUBJECT_DOMAINS: ReadonlySet<string> = new Set(['people', 'other']);
 export function aboutPeople(c: Pick<VlmCandidate, 'type'> & { domain?: VlmDomain | null }): boolean {
   return (c.type === 'tradition' || c.type === 'style') && !!c.domain && PERSON_SUBJECT_DOMAINS.has(c.domain);
+}
+
+/**
+ * guard-v9 (round-3 Tune, h46 "Professional basketball"): on a photo that
+ * shows people, a *style* in the sport domain is a claim about how those
+ * people play (their level, league or manner of play), so it is a claim about
+ * the people. The sport itself arrives as a tradition ("Basketball", "Test
+ * cricket", "association football") and stays a thing, and a sport style on a
+ * photo without people ("Running shoes" on a studio sneaker) is about the
+ * object. Again by class and the model's own domain, not by word. Unlike
+ * aboutPeople it applies only once the reading shows people: a quick read of a
+ * sneaker or a hoop is not held on the chance that people appear at stage 2.
+ */
+export function playStyleOfPeople(c: Pick<VlmCandidate, 'type'> & { domain?: VlmDomain | null }, mentionsPeople: boolean): boolean {
+  return mentionsPeople && c.type === 'style' && c.domain === 'sport';
 }
 
 /** Inspector reason codes of guard-v8 (decision notes). */
@@ -899,6 +921,8 @@ function evaluate(
     // The stage-1 quick read has no observations, so people may only show at stage 2 (h47:
     // "Formal dance attire" at stage 1, "A young man wears ..." at stage 2): a claim about
     // people is held until stage 2 can tell, never published from stage 1 on context.
+    if (playStyleOfPeople({ type: c.type, domain: input.domain }, facts.mentionsPeople) && c.evidence !== 'read_text')
+      return observe('G-PEOPLE-CLAIM', EVIDENCE_NOTES.peopleClaim);
     if (aboutPeople({ type: c.type, domain: input.domain }) && c.evidence !== 'read_text') {
       if (facts.mentionsPeople) return observe('G-PEOPLE-CLAIM', EVIDENCE_NOTES.peopleClaim);
       if (opts.stage === 1) {
@@ -1045,12 +1069,40 @@ function stage1Texts(published: VlmAnalysis, held: readonly VlmCandidate[]): str
  * name-like word in it (a capitalized word after the first, a maker, a model
  * code, or a single unknown capitalized word) is already published as a
  * candidate's name or read in the photo's kept visible text. A brand-like
- * label must have its brand read (brandReadIn). Anything else is dropped.
+ * label must have its brand read (brandReadIn) and, since guard-v9, every
+ * other word of it too, unless it is a published name or its brand words name
+ * a published reference that is not a brand (subjectBrandRead). Anything else
+ * is dropped.
  */
+/**
+ * guard-v9 (round-3 Tune, h40 "OCBC Bank column sign"): a brand-like
+ * "What caught your eye?" label repeats only what was read. Its brand words
+ * are read (brandReadIn) and so is every other word of it, as for a brand
+ * claim (G-BRAND-CORROBORATE), unless the label is itself a published name or
+ * its brand words name a published reference that is not a brand (a place or
+ * a sign read in the photo: "Fixture Harbour sign" next to the published place
+ * "Fixture Harbour"). guard-v3 to v8 kept a label once its brand words were
+ * read, so a read brand vouched for the object words around it ("column sign").
+ */
+function subjectBrandRead(
+  label: string,
+  texts: readonly string[],
+  published: readonly (Pick<VlmCandidate, 'name'> & { type?: VlmCandidate['type'] })[],
+): boolean {
+  if (published.some((c) => candidateNameKey(c.name) === candidateNameKey(label))) return true;
+  if (brandReadIn(label, texts) === null) return false;
+  const brand = brandWords(label);
+  const namesThing = published.some((c) => c.type !== undefined && c.type !== 'brand' && brand.every((w) => contentTokens(c.name).includes(w)));
+  if (namesThing) return true;
+  const words = contentTokens(stripParens(label)).filter(requiredWord);
+  return words.every((w) => texts.some((t) => textHasToken(t, w)));
+}
+
 export function guardSubjects(
   labels: readonly string[],
   ctx: {
-    published: readonly Pick<VlmCandidate, 'name'>[];
+    /** Published references; `type` (when given) lets a read place or sign name vouch for a label (guard-v9). */
+    published: readonly (Pick<VlmCandidate, 'name'> & { type?: VlmCandidate['type'] })[];
     texts: readonly string[];
     mentionsPeople?: boolean;
     /**
@@ -1078,7 +1130,7 @@ export function guardSubjects(
       (ctx.mentionsPeople !== false && ROLE_RE.test(label)) ||
       PERSON_OBS_RE.test(label) ||
       VTEXT_RE.test(label) ||
-      (brand && brandReadIn(label, ctx.texts) === null && !ctx.published.some((c) => candidateNameKey(c.name) === candidateNameKey(label))) ||
+      (brand && !subjectBrandRead(label, ctx.texts, ctx.published)) ||
       !nameLike.every((t) => known.some((k) => textHasToken(k, t))) ||
       tokens.some((t) => withheld.has(t));
     (bad ? dropped : kept).push(label);
@@ -1088,7 +1140,7 @@ export function guardSubjects(
 
 function guardCompetingSubjects(
   a: VlmAnalysis,
-  published: readonly Pick<VlmCandidate, 'name'>[],
+  published: readonly Pick<VlmCandidate, 'name' | 'type'>[],
   texts: readonly string[],
   withheldPersons: readonly string[] = [],
   peopleObservations: VlmAnalysis['observations'] = a.observations,
@@ -1425,7 +1477,7 @@ export function guardEnrichment(input: {
     const person = c.type === 'creator' || guarded.domain === 'people';
     // G-PEOPLE-CLAIM (guard-v8): people seen only at stage 2 make a held claim about them
     // (an occasion, a role, a style of the person) a private observation unless it rests on read text.
-    if (!person && facts.mentionsPeople && aboutPeople(c) && guarded.evidence !== 'read_text') {
+    if (!person && facts.mentionsPeople && (aboutPeople(c) || playStyleOfPeople(c, true)) && guarded.evidence !== 'read_text') {
       decisions.push(decision(guarded, 'observe', ['G-PEOPLE-CLAIM'], EVIDENCE_NOTES.peopleClaim));
       continue;
     }

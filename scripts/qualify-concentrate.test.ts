@@ -520,7 +520,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       profile_hash: profileHash(profile),
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 10_000, output_tokens: 1200, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v8', scorer_version: 'score-v7', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v9', scorer_version: 'score-v7', holdout_blind: true, pass: true },
     });
     expect(run.artifact!.eval!.metrics).toMatchObject({ holdout_M1: 0, holdout_M3: 1, holdout_M13: 1, failed_calls: 0, holdout_photos: 10, holdout_blind_photos: 10 });
     expect(qualificationState(profile, outDir)).toBe('qualified');
@@ -709,7 +709,7 @@ describe('scripts/qualify-concentrate (offline harness)', () => {
       requests_sent: 10,
       fixtures: { total: 10, passed: 10, failed: 0, outcomes: { complete: 10 } },
       usage: { input_tokens: 9000, output_tokens: 1000, unknown_usage_attempts: 0 },
-      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v8', holdout_blind: true, pass: true },
+      eval: { golden_set: 'golden-v3', guardrail_version: 'guard-v9', holdout_blind: true, pass: true },
     });
     // Scored as a stage-1-only run: the same block a separate vision_photo qualification would carry.
     expect(run.stage1Artifact!.eval!.metrics).toMatchObject({ holdout_M13: 1, failed_calls: 0, holdout_photos: 10 });

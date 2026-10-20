@@ -94,7 +94,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v8');
+    expect(GUARDRAIL_VERSION).toBe('guard-v9');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -1660,5 +1660,89 @@ describe('guard-v8: publication by evidence class', () => {
     const s2 = stage2(g, enrichment({ visible_text: ['BMW'], confirmed: [conf('BMW'), conf('BMW Fixture Series')] }));
     expect(names(s2.publishNow)).toEqual(['BMW']);
     expect(s2.publishNow[0]!.text_only).toBeUndefined();
+  });
+});
+
+/*
+ * guard-v9 (docs/quality-plan.md §18.7, round-3 Tune): the two tune failures of
+ * the round-3 live run, as FIXTURE data shaped like them (h46 "Professional
+ * basketball" on two players, h40 "OCBC Bank column sign" as a competing
+ * subject), not recorded model output. Each rule test fails on the guard-v8 code;
+ * the neighbouring cases (the sport itself, a sport style without people, a
+ * read place name with an object word) pass on both.
+ */
+describe('guard-v9: round-3 Tune fixes', () => {
+  it('G-VTEXT: text described by its script with a space ("in a non-Latin script") is a description, not a transcription', () => {
+    const { kept, dropped } = sanitizeVisibleText([
+      'Small printed museum labels in a non-Latin script',
+      'Captions in Fixture script',
+      'Signs in an East Fixture script',
+      'Script Fixture Coffee',
+      'Manuscripts',
+      'IN SCRIPT WE TRUST',
+    ]);
+    expect(dropped).toEqual(['Small printed museum labels in a non-Latin script', 'Captions in Fixture script', 'Signs in an East Fixture script']);
+    expect(kept).toEqual(['Script Fixture Coffee', 'Manuscripts', 'IN SCRIPT WE TRUST']);
+  });
+
+  const read = (title: string, interpretation: string, cands: VlmQuickCandidate[], over: Record<string, unknown> = {}) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates: cands, quality: { usable: true, issue: null }, ...over }), { twoStage: true });
+
+  it('G-PEOPLE-CLAIM: a style of play in the sport domain on a photo with people is about the people; the sport itself still publishes', () => {
+    const g = read('Basketball game', 'A live game, with a player in a gold jersey dribbling against a defender.', [
+      v2({ name: 'Fixture professional hoops', type: 'style', certainty: 0.8, domain: 'sport', evidence: 'context' }),
+      v2({ name: 'Fixture cricket', type: 'tradition', certainty: 0.9, domain: 'sport', evidence: 'distinctive_form' }),
+    ]);
+    expect(decisionFor(g.decisions, 'Fixture professional hoops')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'], note: 'people_claim' });
+    expect(names(g.analysis.candidates)).toEqual(['Fixture cricket']);
+    expect(g.held).toEqual([]);
+  });
+
+  it('G-PEOPLE-CLAIM: a sport style on a photo without people is about the object and is not held for stage 2', () => {
+    const g = read('Black low-top sneaker', 'A black athletic sneaker on a plinth.', [
+      v2({ name: 'Fixture running shoes', type: 'style', certainty: 0.6, domain: 'sport', evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.analysis.candidates)).toEqual(['Fixture running shoes']);
+    expect(g.held).toEqual([]);
+  });
+
+  it('G-PEOPLE-CLAIM: a held sport style whose people show only at stage 2 stays private; read text backs it', () => {
+    const g = read('Court at dusk', 'A court with a hoop.', [
+      v2({ name: 'Fixture streetball league', type: 'style', certainty: 0.3, domain: 'sport', evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture streetball league']);
+    const conf = [{ name: 'Fixture streetball league', rationale: 'Outdoor court', verdict: 'supported' as const }];
+    const players = [{ text: 'Two players jump for the ball under the hoop.', kind: 'object' as const }];
+    const s2 = stage2(g, enrichment({ observations: players, confirmed: conf }));
+    expect(s2.publishNow).toEqual([]);
+    expect(decisionFor(s2.decisions, 'Fixture streetball league')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    // Without people the same claim publishes on its supported second reading.
+    expect(names(stage2(g, enrichment({ observations: [{ text: 'An empty court with a hoop.', kind: 'setting' }], confirmed: conf })).publishNow)).toEqual([
+      'Fixture streetball league',
+    ]);
+    // A league named on a banner is read text, not a guess about the players.
+    const banner = read('Two players under a banner', 'Players under a league banner.', [
+      v2({ name: 'Fixture Hoops League', type: 'style', certainty: 0.8, domain: 'sport', evidence: 'read_text', evidence_text: 'FIXTURE HOOPS LEAGUE' }),
+    ]);
+    expect(decisionFor(banner.decisions, 'Fixture Hoops League')?.rules ?? []).not.toContain('G-PEOPLE-CLAIM');
+  });
+
+  it('G-SUBJECT: a brand-like label repeats only what was read; a read brand does not vouch for the object words around it', () => {
+    const g = read('Mall sale signage', 'A pillar ad with a bank logo.', [
+      v2({ name: 'FXB Bank', type: 'brand', relation: 'depicted', certainty: 0.9, domain: 'other', evidence: 'logo', evidence_text: 'FXB BANK' }),
+    ]);
+    const conf = [{ name: 'FXB Bank', rationale: 'Logo on the pillar', verdict: 'supported' as const }];
+    const s2 = stage2(
+      g,
+      enrichment({
+        visible_text: ['ALL YEAR', 'FXB BANK', 'FXB BANK CARD'],
+        confirmed: conf,
+        competing_subjects: ['FXB Bank column sign', 'FXB Bank card', 'FXB Bank'],
+      }),
+    );
+    expect(names(s2.publishNow)).toEqual(['FXB Bank']);
+    // "column sign" was never read: dropped. "FXB Bank card" is read word for word, "FXB Bank" is a published name.
+    expect(s2.analysis.competing_subjects.map((s) => s.label)).toEqual(['FXB Bank card', 'FXB Bank']);
+    expect(s2.dropped.subjects).toBe(1);
   });
 });
