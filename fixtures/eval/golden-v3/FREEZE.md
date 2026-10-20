@@ -105,3 +105,11 @@ because the golden-v3 digest now includes the held-out labels.
 | Event | Commit or run | Date | By |
 | --- | --- | --- | --- |
 | Labels written, freeze candidate | the commit adding this file (on `r2/blind`) | 2026-10-20 | blind-set curator (round 2) |
+| Labels frozen (freeze commit `F`) | `f4f4a2396f07a84b170ec179004539b0ccb4fb29` | 2026-10-20 | build lead (round 2) |
+| Merged into the round-2 branch (tune labels from `r2/fixes` `34fcc2e`, held-out split from `r2/blind`); binding regenerated | `420ec8c` | 2026-10-20 | build lead (round 2) |
+| Rules frozen, golden-v3 bound for the photo roles (`REQUIRED_GOLDEN_SET` → `golden-v3`; photo code digest `978d8f2b…` and thresholds digest unchanged; golden digest `2bd7ff1a…`) | `a7f5a7bae5b281dece956109a6bc2ef53ce68e44` | 2026-10-20 | build lead (round 2) |
+
+Step 2 check at the binding commit: `git diff f4f4a23 -- freeze.json labels/h3[0-9].json labels/h4[0-9].json` is
+empty and the held-out manifest lines are unchanged; `pnpm test` 1336/1336, typecheck and lint clean. h33's
+licence is not confirmed by the owner; the photo stays in the split (its file is not in git and is used only for
+this internal evaluation), and the open confirmation is reported with the result.
