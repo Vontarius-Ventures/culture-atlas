@@ -1,0 +1,81 @@
+{
+  "id": "h51",
+  "split": "holdout",
+  "file": "h51-food-nachos.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Nachos",
+      "pattern": "nachos?|enchiladas?|chilaquiles|loaded tortilla chips|tostadas?|quesadilla",
+      "aliases": [
+        "Loaded nachos",
+        "Enchiladas"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Tex-Mex",
+      "pattern": "tex-?mex|mexican|mexican-american",
+      "type": "cuisine"
+    },
+    {
+      "name": "Guacamole",
+      "pattern": "guacamole|avocado"
+    },
+    {
+      "name": "Pico de gallo",
+      "pattern": "pico de gallo|salsa fresca|salsa|diced tomato"
+    },
+    {
+      "pattern": "sour cream|melted cheese|cheddar|shredded (chicken|meat|pork|beef)|carnitas|pulled (pork|chicken)",
+      "generic": true
+    },
+    {
+      "pattern": "oval platter|serving platter|green[- ]rimmed (plate|platter)|woven placemat|rattan placemat|wicker charger|wooden table",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "chipotle|taco bell|chili'?s|el torito|on the border|chuy'?s|qdoba|old el paso",
+      "why": "no restaurant or product name is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "talavera|majolica|maiolica|puebla",
+      "why": "the platter's green brush border is not identifiable as a named pottery tradition"
+    },
+    {
+      "pattern": "cinco de mayo|d[ií]a de (los )?muertos|fiesta|party",
+      "why": "no occasion is shown"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "An oval platter with a green brushed border, heaped with a baked dish under melted cheese (nachos or enchiladas; shredded meat is visible under the cheese), topped with guacamole, sour cream and pico de gallo; woven placemat, wooden table, another plate behind. No text. Tex-Mex or Mexican cuisine is acceptable; the dish is labelled loosely because chips and tortillas are hidden under the cheese."
+}

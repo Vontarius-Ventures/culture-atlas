@@ -1,0 +1,75 @@
+{
+  "id": "h56",
+  "split": "holdout",
+  "file": "h56-interior-wood-panelled-bedroom.png",
+  "subject_domains": [
+    "interior"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Wood panelling",
+      "pattern": "wood(en)?[- ]panel(l)?(ed|ing)|panel(l)?ed walls?|knotty pine|tongue[- ]and[- ]groove|wainscot\\w*",
+      "aliases": [
+        "Wood-panelled room"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "abandoned|derelict|neglected|decay(ed|ing)?|run-?down|dilapidated|disused|urban exploration|urbex|damaged wall|hole in the wall"
+    },
+    {
+      "pattern": "motel( room)?|hotel room|bedroom|cabin|guest room",
+      "generic": true
+    },
+    {
+      "pattern": "dated|old-fashioned|vintage|retro"
+    },
+    {
+      "pattern": "bed|mattress|box spring|rumpled sheets|armchair|red chair|small window|debris|light switch|outlet",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "mid-?century|scandinavian|alpine|chalet|log cabin|adirondack|craftsman|americana|1970s|seventies|rustic|wabi-?sabi|cottagecore|western",
+      "why": "plain cheap wall panelling in a ruined room; no named interior style or period is supported"
+    },
+    {
+      "pattern": "bates motel|psycho|the shining|chernobyl|pripyat|route 66|desert",
+      "why": "no title, sign or text names a film or place"
+    },
+    {
+      "pattern": "crime scene|murder|horror|haunted",
+      "why": "an event or genre inferred from a messy room"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "An abandoned, wood-panelled small room (motel or cabin bedroom): a bare mattress with soiled, rumpled sheets, a red armchair, a small bright window, a large hole torn in the panelling at left, debris on the floor. ADVERSARIAL for a weak style guess: the panelling and light invite 'rustic', 'mid-century' or 'cabin' style claims and film references; only the panelling and the abandoned state are supported."
+}

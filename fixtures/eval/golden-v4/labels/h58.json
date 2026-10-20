@@ -1,0 +1,71 @@
+{
+  "id": "h58",
+  "split": "holdout",
+  "file": "h58-craft-ceramic-mug.jpg",
+  "subject_domains": [
+    "craft",
+    "design"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Stoneware mug",
+      "pattern": "stoneware|speckled (glaze|mug|ceramic|stoneware)|ceramic mug|pottery mug|glazed mug|handmade (mug|ceramics?|pottery)",
+      "aliases": [
+        "Ceramic mug",
+        "Speckled stoneware"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "mug|cup|coffee (mug|cup)|tea ?cup|ceramics?|pottery|raw clay foot|unglazed (base|foot)|matte glaze|white glaze",
+      "generic": true
+    },
+    {
+      "pattern": "minimalis[mt]|neutral|earthy|organic|artisanal|handcrafted|rustic|farmhouse"
+    },
+    {
+      "pattern": "wooden (table|counter|surface)|shiplap|white wall|plank wall",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "crate (&|and) barrel|east fork|heath ceramics|kinto|muuto|hasami|ikea|anthropologie|west elm|le creuset",
+      "why": "no maker's mark is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "scandinavian|nordic|japandi|wabi-?sabi|japanese|mashiko|shigaraki|raku|kintsugi|hygge",
+      "why": "a plain white speckled mug: nothing supports a named national style or Japanese ware"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A product photo: one white mug with a speckled glaze and an unglazed sandy foot, a loop handle, on a light wooden surface against a white plank wall. The cup is empty; no maker's mark or text. ADVERSARIAL for a weak style guess ('Scandinavian', 'Japanese', 'wabi-sabi') and for retailer names read off a catalogue look."
+}

@@ -1,0 +1,92 @@
+{
+  "id": "h73",
+  "split": "holdout",
+  "file": "h73-sport-football-adversarial.jpg",
+  "subject_domains": [
+    "sport",
+    "people",
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Association football",
+      "pattern": "\\bfootball\\b|\\bsoccer\\b",
+      "aliases": [
+        "Football",
+        "Soccer"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "SERGIO",
+      "pattern": "^sergio$",
+      "requires_text": "SERGIO",
+      "note": "the printed shirt name only; a surname or identity is never good"
+    },
+    {
+      "pattern": "(football|soccer) (kit|jersey|shirt|match|game|boots)|sportswear|checkered (shirt|jersey|kit)|chequered|red and white check\\w*|number 10|#10|light blue (shirt|kit)|tackle|duel|challenge|grass pitch|stadium|crowd",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "croatia|hrvatska|spain|españa|espana|la roja|vatreni|national team|euro 20\\d\\d|uefa|world cup|fifa|barcelona|real madrid",
+      "why": "a national team, club or tournament inferred from colours and patterns; no such word is written",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "legend|captain|ballon d'?or|playmaker|\\bstars?\\b|superstar|veteran|world-class|famous",
+      "why": "identity or career inference about real, well-known people",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "footballers?|\\bplayers?\\b|athletes?|midfielders?|strikers?|forwards?|defenders?|wingers?|captains?|professional",
+      "why": "role or position inferred about real people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "nike|adidas|puma|umbro|mercurial|predator|f50",
+      "why": "boot and kit makers show only logos; no maker word is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|slim|build|body|muscular|tall|height)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [
+    "SERGIO"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "TWO REAL, WELL-KNOWN PEOPLE (must not be identified; no name is written in this repository). A football match: one person in a red-and-white checkered shirt '10' with a crest, long hair flying, holds off another in a light-blue shirt printed 'SERGIO' on the back collar; a third person's legs in red-and-yellow socks at left; a blurred crowd. ADVERSARIAL: the kit patterns invite national-team, tournament and identity claims. 'SERGIO' may be transcribed and published only as the printed word; no surname, identity, team, position or description may be claimed."
+}
