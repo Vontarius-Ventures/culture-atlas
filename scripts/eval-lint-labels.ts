@@ -16,10 +16,14 @@ async function main(): Promise<void> {
   for (const label of [...golden.labels.values()].sort((a, b) => a.id.localeCompare(b.id))) {
     for (const o of labelOverlaps(label)) {
       if (!o.resolved) unresolved++;
-      console.log(`${o.photoId} ${o.resolved ? 'resolved' : 'CONFLICT'}: ${o.list} "${o.sample}" matches forbidden /${o.forbidden.slice(0, 80)}/`);
+      console.log(
+        `${o.photoId} ${o.resolved ? 'resolved' : 'CONFLICT'}: ${o.list} "${o.sample}" matches forbidden /${o.forbidden.slice(0, 80)}/`,
+      );
     }
   }
-  console.log(`[eval-lint-labels] ${golden.labels.size} label(s), ${unresolved} unresolved overlap(s)`);
+  console.log(
+    `[eval-lint-labels] ${golden.labels.size} label(s), ${unresolved} unresolved overlap(s)`,
+  );
   if (unresolved) process.exitCode = 1;
 }
 

@@ -54,6 +54,15 @@ const RecordingFileSchema = z
     enrichment: z.unknown().optional(),
     quick_ms: z.number().nonnegative().optional(),
     enrich_ms: z.number().nonnegative().optional(),
+    /** Plan G (round 4): the token counts the live calls reported (information only, never scored). */
+    quick_usage: z
+      .object({ inputTokens: z.number().optional(), outputTokens: z.number().optional() })
+      .strict()
+      .optional(),
+    enrich_usage: z
+      .object({ inputTokens: z.number().optional(), outputTokens: z.number().optional() })
+      .strict()
+      .optional(),
     /** Legacy verifier reply (vlm-verify-v1/v2, after stage 2, advisory) when eval:live ran it. */
     verification: z.unknown().optional(),
     verify_ms: z.number().nonnegative().optional(),
@@ -71,11 +80,17 @@ export interface LoadedRecording extends Recording {
   covers: string[];
 }
 
-export async function loadReplayFixtures(dir: string): Promise<{ manifest: ReplayManifest; recordings: LoadedRecording[] }> {
-  const manifest = ReplayManifestSchema.parse(JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8')));
+export async function loadReplayFixtures(
+  dir: string,
+): Promise<{ manifest: ReplayManifest; recordings: LoadedRecording[] }> {
+  const manifest = ReplayManifestSchema.parse(
+    JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8')),
+  );
   const recordings: LoadedRecording[] = [];
   for (const r of manifest.recordings) {
-    const body = RecordingFileSchema.parse(JSON.parse(await readFile(path.join(dir, r.file), 'utf8')));
+    const body = RecordingFileSchema.parse(
+      JSON.parse(await readFile(path.join(dir, r.file), 'utf8')),
+    );
     recordings.push({
       photoId: r.photo,
       runId: r.id,
@@ -83,9 +98,15 @@ export async function loadReplayFixtures(dir: string): Promise<{ manifest: Repla
       enrichment: body.enrichment,
       quickMs: body.quick_ms,
       enrichMs: body.enrich_ms,
-      ...(body.verification !== undefined ? { verification: body.verification, verifyMs: body.verify_ms } : {}),
-      ...(body.verification1 !== undefined ? { verification1: body.verification1, verify1Ms: body.verify1_ms } : {}),
-      ...(body.verification2 !== undefined ? { verification2: body.verification2, verify2Ms: body.verify2_ms } : {}),
+      ...(body.verification !== undefined
+        ? { verification: body.verification, verifyMs: body.verify_ms }
+        : {}),
+      ...(body.verification1 !== undefined
+        ? { verification1: body.verification1, verify1Ms: body.verify1_ms }
+        : {}),
+      ...(body.verification2 !== undefined
+        ? { verification2: body.verification2, verify2Ms: body.verify2_ms }
+        : {}),
       gate: r.gate,
       shape: r.shape,
       covers: r.covers,
@@ -111,18 +132,30 @@ export async function loadPhase4Recordings(dir: string): Promise<Recording[]> {
   const out: Recording[] = [];
   const photo = (n: number) => `p${String(n).padStart(2, '0')}`;
   if (await isDir(path.join(dir, 'stage1')))
-    for (const f of (await readdir(path.join(dir, 'stage1'))).filter((x) => /^\d{3}\.json$/.test(x)).sort()) {
+    for (const f of (await readdir(path.join(dir, 'stage1')))
+      .filter((x) => /^\d{3}\.json$/.test(x))
+      .sort()) {
       const r = await readPhase4(path.join(dir, 'stage1', f));
-      if (r) out.push({ photoId: photo(Number(f.slice(0, 3))), runId: `stage1-${f.slice(0, 3)}`, quick: r.value, quickMs: r.ms });
+      if (r)
+        out.push({
+          photoId: photo(Number(f.slice(0, 3))),
+          runId: `stage1-${f.slice(0, 3)}`,
+          quick: r.value,
+          quickMs: r.ms,
+        });
     }
   if (await isDir(path.join(dir, 'enrich'))) {
-    const files = (await readdir(path.join(dir, 'enrich'))).filter((x) => /^\d{3}\.json$/.test(x)).sort();
+    const files = (await readdir(path.join(dir, 'enrich')))
+      .filter((x) => /^\d{3}\.json$/.test(x))
+      .sort();
     for (const f of files) {
       const n = Number(f.slice(0, 3));
       if (n % 2 === 0) continue;
       const quick = await readPhase4(path.join(dir, 'enrich', f));
       const enrichFile = `${String(n + 1).padStart(3, '0')}.json`;
-      const enrich = files.includes(enrichFile) ? await readPhase4(path.join(dir, 'enrich', enrichFile)) : null;
+      const enrich = files.includes(enrichFile)
+        ? await readPhase4(path.join(dir, 'enrich', enrichFile))
+        : null;
       if (!quick) continue;
       out.push({
         photoId: photo((n + 1) / 2),
@@ -170,7 +203,9 @@ export function runReplay(
 
 /** Human-readable summary lines (no model text beyond candidate names). */
 export function summarize(result: ReplayResult): string[] {
-  const lines = [`pipeline ${result.pipeline} (guardrails ${result.guardrail_version ?? 'none'}), scorer ${result.scorecard.scorer_version}, thresholds ${result.scorecard.thresholds_version}`];
+  const lines = [
+    `pipeline ${result.pipeline} (guardrails ${result.guardrail_version ?? 'none'}), scorer ${result.scorecard.scorer_version}, thresholds ${result.scorecard.thresholds_version}`,
+  ];
   for (const [split, s] of Object.entries(result.scorecard.splits)) {
     const m = Object.entries(s.metrics)
       .filter(([, v]) => v !== null)
@@ -187,7 +222,9 @@ export function summarize(result: ReplayResult): string[] {
       ...r.visibleTextBad.map((t) => `visible_text:${t}`),
     ];
     if (bad.length || r.cleanDropped.length || r.unlabelledNames.length || r.visibleTextBad.length)
-      lines.push(`  ${r.photoId}/${r.runId}: ${[...bad, ...r.cleanDropped.map((n) => `clean-dropped:${n}`), ...r.unlabelledNames.map((n) => `unlabelled:${n}`)].join('; ')}`);
+      lines.push(
+        `  ${r.photoId}/${r.runId}: ${[...bad, ...r.cleanDropped.map((n) => `clean-dropped:${n}`), ...r.unlabelledNames.map((n) => `unlabelled:${n}`)].join('; ')}`,
+      );
   }
   return lines;
 }

@@ -42,6 +42,9 @@ export interface Recording {
   enrichment?: unknown;
   quickMs?: number;
   enrichMs?: number;
+  /** Plan G (round 4): the token counts each live call reported, when it reported them. */
+  quickUsage?: { inputTokens?: number; outputTokens?: number };
+  enrichUsage?: { inputTokens?: number; outputTokens?: number };
   /**
    * Legacy verifier reply (vlm-verify-v1/v2: one advisory call after stage 2,
    * requalification round 1). Replayed under v3 semantics by name for both

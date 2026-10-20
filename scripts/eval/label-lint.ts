@@ -100,7 +100,16 @@ function expandSeq(src: string): string[] {
       i = end + 1;
     } else if (ch === '\\') {
       const e = src[i + 1] ?? '';
-      atom = e === 'b' || e === 'B' ? [''] : e === 's' ? [' '] : e === 'd' ? ['1'] : e === 'w' ? ['a'] : [e];
+      atom =
+        e === 'b' || e === 'B'
+          ? ['']
+          : e === 's'
+            ? [' ']
+            : e === 'd'
+              ? ['1']
+              : e === 'w'
+                ? ['a']
+                : [e];
       i += 2;
     } else if (ch === '^' || ch === '$') {
       atom = [''];
@@ -135,7 +144,12 @@ function expandSeq(src: string): string[] {
 
 /** Sample names an entry's pattern accepts: the literal readings of each alternative (at most MAX_SAMPLES). */
 export function sampleNames(pattern: string): string[] {
-  return cap(splitTop(pattern).flatMap(expandSeq).map((s) => s.replace(/\s+/g, ' ').trim()).filter((s) => /\p{L}/u.test(s)));
+  return cap(
+    splitTop(pattern)
+      .flatMap(expandSeq)
+      .map((s) => s.replace(/\s+/g, ' ').trim())
+      .filter((s) => /\p{L}/u.test(s)),
+  );
 }
 
 /** Names the label both accepts and forbids (candidate field). */
@@ -144,11 +158,21 @@ export function labelOverlaps(label: PhotoLabel): LabelOverlap[] {
   const forbidden = label.forbidden.filter((f) => f.field === 'candidate');
   for (const list of ['expected', 'acceptable'] as const) {
     for (const entry of label[list]) {
-      const samples = cap([...(entry.name ? [entry.name] : []), ...entry.aliases, ...(entry.pattern ? sampleNames(entry.pattern) : [])]);
+      const samples = cap([
+        ...(entry.name ? [entry.name] : []),
+        ...entry.aliases,
+        ...(entry.pattern ? sampleNames(entry.pattern) : []),
+      ]);
       for (const sample of samples)
         for (const f of forbidden)
           if (new RegExp(f.pattern, 'iu').test(sample))
-            out.push({ photoId: label.id, list, sample, forbidden: f.pattern, resolved: !entry.requires_text && forbiddenCovered(label, sample, f) });
+            out.push({
+              photoId: label.id,
+              list,
+              sample,
+              forbidden: f.pattern,
+              resolved: !entry.requires_text && forbiddenCovered(label, sample, f),
+            });
     }
   }
   return out;
