@@ -22,8 +22,9 @@ fixtures/eval/
   golden-v4/         round 3: tune = every golden-v3 photo, label fixes on h31, h43, h46, h01;
                      held-out = h50-h79 (no longer blind: its blind run failed; FREEZE.md, freeze.json as in golden-v2)
   golden-v5/         round 4: tune = every golden-v4 photo (p01-p15, h01-h79, 94 photos); the person-descriptor
-                     "tall"/"height" patterns scoped to people (14 labels, each in its history); no held-out split
-                     yet: the fresh blind split h80+ is added and frozen before any photo role can qualify
+                     "tall"/"height" patterns scoped to people (14 labels, each in its history), then "slim" (12
+                     labels, after the model sweep); no held-out split yet: the fresh blind split h80+ is added
+                     and frozen before any photo role can qualify (run `pnpm eval:lint-labels` on it first)
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -111,8 +112,15 @@ fixtures/eval/
   scopes the person-descriptor words "tall" and "height" to people on h27,
   h29, h46 and h54, h65, h69-h76, h79 (the consumed h50-h79 labels, now tune):
   the unscoped words matched "a tall exhaust stack", "tall dry grasses" and "a
-  tall pole" in the round-3 blind run. Only tune labels are edited this way;
-  held-out labels are frozen.
+  tall pole" in the round-3 blind run. After the round-4 model sweep it scopes
+  "slim" the same way on h40, h54, h65, h69-h76 and h79 ("slim dark-wash
+  jeans" is the fit of a garment, not a body). Only tune labels are edited
+  this way; held-out labels are frozen. `pnpm eval:lint-labels --golden <dir>`
+  lists names a label both accepts and forbids (score-v10 resolves an
+  accepted name that strictly contains a non-brand forbidden match); run it
+  on a new blind split before the freeze. On golden-v5 it reports three
+  unresolved conflicts left for the labeller: h54 ("diner" the venue vs
+  "diners"), h70 (a brand in the expected pattern) and h78 ("internal review").
 - **thr-v2** (docs/requalification-plan.md decisions 3 and 4). `two_stage_only`
   lists the metrics gated only on a two-stage scorecard (M5, M9): a split
   scored on stage 1 alone reports them but is gated on M15 ≥ 0.60 for

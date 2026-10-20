@@ -2310,3 +2310,136 @@ call). 0 Qloo, 0 Wikipedia. No Elorian.
 - The licence questions of golden-v4/FREEZE.md and h33 are still open. For
   the next set the owner allows generated starting images where a licence is
   unclear.
+
+### 19.8 The model sweep: results (live, 94 tune photos, guard-v11, score-v9)
+
+Each run was 188 requests (`r4/SWEEP.md`), recorded outside git. Live gates,
+thr-v2, golden-v5 tune.
+
+| Run | Requests (status) | Fails | Coverage | Latency (stage 1 p50 / p95, enrich p95) |
+| --- | --- | --- | --- | --- |
+| haiku / haiku | 188 (all 200) | M1 7, M4 0.257, M8 1, M11 5 | M5 0.819, M15 0.699 | 2.6 s / 3.4 s, 6.3 s |
+| sonnet / sonnet | 188 (all 200) | M1 3, M4 0.354, M10 1, M11 2, stage-1 p50 | M5 0.855, M15 0.711 | 3.8 s / 5.7 s, 11.3 s |
+| gpt-5.4-mini / same | 188 (187 x 200, 1 x 424) | M1 10, M4 0.290, M5, M9, M10 2, M11 8, M12 0.266, M13, M15 0.578 | M5 0.783 | 2.6 s / 3.3 s, 5.9 s |
+| gemini-3.8-flash / same | 97 (all 200), stopped by hand | 34 of about 48 enrich outputs invalid | — | stage-1 p50 4.9 s |
+
+The analysis of the sweep (owner-directed, round 4) found that every haiku
+stage-1 forbidden claim was a rule or label class, that sonnet at stage 2
+rejects claims haiku confirms on its own reading ("Wilson" read from a "W"
+stencil, h28), that gpt-5.4-mini leaks through its headline and observations,
+and that gemini needs a diagnosis before it is considered again. It chose
+haiku at stage 1 and sonnet at stage 2 (the "mix") and a list of class rules
+(19.9).
+
+### 19.9 guard-v12, score-v10, labels (class rules after the sweep)
+
+Each rule is by class; a test in `guardrails.test.ts` "guard-v12" (9 tests)
+or `scorer.test.ts` "score-v10" fails on the previous version.
+
+| Rule | What it decides | Not a word patch because |
+| --- | --- | --- |
+| People test on every surface | On a photo with people, an observation that refers to a person (people, role, presence or occasion word, a pronoun, "one wears") is not shown, and a "What caught your eye?" label with a people, role or occasion word is dropped | The guard-v10/v11 people lexicon applied to two more surfaces; no new word |
+| Headline meta-commentary (`metaCommentary`) | A title or interpretation in the first person ("I will not follow") or about instructions, prompts, rules or the assistant is replaced by the neutral line; quoted text does not count | Pattern of the assistant speaking, not of one card |
+| G-BRAND unknown lead | A fashion or sport object named only with general English words that the model did not read ("Checkerboard slip-on sneakers", "Bell sleeve dress") is not an unknown maker; letter-shape compounds ("T-shirt", "V-neck") are not proper names | A bundled dictionary (SCOWL size 50, "words in most dictionaries", lower-case a-z only, 63,367 words; `english-words.ts`, copyright notice in `english-words.COPYRIGHT.txt`), not tune words |
+| Prompt contract | A garment or sport-equipment type qualified by more than a colour, material or size, in the fashion or sport domain, is not G-GENERIC ("Football boots"); a garment or equipment whose name says nothing about who wears it is not a play style ("striped football kit"); a sport named alone may be typed as a style ("basketball") and is not generic; an art-domain claim whose only medium word is "painting" is held for stage 2 | `SPORT_EQUIPMENT` is a closed list of equipment nouns (the counterpart of GARMENTS); a level, team, nationality or capitalized name keeps the claim about the players ("Professional hoops", "Fixturian football jersey") |
+| Titled works | A stage-2 "<Title> by <Creator>" whose title repeats a stage-1 work that is shown publishes as a resemblance; the creator appears only inside the work's name | Two readings name the same work |
+| Common-word read text (`commonWordsRead`) | A brand, a signage work or a place the model says it read, named only with general words written as a description (a single word, or lower case: "Specialties", "internal review notice"), is visible text only | Same dictionary; a name of general words written as a name ("Agricultural Bank of China") stays a claim |
+| One depicted work per reading | A work title read at stage 2 next to a stage-1 work is a mention (a credit line, "Producer of GONE WITH THE WIND"), never a reference | Class of credit lines |
+| Uncertain second reading | Stage 2 with overall uncertainty "high" confirms nothing: no held claim and no addition publishes | The model's own field (h08, h49, h55, h77, p15 in the sweeps: dark or blurred photos) |
+
+- **score-v10**: a label's own expected or acceptable entry whose match on a
+  name strictly contains a forbidden match wins over it (h72 accepts
+  "catcher's gear" and forbids "catcher"; score-v9 checked the forbidden list
+  first, so the accepted name always counted in M1, M2 and M11). Never for a
+  brand_without_text entry ("Checkerboard Vans" still names the brand), and
+  equal spans stay forbidden.
+- **golden-v5**: "slim" in the person-descriptor patterns is scoped to people
+  on 12 labels (h40, h54, h65, h69-h76, h79; history recorded), the same
+  artifact as "tall" ("slim dark-wash jeans" is a fit). h29 was already scoped.
+- **`pnpm eval:lint-labels --golden <dir>`** lists names a label both accepts
+  and forbids (literal readings of each good pattern, tested against the
+  forbidden candidate patterns). Whoever prepares h80+ runs it before the
+  freeze. On golden-v5 it leaves three conflicts for the labeller: h54
+  ("diner" the venue vs "diners"), h70 (Vans in an expected pattern), h78
+  ("internal review").
+- **eval:live usage (plan G)**: each call's tokens go into the recording and
+  `usage.json`, priced at the catalog snapshot's unconditioned list rate.
+- **Rejected or narrowed from the plan.** The creator of a titled work is not
+  published as its own claim (that would be a person identity without read
+  text); it is shown only inside "<Title> by <Creator>". The common-word rule
+  is narrowed to names written as a description: the plan's version dropped
+  three expected or acceptable brands made of dictionary words (h12, h41,
+  h10). "Caffè" (h33) is not an English word and is not caught; adding it
+  would be a word patch. "Catcher's protective gear" and "catcher's leg
+  guards" (h72) stay forbidden: widening the label to them would fit it to
+  the model. h79's cuisine typing stays as in 19.1.
+
+### 19.10 Replays under guard-v12 and score-v10 (no request)
+
+Verifier off, live gates, golden-v5. The sweeps were recorded with the
+current prompts; the older runs with `vlm-quick-v2` / `vlm-enrich-v3`.
+
+| Recordings | guard-v11, score-v9 | guard-v12, score-v10 |
+| --- | --- | --- |
+| Sweep haiku | FAIL M1 7, M4 0.257, M8 1, M11 5 (M5 0.819, M15 0.699) | FAIL M1 2, M4 0.226, M8 1, M11 1 (M5 0.843, M15 0.723) |
+| Sweep sonnet | FAIL M1 3, M4 0.354, M10 1, M11 2, p50 | FAIL M4 0.318, p50 (M1 0, M11 0, M5 0.880, M15 0.747) |
+| Sweep gpt-5.4-mini | FAIL M1 10, M11 8, M4 0.290, M5, M9, M10 2, M12, M15 | FAIL M1 4, M11 2, M4 0.251, M9, M10 2, M12 (M5 0.807, M15 0.602) |
+| 94 tune (round-3 readings) | FAIL M1 1, M4 0.216, M5 0.795 | FAIL M4 0.216, M5 0.795 (M1 0: h78) |
+| r3 Tune 64 / fresh 64 | FAIL M4 0.221 / M4 0.215, M8 | FAIL M4 0.221 / M4 0.215, M8 1 |
+| h50-h79 / h30-h49 / h14-h29 blind readings | — | FAIL M5 0.667, M15 0.556 / M4 0.222, M15 0.444 / M4 0.243 (M1 0 on all) |
+| §15 Tune runs 1 / 2, Evaluate iterations 1 / 2 | — | FAIL M8, M9 / M4 0.233 / M4 0.236 / M9 |
+| `replay-v1` (CI) | PASS | PASS |
+
+The remaining haiku M1 are "Wilson" (h28, haiku's own stage 2 confirms its
+misreading) and "Catcher's protective gear" (h72); M8 is p10 "minimo". On
+every recording the forbidden gates move to 0 or down; coverage is unchanged
+or better, except what replays cannot show: claims guard-v12 now holds for
+stage 2 (paintings) have no recorded verdict and count as drops.
+
+### 19.11 The mix, live (haiku stage 1, sonnet stage 2): FAIL
+
+Profile file `r4/profiles/mix.json` (haiku.json's `vision_photo` entry and
+sonnet.json's `vision_photo_enrich` entry, unchanged), out-dir `r4/iter1`,
+package `r4-iter1-mix`, guard-v12, score-v10, 94 tune photos, no Qloo, no
+verifier.
+
+- **Requests**: 187 (186 x 200, 1 network error: p14 stage 1 timed out,
+  so p14 has no reading and M13 is 0.9947).
+- **Gates**: FAIL. M1 4, M4 0.3345, M11 2, M13 0.9947. Passing: M2 0.016,
+  M3 0.981, M5 0.878, M6 0.978, M7 1, M8 0, M9 0.961, M10 0, M12 0.143,
+  M15 0.707, stage 1 p50 2.8 s / p95 5.1 s, enrich p95 9.0 s, 0 incomplete.
+- **M1**: h37 "Floral folk painting" (held as a painting subject, supported,
+  then counted as a medium claim although h37 expects "floral painting": a
+  label conflict between an expected name and the medium class, left to the
+  owner), h54 title "Café table with menu and waitstaff" ("waitstaff" is in
+  no people list; adding it would be a word patch), h72 "catcher's leg
+  guards" (label, see 19.9), p02 "Leafy greens and fresh produce" (a cuisine
+  claim on a label with no food domain).
+- **M4 0.3345 (92 of 275)**: 37 drops are sonnet "weak" verdicts on held
+  claims (27 context-only styles, traditions and places, 3 people-photo
+  holds, 4 brand holds, 2 low certainty, 1 painting). Were they supported,
+  M4 would be about 0.20. The hold policy (option C) and sonnet's strict
+  verdicts together cost more coverage than the rule fixes recover: the haiku
+  sweep replayed under the same rules is at 0.226.
+- **Cost (plan G)**: $1.632 at list rate (haiku stage 1 $0.043, sonnet stage
+  2 $1.589); worst-case reservation was $5.55.
+- No grounding confirmation run: the tune run did not pass.
+
+**State.** No configuration passes Tune. haiku / haiku (replayed) is closest
+on coverage and latency but publishes haiku's self-confirmed misreading
+(h28). The mix is safer at stage 2 and fails on coverage. The blocker is the
+stage-2 verdict on held context-only claims, which is a prompt or policy
+question (what "supported" means for a style read from form), not a rule
+gap; it needs a decision before h80+ is frozen.
+
+### 19.12 Spend (round 4 to date)
+
+| Package | Concentrate requests | Cost |
+| --- | --- | --- |
+| r4-smoke-haiku | 4 | worst case $0.03 |
+| r4-sweep-haiku / sonnet / gptmini | 188 / 188 / 188 | worst case $1.32 / $7.99 / $3.57 |
+| r4-sweep-gemini | 97 (stopped) | worst case about $2.61 |
+| r4-iter1-mix | 187 | $1.63 at list rate (worst case $5.55) |
+| **Total** | **852** | **at most $21.07** (worst-case reservations, actual cost known for the mix only) |
+
+0 Qloo, 0 Wikipedia. Round-4 caps: 1,500 requests and $60.

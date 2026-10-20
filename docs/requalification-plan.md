@@ -335,3 +335,23 @@ labels). No request was made for the build; thresholds are unchanged.
   people claims can no longer publish. The sweep measures the new prompts on
   haiku, sonnet, gemini-3.8-flash and gpt-5.4-mini.
 
+
+### Round 4, after the sweep (2026-10-20): guard-v12, score-v10, the mix: Tune FAIL
+
+Details in quality-plan §19.8–19.12. The sweep (haiku, sonnet,
+gpt-5.4-mini; gemini stopped on invalid outputs) passed no run. guard-v12
+applies the people test to observations and "What caught your eye?" labels,
+replaces headlines in which the model talks about itself or its
+instructions, stops calling dictionary-word garment names unknown makers,
+follows the prompt for garment, equipment and sport claims, holds art-domain
+paintings for stage 2, treats a second read work title as a mention, keeps
+common-word read text as text, and lets a highly uncertain stage 2 confirm
+nothing. score-v10 lets a label's own longer accepted name win over a
+non-brand forbidden match (h72); "slim" is scoped to people in golden-v5;
+`pnpm eval:lint-labels` checks a new split before the freeze. Replayed, every
+recorded run loses its forbidden-gate failures except haiku's own
+misreadings (h28 "Wilson") and two label-bound h72 names. The live mix (haiku
+stage 1, sonnet stage 2, 187 requests, $1.63) fails Tune on M1 4, M4 0.335,
+M11 2 and M13 (one timeout): sonnet hedges 37 held claims, 27 of them
+context-only. h80+ is not frozen; the stage-2 verdict policy for held
+context-only claims needs a decision first.
