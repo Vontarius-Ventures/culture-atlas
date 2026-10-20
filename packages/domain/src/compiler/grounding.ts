@@ -13,7 +13,7 @@ export { canonicalTokens } from './text';
  * doubt becomes a reference under the candidate's own name, never a
  * look-alike's name. No I/O; every decision carries a rule id and a reason.
  */
-export const GROUNDING_VERSION = 'ground-v5';
+export const GROUNDING_VERSION = 'ground-v6';
 
 export type GroundingRule = 'Q-TYPE' | 'Q-TAGTYPES' | 'Q-NAME' | 'Q-SUBSET' | 'Q-PLACE' | 'Q-EVIDENCE' | 'Q-DOUBT';
 
@@ -194,7 +194,27 @@ export function creatorTypesFor(domain: string | null | undefined): QlooEntityTy
  * restricted.
  */
 const SPATIAL_TAG_FAMILIES = ['urn:tag:decor:qloo', 'urn:tag:setting:qloo'] as const;
-const NON_SPATIAL_DOMAINS: ReadonlySet<string> = new Set(['vehicle', 'fashion', 'food', 'sport', 'music', 'film', 'people']);
+/**
+ * ground-v6 (round 4, after iteration 5, owner decision): decor and setting tags ground only a style claim
+ * about a room, a space or a building: a candidate in the interior or architecture domain (or of unknown
+ * domain, legacy readings) whose name names no movable object or street furniture (OBJECT_HEADS). Art,
+ * design, craft, signage and every other domain, and "Pedestrian bollard street design" (iteration-5 h79,
+ * a setting tag for street furniture), stay unresolved under their own names.
+ */
+const SPATIAL_DOMAINS: ReadonlySet<string> = new Set(['interior', 'architecture']);
+const OBJECT_HEADS: ReadonlySet<string> = new Set(
+  `table tables chair chairs stool stools sofa sofas couch couches armchair armchairs bench benches bed beds desk desks
+   cabinet cabinets cabinetry dresser dressers wardrobe wardrobes shelf shelves lamp lamps chandelier rug rugs carpet
+   vase vases mug mugs cup cups bowl bowls plate plates tableware ceramics pottery dinnerware glassware cutlery teapot
+   kettle furniture upholstery cushion cushions curtain curtains bollard bollards bin bins post posts pole poles sign
+   signs signage bracket brackets kiosk kiosks fountain fountains mailbox postbox hydrant streetlight streetlights
+   lamppost lampposts planter planters railing railings fence fences barrier barriers`.split(/\s+/).filter(Boolean),
+);
+function spatialStyleClaim(c: GuardedCandidate): boolean {
+  if (c.userSelected) return true;
+  if (c.domain && !SPATIAL_DOMAINS.has(c.domain)) return false;
+  return ![...canonicalTokens(c.name)].some((t) => OBJECT_HEADS.has(t));
+}
 
 /**
  * ground-v5: one token form for the inflections and the -ism/-ist/-al forms of a style word
@@ -317,6 +337,29 @@ function localityKey(e: QlooEntity): string {
   return `id:${e.entity_id}`;
 }
 
+/**
+ * ground-v6: words that name a building or landmark (a palace, a theatre, a tower ...), as opposed to an
+ * area (a city, a district, a quarter).
+ */
+const LANDMARK_WORDS: ReadonlySet<string> = new Set(
+  `palace palais palazzo castle chateau schloss tower cathedral church basilica chapel temple shrine mosque synagogue
+   abbey monastery museum musee museo gallery theatre theater opera bridge gate fort fortress citadel stadium arena
+   station library hall house building monument memorial statue pagoda pavilion lighthouse mill`.split(/\s+/).filter(Boolean),
+);
+/**
+ * ground-v6: a place matched only through Qloo's alias list is accepted only when the entity is the same
+ * kind of place as the candidate: a building or landmark (a landmark word in the candidate's name, or
+ * the candidate filed under architecture) only as a venue (urn:entity:place), an area only as a locality
+ * or destination. Iteration-5 p09 "Palais-Royal" (the palace) reached the locality "Quartier du Palais
+ * Royal" through its alias.
+ */
+function aliasKindAgrees(c: GuardedCandidate, e: QlooEntity): boolean {
+  const landmark = c.domain === 'architecture' || [...canonicalTokens(c.name)].some((t) => LANDMARK_WORDS.has(t));
+  const venue = e.types.includes('urn:entity:place');
+  const area = e.types.includes('urn:entity:locality') || e.types.includes('urn:entity:destination');
+  return landmark ? venue && !area : area;
+}
+
 function placeTier(e: QlooEntity): number {
   const tiers = e.types.map((t) => PLACE_ENTITY_TYPES.indexOf(t as QlooEntityType)).filter((i) => i >= 0);
   return tiers.length ? Math.min(...tiers) : PLACE_ENTITY_TYPES.length;
@@ -325,10 +368,13 @@ function placeTier(e: QlooEntity): number {
 function acceptTag(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'tags' }>, results: readonly QlooTag[]): AcceptDecision {
   if (results.length === 0) return { match: null, rule: 'Q-NAME', reason: 'no_results' };
   const rank = (t: QlooTag) => plan.tagTypes.findIndex((f) => tagFamilyMatches(t, f));
-  const spatialOk = !(c.domain && NON_SPATIAL_DOMAINS.has(c.domain) && !c.userSelected);
+  const spatialOk = spatialStyleClaim(c);
   const spatial = (t: QlooTag) => SPATIAL_TAG_FAMILIES.some((f) => tagFamilyMatches(t, f));
   const typed = results.filter((t) => !forbiddenFamily(t) && rank(t) >= 0 && (spatialOk || !spatial(t)));
-  if (typed.length === 0) return { match: null, rule: 'Q-TAGTYPES', reason: spatialOk ? 'no_allowed_tag_type' : 'decor_tag_outside_domain' };
+  if (typed.length === 0) {
+    const spatialOnly = !spatialOk && results.some((t) => !forbiddenFamily(t) && rank(t) >= 0 && spatial(t));
+    return { match: null, rule: 'Q-TAGTYPES', reason: spatialOnly ? 'decor_tag_outside_domain' : 'no_allowed_tag_type' };
+  }
   const nameTokens = canonicalTokens(c.name);
   const queryTokens = canonicalTokens(plan.query);
   const targets = [queryTokens, nameTokens].filter((s) => s.size > 0);
@@ -401,7 +447,9 @@ function acceptEntity(c: GuardedCandidate, plan: Extract<LookupPlan, { kind: 'se
   if (want.size === 0) return { match: null, rule: 'Q-NAME', reason: 'empty_canonical_name' };
   const tokensOf = (n: string) => (isBrand ? withoutSuffixes(canonicalTokens(n)) : canonicalTokens(n));
   const names = (e: QlooEntity) => (isPlace ? [e.name, ...akaNames(e)] : [e.name]);
-  const exact = typed.filter((e) => names(e).some((n) => sameTokens(tokensOf(n), want)));
+  const exact = typed.filter(
+    (e) => sameTokens(tokensOf(e.name), want) || (names(e).some((n) => sameTokens(tokensOf(n), want)) && aliasKindAgrees(c, e)),
+  );
   if (exact.length === 0) {
     // ground-v4, Q-ACRONYM: a brand written as an acronym in the photo ("NBA") is the one brand whose
     // full name has exactly those initials ("National Basketball Association"); two such brands are a doubt.

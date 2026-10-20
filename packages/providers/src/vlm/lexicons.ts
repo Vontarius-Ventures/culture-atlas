@@ -335,3 +335,81 @@ export const FOOD_EVIDENCE = set(`
 export function hasPhrase(folded: string, phrase: string): boolean {
   return ` ${folded} `.includes(` ${phrase} `);
 }
+
+/**
+ * guard-v16 (round 4, after iteration 5, owner decision; docs/quality-plan.md §19.23): occupations, the
+ * singular nouns of the people's work. Built from the US Bureau of Labor Statistics Standard Occupational
+ * Classification (SOC 2018: its 23 major groups, from management to transportation) and the ILO's
+ * ISCO-08 unit groups, reduced to the everyday one-word nouns a photo caption uses, plus the military,
+ * religious and service roles those classifications file under broader titles. Plurals are generated
+ * (occupationPattern in guardrails.ts). A caption that names one of them assigns a person a role.
+ * Left out on purpose, because their usual sense is a thing or a verb: trainer, runner, dresser, cooker,
+ * cook, guard, sweeper, cleaner, printer, monitor, speaker, mixer, conductor, porter, page, model, fan,
+ * designer, tailor, potter, cobbler, shepherd, hunter, cardinal, marine, crew, carrier, agent, host,
+ * guide, general, private, principal, dean, coach, dishwasher, decorator, streamer, recruit, partner,
+ * pal, date, brother (the singular is also a maker), godfather, king, queen, prince, princess.
+ */
+export const OCCUPATIONS = set(`
+  accountant actor actress acrobat activist administrator admiral advisor aide ambassador analyst anchorman
+  anchorwoman animator announcer apprentice archaeologist archer archivist architect artisan artist assistant
+  astronaut astronomer athlete attendant attorney auctioneer auditor author baker ballerina banker barber barista
+  barmaid barman barrister bartender bassist beautician bellboy bellhop biologist bishop blacksmith blogger
+  bodyguard bookkeeper bookseller bouncer brewer bricklayer broker builder busboy busker businessman businesswoman
+  businessperson butcher butler cabbie cadet cameraman camerawoman campaigner captain caregiver caretaker
+  carpenter cartoonist cashier caterer ceramicist ceo chauffeur chef chemist chiropractor choreographer
+  cinematographer clerk clergyman clown colonel columnist comedian commander commentator composer concierge
+  confectioner constable consultant contractor copywriter coroner corporal correspondent counsellor counselor
+  courier cowboy cowgirl craftsman craftswoman critic croupier curator custodian dancer dealer deckhand
+  dentist deputy detective dietitian diplomat director dispatcher docent doctor doorman dressmaker drummer
+  economist editor electrician embalmer engineer engraver entertainer entrepreneur executive explorer
+  farmer farmhand ferryman firefighter fireman fisherman fishmonger flautist florist flutist foreman forester
+  freelancer gamekeeper gardener geologist glassblower glazier goldsmith gondolier governess governor
+  greengrocer grocer groundskeeper guitarist gunsmith hairdresser hairstylist handyman harpist hawker
+  headmaster headmistress herder herdsman historian homemaker hostess housekeeper housewife househusband
+  illustrator imam infantryman influencer innkeeper inspector instructor intern interpreter inventor
+  investigator investor janitor jeweler jeweller jockey journalist judge juggler labourer laborer landlady
+  landlord landscaper lawyer lecturer librarian lieutenant lifeguard linguist locksmith logger lumberjack
+  lyricist machinist magician maid mailman manager manicurist mason masseur masseuse mathematician mayor
+  mechanic medic merchant metalworker midwife milkman milliner miner minister missionary monk mortician
+  mover musician nanny navigator negotiator neurologist newscaster newsreader notary novelist nun nurse
+  nutritionist obstetrician officer operator optician optometrist orchestrator organist painter
+  paramedic paratrooper pastor pathologist patrolman pediatrician peddler performer pharmacist philosopher
+  photographer photojournalist physician physicist physiotherapist pianist pilot playwright plasterer
+  plumber poet policeman policewoman politician pollster pope postman postwoman postmaster preacher president
+  priest producer professor programmer projectionist promoter proofreader prosecutor psychiatrist psychologist
+  publicist publisher purser rabbi radiologist rancher ranger rapper realtor receptionist referee reporter
+  researcher restaurateur retailer roofer sailor salesman saleswoman salesperson saxophonist scholar
+  schoolteacher scientist screenwriter sculptor seamstress secretary senator sergeant servant sheriff
+  shipwright shoemaker shopkeeper sculptress silversmith singer skipper soldier stylist sommelier songwriter
+  sonographer stallholder statistician stenographer steward stewardess stockbroker stonemason storekeeper
+  storyteller student stuntman stuntwoman superintendent supervisor surgeon surveyor tattooist
+  taxidermist teacher technician teller therapist tiler toolmaker tourguide trader translator trooper trucker
+  trumpeter tutor typist umpire undertaker upholsterer usher valet vendor veterinarian vicar videographer
+  violinist vlogger vocalist volunteer waiter waitress warden watchmaker weaver welder winemaker woodcutter
+  woodworker wrangler writer zookeeper
+`);
+
+/**
+ * guard-v16: relations between people (family, household, work, friendship), singular; plurals generated.
+ * The long-standing RELATIONSHIP_WORDS of guardrails.ts (couple, friend, spouse ...) stay as they are.
+ */
+export const RELATIONS = set(`
+  mother father mom mum dad parent son daughter sister grandmother grandfather grandma grandpa granny grandparent
+  grandson granddaughter grandchild aunt uncle cousin niece nephew widow widower stepmother stepfather stepson
+  stepdaughter stepbrother stepsister godmother godson goddaughter boss neighbour neighbor roommate flatmate
+  housemate teammate buddy lover fiance fiancee newlywed
+`);
+
+/**
+ * guard-v16: nouns of a business or commercial venue. A place named with a proper name and one of them
+ * ("Robinsons department store", "Fixture Bank", "Fixture Hotel") is a business, which the guard treats as
+ * a brand: held at stage 1 and published only on read text of its name. Landmarks, museums, galleries,
+ * theatres, markets, malls, stations and squares are places and are not listed.
+ */
+export const BUSINESS_NOUNS = set(`
+  store stores shop shops boutique boutiques bank banks hotel hotels motel motels hostel hostels restaurant
+  restaurants cafe cafes coffeehouse bistro brasserie diner diners bar bars pub pubs tavern bakery bakeries
+  patisserie pharmacy pharmacies drugstore chemist chemists supermarket supermarkets hypermarket grocery
+  groceries grocer deli outlet outlets chain franchise dealership showroom salon salons barbershop gym gyms
+  emporium mart megastore superstore kiosk kiosks pizzeria trattoria steakhouse teahouse
+`);

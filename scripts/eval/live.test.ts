@@ -276,19 +276,19 @@ describe('eval:live (offline rails)', () => {
         confirmPaidRequests: false,
       }),
     ).rejects.toThrow(
-      'names promptVersion vlm-quick-v2; schema atlas_quick_read_v2 is sent with vlm-quick-v3',
+      'names promptVersion vlm-quick-v2; schema atlas_quick_read_v2 is sent with vlm-quick-v4',
     );
     await expect(
       runLiveEval({
         ...common,
         outDir: out,
         profiles: {
-          vision_photo: { ...staleQuick, promptVersion: 'vlm-quick-v3' },
+          vision_photo: { ...staleQuick, promptVersion: 'vlm-quick-v4' },
           vision_photo_enrich: staleEnrich,
         },
         confirmPaidRequests: false,
       }),
-    ).rejects.toThrow('sent with vlm-enrich-v7');
+    ).rejects.toThrow('sent with vlm-enrich-v8');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -482,12 +482,12 @@ describe('eval:live (offline rails)', () => {
     const { g, golden, thresholds } = await setup(['p01']);
     const quickV2 = {
       ...quickProfile,
-      promptVersion: 'vlm-quick-v3',
+      promptVersion: 'vlm-quick-v4',
       schemaVersion: 'atlas_quick_read_v2',
     } as ModelProfile;
     const enrichV2 = {
       ...enrichProfile,
-      promptVersion: 'vlm-enrich-v7',
+      promptVersion: 'vlm-enrich-v8',
       schemaVersion: 'atlas_enrichment_v2',
       maxOutputTokens: 1600,
     } as ModelProfile;
@@ -674,12 +674,12 @@ describe('eval:live (offline rails)', () => {
     const { g, golden, thresholds } = await setup(['p01']);
     const quickV2 = {
       ...quickProfile,
-      promptVersion: 'vlm-quick-v3',
+      promptVersion: 'vlm-quick-v4',
       schemaVersion: 'atlas_quick_read_v2',
     } as ModelProfile;
     const enrichV2 = {
       ...enrichProfile,
-      promptVersion: 'vlm-enrich-v7',
+      promptVersion: 'vlm-enrich-v8',
       schemaVersion: 'atlas_enrichment_v2',
       maxOutputTokens: 1600,
     } as ModelProfile;

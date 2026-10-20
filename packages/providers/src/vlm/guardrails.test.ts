@@ -26,6 +26,9 @@ import {
   paintingSubject,
   peopleShown,
   personObservation,
+  OCCUPATION_RE,
+  claimNamesPeople,
+  businessPlace,
   PEOPLE_CLAIM_RE,
   qualifiedThingType,
   readModel,
@@ -111,7 +114,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v15');
+    expect(GUARDRAIL_VERSION).toBe('guard-v16');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -406,6 +409,8 @@ describe('G-DEPICTED on a named place or work seen on context only (guard-v2)', 
           { name: 'Fixture Avenue', type: 'place', relation: 'depicted', certainty: 0.5, domain: 'place', evidence: 'context', evidence_text: null, tag_query: null, rationale: 'r' },
           { name: 'Fixture Café', type: 'place', relation: 'depicted', certainty: 0.8, domain: 'signage', evidence: 'read_text', evidence_text: 'Fixture Café', tag_query: null, rationale: 'r' },
         ],
+        // guard-v16: a business named on a sign is a brand, published only on the transcription of its name.
+        visible_text: ['Fixture Café'],
       }),
     );
     // guard-v8: an addition on context alone is a private observation (G-EVIDENCE), never a reference.
@@ -2378,5 +2383,70 @@ describe('guard-v15: the medium rule names what is shown, not the search phrase 
     // A medium word in the name still drops it.
     const named = read([v2({ name: 'Fixture tronie illustration', type: 'style', domain: 'art', certainty: 0.7, evidence: 'distinctive_form' })]);
     expect(decisionFor(named.decisions, 'Fixture tronie illustration')?.action).toBe('drop');
+  });
+});
+
+/*
+ * guard-v16 (round 4, after iteration 5, docs/quality-plan.md §19.23): the people test reads a broad
+ * occupation and relation lexicon on every surface, and a business typed as a place is a brand. Each test
+ * fails on guard-v15.
+ */
+describe('guard-v16: occupations and relations by lexicon, businesses typed as places', () => {
+  const read = (title: string, interpretation: string, cands: VlmQuickCandidate[]) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates: cands, quality: { usable: true, issue: null } }), { twoStage: true });
+  const ok = (name: string) => ({ name, rationale: 'Visible', verdict: 'supported' as const });
+  const truck = v2({ name: 'Fixture tractor unit', type: 'object', domain: 'vehicle', certainty: 0.8, evidence: 'distinctive_form' });
+
+  it('an occupation or relation word on any surface of a photo with people is withheld (iteration-5 h69 "instructor" shape)', () => {
+    expect(OCCUPATION_RE.test('the instructors')).toBe(true);
+    const g = read('A man beside a truck', 'A white truck and an instructor gesturing beside it.', [
+      truck,
+      v2({ name: 'Fixture mechanic workwear style', type: 'style', domain: 'fashion', certainty: 0.7, evidence: 'context' }),
+    ]);
+    expect([g.analysis.title, g.analysis.interpretation]).toEqual([NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION]);
+    expect(decisionFor(g.decisions, 'Fixture mechanic workwear style')).toMatchObject({ action: 'observe', note: 'people_claim' });
+    const s2 = stage2(
+      g,
+      enrichment({
+        observations: [
+          { text: 'A mother holds a paper cup', kind: 'object' },
+          { text: 'A white truck on asphalt', kind: 'object' },
+        ],
+        competing_subjects: ['Driving instructor', 'White truck'],
+        confirmed: [ok('Fixture tractor unit')],
+      }),
+    );
+    expect(s2.analysis.observations.map((o) => o.text)).toEqual(['A white truck on asphalt']);
+    expect(s2.analysis.competing_subjects.map((x) => x.label)).toEqual(['White truck']);
+  });
+
+  it('garments and equipment named by an occupation, possessives and compounds that name a thing still publish', () => {
+    const g = read('Two people outdoors', 'A person in boots and a knit sweater.', [
+      v2({ name: 'Cowboy boots', type: 'object', domain: 'fashion', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Fisherman sweater', type: 'object', domain: 'fashion', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Butcher block countertop', type: 'object', domain: 'interior', certainty: 0.8, evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.analysis.candidates)).toEqual(['Cowboy boots', 'Fisherman sweater', 'Butcher block countertop']);
+    expect(claimNamesPeople('Painter pants')).toBe(false);
+    expect(claimNamesPeople('Street food vendor')).toBe(true);
+    // A read occupation still backs a claim: the read-text exemption is unchanged.
+    const sign = read('A shop sign', 'A sign over a door.', [
+      v2({ name: 'Fixtureton Locksmith', type: 'place', domain: 'signage', certainty: 0.8, evidence: 'read_text', evidence_text: 'FIXTURETON LOCKSMITH' }),
+    ]);
+    expect(decisionFor(sign.decisions, 'Fixtureton Locksmith')?.note).not.toBe('people_claim');
+  });
+
+  it('a place named with a proper name and a business noun is a brand: held at stage 1, published only on read text (iteration-5 h40 shape)', () => {
+    expect(businessPlace('Fixturesons department store')).toBe(true);
+    expect(businessPlace('Fixture Hotel')).toBe(true);
+    expect(businessPlace('Corner cafe')).toBe(false);
+    expect(businessPlace('Musée du Fixture')).toBe(false);
+    const place = v2({ name: 'Fixturesons department store', type: 'place', domain: 'place', relation: 'depicted', certainty: 0.6, evidence: 'read_text', evidence_text: 'FIXTURESONS GROUP' });
+    const g = read('Sale signs in a mall', 'A sale banner in a shopping centre.', [place]);
+    expect(names(g.held)).toEqual(['Fixturesons department store']);
+    expect(names(stage2(g, enrichment({ visible_text: ['SALE'], confirmed: [ok('Fixturesons department store')] })).analysis.candidates)).toEqual([]);
+    expect(names(stage2(g, enrichment({ visible_text: ['FIXTURESONS'], confirmed: [ok('Fixturesons department store')] })).analysis.candidates)).toEqual([
+      'Fixturesons department store',
+    ]);
   });
 });

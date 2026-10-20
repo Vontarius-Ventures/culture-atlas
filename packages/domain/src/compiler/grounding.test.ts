@@ -289,7 +289,7 @@ describe('acceptMatch: the same thing, or nothing (Q-NAME, Q-SUBSET, Q-PLACE, Q-
   });
 
   it('is versioned', () => {
-    expect(GROUNDING_VERSION).toBe('ground-v5');
+    expect(GROUNDING_VERSION).toBe('ground-v6');
   });
 });
 
@@ -388,9 +388,15 @@ describe('ground-v5: acceptance by the candidate\'s kind and domain', () => {
       ['Neoclassical chair', 'Neoclassical'],
       ['Dutch Golden Age portraiture', 'Dutch Golden Age Style'],
       ['wood-paneled interior', 'Wood Paneling'],
-    ] as const) {
+    ] as const)
       expect(definingStyleTag(name, t), `${name} -> ${t}`).toBe(true);
-      const c = cand({ name, type: 'style', domain: 'interior', tag_query: t.toLowerCase() });
+    // ground-v6: a decor tag grounds only a room, space or building style claim.
+    for (const [name, t, domain] of [
+      ['wood-paneled interior', 'Wood Paneling', 'interior'],
+      ['Exposed brick wall', 'Exposed Brick', 'architecture'],
+      ['Neoclassical architecture', 'Neoclassical', 'architecture'],
+    ] as const) {
+      const c = cand({ name, type: 'style', domain, tag_query: t.toLowerCase() });
       expect(acceptMatch(c, tagsPlan(c), [tag('urn:tag:decor:qloo', 'x', t)]).match).toMatchObject({ name: t });
     }
     // Not accepted: the tag adds a word (h07, h02, a looser upholstery tag) or drops a place (h10).
@@ -407,5 +413,37 @@ describe('ground-v5: acceptance by the candidate\'s kind and domain', () => {
     // A tag equal to the candidate's own name is accepted as before; cuisine tags are not concerned.
     const loft = cand({ name: 'Industrial loft', type: 'style', domain: 'interior', tag_query: 'industrial' });
     expect(acceptMatch(loft, tagsPlan(loft), [tag('urn:tag:decor:qloo', 'loft', 'Industrial Loft')]).match).toMatchObject({ name: 'Industrial Loft' });
+  });
+});
+
+describe('ground-v6: decor tags for spaces only, place aliases of the same kind', () => {
+  it('a decor or setting tag never grounds an object, street furniture or a non-spatial domain (h79 shape)', () => {
+    for (const [name, t, domain] of [
+      ['Rustic wooden table', 'Rustic', 'interior'],
+      ['Minimalist tableware', 'Minimalist', 'design'],
+      ['Dutch Golden Age portraiture', 'Dutch Golden Age Style', 'art'],
+      ['Pedestrian bollard street design', 'Pedestrian Street', 'architecture'],
+    ] as const) {
+      const c = cand({ name, type: 'style', domain, tag_query: t.toLowerCase() });
+      const family = name.startsWith('Pedestrian') ? 'urn:tag:setting:qloo' : 'urn:tag:decor:qloo';
+      expect(acceptMatch(c, tagsPlan(c), [tag(family, 'x', t)]), name).toMatchObject({ match: null, reason: 'decor_tag_outside_domain' });
+    }
+    // A room or building style claim still grounds; an aesthetic style tag is not restricted.
+    const loft = cand({ name: 'Industrial loft', type: 'style', domain: 'interior', tag_query: 'industrial loft' });
+    expect(acceptMatch(loft, tagsPlan(loft), [tag('urn:tag:decor:qloo', 'loft', 'Industrial Loft')]).match).toMatchObject({ name: 'Industrial Loft' });
+    const table = cand({ name: 'Rustic wooden table', type: 'style', domain: 'interior', tag_query: 'rustic' });
+    expect(acceptMatch(table, tagsPlan(table), [tag('urn:tag:style:qloo', 'rustic', 'Rustic')]).match).toMatchObject({ name: 'Rustic' });
+  });
+
+  it('a place reached only through an alias must be the same kind of place (p09 shape)', () => {
+    const quarter = ent('L1', 'Quartier du Fixture Royal', 'urn:entity:locality', { popularity: 0.5, properties: { akas: ['Fixture-Royal'] } });
+    const palace = cand({ name: 'Palais Fixture-Royal', type: 'place', domain: 'architecture', relation: 'depicted', certainty: 0.8 });
+    const aliasOnly = ent('L2', 'Quartier du Palais Fixture-Royal', 'urn:entity:locality', { popularity: 0.5, properties: { akas: ['Palais Fixture-Royal'] } });
+    expect(acceptMatch(palace, searchPlan(palace), [aliasOnly]).match).toBeNull();
+    // An area named by its alias as an area is accepted; a venue alias for a landmark is accepted.
+    const area = cand({ name: 'Fixture-Royal', type: 'place', domain: 'place', relation: 'depicted', certainty: 0.8 });
+    expect(acceptMatch(area, searchPlan(area), [quarter]).match).toMatchObject({ entity_id: 'FIXTURE-L1' });
+    const venue = ent('V1', 'Fixture Royal Palace Museum', 'urn:entity:place', { popularity: 0.5, properties: { akas: ['Palais Fixture-Royal'] } });
+    expect(acceptMatch(palace, searchPlan(palace), [venue]).match).toMatchObject({ entity_id: 'FIXTURE-V1' });
   });
 });

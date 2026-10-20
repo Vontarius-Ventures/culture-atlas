@@ -11,6 +11,9 @@ import {
   MAKERS,
   MATERIALS,
   MUSIC,
+  OCCUPATIONS,
+  RELATIONS,
+  BUSINESS_NOUNS,
   STOP,
   foldText,
   hasPhrase,
@@ -18,7 +21,7 @@ import {
   nameTokens,
 } from './lexicons';
 
-const LISTS = { STOP, GENERIC_NOUNS, COLOURS, MATERIALS, GENERIC_QUALIFIERS, MAKERS, FASHION, MUSIC, FILM, FOOD, FOOD_EVIDENCE, FOOD_NAME_ENDINGS };
+const LISTS = { STOP, GENERIC_NOUNS, COLOURS, MATERIALS, GENERIC_QUALIFIERS, MAKERS, FASHION, MUSIC, FILM, FOOD, FOOD_EVIDENCE, FOOD_NAME_ENDINGS, OCCUPATIONS, RELATIONS, BUSINESS_NOUNS };
 
 describe('lexicon tokenizer', () => {
   it('folds case and accents like normalizeName, and keeps CJK verbatim', () => {

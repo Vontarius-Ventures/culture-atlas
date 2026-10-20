@@ -81,8 +81,11 @@ export const VLM_READING_VERSIONS = {
    * vlm-quick-v3 (round 4, docs/quality-plan.md §19): on photos with people, candidates name what is worn,
    * held, eaten, played or done, never who the people are or their event; well-known works and landmarks by
    * their title; at least three candidates on a usable photo. Same schema.
+   * vlm-quick-v4 / vlm-enrich-v8 (round 4, after iteration 5, §19.23): people are referred to only with
+   * neutral person nouns and what is visibly worn, held or done, never a role, occupation, relationship or
+   * occasion unless legible text names it (shared evidence rules, both stages).
    */
-  quickV2: { prompt: 'vlm-quick-v3', schema: 'atlas_quick_read_v2' },
+  quickV2: { prompt: 'vlm-quick-v4', schema: 'atlas_quick_read_v2' },
   /**
    * Reading v2, stage 2. vlm-enrich-v3 (requalification tune): prominent text first, partly hidden words as
    * their visible letters. vlm-enrich-v4 (round 4): the same people and artwork rules for additions, and a
@@ -97,7 +100,7 @@ export const VLM_READING_VERSIONS = {
    * title is judged by the form that identifies it (the stage-1 prompt asks for such names on their form, but
    * stage 2 judged them as needing a label, iteration-4 h60 "David by Michelangelo" weak).
    */
-  enrichV2: { prompt: 'vlm-enrich-v7', schema: 'atlas_enrichment_v2' },
+  enrichV2: { prompt: 'vlm-enrich-v8', schema: 'atlas_enrichment_v2' },
 } as const;
 
 /** Stage 1 measured as good at 512 px as at 768; stage 2 reads small logos and labels at 768. */
@@ -170,7 +173,8 @@ const V2_EVIDENCE_RULES = `- Name a brand, maker, model or product line only whe
 - Use relation "depicted" ONLY when evidence is read_text, logo or distinctive_form and you are confident; otherwise "resembles". A resemblance never establishes authenticity, provenance or origin.
 - Never infer or state the identity, ethnicity, nationality, religion, health, age or any other personal or sensitive attribute of a person. Do not identify real people. Do not describe hair, face, skin, age, body or facial expression, and do not infer anyone's role, profession, team or affiliation. Describe clothing and style, not the wearer.
 - Photos with people: spend candidates on what the people wear, hold, eat, play or do: the named type of each visible garment or accessory (a varsity jacket, a floral print dress, checkerboard slip-on sneakers), objects, food, musical instruments, vehicles and the activity or sport itself (baseball, association football). Never name who they are, their relationship, role, team, club, league, school, unit, event or occasion (a wedding, a prom, a graduation, a parade, a national team), unless legible text in the photo names it; then copy that text into evidence_text and use evidence read_text.
-- A well-known artwork, building or landmark that you recognize by its form is named by its title or proper name (type work or place, evidence distinctive_form), not only by its period, style or medium.`;
+- A well-known artwork, building or landmark that you recognize by its form is named by its title or proper name (type work or place, evidence distinctive_form), not only by its period, style or medium.
+- Wherever you mention people (title, interpretation, observations, candidates, regions, notes), refer to them only with neutral person nouns (person, people, man, woman, child, group) and what is visibly worn, held or done; never by a role, occupation, relationship or occasion (an instructor, a waiter, a mother, a couple, guests, a celebration) unless legible text in the photo names it.`;
 
 export const VLM_QUICK_SYSTEM_PROMPT_V2 = `You give a fast first reading of a single photo for culture atlas, a cultural discovery app. Respond only with the structured output schema.
 

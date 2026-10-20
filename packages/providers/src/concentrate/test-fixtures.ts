@@ -58,13 +58,13 @@ export const enrichProfile: ModelProfile = {
 /** Reading v2 (docs/quality-plan.md §3): stage 1 at 512 px. */
 export const quickProfileV2: ModelProfile = {
   ...quickProfile,
-  promptVersion: 'vlm-quick-v3',
+  promptVersion: 'vlm-quick-v4',
   schemaVersion: 'atlas_quick_read_v2',
 };
 /** Reading v2, stage 2: output cap raised to 1600 at re-qualification. */
 export const enrichProfileV2: ModelProfile = {
   ...enrichProfile,
-  promptVersion: 'vlm-enrich-v7',
+  promptVersion: 'vlm-enrich-v8',
   schemaVersion: 'atlas_enrichment_v2',
   maxOutputTokens: 1600,
 };

@@ -28,6 +28,9 @@ import {
   hasPhrase,
   isNonLatin,
   nameTokens,
+  OCCUPATIONS,
+  RELATIONS,
+  BUSINESS_NOUNS,
 } from './lexicons';
 import { ENGLISH_WORDS } from './english-words';
 import {
@@ -156,7 +159,7 @@ import {
  * headline is replaced as a unit: when the people test replaces the title or the interpretation, the
  * other line is replaced too (it was written as the same reading).
  */
-export const GUARDRAIL_VERSION = 'guard-v15';
+export const GUARDRAIL_VERSION = 'guard-v16';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -495,7 +498,53 @@ export const PEOPLE_NOUN_RE = new RegExp(String.raw`\b(?:${RELATIONSHIP_WORDS}|$
  * playStyleOfPeople), not a replacement: a synonym it does not name still
  * reaches the class rules only.
  */
-export const PEOPLE_CLAIM_RE = new RegExp(String.raw`\b(?:${RELATIONSHIP_WORDS}|${PERSON_ROLE_WORDS}|${PEOPLE_CONTEXT_WORDS})\b`, 'i');
+const PEOPLE_CLAIM_CORE = String.raw`${RELATIONSHIP_WORDS}|${PERSON_ROLE_WORDS}|${PEOPLE_CONTEXT_WORDS}`;
+
+/** guard-v16: the singular and plural forms of a lexicon noun ("chef"/"chefs", "fireman"/"firemen", "nanny"/"nannies"). */
+function nounForms(w: string): string[] {
+  if (w.endsWith('man')) return [w, `${w.slice(0, -3)}men`];
+  if (/[^aeiou]y$/.test(w)) return [w, `${w.slice(0, -1)}ies`];
+  if (/(?:s|x|z|ch|sh)$/.test(w)) return [w, `${w}es`];
+  return [w, `${w}s`];
+}
+/**
+ * guard-v16: nouns that, after an occupation or relation word, make it the name of a thing (the
+ * equipment-vs-role logic of score-v10/v12 and the "chef's knife" rule): garments, sport equipment and a
+ * few object and venue nouns ("Cowboy boots", "Fisherman sweater", "Butcher block", "Banker lamp",
+ * "Captain chair", "Mason jar", "Farmers market"). A possessive ("the waiter's notepad", "baker's twine")
+ * names a thing too.
+ */
+const ROLE_THING_NOUNS = [
+  ...GARMENTS,
+  ...SPORT_EQUIPMENT,
+  ...`apron aprons chair chairs table tables desk desks block blocks pole poles lamp lamps sink sinks jar jars case cases
+     knife knives tool tools paper tape collar collars sleeve sleeves market markets shop shops stall stalls cart carts
+     truck trucks car cars van vans boat boats station stations house houses tray trays pen pens tower towers machine
+     machines shark sharks pie pies cut style inspired made`.split(/\s+/).filter(Boolean),
+];
+/**
+ * guard-v16: occupations and relations from the broad lexicons (OCCUPATIONS, RELATIONS: several hundred
+ * nouns from a standard occupation classification, instead of guard-v10's short closed lists), each
+ * not followed by a possessive or by a thing noun.
+ */
+const OCCUPATION_WORDS = String.raw`(?:${[...new Set([...OCCUPATIONS, ...RELATIONS].flatMap(nounForms))]
+  .sort((a, b) => b.length - a.length)
+  .join('|')})(?!['’]|[- ](?:${[...new Set(ROLE_THING_NOUNS)].sort((a, b) => b.length - a.length).join('|')})\b)`;
+export const OCCUPATION_RE = new RegExp(String.raw`\b${OCCUPATION_WORDS}\b`, 'i');
+const PEOPLE_CLAIM_CORE_RE = new RegExp(String.raw`\b(?:${PEOPLE_CLAIM_CORE})\b`, 'i');
+/**
+ * guard-v16: on every surface (headline, observations, "What caught your eye?" labels) the people test
+ * also reads the occupation and relation lexicons.
+ */
+export const PEOPLE_CLAIM_RE = new RegExp(String.raw`\b(?:${PEOPLE_CLAIM_CORE}|${OCCUPATION_WORDS})\b`, 'i');
+/**
+ * guard-v16: a claim names the people's occupation, relation, occasion or group. An occupation word in
+ * the name of a garment or a piece of equipment ("Chef jacket", "Doctor Martens boots", "Catcher's mitt")
+ * names the thing worn or held (plainThing), not the person.
+ */
+export function claimNamesPeople(name: string): boolean {
+  return PEOPLE_CLAIM_CORE_RE.test(name) || (OCCUPATION_RE.test(name) && !plainThing(name));
+}
 
 /**
  * guard-v11: a text says that people are in the photo (a people word, a
@@ -741,7 +790,9 @@ const isProductToken = (t: string) =>
 export function brandWords(name: string): string[] {
   const tokens = contentTokens(stripParens(name));
   while (tokens.length > 1 && isFillerToken(tokens[0]!)) tokens.shift();
-  while (tokens.length > 1 && isProductToken(tokens[tokens.length - 1]!)) tokens.pop();
+  // guard-v16: a trailing business noun ("... department store", "... cafe") is not a word of the name to read.
+  const trailing = (t: string) => isProductToken(t) || BUSINESS_NOUNS.has(t) || t === 'department';
+  while (tokens.length > 1 && trailing(tokens[tokens.length - 1]!)) tokens.pop();
   return tokens.length === 1 && isProductToken(tokens[0]!) && !MAKERS.has(tokens[0]!) ? [] : tokens;
 }
 
@@ -997,6 +1048,27 @@ const PRODUCT_TYPES: ReadonlySet<string> = new Set(['object', 'style', 'traditio
  *    (`brandResidue`): "Beetle" next to "Volkswagen Beetle" is the same
  *    model claim without its maker, not a new description.
  */
+/**
+ * guard-v16: a place whose last naming word is a business or commercial-venue noun (BUSINESS_NOUNS) and
+ * whose other words include a proper name: a word that is neither a general English word nor a
+ * nationality (iteration-5 h40 "Robinsons department store", typed place, published on stage-1 read
+ * text the second reading did not confirm). "Corner café", "Japanese supermarket" and landmarks
+ * ("Musée du Louvre", "Borough Market") are not businesses by this rule.
+ */
+export function businessPlace(name: string): boolean {
+  const tokens = contentTokens(stripParens(name));
+  const at = tokens.findIndex((t) => BUSINESS_NOUNS.has(t));
+  if (tokens.length < 2 || at < 0) return false;
+  // A proper name among the other words: a word no dictionary or lexicon holds and no nationality
+  // ("Robinsons department store", "Starbucks cafe") ...
+  const others = tokens.filter((t, i) => i !== at && !BUSINESS_NOUNS.has(t) && t !== 'department');
+  if (others.some((t) => !commonWord(t) && !NATIONALITIES.has(t) && !/^\d+$/.test(t))) return true;
+  // ... or the business noun written with a capital after the first word: the whole is a name
+  // ("Raffles Hotel", "Agricultural Bank of China"), not a description ("Corner café").
+  const words = stripParens(name).split(/[\s/]+/).filter(Boolean);
+  return words.slice(1).some((w) => /^\p{Lu}/u.test(w) && BUSINESS_NOUNS.has(foldText(w)));
+}
+
 export function isBrandLike(
   c: Pick<VlmCandidate, 'name' | 'type'> & { evidence?: VlmEvidence | null; domain?: VlmDomain | null; tag_queries?: readonly string[] },
   ctx: { knownWords?: ReadonlySet<string>; brandResidue?: ReadonlySet<string> } = {},
@@ -1006,7 +1078,9 @@ export function isBrandLike(
   if (tokens.some((t) => MAKERS.has(t))) return true;
   if (PRODUCT_TYPES.has(c.type) && ctx.brandResidue?.size && tokens.some((t) => ctx.brandResidue!.has(t))) return true;
   // A place named with an acronym in capitals is an organisation ("EMT Madrid", the transit operator).
-  if (!PRODUCT_TYPES.has(c.type)) return c.type === 'place' && acronymTokens(c.name).length > 0;
+  // guard-v16: a place named with a proper name and a business noun is a business ("Robinsons department
+  // store"): brand-like, held at stage 1 and published only on read text of its name.
+  if (!PRODUCT_TYPES.has(c.type)) return c.type === 'place' && (acronymTokens(c.name).length > 0 || businessPlace(c.name));
   if (tokens.some((t, i) => CONTEXTUAL_MAKERS.has(t) && tokens.some((u, j) => j !== i && CONTEXT_PRODUCTS.has(u)))) return true;
   if (c.type === 'object' || c.type === 'style') {
     if (tokens.some(isModelCode)) return true;
@@ -1364,7 +1438,7 @@ function evaluate(
     // of the people (PEOPLE_CLAIM_RE) is about them whatever type and domain the model gave it
     // ("Wedding cake" as food, "… national football team" as a sport tradition). Brands, creators
     // and people-domain names have their own rules (G-BRAND, G-IDENTITY).
-    const namesPeople = c.type !== 'brand' && c.type !== 'creator' && input.domain !== 'people' && PEOPLE_CLAIM_RE.test(c.name);
+    const namesPeople = c.type !== 'brand' && c.type !== 'creator' && input.domain !== 'people' && claimNamesPeople(c.name);
     if ((aboutPeople({ type: c.type, domain: input.domain }) || namesPeople) && !readBacked) {
       if (facts.mentionsPeople || PEOPLE_NOUN_RE.test(c.name)) return observe('G-PEOPLE-CLAIM', EVIDENCE_NOTES.peopleClaim);
       if (opts.stage === 1) {
@@ -2118,7 +2192,7 @@ export function guardEnrichment(input: {
     // the model's own read_text label (a "supported" verdict published it with any evidence_text), and the
     // claim is about the people by class or by word (PEOPLE_CLAIM_RE), whatever its type and domain.
     const aboutThePeople =
-      aboutPeople(c) || playStyleOfPeople(c, true) || (c.type !== 'brand' && PEOPLE_CLAIM_RE.test(c.name));
+      aboutPeople(c) || playStyleOfPeople(c, true) || (c.type !== 'brand' && claimNamesPeople(c.name));
     if (!person && facts.mentionsPeople && aboutThePeople && !(guarded.evidence === 'read_text' && claimReadIn(c.name, stage2Texts))) {
       peopleWithheld.push(guarded);
       decisions.push(decision(guarded, 'observe', ['G-PEOPLE-CLAIM'], EVIDENCE_NOTES.peopleClaim));

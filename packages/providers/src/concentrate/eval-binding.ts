@@ -19,31 +19,31 @@ export const EVAL_BINDING = {
     'golden-v1': {
       golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
       scorer_version: 'score-v14',
-      code_sha256: 'c1492cb53482eb3f78293c9a9068bbdaac0f0905acdcead7a8f500001087583b',
+      code_sha256: 'c2d20f12586dfb9bf9df6e3ea99c3347931e89069f6b62a405cb72023edfee8e',
       blind_consumed: false,
     },
     'golden-v2': {
       golden_sha256: 'b429f6190fc688b20b8e8a3d3ff3e287bd3c899cca4c3ebe291de2b69682f930',
       scorer_version: 'score-v14',
-      code_sha256: 'c1492cb53482eb3f78293c9a9068bbdaac0f0905acdcead7a8f500001087583b',
+      code_sha256: 'c2d20f12586dfb9bf9df6e3ea99c3347931e89069f6b62a405cb72023edfee8e',
       blind_consumed: true,
     },
     'golden-v3': {
       golden_sha256: '12edf9323aa65b674a95a55aa0f3effe46039fe1de5385a93bfbfd86d72f8ad3',
       scorer_version: 'score-v14',
-      code_sha256: 'c1492cb53482eb3f78293c9a9068bbdaac0f0905acdcead7a8f500001087583b',
+      code_sha256: 'c2d20f12586dfb9bf9df6e3ea99c3347931e89069f6b62a405cb72023edfee8e',
       blind_consumed: true,
     },
     'golden-v4': {
       golden_sha256: '5788b89074f4afe52a18f56746ca9b8fe76cf6c9389083ef35657d5af8916b92',
       scorer_version: 'score-v14',
-      code_sha256: 'c1492cb53482eb3f78293c9a9068bbdaac0f0905acdcead7a8f500001087583b',
+      code_sha256: 'c2d20f12586dfb9bf9df6e3ea99c3347931e89069f6b62a405cb72023edfee8e',
       blind_consumed: true,
     },
     'golden-v5': {
       golden_sha256: '2c73a8c3e9b9d8e6809124886242111995c22e30cab1416397f181150d9cfbde',
       scorer_version: 'score-v14',
-      code_sha256: 'c1492cb53482eb3f78293c9a9068bbdaac0f0905acdcead7a8f500001087583b',
+      code_sha256: 'c2d20f12586dfb9bf9df6e3ea99c3347931e89069f6b62a405cb72023edfee8e',
       blind_consumed: false,
     },
     'text-v1': {

@@ -370,15 +370,17 @@ describe('reading v2 (quality plan §3)', () => {
   });
 
   it('the v2 prompts are pinned: an edit needs a new promptVersion and re-qualification', () => {
-    // vlm-quick-v3 (round 4, docs/quality-plan.md §19): was ae79cce2… as vlm-quick-v2.
-    expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('d1a308e5631c07c18dead7d4d02823114f845340ec13f1008a2add7d3fbea248');
-    expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v3');
-    // vlm-enrich-v7 (round 4, after iteration 4, §19.21): was 0a942c85… as vlm-enrich-v6 (iteration 3, §19.15),
+    // vlm-quick-v4 (round 4, after iteration 5, §19.23): was d1a308e5… as vlm-quick-v3 (round 4, §19),
+    // ae79cce2… as vlm-quick-v2.
+    expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('b237fbc1b44faed4f62d2b41348223e80ed750a055a6c4adaee773bd197a6afd');
+    expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v4');
+    // vlm-enrich-v8 (round 4, after iteration 5, §19.23): was c52ea8ef… as vlm-enrich-v7 (§19.21),
+    // 0a942c85… as vlm-enrich-v6 (iteration 3, §19.15),
     // e682090c… as vlm-enrich-v5 (iteration 2, §19.13),
     // 8007487d… as vlm-enrich-v4 (round 4), b8740b2b… as vlm-enrich-v3 (requalification tune, §15), d23612b5…
     // as vlm-enrich-v2.
-    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('c52ea8ef1e25e7a7298c6f660636965713ca209668486dc8ac13496dbc5cd4b6');
-    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v7');
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('a72b91697bced8de698d78a93a3c7a63ccbfc62ab6ef34b431377cce2e8403b2');
+    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v8');
   });
 
   it('round 4 (vlm-quick-v3, vlm-enrich-v4): people photos name what is worn, held, eaten or played; works by their title', () => {
@@ -401,6 +403,14 @@ describe('reading v2 (quality plan §3)', () => {
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('another named style or type fits them as well or better');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('a vehicle, sign or building form found only in that place');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('A brand, maker or model is supported only when its name or logo is legible');
+  });
+
+  it('vlm-quick-v4 and vlm-enrich-v8 refer to people only with neutral person nouns', () => {
+    for (const prompt of [VLM_QUICK_SYSTEM_PROMPT_V2, VLM_ENRICH_SYSTEM_PROMPT_V2]) {
+      expect(prompt).toContain('refer to them only with neutral person nouns (person, people, man, woman, child, group)');
+      expect(prompt).toContain('never by a role, occupation, relationship or occasion');
+      expect(prompt).toContain('unless legible text in the photo names it');
+    }
   });
 
   it('vlm-enrich-v7 judges a work named by its title by the form that identifies it', () => {
