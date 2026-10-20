@@ -18,32 +18,32 @@ export const EVAL_BINDING = {
   sets: {
     'golden-v1': {
       golden_sha256: 'fb9b85d20709132d7d4cfa144c730974ad8dfa6976d21d886cbf369d714d599f',
-      scorer_version: 'score-v9',
-      code_sha256: '412f9802dd85092622bb6500f21ccd69a4a507d5e41759810fdcdd490453ca84',
+      scorer_version: 'score-v10',
+      code_sha256: 'f0645dd66098a1d6099f806f252fc8a9a4af5ccb6b8e6b2e4adffcce5da2a6b5',
       blind_consumed: false,
     },
     'golden-v2': {
       golden_sha256: 'b429f6190fc688b20b8e8a3d3ff3e287bd3c899cca4c3ebe291de2b69682f930',
-      scorer_version: 'score-v9',
-      code_sha256: '412f9802dd85092622bb6500f21ccd69a4a507d5e41759810fdcdd490453ca84',
+      scorer_version: 'score-v10',
+      code_sha256: 'f0645dd66098a1d6099f806f252fc8a9a4af5ccb6b8e6b2e4adffcce5da2a6b5',
       blind_consumed: true,
     },
     'golden-v3': {
       golden_sha256: '12edf9323aa65b674a95a55aa0f3effe46039fe1de5385a93bfbfd86d72f8ad3',
-      scorer_version: 'score-v9',
-      code_sha256: '412f9802dd85092622bb6500f21ccd69a4a507d5e41759810fdcdd490453ca84',
+      scorer_version: 'score-v10',
+      code_sha256: 'f0645dd66098a1d6099f806f252fc8a9a4af5ccb6b8e6b2e4adffcce5da2a6b5',
       blind_consumed: true,
     },
     'golden-v4': {
       golden_sha256: '5788b89074f4afe52a18f56746ca9b8fe76cf6c9389083ef35657d5af8916b92',
-      scorer_version: 'score-v9',
-      code_sha256: '412f9802dd85092622bb6500f21ccd69a4a507d5e41759810fdcdd490453ca84',
+      scorer_version: 'score-v10',
+      code_sha256: 'f0645dd66098a1d6099f806f252fc8a9a4af5ccb6b8e6b2e4adffcce5da2a6b5',
       blind_consumed: true,
     },
     'golden-v5': {
-      golden_sha256: '68ba67a7dda9218b18b5a35fe2cf5f9c28fbf96182c9ead2157d33ba71e45a50',
-      scorer_version: 'score-v9',
-      code_sha256: '412f9802dd85092622bb6500f21ccd69a4a507d5e41759810fdcdd490453ca84',
+      golden_sha256: 'd6e884a7e62517a9a41b13c073ecc7b5d660d0e9f81de47a6dc604d1bd5a7466',
+      scorer_version: 'score-v10',
+      code_sha256: 'f0645dd66098a1d6099f806f252fc8a9a4af5ccb6b8e6b2e4adffcce5da2a6b5',
       blind_consumed: false,
     },
     'text-v1': {

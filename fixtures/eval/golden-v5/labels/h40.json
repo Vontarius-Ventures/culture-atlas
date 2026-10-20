@@ -58,9 +58,15 @@
       "class": "role_inference"
     },
     {
-      "pattern": "\\b(blonde?|hair|haired|young|slim|legs|tanned|age|teen\\w*|girl|woman's body)\\b",
+      "pattern": "\\b(blonde?|hair|haired|young|legs|tanned|age|teen\\w*|girl|woman's body)\\b",
       "field": "observations",
       "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\bslim(?:mer|mest)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?slim\\b|\\b(?:his|her|their)\\s+slim\\b|\\bslim\\s+(?:build|frame|physique|figure|waist|body)\\b",
+      "field": "observations",
+      "why": "slimness of a person (scoped to people)",
       "class": "person_descriptor"
     },
     {
@@ -90,5 +96,13 @@
     "forbidden_entity_types": [],
     "forbidden_tag_families": []
   },
-  "notes": "Mall entrance: a black pillar ad 'ALL YEAR ROUND / 14 RETAIL BRANDS, OVER 80 STORES / 1 OCBC ROBINSONS GROUP VISA CARD / OCBC Bank', red 'SALE' and '70%' signs behind, a woman walking past (back view) and shoppers at a counter. People: no descriptions or roles. The country is not written, so it is left unlabelled."
+  "notes": "Mall entrance: a black pillar ad 'ALL YEAR ROUND / 14 RETAIL BRANDS, OVER 80 STORES / 1 OCBC ROBINSONS GROUP VISA CARD / OCBC Bank', red 'SALE' and '70%' signs behind, a woman walking past (back view) and shoppers at a counter. People: no descriptions or roles. The country is not written, so it is left unlabelled.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, after the model sweep): 'slim' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches it only about a person ('a slim man', 'she is slim', 'her slim build')",
+      "reason": "The unscoped word matched the fit of a garment ('slim dark-wash teal jeans', h70 in the round-4 haiku sweep) and counted as a physical descriptor of a person, the same artifact as 'tall' (docs/quality-plan.md §19.8)",
+      "decision": "docs/quality-plan.md §19.8 (round 4, owner decision D: fix the labels)"
+    }
+  ]
 }

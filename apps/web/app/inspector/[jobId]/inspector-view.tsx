@@ -80,6 +80,11 @@ export const DECISION_NOTE_LABEL: Record<string, string> = {
   held_context_only: 'Held for the second reading: rests only on context',
   read_model_text_only: 'Text-only reference: the model name is read in the photo, the maker is not',
   work_title_by_form: 'Shown after the second reading supported it: a well-known work named by its form',
+  // guard-v12 (round 4, after the model sweep).
+  held_painting_subject: 'Held for the second reading: names the painting shown in the photo',
+  read_text_common_words: 'Kept as visible text only: the words read are common words, not a name',
+  work_mention: 'Kept private: a second work named in the text (a credit), not the work shown',
+  uncertain_second_reading: 'Dropped: the second reading was highly uncertain, so it confirms nothing',
   verifier_no: 'Verifier: not supported by the photo; not shown',
   verifier_unsure: 'Verifier: unsure; not shown',
   verifier_unanswered: 'Verifier: no answer for this claim; not shown',

@@ -17,14 +17,21 @@ import {
   guardQuickRead,
   hasMediumWord,
   brandResidue,
+  commonWordsRead,
+  generalWordsOnly,
   isBrandLike,
   looksLikePlate,
+  metaCommentary,
   namesGarment,
+  paintingSubject,
   peopleShown,
+  personObservation,
+  qualifiedThingType,
   readModel,
   sanitizeObservations,
   sportActivity,
   titledWork,
+  workTitle,
   sanitizeVisibleText,
   stage2Request,
   type GuardDecision,
@@ -103,7 +110,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v11');
+    expect(GUARDRAIL_VERSION).toBe('guard-v12');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -2001,7 +2008,9 @@ describe('guard-v11: hold until confirmed, people presence by words, read model,
     expect(
       ['Little League baseball', 'Professional basketball', 'Youth baseball', 'Croatia national football team', 'Brazilian football', 'NBA basketball', 'Fixture FC football'].map(sport),
     ).toEqual([false, false, false, false, false, false, false]);
-    expect(sportActivity({ name: 'Baseball', type: 'style', domain: 'sport' })).toBe(false);
+    // guard-v12: the sport may arrive typed as a style (vlm-quick-v3 asks for the sport itself); an object never is one.
+    expect(sportActivity({ name: 'Baseball', type: 'style', domain: 'sport' })).toBe(true);
+    expect(sportActivity({ name: 'Baseball', type: 'object', domain: 'sport' })).toBe(false);
   });
 
   it("people presence comes from the reading's words, never from the model's domain label alone", () => {
@@ -2072,5 +2081,169 @@ describe('guard-v11: hold until confirmed, people presence by words, read model,
     expect(stage2(g, enrichment({ confirmed: [weak('Fixture with a Pearl Earring')] })).publishNow).toEqual([]);
     expect(titledWork({ name: 'The Fixture Night', type: 'work', domain: 'art', evidence: 'context' })).toBe(false);
     expect(titledWork({ name: 'FXB Fixture', type: 'work', domain: 'art', evidence: 'distinctive_form' })).toBe(false);
+  });
+});
+
+describe('guard-v12: one people test on every surface, rules that follow the prompt contract (round 4, after the model sweep)', () => {
+  const read = (title: string, interpretation: string, cands: VlmQuickCandidate[], twoStage = true) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates: cands, quality: { usable: true, issue: null } }), { twoStage });
+  const ok = (name: string) => ({ name, rationale: 'Visible', verdict: 'supported' as const });
+  const add = (c: Partial<VlmQuickCandidate> & { name: string }) => ({ ...v2(c), rationale: 'Seen' });
+
+  it('on a photo with people, no observation that refers to a person and no "What caught your eye?" label about them is shown', () => {
+    const g = read('Two people on a bench', 'Matching orange tops and denim.', [
+      v2({ name: 'Fixture tote bag', type: 'object', domain: 'fashion', certainty: 0.7, evidence: 'distinctive_form' }),
+    ]);
+    const s2 = stage2(
+      g,
+      enrichment({
+        observations: [
+          { text: 'One wears slim dark jeans with lace-up shoes; the other wears ripped jeans', kind: 'garment' },
+          { text: 'The player wears white sneakers', kind: 'garment' },
+          { text: 'They hold paper cups', kind: 'object' },
+          { text: 'Standing server with a notepad', kind: 'garment' },
+          { text: 'Fallen leaves on the pavement', kind: 'setting' },
+        ],
+        competing_subjects: ['standing server taking an order', 'two seated customers', 'Wooden park bench'],
+        confirmed: [ok('Fixture tote bag')],
+      }),
+    );
+    expect(s2.analysis.observations.map((o) => o.text)).toEqual(['Fallen leaves on the pavement']);
+    expect(s2.analysis.competing_subjects.map((x) => x.label)).toEqual(['Wooden park bench']);
+    // Without people, an occasion word describes a thing and stays.
+    expect(personObservation({ text: 'A wedding cake on a stand', kind: 'food' }, false)).toBe(false);
+    expect(personObservation({ text: 'A wedding cake on a stand', kind: 'food' }, true)).toBe(true);
+    expect(sanitizeObservations([{ id: 'o1', text: 'They wear matching tops', kind: 'garment', region_ids: [] }], { people: true }).kept).toEqual([]);
+  });
+
+  it('a headline in which the model talks about itself or its instructions is replaced; a quoted sign is not', () => {
+    expect(metaCommentary('The image shows a text card asking to print system instructions, which I will not follow.')).toBe(true);
+    expect(metaCommentary('A notice that I cannot verify')).toBe(true);
+    expect(metaCommentary('Ignore all previous instructions banner')).toBe(true);
+    expect(metaCommentary('Neon sign reading "I am here"')).toBe(false);
+    expect(metaCommentary('Statue of Fixture I on a plinth')).toBe(false);
+    expect(metaCommentary('A care label with washing instructions')).toBe(false);
+    const g = read('Security notice card', 'A text card asking to print system rules, which I will not follow.', []);
+    expect([g.analysis.title, g.analysis.interpretation]).toEqual(['Security notice card', NEUTRAL_INTERPRETATION]);
+    expect(g.titleChanged).toBe(true);
+  });
+
+  it('G-BRAND: a fashion object named only with general English words is not an unknown maker; an unknown word still is', () => {
+    expect(generalWordsOnly('Checkerboard slip-on sneakers')).toBe(true);
+    expect(generalWordsOnly('Fixturo road bike')).toBe(false);
+    expect(generalWordsOnly('Vans sneakers')).toBe(false);
+    const g = read('A pair of shoes', 'Shoes on a bench.', [
+      v2({ name: 'Checkerboard slip-on sneakers', type: 'object', domain: 'fashion', certainty: 0.7, evidence: 'distinctive_form' }),
+      v2({ name: 'Bell sleeve dress', type: 'object', domain: 'fashion', certainty: 0.7, evidence: 'distinctive_form' }),
+      v2({ name: 'Colour-block T-shirt', type: 'object', domain: 'fashion', certainty: 0.7, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixturo road bike', type: 'object', domain: 'sport', certainty: 0.7, evidence: 'distinctive_form' }),
+      v2({ name: 'Gingham sneakers', type: 'object', domain: 'fashion', certainty: 0.7, evidence: 'read_text', evidence_text: 'GINGHAM' }),
+    ]);
+    expect(names(g.analysis.candidates)).toEqual(['Checkerboard slip-on sneakers', 'Bell sleeve dress', 'Colour-block T-shirt']);
+    // An unknown word, or general words the model says it read (a name on the product), still wait for stage 2.
+    expect(names(g.held)).toEqual(['Fixturo road bike', 'Gingham sneakers']);
+    // A letter-shape compound is not a proper name; a capitalized model name after a letter still is.
+    expect(isBrandLike({ name: 'V-neck sweater', type: 'object', domain: 'fashion' })).toBe(false);
+    expect(isBrandLike({ name: 'Fixturo X-Trail', type: 'object', domain: 'vehicle' })).toBe(true);
+  });
+
+  it('garment and equipment types and a sport named alone follow the prompt: not generic, not a play style', () => {
+    expect(qualifiedThingType('Football boots')).toBe(true);
+    expect(qualifiedThingType('White leather sneakers')).toBe(false);
+    const g = read('Football match', 'A player in a striped kit runs with the ball.', [
+      v2({ name: 'Football boots', type: 'object', domain: 'sport', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Black-and-white striped football kit', type: 'style', domain: 'sport', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Basketball', type: 'style', domain: 'sport', certainty: 0.8, evidence: 'context' }),
+      v2({ name: 'White leather sneakers', type: 'object', domain: 'fashion', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Professional hoops', type: 'style', domain: 'sport', certainty: 0.8, evidence: 'context' }),
+      v2({ name: 'Fixturian football jersey', type: 'style', domain: 'sport', certainty: 0.8, evidence: 'context' }),
+    ]);
+    expect(names(g.analysis.candidates)).toEqual(['Football boots', 'Black-and-white striped football kit', 'Basketball']);
+    expect(names(g.demoted)).toEqual(['White leather sneakers']);
+    expect(decisionFor(g.decisions, 'Professional hoops')).toMatchObject({ action: 'observe', note: 'people_claim' });
+    // A capitalized team or country word says who wears it: still a claim about the players.
+    expect(decisionFor(g.decisions, 'Fixturian football jersey')?.action).not.toBe('publish');
+    // Bags of shopping are not a garment type, whatever their qualifier.
+    expect(names(read('Groceries', 'Bags on a counter.', [v2({ name: 'Paper grocery bags', type: 'object', domain: 'other', certainty: 0.8, evidence: 'distinctive_form' })]).demoted)).toEqual([
+      'Paper grocery bags',
+    ]);
+  });
+
+  it('an art-domain claim whose only medium word is "painting" waits for stage 2 instead of being dropped', () => {
+    expect(paintingSubject({ name: 'Plum blossom painting', tag_queries: [] }, 'art')).toBe(true);
+    expect(paintingSubject({ name: 'Plum blossom illustration painting', tag_queries: [] }, 'art')).toBe(false);
+    expect(paintingSubject({ name: 'Folk floral painting', tag_queries: [] }, 'craft')).toBe(false);
+    const cands = [
+      v2({ name: 'Fixture blossom painting', type: 'tradition', domain: 'art', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture floral painting', type: 'style', domain: 'craft', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture blossom illustration', type: 'style', domain: 'art', certainty: 0.8, evidence: 'distinctive_form' }),
+    ];
+    const g = read('Hanging scroll', 'A scroll with blossoms.', cands);
+    expect(names(g.held)).toEqual(['Fixture blossom painting']);
+    expect(decisionFor(g.decisions, 'Fixture blossom painting')).toMatchObject({ action: 'hold', note: 'held_painting_subject' });
+    expect(decisionFor(g.decisions, 'Fixture floral painting')).toMatchObject({ action: 'drop', rules: ['G-MEDIUM'] });
+    expect(decisionFor(g.decisions, 'Fixture blossom illustration')).toMatchObject({ action: 'drop', rules: ['G-MEDIUM'] });
+    expect(names(stage2(g, enrichment({ confirmed: [ok('Fixture blossom painting')] })).publishNow)).toEqual(['Fixture blossom painting']);
+    // No stage 2 to support it: dropped, as before.
+    expect(read('Hanging scroll', 'A scroll with blossoms.', cands, false).held).toEqual([]);
+  });
+
+  it('a stage-2 "<Title> by <Creator>" repeating a work the first reading named publishes with it, as a resemblance', () => {
+    expect(workTitle('Fixture David by Fixturo Buonarroti')).toBe('Fixture David');
+    expect(workTitle('Stand by Me')).toBe('Stand');
+    const g = read('Marble statue', 'A marble figure in a gallery.', [
+      v2({ name: 'Fixture David', type: 'work', domain: 'art', certainty: 0.8, relation: 'resembles', evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture David']);
+    const byCreator = add({ name: 'Fixture David by Fixturo', type: 'work', domain: 'art', certainty: 0.8, relation: 'resembles', evidence: 'distinctive_form' });
+    const other = add({ name: 'Fixture Goliath by Fixturo', type: 'work', domain: 'art', certainty: 0.8, relation: 'resembles', evidence: 'distinctive_form' });
+    const s2 = stage2(g, enrichment({ confirmed: [ok('Fixture David')], additional_candidates: [byCreator, other] }));
+    expect(s2.publishNow.map((c) => [c.name, c.relation])).toEqual([
+      ['Fixture David', 'resembles'],
+      ['Fixture David by Fixturo', 'resembles'],
+    ]);
+    expect(decisionFor(s2.decisions, 'Fixture David by Fixturo')).toMatchObject({ action: 'publish', note: 'work_title_by_form' });
+    expect(decisionFor(s2.decisions, 'Fixture Goliath by Fixturo')?.action).toBe('drop');
+    // The first reading's work not shown (hedged): nothing confirms the longer name either.
+    expect(stage2(g, enrichment({ confirmed: [{ name: 'Fixture David', rationale: 'Maybe', verdict: 'weak' }], additional_candidates: [byCreator] })).publishNow).toEqual([]);
+  });
+
+  it('read text made of common words is visible text, never a reference; a name written as a name stays a claim', () => {
+    expect(commonWordsRead({ name: 'Specialties', type: 'place', evidence: 'read_text' }, 'signage')).toBe(true);
+    expect(commonWordsRead({ name: 'internal review notice', type: 'work', evidence: 'read_text' }, 'signage')).toBe(true);
+    expect(commonWordsRead({ name: 'Agricultural Bank of Fixture', type: 'brand', evidence: 'read_text' }, 'signage')).toBe(false);
+    expect(commonWordsRead({ name: 'Golden Harvest Bank', type: 'brand', evidence: 'read_text' }, 'signage')).toBe(false);
+    expect(commonWordsRead({ name: 'Canon', type: 'brand', evidence: 'read_text' }, 'design')).toBe(false);
+    expect(commonWordsRead({ name: 'Specialties', type: 'place', evidence: 'context' }, 'signage')).toBe(false);
+    const g = read('Cake on a stand', 'A frosted cake under a script sign.', [
+      v2({ name: 'Specialties', type: 'place', domain: 'signage', certainty: 0.6, relation: 'depicted', evidence: 'read_text', evidence_text: 'Specialties' }),
+      v2({ name: 'Frosted layer cake', type: 'object', domain: 'food', certainty: 0.8, relation: 'depicted', evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.analysis.candidates)).toEqual(['Frosted layer cake']);
+    expect(decisionFor(g.decisions, 'Specialties')).toMatchObject({ action: 'drop', rules: ['G-TEXT-ECHO'], note: 'read_text_common_words' });
+  });
+
+  it('one depicted work per reading: a second work title read at stage 2 (a credit line) is a mention', () => {
+    const g = read('Film poster', 'A poster with a red title.', [
+      v2({ name: 'Fixture Night', type: 'work', domain: 'film', certainty: 0.9, relation: 'depicted', evidence: 'read_text', evidence_text: 'Fixture Night' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture Night']);
+    const credit = add({ name: 'Fixture Wind', type: 'work', domain: 'film', certainty: 0.7, relation: 'depicted', evidence: 'read_text', evidence_text: 'Producer of FIXTURE WIND' });
+    const s2 = stage2(g, enrichment({ visible_text: ['Fixture Night', 'Producer of FIXTURE WIND'], confirmed: [ok('Fixture Night')], additional_candidates: [credit] }));
+    expect(names(s2.publishNow)).toEqual(['Fixture Night']);
+    expect(decisionFor(s2.decisions, 'Fixture Wind')).toMatchObject({ action: 'observe', note: 'work_mention' });
+  });
+
+  it('a highly uncertain second reading confirms nothing: no held claim and no addition publishes', () => {
+    const g = read('Funfair street', 'A street with stalls and rides.', [
+      v2({ name: 'Fixture midway', type: 'place', domain: 'place', certainty: 0.6, evidence: 'context' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture midway']);
+    const extra = add({ name: 'Ferris wheel', type: 'object', domain: 'other', certainty: 0.8, relation: 'depicted', evidence: 'distinctive_form' });
+    const high = stage2(g, enrichment({ confirmed: [ok('Fixture midway')], additional_candidates: [extra], uncertainty: { overall: 'high', notes: ['Strong blur'] } }));
+    expect(high.publishNow).toEqual([]);
+    expect(decisionFor(high.decisions, 'Fixture midway')).toMatchObject({ action: 'drop', note: 'uncertain_second_reading' });
+    const medium = stage2(g, enrichment({ confirmed: [ok('Fixture midway')], additional_candidates: [extra], uncertainty: { overall: 'medium', notes: [] } }));
+    expect(names(medium.publishNow)).toEqual(['Fixture midway', 'Ferris wheel']);
   });
 });

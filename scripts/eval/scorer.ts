@@ -4,6 +4,7 @@ import {
   foldText,
   textContains,
   type ForbiddenClass,
+  type ForbiddenEntry,
   type Gate,
   type LabelEntry,
   type PhotoLabel,
@@ -48,7 +49,16 @@ import {
  *    expected, read "Z4" (h67) always counted as a brand without text (M1, M7).
  * No gate, threshold or other metric definition changed.
  */
-export const SCORER_VERSION = 'score-v9';
+/**
+ * score-v10 (round 4, after the model sweep; docs/quality-plan.md §19.8): a label's own explicit
+ * expected or acceptable entry whose match on a name contains every match of a forbidden pattern
+ * (strictly longer) wins over that pattern (forbiddenCovered; never for a brand_without_text entry): h72 accepts "catcher's gear" and
+ * "catcher's mitt" and forbids "catcher" as a role, and score-v9 checked the forbidden list first, so the
+ * accepted equipment names always counted as role inferences (M1, M2, M11). An overlap of equal spans is a
+ * real conflict and stays forbidden; `pnpm eval:lint-labels` lists both kinds. No gate, threshold or
+ * other metric definition changed.
+ */
+export const SCORER_VERSION = 'score-v10';
 /** score-v8: forbidden classes about the people that also apply to the headline (field `candidate`). */
 export const HEADLINE_PEOPLE_CLASSES: ReadonlySet<ForbiddenClass> = new Set(['person_identity', 'person_descriptor', 'role_inference']);
 
@@ -241,14 +251,43 @@ function labelEntry(label: PhotoLabel, c: CandidateView): Tagged | undefined {
   return findEntry(all, c.name);
 }
 
+/** Spans of every non-empty match of `pattern` in `text`. */
+function matchSpans(pattern: string, text: string): [number, number][] {
+  return [...text.matchAll(new RegExp(pattern, 'giu'))].filter((m) => m[0].length > 0).map((m) => [m.index, m.index + m[0].length]);
+}
+
 /**
- * Status of one candidate. Forbidden wins. An expected or acceptable entry
+ * score-v10: the label's own explicit expected or acceptable entry (a pattern with no requires_text)
+ * matches `text` on a span that strictly contains every match of the forbidden `pattern` ("catcher's gear"
+ * around "catcher"): the label accepts the longer name, so that forbidden pattern does not apply to it.
+ */
+export function coveredByGoodEntry(label: Pick<PhotoLabel, 'expected' | 'acceptable'>, text: string, pattern: string): boolean {
+  const forbidden = matchSpans(pattern, text);
+  if (!forbidden.length) return false;
+  const good = [...label.expected, ...label.acceptable]
+    .filter((e) => !!e.pattern && !e.requires_text)
+    .flatMap((e) => matchSpans(e.pattern!, text));
+  return forbidden.every(([s, t]) => good.some(([a, b]) => a <= s && t <= b && b - a > t - s));
+}
+
+/**
+ * score-v10: a forbidden candidate entry the label's own good entry covers on `text`. A brand word
+ * (class brand_without_text) is never covered: a longer accepted name around it ("Checkerboard Vans")
+ * still names the brand that no text shows, while a role word inside the name of a thing ("catcher's
+ * gear") describes the thing.
+ */
+export function forbiddenCovered(label: Pick<PhotoLabel, 'expected' | 'acceptable'>, text: string, entry: Pick<ForbiddenEntry, 'pattern' | 'class'>): boolean {
+  return entry.class !== 'brand_without_text' && coveredByGoodEntry(label, text, entry.pattern);
+}
+
+/**
+ * Status of one candidate. Forbidden wins (score-v10: unless the label's own good entry covers it). An expected or acceptable entry
  * whose requires_text is not in `texts` (the final visible text) makes the
  * claim unsupported, which counts as forbidden (a brand read before any text).
  */
 export function candidateStatus(label: PhotoLabel, c: CandidateView, texts: readonly string[]): CandidateStatus {
   for (const f of label.forbidden)
-    if (f.field === 'candidate' && new RegExp(f.pattern, 'iu').test(c.name)) return 'forbidden';
+    if (f.field === 'candidate' && new RegExp(f.pattern, 'iu').test(c.name) && !forbiddenCovered(label, c.name, f)) return 'forbidden';
   const entry = labelEntry(label, c);
   if (!entry) return 'unlabelled';
   if (entry.requires_text && !texts.some((t) => textContains(t, entry.requires_text!))) return 'forbidden';
@@ -414,7 +453,11 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
             ? [...vt]
             : f.observations.map((o) => o.text);
     const isHeadline = (h: string) => headline.includes(h);
-    const matching = hits.filter((h) => re.test(entry.field === 'text' || isHeadline(h) ? h.replace(/^\w+: /, '') : h));
+    const matching = hits.filter((h) => {
+      const text = entry.field === 'text' || isHeadline(h) ? h.replace(/^\w+: /, '') : h;
+      // score-v10: a name the label itself accepts around the forbidden match is not a violation.
+      return re.test(text) && !(entry.field === 'candidate' && forbiddenCovered(label, text, entry));
+    });
     if (entry.class && classes.has(entry.class)) for (const h of matching) add(entry.class, h);
     // A forbidden statement in the always-visible title or interpretation is a hard error.
     else if (entry.field === 'text') for (const h of matching) add('forbidden_text', h);

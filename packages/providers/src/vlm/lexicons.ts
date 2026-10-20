@@ -214,6 +214,23 @@ export const GARMENTS = set(`
 `);
 
 /**
+ * guard-v12: nouns for the equipment of a sport, the counterpart of GARMENTS
+ * for what is held, worn for protection or played with ("Cricket pads",
+ * "Batting gloves", "Hockey stick", "Tennis racket"). A claim whose last naming
+ * word is one of them names a thing in the photo, not how or at what level the
+ * people play.
+ */
+export const SPORT_EQUIPMENT = set(`
+  bat bats racket rackets racquet racquets paddle paddles club clubs stick sticks cue cues puck pucks
+  mitt mitts glove gloves pad pads guard guards shinguards shinpads helmet helmets mask masks gear
+  ball balls shuttlecock shuttlecocks wicket wickets stumps bails hoop hoops net nets goal goals
+  skate skates ski skis snowboard snowboards skateboard skateboards surfboard surfboards board boards
+  cleats spikes boots shoes sneakers trainers
+  saddle saddles bridle bridles stirrup stirrups reins harness harnesses
+  oar oars rod rods reel reels bow bows arrow arrows foil foils epee sabre saber
+`);
+
+/**
  * Descriptive words that may lead a product name without making it a brand
  * guess: nationalities and regions, periods, garment and construction
  * styles. A fashion or sport object whose leading word is in none
