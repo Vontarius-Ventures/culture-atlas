@@ -26,6 +26,7 @@ import {
   paintingSubject,
   peopleShown,
   personObservation,
+  PEOPLE_CLAIM_RE,
   qualifiedThingType,
   readModel,
   sanitizeObservations,
@@ -110,7 +111,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v13');
+    expect(GUARDRAIL_VERSION).toBe('guard-v14');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -888,7 +889,7 @@ describe('guard-v3: G-CUISINE-FOOD and G-CATEGORY do not take the model domain o
   it('drops a food-domain tradition or style on a photo with no food, not only type cuisine', () => {
     const g = cathedral([
       v2({ name: 'Mediterranean diet', type: 'tradition', domain: 'food', certainty: 0.6, tag_query: 'mediterranean diet' }),
-      v2({ name: 'Fixture tea ceremony', type: 'tradition', domain: 'food', certainty: 0.6, tag_query: 'tea ceremony' }),
+      v2({ name: 'Fixture tea tradition', type: 'tradition', domain: 'food', certainty: 0.6, tag_query: 'tea culture' }),
     ]);
     expect(g.analysis.candidates).toEqual([]);
     expect(g.decisions.map((d) => d.rules)).toEqual([['G-CUISINE-FOOD'], ['G-CUISINE-FOOD']]);
@@ -1929,14 +1930,15 @@ describe('guard-v11: hold until confirmed, people presence by words, read model,
   it('on a photo with people a style or tradition is held whatever its domain; garments, sports named alone, objects and food publish', () => {
     const g = read('Two men in suits at a table', 'Two men in dark suits share a cake.', [
       // h74 / h73 shapes without the closed-list words: a tradition filed under food, a sport qualified by a nation.
-      v2({ name: 'Fixture celebration cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' }),
+      // (guard-v14: the fixture no longer says "celebration", now a listed occasion word; this test is about the class rule.)
+      v2({ name: 'Fixture tiered cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' }),
       v2({ name: 'Brazilian fixtureball', type: 'tradition', domain: 'sport', certainty: 0.6, evidence: 'distinctive_form' }),
       v2({ name: 'Fixture neon signage', type: 'style', domain: 'signage', certainty: 0.7, evidence: 'distinctive_form' }),
       v2({ name: 'Floral print dress', type: 'style', domain: 'fashion', certainty: 0.5, evidence: 'context' }),
       v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'context' }),
     ]);
-    expect(names(g.held)).toEqual(['Fixture celebration cake', 'Brazilian fixtureball', 'Fixture neon signage']);
-    expect(decisionFor(g.decisions, 'Fixture celebration cake')).toMatchObject({ action: 'hold', rules: ['G-PEOPLE-CLAIM'], note: 'held_people_present' });
+    expect(names(g.held)).toEqual(['Fixture tiered cake', 'Brazilian fixtureball', 'Fixture neon signage']);
+    expect(decisionFor(g.decisions, 'Fixture tiered cake')).toMatchObject({ action: 'hold', rules: ['G-PEOPLE-CLAIM'], note: 'held_people_present' });
     expect(names(g.analysis.candidates)).toEqual(['Floral print dress', 'Fixtureball']);
     const objects = read('A woman at a market stall', 'A woman beside a fruit stall.', [
       v2({ name: 'White buttercream cake', type: 'cuisine', domain: 'food', certainty: 0.5, evidence: 'distinctive_form' }),
@@ -1949,14 +1951,14 @@ describe('guard-v11: hold until confirmed, people presence by words, read model,
 
   it('a held claim publishes only on a supported second reading that passes the stage-2 rules; a hedge retracts nothing shown (FAST-02)', () => {
     const g = read('Two men in suits at a table', 'Two men in dark suits share a cake.', [
-      v2({ name: 'Fixture celebration cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture tiered cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' }),
       v2({ name: 'Fixture neon signage', type: 'style', domain: 'signage', certainty: 0.7, evidence: 'distinctive_form' }),
       v2({ name: 'Floral print dress', type: 'style', domain: 'fashion', certainty: 0.5, evidence: 'context' }),
     ]);
     const people = [{ text: 'Two men in dark suits stand at a table.', kind: 'person_style' as const }, { text: 'A white cake on a stand.', kind: 'food' as const }];
-    const s2 = stage2(g, enrichment({ observations: people, confirmed: [weak('Fixture celebration cake'), ok('Fixture neon signage'), { name: 'Floral print dress', rationale: 'No', verdict: 'unsupported' }] }));
+    const s2 = stage2(g, enrichment({ observations: people, confirmed: [weak('Fixture tiered cake'), ok('Fixture neon signage'), { name: 'Floral print dress', rationale: 'No', verdict: 'unsupported' }] }));
     // The hedged claim was never shown, so it simply stays private; the supported one publishes now.
-    expect(decisionFor(s2.decisions, 'Fixture celebration cake')).toMatchObject({ action: 'observe', note: 'weak' });
+    expect(decisionFor(s2.decisions, 'Fixture tiered cake')).toMatchObject({ action: 'observe', note: 'weak' });
     expect(names(s2.publishNow)).toEqual(['Fixture neon signage']);
     // A card already shown stays (advisory veto only).
     expect(names(s2.analysis.candidates)).toEqual(['Floral print dress', 'Fixture neon signage']);
@@ -2271,5 +2273,77 @@ describe('guard-v13: the headline of a photo with people is replaced as a unit',
     // No people shown: a server rack is a thing; nothing is replaced.
     const things = read('Server rack with blue lights', 'A row of servers in a data centre.');
     expect([things.analysis.title, things.analysis.interpretation]).toEqual(['Server rack with blue lights', 'A row of servers in a data centre.']);
+  });
+});
+
+/*
+ * guard-v14 (round 4, after the iteration-3 grounding run, docs/quality-plan.md §19.19): the generic nouns
+ * of a social occasion or event (celebration, party, reception, festivities, ceremony, gathering, festival,
+ * event ...) join the named occasions in the people test, on every surface. Each test fails on guard-v13.
+ */
+describe('guard-v14: generic occasion and event nouns in the people test on every surface', () => {
+  const read = (title: string, interpretation: string, cands: VlmQuickCandidate[]) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates: cands, quality: { usable: true, issue: null } }), { twoStage: true });
+  const ok = (name: string) => ({ name, rationale: 'Visible', verdict: 'supported' as const });
+  const cake = v2({ name: 'Frosted layer cake', type: 'cuisine', domain: 'food', certainty: 0.8, evidence: 'distinctive_form' });
+
+  it('the headline: an occasion inferred in the interpretation replaces both lines (iteration-3 grounding run, h74 shape)', () => {
+    const g = read('Two men sharing a cake', 'Two men in dark suits share a frosted cake, resembling a formal celebration setting.', [cake]);
+    expect([g.analysis.title, g.analysis.interpretation]).toEqual([NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION]);
+    expect(PEOPLE_CLAIM_RE.test('a festive gathering')).toBe(true);
+  });
+
+  it('claims at stage 1 and stage 2, observations and "What caught your eye?" labels are withheld on a photo with people', () => {
+    const g = read('Two people at a table', 'A frosted cake on a table.', [
+      cake,
+      v2({ name: 'Formal evening reception', type: 'tradition', domain: 'other', certainty: 0.7, evidence: 'context' }),
+      v2({ name: 'Party hat', type: 'object', domain: 'fashion', certainty: 0.8, evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.analysis.candidates)).toEqual(['Frosted layer cake']);
+    expect(decisionFor(g.decisions, 'Formal evening reception')).toMatchObject({ action: 'observe', note: 'people_claim' });
+    // An object named by an occasion asserts the people's occasion, as "Wedding cake" does.
+    expect(decisionFor(g.decisions, 'Party hat')).toMatchObject({ action: 'observe', note: 'people_claim' });
+    const s2 = stage2(
+      g,
+      enrichment({
+        observations: [
+          { text: 'Festive gathering around a long table', kind: 'setting' },
+          { text: 'A white cake on a glass stand', kind: 'food' },
+        ],
+        competing_subjects: ['Garden party', 'Glass cake stand'],
+        confirmed: [ok('Frosted layer cake')],
+        additional_candidates: [{ ...v2({ name: 'Banquet celebration', type: 'tradition', domain: 'other', certainty: 0.8, evidence: 'distinctive_form' }), rationale: 'Seen' }],
+      }),
+    );
+    expect(names(s2.analysis.candidates)).toEqual(['Frosted layer cake']);
+    expect(decisionFor(s2.decisions, 'Banquet celebration')).toMatchObject({ action: 'observe', note: 'people_claim' });
+    expect(s2.analysis.observations.map((o) => o.text)).toEqual(['A white cake on a glass stand']);
+    expect(s2.analysis.competing_subjects.map((x) => x.label)).toEqual(['Glass cake stand']);
+  });
+
+  it('object and food names still publish: no occasion noun, a homonym that names a thing, or no people in the photo', () => {
+    const g = read('Two people at a counter', 'A frosted cake beside a reception desk.', [
+      cake,
+      v2({ name: 'Reception desk', type: 'object', domain: 'interior', certainty: 0.8, evidence: 'distinctive_form' }),
+      v2({ name: 'Gala apples', type: 'cuisine', domain: 'food', certainty: 0.8, evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.analysis.candidates)).toEqual(['Frosted layer cake', 'Reception desk', 'Gala apples']);
+    for (const t of ['Ceremonial uniform', 'Banquet hall', 'eventing saddle', 'festive lights']) expect(PEOPLE_CLAIM_RE.test(t), t).toBe(false);
+    // Without people, a party hat is a thing: held for stage 2 (its word may name an occasion), published when supported.
+    const things = read('Paper hats on a shelf', 'Striped paper hats on a wooden shelf.', [
+      v2({ name: 'Party hat', type: 'object', domain: 'fashion', certainty: 0.8, evidence: 'distinctive_form' }),
+    ]);
+    expect(names(things.held)).toEqual(['Party hat']);
+    expect(names(stage2(things, enrichment({ confirmed: [ok('Party hat')] })).analysis.candidates)).toEqual(['Party hat']);
+    expect(personObservation({ text: 'Party hats on a shelf', kind: 'object' }, false)).toBe(false);
+  });
+
+  it('read text that names the claim still backs it (the read-text exemption is unchanged)', () => {
+    const g = read('Two people under a banner', 'A banner over a street.', [
+      v2({ name: 'Fixtureville Lantern Festival', type: 'tradition', domain: 'other', certainty: 0.8, evidence: 'read_text', evidence_text: 'FIXTUREVILLE LANTERN FESTIVAL' }),
+    ]);
+    expect(decisionFor(g.decisions, 'Fixtureville Lantern Festival')?.action).not.toBe('observe');
+    const s2 = stage2(g, enrichment({ visible_text: ['FIXTUREVILLE LANTERN FESTIVAL'], confirmed: [ok('Fixtureville Lantern Festival')] }));
+    expect(decisionFor(s2.decisions, 'Fixtureville Lantern Festival')?.note).not.toBe('people_claim');
   });
 });

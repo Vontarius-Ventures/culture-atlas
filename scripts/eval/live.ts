@@ -33,6 +33,8 @@ import {
   type CatalogSnapshot,
 } from '../../packages/providers/src/concentrate/profiles';
 import { structuredOutputContract } from '../../packages/providers/src/model-gateway/schema';
+import { DomainConfigSchema } from '../../packages/domain/src/config';
+import { backoffMs } from '../../packages/domain/src/jobs/queue';
 import { RequestCounter } from '../qualify-concentrate-lib';
 import { verifiedGoldenPhotos } from './golden-photos';
 import type { GoldenSet, Thresholds } from './labels';
@@ -56,6 +58,25 @@ import {
  */
 
 export const STOP_STATUSES = [401, 402, 403, 404, 422, 429];
+
+/**
+ * Round 4 (docs/quality-plan.md §19.19): eval:live retries exactly as production does, no more.
+ *  - In-process (StructuredResponseRunner): every model call gets maxRetries = JOB_MAX_PROVIDER_RETRIES
+ *    (default LIMITS.providerRetriesPerStage); the runner caps it at one retry, only for a transient
+ *    provider failure (424, 5xx, a network error that is not a timeout), within the role's deadline.
+ *    A timeout is never retried in-process.
+ *  - Job level (apps/worker failJob): a stage-1 failure leaves the analysis job, which is re-queued with
+ *    backoff while it is retryable (ProviderError.retryable: timeout, server; rate_limited too, but a 429
+ *    stops eval:live) and attempts remain (JOB_MAX_ATTEMPTS, default 3); the new job attempt reads the
+ *    photo again from stage 1. Stage-2 and verifier failures are caught inside the job (the analysis
+ *    continues without them), so they are never retried at job level.
+ * Every attempt goes through the counted fetch and the ledger. The operator fallback (MODEL_FALLBACK) is
+ * off by default and not mirrored.
+ */
+export const PRODUCTION_RETRY_POLICY = {
+  providerRetries: DomainConfigSchema.shape.JOB_MAX_PROVIDER_RETRIES.parse(undefined),
+  jobAttempts: DomainConfigSchema.shape.JOB_MAX_ATTEMPTS.parse(undefined),
+} as const;
 const CONCENTRATE_COUNTER = '.eval-live-concentrate-counter.json';
 const QLOO_COUNTER = '.eval-live-qloo-counter.json';
 
@@ -171,6 +192,8 @@ export interface LiveEvalResult {
   grounding?: ReturnType<typeof scoreGrounding>;
   requestsSent?: number;
   qlooSent?: number;
+  /** Stage-1 job attempts re-queued under the production retry policy (PRODUCTION_RETRY_POLICY). */
+  jobRetries?: number;
 }
 
 function endpointOf(input: unknown): string {
@@ -406,6 +429,8 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
         : s.costMicros + Math.round(u.inputTokens * r.input + u.outputTokens * r.output);
   };
   const failed: { photoId: string; call: CallRecord }[] = [];
+  let jobRetries = 0;
+  const pause = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   let stoppedBy: string | undefined;
   const failures: Record<string, unknown>[] = [];
   const fail = (photoId: string, stage: CallRecord['stage'], error: unknown, ms: number) => {
@@ -434,18 +459,38 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   for (const { photo, path: file } of photos) {
     if (stoppedBy) break;
     const bytes = await readFile(file);
-    let started = Date.now();
-    let quick: Awaited<ReturnType<ConcentrateVlm['analyzeImage']>>;
-    try {
-      const bounded = await boundJpegForProfile(bytes, stage1.image);
-      quick = await quickVlm.analyzeImage(
-        { image: { bytes: bounded.bytes, mediaType: 'image/jpeg' } },
-        { maxRetries: 0, ...identity(photo.id, 'stage1') },
-      );
-    } catch (error) {
-      fail(photo.id, 'quick', error, Date.now() - started);
-      continue;
+    let started: number;
+    let quick: Awaited<ReturnType<ConcentrateVlm['analyzeImage']>> | undefined;
+    // Production policy (PRODUCTION_RETRY_POLICY): a retryable stage-1 failure re-queues the job.
+    for (let jobAttempt = 1; ; jobAttempt++) {
+      started = Date.now();
+      try {
+        const bounded = await boundJpegForProfile(bytes, stage1.image);
+        quick = await quickVlm.analyzeImage(
+          { image: { bytes: bounded.bytes, mediaType: 'image/jpeg' } },
+          {
+            maxRetries: PRODUCTION_RETRY_POLICY.providerRetries,
+            ...identity(photo.id, jobAttempt === 1 ? 'stage1' : `stage1:job${jobAttempt}`),
+          },
+        );
+        break;
+      } catch (error) {
+        const requeued =
+          error instanceof ProviderError &&
+          error.retryable &&
+          error.kind !== 'rate_limited' &&
+          !STOP_STATUSES.includes(error.status ?? 0) &&
+          jobAttempt < PRODUCTION_RETRY_POLICY.jobAttempts;
+        if (!requeued) {
+          fail(photo.id, 'quick', error, Date.now() - started);
+          break;
+        }
+        jobRetries++;
+        log(`${photo.id} quick: ${error.kind}; job attempt ${jobAttempt} of ${PRODUCTION_RETRY_POLICY.jobAttempts} re-queued (production policy)`);
+        await pause(backoffMs(jobAttempt));
+      }
     }
+    if (!quick) continue;
     used('quick', quick.usage);
     const rec: Recording = {
       photoId: photo.id,
@@ -469,7 +514,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
             claims: targets.map((t) => ({ name: t.name, type: t.type })),
             visibleText: stage === 1 ? [] : [...pre.stage2Text],
           },
-          { maxRetries: 0, ...identity(photo.id, `verify${stage}`) },
+          { maxRetries: PRODUCTION_RETRY_POLICY.providerRetries, ...identity(photo.id, `verify${stage}`) },
         );
         used('verify', res.usage);
         if (stage === 1) {
@@ -498,7 +543,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
             // verifier's stage-1 check when it ran), then held names.
             stage1: opts.pipeline.run(rec).verify.stage2Input,
           },
-          { maxRetries: 0, ...identity(photo.id, 'stage2') },
+          { maxRetries: PRODUCTION_RETRY_POLICY.providerRetries, ...identity(photo.id, 'stage2') },
         );
         rec.enrichment = res.enrichment;
         rec.enrichMs = Date.now() - started;
@@ -752,6 +797,7 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
     scorecard,
     ...(grounding ? { grounding } : {}),
     requestsSent: await counter.used(),
+    jobRetries,
     qlooSent,
     usage,
   };

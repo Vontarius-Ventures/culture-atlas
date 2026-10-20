@@ -109,5 +109,5 @@ if (result.dryRun) {
 for (const line of summarize({ pipeline: 'guarded', guardrail_version: RUNTIME_GUARDS.GUARDRAIL_VERSION, scorecard: result.scorecard!, decisions: {}, runs: [] }))
   log(line);
 if (result.grounding) for (const line of gateLines('grounding gate (thresholds.json)', result.grounding)) log(line);
-log(`requests sent ${result.requestsSent}, Qloo ${result.qlooSent}${result.stoppedBy ? `, stopped by ${result.stoppedBy}` : ''}; scorecard.json written to --out-dir`);
+log(`requests sent ${result.requestsSent}, Qloo ${result.qlooSent}, stage-1 job retries ${result.jobRetries ?? 0}${result.stoppedBy ? `, stopped by ${result.stoppedBy}` : ""}; scorecard.json written to --out-dir`);
 process.exit(result.scorecard!.pass && (!result.grounding || result.grounding.pass) && !result.stoppedBy ? 0 : 1);

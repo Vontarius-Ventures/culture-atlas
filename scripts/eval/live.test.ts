@@ -6,7 +6,7 @@ import { CATALOG_SNAPSHOT_FILE, type ModelProfile } from '../../packages/provide
 import { fetchGoldenPhotos, verifiedGoldenPhotos } from './golden-photos';
 import { loadGoldenSet, loadThresholds } from './labels';
 import * as grounding from '../../packages/domain/src/compiler/grounding';
-import { listRate, runLiveEval } from './live';
+import { listRate, PRODUCTION_RETRY_POLICY, runLiveEval } from './live';
 import {
   runtimeGuardedPipeline,
   runtimeGuardedPipelineWithoutVerifier,
@@ -785,5 +785,85 @@ describe('eval:live (offline rails)', () => {
     expect(result.stoppedBy).toBe('http_429');
     expect(result.scorecard!.splits.tune!.metrics.M13).toBe(0);
     expect(result.scorecard!.pass).toBe(false);
+  });
+
+  // Round 4 (docs/quality-plan.md §19.19): eval:live retries exactly as production does.
+  describe('production retry policy', () => {
+    const run = async (fetchImpl: ReturnType<typeof vi.fn>, profiles: Parameters<typeof runLiveEval>[0]['profiles'], roles: Parameters<typeof runLiveEval>[0]['roles'], maxRequests: number) => {
+      const { g, golden, thresholds } = await setup();
+      const out = await outDir();
+      const ledgerFile = path.join(out, 'ledger.jsonl');
+      const logs: string[] = [];
+      const pauses: number[] = [];
+      const result = await runLiveEval({
+        log: (l) => logs.push(l),
+        golden,
+        photosDir: g.photosDir,
+        split: 'all',
+        profiles,
+        roles,
+        outDir: out,
+        repoRoot: root,
+        maxRequests,
+        spendCapMicros: 5_000_000,
+        confirmPaidRequests: true,
+        apiKey: KEY,
+        pipeline: versionedTestPipeline,
+        thresholds,
+        fetch: fetchImpl as unknown as typeof fetch,
+        ledgerFile,
+        sleep: async (ms) => void pauses.push(ms),
+      });
+      const ledger = (await readFile(ledgerFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l));
+      return { result, logs, ledger, pauses };
+    };
+    /** The first `n` calls fail with `status`, then the normal readings. */
+    const failingFirst = (n: number, status: number) => {
+      const ok = readings();
+      let calls = 0;
+      return vi.fn(async (url: string, init: RequestInit) => (++calls <= n ? new Response('{}', { status }) : ok(url, init)));
+    };
+
+    it('mirrors the production defaults: one in-process retry for a transient failure, three job attempts', () => {
+      expect(PRODUCTION_RETRY_POLICY).toEqual({ providerRetries: 2, jobAttempts: 3 });
+    });
+
+    it('a transient stage-1 failure is retried once in-process, then the job is re-queued; every attempt is in the ledger', async () => {
+      // p01: 503, 503 (job attempt 1, in-process retry), 200 (job attempt 2); p02 and p03 first time.
+      const fetchImpl = failingFirst(2, 503);
+      const { result, logs, ledger, pauses } = await run(fetchImpl, { vision_photo: quickProfile }, ['vision_photo'], 10);
+      expect(fetchImpl).toHaveBeenCalledTimes(5);
+      expect(ledger.map((l) => l.status)).toEqual([503, 503, 200, 200, 200]);
+      expect(result).toMatchObject({ requestsSent: 5, jobRetries: 1 });
+      expect(logs).toContain('p01 quick: server; job attempt 1 of 3 re-queued (production policy)');
+      expect(pauses).toHaveLength(1);
+      expect(result.scorecard!.splits.tune!.metrics.M13).toBe(1);
+    });
+
+    it('a stage-1 failure on every job attempt counts against M13 after three attempts; stage-2 failures are never re-queued', async () => {
+      const fetchImpl = failingFirst(6, 503);
+      const { result } = await run(fetchImpl, { vision_photo: quickProfile }, ['vision_photo'], 12);
+      // p01: 3 job attempts x 2 calls, then p02 and p03.
+      expect(fetchImpl).toHaveBeenCalledTimes(8);
+      expect(result.jobRetries).toBe(2);
+      expect(result.scorecard!.splits.tune!.metrics.M13).toBeLessThan(1);
+      // Stage 2 fails twice (in-process retry): the analysis continues without it, no job retry.
+      const ok = readings();
+      let calls = 0;
+      const stage2Down = vi.fn(async (url: string, init: RequestInit) => {
+        calls++;
+        return calls === 2 || calls === 3 ? new Response('{}', { status: 503 }) : ok(url, init);
+      });
+      const two = await run(stage2Down, { vision_photo: quickProfile, vision_photo_enrich: enrichProfile }, ['vision_photo', 'vision_photo_enrich'], 12);
+      expect(stage2Down).toHaveBeenCalledTimes(7);
+      expect(two.result.jobRetries).toBe(0);
+    });
+
+    it('a 429 still stops the run without a retry', async () => {
+      const fetchImpl = readings(429);
+      const { result } = await run(fetchImpl, { vision_photo: quickProfile }, ['vision_photo'], 6);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ stoppedBy: 'http_429', jobRetries: 0 });
+    });
   });
 });

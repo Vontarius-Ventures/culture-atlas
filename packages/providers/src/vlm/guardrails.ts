@@ -156,7 +156,7 @@ import {
  * headline is replaced as a unit: when the people test replaces the title or the interpretation, the
  * other line is replaced too (it was written as the same reading).
  */
-export const GUARDRAIL_VERSION = 'guard-v13';
+export const GUARDRAIL_VERSION = 'guard-v14';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -460,7 +460,20 @@ const PERSON_ROLE_WORDS = String.raw`waiters?|waitress(?:es)?|baristas?|bartende
  * ("a server", "the staff"; "a chef's knife" is excluded). On a photo without
  * people a "Wedding cake" or a "server rack" is about the thing.
  */
-const PEOPLE_CONTEXT_WORDS = String.raw`weddings?|proms?|engagements?|marriage|proposals?|anniversar(?:y|ies)|birthdays?|graduations?|quincea[ñn]eras?|mitzvahs?|baptisms?|christenings?|funerals?|honeymoons?|reunions?|homecomings?|formal dances?|school dances?|winter formals?|bachelor(?:ette)?s?|retirements?|sidelines?|teams?|squads?|leagues?|regiments?|battalions?|platoons?|brigades?|cavalry|infantry|fraternit(?:y|ies)|sororit(?:y|ies)|servers?|staff|chefs?(?!(?:'s|’s)?[- ]knife|[- ]knives)`;
+/**
+ * guard-v14 (round 4, after the iteration-3 grounding run, owner decision): the generic nouns of a social
+ * occasion or event, beside the named occasions above: a celebration, party, reception, festivities, a
+ * ceremony, gathering, get-together, banquet, gala, soirée, fête, festival, jubilee, parade, procession,
+ * an event or an occasion. On a photo with people they assign the people an occasion as much as
+ * "wedding" does (h74 in the iteration-3 grounding run: "...resembling a formal celebration setting").
+ * The class is the kind of word, not the words of one reading. Homonyms that name a thing are excluded
+ * as "a chef's knife" is: a reception desk, area, counter, hall or room; a banquet hall, room, table or
+ * chair; Gala apples. An object or food named by an occasion ("party hat", "birthday cake") is treated
+ * as "Wedding cake" is: withheld on a photo with people (it asserts their occasion), published by the
+ * other rules on a photo without people. Read text that names the claim still backs it (readBacked).
+ */
+const GENERIC_OCCASION_WORDS = String.raw`celebrations?|part(?:y|ies)|receptions?(?![- ](?:desks?|areas?|counters?|halls?|rooms?)\b)|festivit(?:y|ies)|ceremon(?:y|ies)|gatherings?|get-togethers?|banquets?(?![- ](?:halls?|rooms?|tables?|chairs?)\b)|galas?(?![- ]apples?\b)|soir[ée]es?|f[êe]tes?|festivals?|jubilees?|parades?|processions?|events?|occasions?`;
+const PEOPLE_CONTEXT_WORDS = String.raw`${GENERIC_OCCASION_WORDS}|weddings?|proms?|engagements?|marriage|proposals?|anniversar(?:y|ies)|birthdays?|graduations?|quincea[ñn]eras?|mitzvahs?|baptisms?|christenings?|funerals?|honeymoons?|reunions?|homecomings?|formal dances?|school dances?|winter formals?|bachelor(?:ette)?s?|retirements?|sidelines?|teams?|squads?|leagues?|regiments?|battalions?|platoons?|brigades?|cavalry|infantry|fraternit(?:y|ies)|sororit(?:y|ies)|servers?|staff|chefs?(?!(?:'s|’s)?[- ]knife|[- ]knives)`;
 /**
  * guard-v11: words that say a person is in the photo without naming who they
  * are: someone wearing, dressed in or posing in something, a hand ("Hand with
