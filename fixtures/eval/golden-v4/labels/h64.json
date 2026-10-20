@@ -1,0 +1,83 @@
+{
+  "id": "h64",
+  "split": "holdout",
+  "file": "h64-sign-japanese-vertical-parking.jpg",
+  "subject_domains": [
+    "signage",
+    "place",
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "No-parking sign",
+      "pattern": "no[- ]parking|parking (prohibited|restriction|notice|sign)|駐車|private (parking|property|lot)|parking lot",
+      "aliases": [
+        "Parking notice"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Japan",
+      "pattern": "^japan$|japanese",
+      "type": "place"
+    },
+    {
+      "name": "新六商店",
+      "pattern": "新六商店|shinroku",
+      "type": "brand",
+      "requires_text": "新六商店"
+    },
+    {
+      "pattern": "snow|snowy (lot|field)|winter|vacant lot|parking lot|guard ?rail|utility poles?|power lines|warehouse|factory|sound barrier|fence|parked cars|suv|vertical (text|writing)",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "hokkaido|sapporo|asahikawa|niigata|aomori|akita|tokyo|osaka|nagano|tohoku",
+      "why": "no text names a city or region; snow is not evidence of a prefecture"
+    },
+    {
+      "pattern": "toyota|nissan|honda|mazda|subaru|suzuki|daihatsu|mitsubishi|pajero|jimny|land cruiser|lexus",
+      "why": "no car badge is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "chinese|china|korean",
+      "why": "the sign is Japanese (hiragana の, を, さい)"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "当社関係以外の",
+    "駐車を御遠慮下さい",
+    "新六商店"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A white sign on a post in a snow-covered lot, vertical Japanese in two columns: '当社関係以外の' / '駐車を御遠慮下さい' (please refrain from parking unless on our business) and '(株) 新六商店' (a company name); behind it a grey factory building with an illegible red sign, parked cars (no legible badge or plate), utility poles and a tall dark sound barrier. Each must-read string is one printed column."
+}

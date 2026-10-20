@@ -1,0 +1,84 @@
+{
+  "id": "h63",
+  "split": "holdout",
+  "file": "h63-sign-german-railway.jpg",
+  "subject_domains": [
+    "signage",
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Railway shunting sign",
+      "pattern": "shunting|verschub|rangier|railway sign|rail(way|road) signal|track sign|stop sign for shunting",
+      "aliases": [
+        "Halt für Verschubfahrten"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Halt für Verschubfahrten",
+      "pattern": "halt f(ü|ue)r verschubfahrten|verschubfahrten",
+      "requires_text": "Verschubfahrten"
+    },
+    {
+      "name": "Austria",
+      "pattern": "austria|austrian|österreich|öbb",
+      "type": "place"
+    },
+    {
+      "pattern": "german(-language)?|german text|deutsch",
+      "generic": true
+    },
+    {
+      "pattern": "enamel sign|rusty|rust|weathered|semicircular|bolts?|blue sky|overhead (wires|lines|catenary)|power lines",
+      "generic": true
+    },
+    {
+      "name": "Quanjing",
+      "pattern": "quanjing|全景网",
+      "type": "brand",
+      "requires_text": "quanjing"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "germany|deutsche bahn|\\bdb\\b|switzerland|sbb|berlin|munich|vienna|wien|salzburg|graz",
+      "why": "'Verschub' is the Austrian railway term (Germany writes 'Rangier-'), and no text names a country, operator or city"
+    },
+    {
+      "pattern": "train station|platform|tram",
+      "why": "only the sign, sky and wires are shown"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "Halt für Verschubfahrten"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A rusty, semicircular enamel sign against a blue sky with overhead wires: 'Halt / für / Verschubfahrten' (stop for shunting movements) on three lines; a stock-agency watermark '全景网 www.quanjing.com' bottom left and an image id bottom right. MULTI-LINE MUST-READ: the three printed lines form one must-read string (round-3 scorer convention). 'Verschub' is Austrian railway usage, so Austria is acceptable but not required; Germany is wrong."
+}

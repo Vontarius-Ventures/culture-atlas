@@ -1,0 +1,75 @@
+{
+  "id": "h62",
+  "split": "holdout",
+  "file": "h62-sign-shoe-repairs-multiline.jpg",
+  "subject_domains": [
+    "signage"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Shoe repair",
+      "pattern": "shoe repairs?|cobbler|shoemaker|key cutting|heel bar",
+      "aliases": [
+        "Cobbler"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "While you wait",
+      "pattern": "while you wait",
+      "requires_text": "WHILE YOU WAIT"
+    },
+    {
+      "pattern": "a-?board|sandwich board|pavement sign|sidewalk sign|hand-?painted sign|weathered sign|signage|paving|brick paving",
+      "generic": true
+    },
+    {
+      "pattern": "uk|britain|british|england|english",
+      "type": "place"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "timpson|mister minit|minit|cobbler'?s corner|jim'?s",
+      "why": "only the service is written; no shop name is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "london|manchester|york|edinburgh|dublin|sydney|new york",
+      "why": "no text names a town"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "WHILE YOU WAIT",
+    "SHOE REPAIRS",
+    "AVAILABLE"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A weathered white A-board on brick paving, hand-lettered in black over six lines: 'WHILE / YOU / WAIT / SHOE / REPAIRS / AVAILABLE'; a red sign above it is cut off and unreadable. MULTI-LINE MUST-READ: 'WHILE YOU WAIT' spans three printed lines and 'SHOE REPAIRS' two; they count as read only under the round-3 scorer convention that a must-read string may span transcribed lines (docs/requalification-plan.md, round 3 item 3)."
+}

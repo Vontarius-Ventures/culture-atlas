@@ -1,0 +1,84 @@
+{
+  "id": "h79",
+  "split": "holdout",
+  "file": "h79-street-square-busy.png",
+  "subject_domains": [
+    "place",
+    "people",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Street vendor cart",
+      "pattern": "simit (cart|stall|vendor)|street (food )?(cart|stall|vendor)|vendor cart|food cart|kiosk",
+      "aliases": [
+        "Simit cart"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Istanbul",
+      "pattern": "istanbul|turkey|türkiye|turkish",
+      "type": "place"
+    },
+    {
+      "name": "Ottoman architecture",
+      "pattern": "ottoman|t[üu]rbe|tomb|mausoleum|sebil|domed (building|structure|kiosk)|stone (dome|building)",
+      "type": "style"
+    },
+    {
+      "pattern": "pedestrian (square|street|zone)|public square|plaza|bollards?|crowd|pedestrians|busy street|paving|motion blur|blurred|red awnings?|umbrella|shops|apartment blocks|mural|graffiti",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "taksim|beyo[gğ]lu|istiklal|sultanahmet|emin[oö]n[uü]|kad[iı]k[oö]y|be[sş]ikta[sş]|galata|ortak[oö]y|[uü]sk[uü]dar|bazaar|grand bazaar",
+      "why": "no text names a district, street or landmark"
+    },
+    {
+      "pattern": "\\b(tourists?|sellers?|locals?|shoppers?|commuters?|students?|workers?|police)\\b|\\bvendors?\\b(?! carts?| stalls?)",
+      "why": "a role inferred about real people in a crowd",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "cairo|athens|tehran|sarajevo|baku",
+      "why": "simit carts and an Ottoman domed tomb point to Turkey; another city is unsupported"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|slim|build|body|muscular|tall|height)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A busy pedestrian square with moderate camera-motion blur (a deblurring test frame): crowds walking, yellow bollards, red-and-white street carts (simit carts), a small stone domed building with one arched window (an Ottoman-style tomb or fountain house), apartment blocks with balconies, a mural at right, a blurred person in a white shirt in the left foreground. No legible text. Usable: the scene is clear despite the blur. Istanbul or Turkey is acceptable from the carts and the building, not required; no district or landmark may be named, and no role may be claimed about the people."
+}
