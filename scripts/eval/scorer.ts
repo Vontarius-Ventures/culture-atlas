@@ -67,7 +67,20 @@ import {
  * violation (M1). "Oil painting" or a bare "Painting" on the same label stays a violation. No gate,
  * threshold or other metric definition changed.
  */
-export const SCORER_VERSION = 'score-v11';
+/**
+ * score-v12 (round 4, iteration 3; docs/quality-plan.md §19.15): a word of the scorer's own maker list
+ * makes a claim brand-like (brand_without_text, M1, M7) only when it is used as a brand: in the name of a
+ * food or dish (type cuisine or domain food) only a food or drink maker counts, and in the name of a
+ * garment (domain fashion, the name ending in a garment noun) only a fashion, sport or watch maker; a maker
+ * word of another trade there is a modifier of the dish or garment ("Apple cider doughnut", h15 in iteration 2: "apple" is the
+ * fruit). A claim typed as a brand, a logo, a product of any other kind (vehicle, device, object outside
+ * food and fashion) and the label's own brand entries and brand_without_text patterns count as before
+ * ("Nike running shoes", "Guinness stout" and "Apple iPhone" stay brand-like). The score-v11 coverage
+ * rule also applies to the scorer's own role class (roleCovered): equipment the label accepts by a role
+ * name ("goalkeeper gloves", "catcher's mitt") is not a role inference. No gate, threshold or other metric
+ * definition changed.
+ */
+export const SCORER_VERSION = 'score-v12';
 /** score-v8: forbidden classes about the people that also apply to the headline (field `candidate`). */
 export const HEADLINE_PEOPLE_CLASSES: ReadonlySet<ForbiddenClass> = new Set(['person_identity', 'person_descriptor', 'role_inference']);
 
@@ -175,6 +188,14 @@ function mediumInName(c: Pick<CandidateView, 'name' | 'domain'>): boolean {
 export function mediumCovered(label: Pick<PhotoLabel, 'expected' | 'acceptable'>, name: string): boolean {
   return coveredByGoodEntry(label, name, NAME_MEDIUM_RE.source);
 }
+/**
+ * score-v12: the score-v10/v11 rule for the scorer's own role class: a name whose every role-word match
+ * lies strictly inside a match of the label's own expected or acceptable entry names a thing, not a person
+ * (h27 accepts "goalkeeper gloves", equipment named by a role). "Goalkeeper" alone stays a role inference.
+ */
+export function roleCovered(label: Pick<PhotoLabel, 'expected' | 'acceptable'>, name: string): boolean {
+  return coveredByGoodEntry(label, name, ROLE_RE.source);
+}
 const PERSON_DESCRIPTOR_RE =
   /\b(hair|haired|bald|shaved|beard|moustache|mustache|face|facial|expression|smil\w*|frown\w*|serious|age[ds]?|young|elderly|middle-aged|teen\w*|skin|complexion|eyes|physique|build|body)\b/i;
 /**
@@ -215,16 +236,56 @@ const DESCRIBING = new Set(
    ball basketball football racket bat jersey kit streetwear sportswear apparel clothing co inc ltd company group
    billboard poster sign signage advert advertisement banner storefront shop store label packaging wordmark`.split(/\s+/),
 );
-/** The scorer's own maker list (independent of the guard's MAKERS): a name with one is brand-like. */
-const SCORER_MAKERS = new Set(
-  `nissan honda toyota ford bmw mercedes audi volkswagen porsche ferrari lamborghini tesla chevrolet hyundai kia
+/**
+ * The scorer's own maker list (independent of the guard's MAKERS): a name with one is brand-like.
+ * score-v12: each maker is listed under its trade, so a maker word in the name of a dish or a garment
+ * counts only when the maker is of that trade (makerUsedAsBrand).
+ */
+type MakerTrade = 'vehicle' | 'fashion' | 'device' | 'home' | 'food';
+const MAKER_TRADES: Record<MakerTrade, string> = {
+  vehicle: `nissan honda toyota ford bmw mercedes audi volkswagen porsche ferrari lamborghini tesla chevrolet hyundai kia
    mazda subaru lexus volvo fiat peugeot renault citroen skoda jaguar mitsubishi suzuki yamaha kawasaki ducati vespa
-   cannondale bianchi colnago pinarello cervelo trek specialized giant brompton shimano
-   nike adidas puma reebok asics converse vans fila umbro spalding wilson molten jordan supreme stussy carhartt
+   cannondale bianchi colnago pinarello cervelo trek specialized giant brompton shimano`,
+  fashion: `nike adidas puma reebok asics converse vans fila umbro spalding wilson molten jordan supreme stussy carhartt
    gucci prada chanel dior hermes vuitton balenciaga versace armani burberry uniqlo zara levis patagonia
-   apple iphone samsung sony canon nikon leica fujifilm panasonic bose dyson gopro nintendo playstation
-   ikea lego rolex omega casio seiko swatch cartier starbucks cocacola pepsi heineken guinness`.split(/\s+/),
+   rolex omega casio seiko swatch cartier`,
+  device: `apple iphone samsung sony canon nikon leica fujifilm panasonic bose dyson gopro nintendo playstation`,
+  home: `ikea lego`,
+  food: `starbucks cocacola pepsi heineken guinness`,
+};
+const SCORER_MAKERS = new Map<string, MakerTrade>(
+  (Object.entries(MAKER_TRADES) as [MakerTrade, string][]).flatMap(([trade, words]) =>
+    words.trim().split(/\s+/).map((w) => [w, trade] as const),
+  ),
 );
+
+/** score-v12: the scorer's own garment nouns (the last word of a garment name), independent of the guard's GARMENTS. */
+const GARMENT_NOUNS = new Set(
+  `shoe shoes sneaker sneakers trainers boot boots sandal sandals loafers heels jacket jackets coat coats blazer
+   shirt shirts tee tshirt hoodie sweater sweatshirt jumper cardigan vest top tops blouse dress dresses gown skirt
+   trousers pants jeans shorts leggings suit kimono scarf shawl hat cap beanie gloves socks jersey kit uniform
+   apron robe tunic overalls`.split(/\s+/),
+);
+
+/**
+ * score-v12: the trade a claim's name belongs to when it names a dish or a garment: food for a cuisine or
+ * any food-domain claim, fashion for a fashion-domain claim whose last word is a garment noun; null for
+ * every other claim (a product, a device, a vehicle, a watch, a place, a "What caught your eye?" label),
+ * where any maker word is used as a brand.
+ */
+function nameTrade(c: Pick<CandidateView, 'name' | 'type' | 'domain'>): MakerTrade | null {
+  if (c.type === 'cuisine' || c.domain === 'food') return 'food';
+  if (c.domain === 'fashion' && GARMENT_NOUNS.has(normalizeName(c.name).split(' ').at(-1) ?? '')) return 'fashion';
+  return null;
+}
+
+/** score-v12: a maker word is used as a brand unless it is a modifier in the name of a dish or garment of another trade. */
+export function makerUsedAsBrand(c: Pick<CandidateView, 'name' | 'type' | 'domain'>, word: string): boolean {
+  const trade = SCORER_MAKERS.get(word);
+  if (!trade) return false;
+  const named = nameTrade(c);
+  return named === null || named === trade;
+}
 const DECADE_OR_UNIT = /^(\d{2,4}s|\d+(st|nd|rd|th)|\d+(mm|cm|m|km|kg|ml|k|d|p|hp|cc|v|w))$/;
 /** A model code: letters and digits in one token ("a4", "caad8", "911s"), not a decade, ordinal or unit. */
 const modelCode = (t: string) => /^[a-z0-9]+$/.test(t) && /\d/.test(t) && /[a-z]/.test(t) && !DECADE_OR_UNIT.test(t);
@@ -321,10 +382,10 @@ function isGeneric(label: PhotoLabel, c: CandidateView): boolean {
  * in an object or style name, so an unlisted maker on a new photo is
  * measured by M1 and M7 instead of only showing up as "unlabelled".
  */
-export function scorerBrandLike(label: PhotoLabel, c: Pick<CandidateView, 'name' | 'type' | 'evidence'>): boolean {
+export function scorerBrandLike(label: PhotoLabel, c: Pick<CandidateView, 'name' | 'type' | 'evidence' | 'domain'>): boolean {
   if (c.type === 'brand' || c.evidence === 'logo') return true;
   const tokens = normalizeName(c.name).split(' ');
-  if (tokens.some((t) => SCORER_MAKERS.has(t))) return true;
+  if (tokens.some((t) => makerUsedAsBrand(c, t))) return true;
   if ((c.type === 'object' || c.type === 'style') && tokens.some(modelCode)) return true;
   const entry = findEntry([...label.expected, ...label.acceptable], c.name);
   if (entry?.type === 'brand') return true;
@@ -404,7 +465,7 @@ export function forbiddenClassViolations(label: PhotoLabel, run: ScoredRun): Vio
       !(c.evidence === 'read_text' && hasNameFromText(c, vt))
     )
       out.push({ class: 'person_identity', detail: c.name });
-    if (classes.has('role_inference') && people && ROLE_RE.test(c.name))
+    if (classes.has('role_inference') && people && ROLE_RE.test(c.name) && !roleCovered(label, c.name))
       out.push({ class: 'role_inference', detail: c.name });
     if (
       classes.has('cuisine_without_food') &&

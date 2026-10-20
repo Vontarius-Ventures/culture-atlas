@@ -288,7 +288,7 @@ describe('eval:live (offline rails)', () => {
         },
         confirmPaidRequests: false,
       }),
-    ).rejects.toThrow('sent with vlm-enrich-v5');
+    ).rejects.toThrow('sent with vlm-enrich-v6');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -487,7 +487,7 @@ describe('eval:live (offline rails)', () => {
     } as ModelProfile;
     const enrichV2 = {
       ...enrichProfile,
-      promptVersion: 'vlm-enrich-v5',
+      promptVersion: 'vlm-enrich-v6',
       schemaVersion: 'atlas_enrichment_v2',
       maxOutputTokens: 1600,
     } as ModelProfile;
@@ -679,7 +679,7 @@ describe('eval:live (offline rails)', () => {
     } as ModelProfile;
     const enrichV2 = {
       ...enrichProfile,
-      promptVersion: 'vlm-enrich-v5',
+      promptVersion: 'vlm-enrich-v6',
       schemaVersion: 'atlas_enrichment_v2',
       maxOutputTokens: 1600,
     } as ModelProfile;

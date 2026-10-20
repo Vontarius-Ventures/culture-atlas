@@ -38,7 +38,7 @@
       "pattern": "(football|soccer|training|sports) (kit|top|shirt|jersey|session|wear)|sportswear|athletic wear|training kit"
     },
     {
-      "pattern": "goal ?keeper gloves|gloves|football boots|cleats|socks|football pitch|grass pitch|running track|athletics track|stadium|\\bball\\b",
+      "pattern": "goal ?keeper(?:['’]s|s['’]?)? (?:gloves?|gear|equipment)|\\bkeeper(?:['’]s|s['’]?)? (?:gloves?|gear|equipment)|gloves|football boots|cleats|socks|football pitch|grass pitch|running track|athletics track|stadium|\\bball\\b",
       "generic": true
     }
   ],
@@ -49,7 +49,7 @@
       "class": "person_identity"
     },
     {
-      "pattern": "footballer|\\bplayers?\\b|goal ?keeper(?! gloves)|\\bkeeper\\b|captain|athlete|sportsman",
+      "pattern": "footballer|\\bplayers?\\b|goal ?keeper(?!(?:['’]s|s['’]?)? (?:gloves?|gear|equipment))|\\bkeeper\\b(?!(?:['’]s|s['’]?)? (?:gloves?|gear|equipment))|captain|athlete|sportsman",
       "why": "role inference that narrows the identity of a real person; the gloves may be named as an object",
       "class": "role_inference"
     },
@@ -100,6 +100,12 @@
       "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
       "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
       "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    },
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, iteration 3): the acceptable goalkeeper-gloves name is widened to the goalkeeper's (or keeper's) gloves, gear or equipment, possessive or not, and the role_inference pattern no longer matches 'goalkeeper' or 'keeper' when it is the modifier of that equipment; 'goalkeeper' and 'keeper' alone stay forbidden",
+      "reason": "Same class as h72: equipment named by a role is an object, not a role inference (the label already exempted 'goal keeper gloves' only)",
+      "decision": "docs/quality-plan.md §19.15 (round 4, iteration 3, owner decision: equipment named by a role is an object)"
     }
   ]
 }

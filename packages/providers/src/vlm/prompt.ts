@@ -90,8 +90,11 @@ export const VLM_READING_VERSIONS = {
    * vlm-enrich-v5 (round 4, iteration 2, docs/quality-plan.md §19.13): each verdict judged by the kind of
    * claim: a style, tradition, cuisine or named type is a resemblance, supported by the visible features
    * that define it without text, date or origin; a place needs a landmark, text or a form found only there.
+   * vlm-enrich-v6 (round 4, iteration 3, §19.15, owner option a): additions are proposed only when stage 2
+   * would rate them 0.5 or more and they rest on read text, a logo or a distinctive form (the guard's own
+   * publication rule for additions); context-only or low-certainty additions are not requested.
    */
-  enrichV2: { prompt: 'vlm-enrich-v5', schema: 'atlas_enrichment_v2' },
+  enrichV2: { prompt: 'vlm-enrich-v6', schema: 'atlas_enrichment_v2' },
 } as const;
 
 /** Stage 1 measured as good at 512 px as at 768; stage 2 reads small logos and labels at 768. */
@@ -195,7 +198,7 @@ Content rules:
   - A brand, maker or model is supported only when its name or logo is legible.
   - A claim about who the people are, their relationship, role, team, league, event or occasion is unsupported unless legible text names it.
   Do not add a confirmed entry for the title.
-- additional_candidates: up to four more specific, searchable references the first reading missed, each with a short rationale, and the same fields as the first reading (domain, evidence, evidence_text, tag_query: a taxonomy phrase for a style, tradition or cuisine, otherwise null). Prefer the named types of visible garments, objects, food and instruments, and the title of a well-known artwork or landmark the first reading did not name. Fewer is better than filler.
+- additional_candidates: up to four more specific, searchable references the first reading missed, each with a short rationale, and the same fields as the first reading (domain, evidence, evidence_text, tag_query: a taxonomy phrase for a style, tradition or cuisine, otherwise null). Prefer the named types of visible garments, objects, food and instruments, and the title of a well-known artwork or landmark the first reading did not name. Propose an addition only when you would rate its certainty 0.5 or more and it rests on legible text you read (evidence read_text), a legible logo (evidence logo) or an unmistakable form (evidence distinctive_form): an addition is published only on that, never on context alone or at a lower certainty. Do not propose additions that rest on context (the setting, the mood, what the scene suggests) or that you would rate below 0.5; return fewer or none instead. Fewer is better than filler.
 ${V2_EVIDENCE_RULES}
 - regions: up to four normalized 0..1 boxes (x, y = top-left) for the main evidence, each labeled with the candidate or object it shows.
 - uncertainty.overall summarizes how ambiguous the reading is; add up to three short notes.

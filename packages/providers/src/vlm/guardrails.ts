@@ -681,7 +681,8 @@ const FLOOR = 0.25;
 const DEPICTED_MIN = 0.5;
 const PLACE_MIN = 0.5;
 const LOWCERT_MAX = 0.35;
-const ADDITION_MIN = 0.5;
+/** Stage-2 additions below this certainty never publish (G-ADDITION-FLOOR); vlm-enrich-v6 states the same floor. */
+export const ADDITION_MIN = 0.5;
 const DEPICTED_EVIDENCE: ReadonlySet<VlmEvidence> = new Set(['read_text', 'logo', 'distinctive_form']);
 
 // ---- token helpers -----------------------------------------------------------

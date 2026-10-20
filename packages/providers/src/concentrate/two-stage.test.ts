@@ -19,6 +19,7 @@ import {
   VLM_SYSTEM_PROMPT,
   VLM_READING_VERSIONS,
 } from '../vlm/prompt';
+import { ADDITION_MIN } from '../vlm/guardrails';
 import { VlmEnrichmentV2, VlmQuickReadV2 } from '../vlm/types';
 import { createModelGateway } from './gateway';
 import { profileHash, type ModelProfile } from './profiles';
@@ -372,10 +373,11 @@ describe('reading v2 (quality plan §3)', () => {
     // vlm-quick-v3 (round 4, docs/quality-plan.md §19): was ae79cce2… as vlm-quick-v2.
     expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('d1a308e5631c07c18dead7d4d02823114f845340ec13f1008a2add7d3fbea248');
     expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v3');
-    // vlm-enrich-v5 (round 4, iteration 2, §19.13): was 8007487d… as vlm-enrich-v4 (round 4), b8740b2b… as
-    // vlm-enrich-v3 (requalification tune, §15), d23612b5… as vlm-enrich-v2.
-    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('e682090c14ad315577ac0a2982db7620eb1ce25d1f9a6f6df448b2c0ea993854');
-    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v5');
+    // vlm-enrich-v6 (round 4, iteration 3, §19.15): was e682090c… as vlm-enrich-v5 (iteration 2, §19.13),
+    // 8007487d… as vlm-enrich-v4 (round 4), b8740b2b… as vlm-enrich-v3 (requalification tune, §15), d23612b5…
+    // as vlm-enrich-v2.
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('0a942c855e8650d66fd7dd44fd807bc4bc6ca8dbdfb6955f051bcea63f7b9ee1');
+    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v6');
   });
 
   it('round 4 (vlm-quick-v3, vlm-enrich-v4): people photos name what is worn, held, eaten or played; works by their title', () => {
@@ -398,6 +400,18 @@ describe('reading v2 (quality plan §3)', () => {
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('another named style or type fits them as well or better');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('a vehicle, sign or building form found only in that place');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('A brand, maker or model is supported only when its name or logo is legible');
+  });
+
+  it('vlm-enrich-v6 proposes only additions the guard can publish: certainty at the addition floor, on read text, a logo or a form', () => {
+    // The prompt states the guard's own rule (G-ADDITION-FLOOR, G-EVIDENCE for additions); the guard keeps it.
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain(
+      `Propose an addition only when you would rate its certainty ${ADDITION_MIN} or more and it rests on legible text you read (evidence read_text), a legible logo (evidence logo) or an unmistakable form (evidence distinctive_form)`,
+    );
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain(
+      `Do not propose additions that rest on context (the setting, the mood, what the scene suggests) or that you would rate below ${ADDITION_MIN}`,
+    );
+    // Stage 1 is unchanged: it still names context-only resemblances (held or published by its own rules).
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).not.toContain('Propose an addition only');
   });
 
   it('vlm-enrich-v3 lists prominent text first and transcribes partly hidden words as their visible letters', () => {

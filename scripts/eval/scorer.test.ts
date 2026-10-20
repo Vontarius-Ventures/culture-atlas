@@ -7,13 +7,16 @@ import {
   candidateStatus,
   forbiddenClassViolations,
   forbiddenCovered,
+  makerUsedAsBrand,
   mediumCovered,
+  roleCovered,
   gatesFor,
   headToken,
   mustReadFound,
   runKind,
   scoreRun,
   scoreRuns,
+  scorerBrandLike,
   scorerTeeth,
   SCORER_VERSION,
   type CandidateView,
@@ -617,10 +620,6 @@ describe('score-v10 (round 4, after the model sweep): a name the label itself ac
 });
 
 describe('score-v11 (round 4, iteration 2): the medium class yields to a name the label itself expects', () => {
-  it('is the current scorer version', () => {
-    expect(SCORER_VERSION).toBe('score-v11');
-  });
-
   // h37 shape: a painted kettle whose label expects "folk painting" / "floral painting" and lists the medium class.
   const kettle = label('h98', {
     expected: [{ pattern: 'folk[- ]?(art|painting|motifs?)|floral (motifs?|painting)', aliases: ['Folk painting'], generic: false }],
@@ -642,5 +641,72 @@ describe('score-v11 (round 4, iteration 2): the medium class yields to a name th
     // Equal spans: an entry that is only the medium word does not cover it.
     const bare = label('h99', { acceptable: [{ pattern: 'painting', aliases: [], generic: false }], forbidden_classes: ['medium'] });
     expect(mediumCovered(bare, 'Painting')).toBe(false);
+  });
+});
+
+describe('score-v12 (round 4, iteration 3): a maker word counts only when it is used as a brand', () => {
+  it('is the current scorer version', () => {
+    expect(SCORER_VERSION).toBe('score-v12');
+  });
+
+  // h15 shape: a doughnut label that expects doughnuts and forbids brands without text.
+  const doughnuts = label('h89', {
+    expected: [{ pattern: 'doughnuts?|donuts?', aliases: [], generic: false }],
+    forbidden_classes: ['brand_without_text'],
+  });
+
+  it('a maker word that is a modifier in a dish name is not a brand (score-v11 counted "Apple cider doughnut" in M1 and M7)', () => {
+    const name = 'Apple cider doughnut';
+    for (const extra of [{ type: 'cuisine', domain: 'food' }, { type: 'style', domain: 'food' }, { type: 'object', domain: 'food' }]) {
+      const r = run('h89', { candidates: [c(name, extra)] });
+      expect(scorerBrandLike(doughnuts, r.final.candidates[0]!)).toBe(false);
+      expect(forbiddenClassViolations(doughnuts, r)).toEqual([]);
+      expect(scoreRun(doughnuts, r)).toMatchObject({ brandLike: 0, statuses: { expected: 1, forbidden: 0 } });
+    }
+    // The same in a garment name: a device maker's word modifies the garment ("Apple print dress").
+    expect(makerUsedAsBrand({ name: 'Apple print dress', type: 'style', domain: 'fashion' }, 'apple')).toBe(false);
+  });
+
+  it('a maker of the same trade, a brand-typed claim, a product and an untyped label stay brand-like', () => {
+    const brandLike = (name: string, extra: Partial<CandidateView>) => scorerBrandLike(doughnuts, c(name, extra));
+    // A food or drink maker in a food name, a fashion maker in a garment name: used as a brand.
+    expect(brandLike('Guinness stout', { type: 'cuisine', domain: 'food' })).toBe(true);
+    expect(brandLike('Nike running shoes', { type: 'object', domain: 'fashion' })).toBe(true);
+    // Typed as a brand, or a logo: always.
+    expect(brandLike('Apple cider doughnut', { type: 'brand', domain: 'food' })).toBe(true);
+    expect(brandLike('Apple cider doughnut', { type: 'cuisine', domain: 'food', evidence: 'logo' })).toBe(true);
+    // A product of another kind (a device, a watch worn as an accessory, a vehicle): any maker word counts.
+    expect(brandLike('Apple iPhone', { type: 'object', domain: 'design' })).toBe(true);
+    expect(brandLike('Apple Watch', { type: 'object', domain: 'fashion' })).toBe(true);
+    expect(brandLike('Giant road bike', { type: 'object', domain: 'vehicle' })).toBe(true);
+    // A "What caught your eye?" label (no type or domain of its own) counts as before.
+    const r = run('h89', { candidates: [], competing_subjects: ['Apple cider doughnuts'] });
+    expect(forbiddenClassViolations(doughnuts, r)).toContainEqual({ class: 'brand_without_text', detail: 'subject: Apple cider doughnuts' });
+    // The label's own brand_without_text pattern still applies whatever the claim's class.
+    const ciderMaker = label('h88', {
+      forbidden: [{ pattern: 'apple', field: 'candidate', class: 'brand_without_text', why: 'no maker word is legible' }],
+      forbidden_classes: ['brand_without_text'],
+    });
+    expect(scorerBrandLike(ciderMaker, c('Apple cider doughnut', { type: 'cuisine', domain: 'food' }))).toBe(true);
+  });
+
+  // h27 shape: the label accepts the goalkeeper's gloves as an object and forbids the role.
+  const keeper = label('h87', {
+    acceptable: [{ pattern: "goal ?keeper(?:['’]s|s['’]?)? (?:gloves?|gear|equipment)", aliases: [], generic: true }],
+    forbidden_classes: ['role_inference'],
+    people: { present: true },
+  });
+
+  it("equipment the label accepts by a role name is not a role inference of the scorer's own class (score-v11 counted it)", () => {
+    for (const name of ['Goalkeeper gloves', "Goalkeeper's gloves"]) {
+      expect(roleCovered(keeper, name)).toBe(true);
+      expect(forbiddenClassViolations(keeper, run('h87', { candidates: [c(name, { type: 'object', domain: 'sport' })] }))).toEqual([]);
+    }
+    // The role alone, or a role outside the accepted match, stays a violation.
+    for (const name of ['Goalkeeper', 'Goalkeeper and defender gloves'])
+      expect(forbiddenClassViolations(keeper, run('h87', { candidates: [c(name, { type: 'object', domain: 'sport' })] }))).toContainEqual({
+        class: 'role_inference',
+        detail: name,
+      });
   });
 });

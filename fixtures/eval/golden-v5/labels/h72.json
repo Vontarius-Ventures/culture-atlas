@@ -25,6 +25,10 @@
       "generic": true
     },
     {
+      "pattern": "catcher(?:['’]s|s['’]?)? (?:protective )?(?:gear|equipment|mitt|mask|helmet|(?:leg|shin) guards?|chest protectors?)|(?:leg|shin) guards?|chest protectors?",
+      "generic": true
+    },
+    {
       "pattern": "red (jersey|uniform)|blue (jersey|uniform)|number 8|number 33|#8|#33",
       "generic": true
     }
@@ -36,8 +40,8 @@
       "class": "brand_without_text"
     },
     {
-      "pattern": "batters?|hitters?|catchers?|umpires?|coach(es)?|pitchers?|fielders?|shortstops?|players?|athletes?|kids|boys|teens?|teenagers?|children|youths?|parents|fans|spectators",
-      "why": "a role or age inferred about real people",
+      "pattern": "batters?|hitters?|catchers?(?!(?:['’]s|s['’]?)? (?:protective )?(?:gear|equipment|mitt|mask|helmet|(?:leg|shin) guards?|chest protectors?))|umpires?|coach(es)?|pitchers?|fielders?|shortstops?|players?|athletes?|kids|boys|teens?|teenagers?|children|youths?|parents|fans|spectators",
+      "why": "a role or age inferred about real people (the catcher's protective equipment may be named as objects)",
       "class": "role_inference"
     },
     {
@@ -104,6 +108,12 @@
       "change": "golden-v5 (round 4, after the model sweep): 'slim' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches it only about a person ('a slim man', 'she is slim', 'her slim build')",
       "reason": "The unscoped word matched the fit of a garment ('slim dark-wash teal jeans', h70 in the round-4 haiku sweep) and counted as a physical descriptor of a person, the same artifact as 'tall' (docs/quality-plan.md §19.8)",
       "decision": "docs/quality-plan.md §19.8 (round 4, owner decision D: fix the labels)"
+    },
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, iteration 3): a new acceptable entry names the catcher's protective equipment generally (gear, equipment, mitt, mask, helmet, leg or shin guards, chest protector, with or without 'protective', possessive or not), and leg guards, shin guards and chest protectors alone; the role_inference pattern no longer matches 'catcher' when it is the modifier of that equipment ('catcher's leg guards'); 'catcher' and 'catchers' alone stay forbidden",
+      "reason": "Catcher's equipment is objects, not a role: the label accepted 'catcher's gear, mitt, mask, helmet' only, so 'Catcher's leg guards' and 'Catcher's protective gear' (round-4 sweep and iterations 1-2) counted as role inference in M1 and M11 (docs/quality-plan.md §19.11, §19.13). The same class logic is applied to h27 (goalkeeper's gloves and equipment)",
+      "decision": "docs/quality-plan.md §19.15 (round 4, iteration 3, owner decision: equipment named by a role is an object)"
     }
   ]
 }
