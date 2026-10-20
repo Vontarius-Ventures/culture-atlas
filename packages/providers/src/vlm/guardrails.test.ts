@@ -94,7 +94,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v7');
+    expect(GUARDRAIL_VERSION).toBe('guard-v8');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -368,7 +368,7 @@ describe('G-VTEXT plates (guard-v2)', () => {
 });
 
 describe('G-DEPICTED on a named place or work seen on context only (guard-v2)', () => {
-  it('holds it at stage 1 and drops it as a stage-2 addition; a style is only downgraded', () => {
+  it('holds it at stage 1 and keeps it out as a stage-2 addition; a style is only downgraded', () => {
     const g = guardQuickRead(
       reading([
         { name: 'Fixture Road', type: 'place', relation: 'depicted', evidence: 'context', certainty: 0.6, domain: 'place' },
@@ -388,7 +388,9 @@ describe('G-DEPICTED on a named place or work seen on context only (guard-v2)', 
         ],
       }),
     );
-    expect(decisionFor(s2.decisions, 'Fixture Avenue')).toMatchObject({ action: 'drop', note: 'held_at_stage_2' });
+    // guard-v8: an addition on context alone is a private observation (G-EVIDENCE), never a reference.
+    expect(decisionFor(s2.decisions, 'Fixture Avenue')).toMatchObject({ action: 'observe', note: 'context_only' });
+    expect(decisionFor(s2.decisions, 'Fixture Avenue')!.rules).toContain('G-EVIDENCE');
     expect(decisionFor(s2.decisions, 'Fixture Road')).toMatchObject({ action: 'drop' });
     expect(names(s2.analysis.candidates)).toEqual(['Fixture neon style', 'Fixture Café']);
   });
@@ -528,7 +530,8 @@ describe('G-PLACE, G-TEXT-ECHO, G-LOWCERT', () => {
       }),
     );
     expect(s2.publishNow).toEqual([]);
-    expect(decisionFor(s2.decisions, 'Yuyuan Garden')).toMatchObject({ action: 'drop', rules: ['G-VERDICT'], note: 'unsupported' });
+    // guard-v8: an unsupported held claim is a private observation for the inspector, never published.
+    expect(decisionFor(s2.decisions, 'Yuyuan Garden')).toMatchObject({ action: 'observe', rules: ['G-VERDICT'], note: 'unsupported' });
   });
 
   it('holds a style read off a sign ("Art Deco" from "LES ARTS DECORATIFS") and a low-certainty resemblance', () => {
@@ -578,7 +581,7 @@ describe('stage 2: G-VERDICT and G-BRAND-CORROBORATE', () => {
     expect(decisionFor(s2.decisions, 'Fixturo X-Trail')).toMatchObject({ action: 'drop', rules: ['G-VERDICT', 'G-BRAND-CORROBORATE'] });
   });
 
-  it('weak verdicts drop strong claims and publish held styles as non-anchor resemblances; no entry drops', () => {
+  it('guard-v8: a weak verdict never publishes a held claim, style or tradition included; no entry drops', () => {
     const g = quick([
       v2({ name: 'Spalding', type: 'brand', certainty: 0.35, domain: 'sport' }),
       v2({ name: 'Streetball', type: 'tradition', certainty: 0.3, tag_query: 'streetball', domain: 'sport' }),
@@ -597,10 +600,13 @@ describe('stage 2: G-VERDICT and G-BRAND-CORROBORATE', () => {
         ],
       }),
     );
-    expect(s2.publishNow.map((c) => [c.name, c.relation])).toEqual([['Streetball', 'resembles']]);
-    expect(s2.nonAnchorIds).toEqual([s2.publishNow[0]!.id]);
-    expect(decisionFor(s2.decisions, 'Spalding')).toMatchObject({ action: 'drop', note: 'weak' });
-    expect(decisionFor(s2.decisions, 'Fixture place')).toMatchObject({ action: 'drop', note: 'weak' });
+    // guard-v7 published "Streetball" as a non-anchor resemblance; guard-v8 keeps every weak claim private.
+    expect(s2.publishNow).toEqual([]);
+    expect(s2.nonAnchorIds).toEqual([]);
+    expect(names(s2.analysis.candidates)).toEqual([]);
+    expect(decisionFor(s2.decisions, 'Spalding')).toMatchObject({ action: 'observe', rules: ['G-VERDICT'], note: 'weak' });
+    expect(decisionFor(s2.decisions, 'Streetball')).toMatchObject({ action: 'observe', rules: ['G-VERDICT'], note: 'weak' });
+    expect(decisionFor(s2.decisions, 'Fixture place')).toMatchObject({ action: 'observe', note: 'weak' });
     expect(decisionFor(s2.decisions, 'Road cycling culture')).toMatchObject({ action: 'drop', note: 'no_confirmation' });
   });
 
@@ -671,7 +677,8 @@ describe('stage 2: G-VERDICT and G-BRAND-CORROBORATE', () => {
   it('FAST-02: published candidates stay in order; unsupported ones are advisory vetoes only', () => {
     const g = quick([
       v2({ name: 'Road cycling', type: 'tradition', certainty: 0.6, tag_query: 'road cycling', domain: 'sport' }),
-      v2({ name: 'Porch culture', type: 'tradition', certainty: 0.6, tag_query: 'porch', domain: 'other' }),
+      // A thing domain: guard-v8 holds a tradition with no thing domain as a possible claim about people.
+      v2({ name: 'Porch culture', type: 'tradition', certainty: 0.6, tag_query: 'porch', domain: 'architecture' }),
     ]);
     const s2 = stage2(
       g,
@@ -794,7 +801,7 @@ describe('legacy (v1) compatibility', () => {
       uncertainty: { overall: 'medium', notes: [] },
       competing_subjects: [],
     });
-    expect(decisionFor(s2.decisions, 'Spalding')).toMatchObject({ action: 'drop', rules: ['G-VERDICT'], note: 'weak' });
+    expect(decisionFor(s2.decisions, 'Spalding')).toMatchObject({ action: 'observe', rules: ['G-VERDICT'], note: 'weak' });
     expect(s2.publishNow.map((c) => [c.name, c.suggested_categories])).toEqual([['Streetball', []]]);
   });
 });
@@ -1082,7 +1089,11 @@ describe('guard-v3: G-BRAND-CORROBORATE needs every brand word, from two separat
   it('a make read on a badge does not vouch for a model guessed from the shape', () => {
     const g = quickOf('A parked SUV', [v2({ name: 'Nissan Fixtrail', type: 'object', certainty: 0.6, domain: 'vehicle' })]);
     const conf = [{ name: 'Nissan Fixtrail', rationale: 'Badge', verdict: 'supported' as const }];
-    expect(stage2(g, enrichment({ visible_text: ['NISSAN'], confirmed: conf })).publishNow).toEqual([]);
+    const makeOnly = stage2(g, enrichment({ visible_text: ['NISSAN'], confirmed: conf }));
+    // guard-v8: the model is not published; the maker read on the badge is, as a text-only brand reference.
+    expect(makeOnly.publishNow.map((c) => [c.name, c.type, c.text_only, c.evidence_text])).toEqual([['NISSAN', 'brand', true, 'NISSAN']]);
+    expect(brandCorroboratedIds(makeOnly.decisions).size).toBe(0);
+    expect(decisionFor(makeOnly.decisions, 'Nissan Fixtrail')).toMatchObject({ action: 'drop', note: 'not_read_at_stage_2' });
     expect(names(stage2(g, enrichment({ visible_text: ['NISSAN', 'FIXTRAIL'], confirmed: conf })).publishNow)).toEqual(['Nissan Fixtrail']);
   });
 
@@ -1508,5 +1519,146 @@ describe('guard-v7: role synonyms, people words, stage-1 person observations, me
       { twoStage: true },
     );
     expect(ruleSets(film).flat()).not.toContain('G-MEDIUM');
+  });
+});
+
+/*
+ * guard-v8 (docs/requalification-plan.md, round 3): publication by evidence
+ * class. The readings below are FIXTURE data shaped like the round-2 blind
+ * failures (h47 "Prom", h34 "Scandinavian minimalism", h43 "BMW Vision ..."),
+ * not recorded model output. Each test of a new rule fails on the guard-v7
+ * code; the legacy-reading and duplicate-maker tests guard against over-reach
+ * and pass on both.
+ */
+describe('guard-v8: publication by evidence class', () => {
+  const read = (title: string, interpretation: string, cands: VlmQuickCandidate[]) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates: cands, quality: { usable: true, issue: null } }), { twoStage: true });
+  const people = [
+    { text: 'A young man wears a black suit jacket and a satin tie.', kind: 'garment' as const },
+    { text: 'A woman pins a white rose to his lapel.', kind: 'object' as const },
+  ];
+
+  it('G-PEOPLE-CLAIM: an occasion with no thing domain is held at stage 1 and kept private once stage 2 shows people (h47 shape)', () => {
+    const g = read('Formal dance attire with corsage', 'The photo resembles a formal event, with a black suit and a sequined gown.', [
+      v2({ name: 'Boutonnière', type: 'object', certainty: 0.5, domain: 'fashion', evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture Prom', type: 'tradition', certainty: 0.45, domain: 'other', evidence: 'context', tag_query: 'formal dance' }),
+    ]);
+    // Nothing in the quick read shows people, so the occasion waits instead of publishing in the first section.
+    expect(names(g.analysis.candidates)).toEqual(['Boutonnière']);
+    expect(names(g.held)).toEqual(['Fixture Prom']);
+    expect(decisionFor(g.decisions, 'Fixture Prom')).toMatchObject({ action: 'hold', rules: ['G-PEOPLE-CLAIM'] });
+    const conf = [
+      { name: 'Boutonnière', rationale: 'A white rose on the lapel', verdict: 'supported' as const },
+      { name: 'Fixture Prom', rationale: 'Formal wear suggests a dance', verdict: 'supported' as const },
+    ];
+    const s2 = stage2(g, enrichment({ observations: people, confirmed: conf }));
+    expect(s2.publishNow).toEqual([]);
+    expect(names(s2.analysis.candidates)).toEqual(['Boutonnière']);
+    expect(decisionFor(s2.decisions, 'Fixture Prom')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'], note: 'people_claim' });
+    // Without people in the photo, the same claim publishes on a supported second reading.
+    expect(names(stage2(g, enrichment({ observations: [{ text: 'A ballroom with a mirror ball.', kind: 'setting' }], confirmed: conf })).publishNow)).toEqual(['Fixture Prom']);
+  });
+
+  it('G-PEOPLE-CLAIM: people in the quick read keep the claim private at once; read text backs it; clothing and sport still publish', () => {
+    const g = read('Two people in formal wear', 'A man and a woman dressed for an evening event.', [
+      v2({ name: 'Fixture Prom', type: 'tradition', certainty: 0.7, domain: 'other', evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture graduation look', type: 'style', certainty: 0.7, domain: 'other', evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture sorority style', type: 'style', certainty: 0.7, domain: 'people', evidence: 'distinctive_form' }),
+      v2({ name: 'Tuxedo', type: 'style', certainty: 0.7, domain: 'fashion', evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture cricket', type: 'tradition', certainty: 0.7, domain: 'sport', evidence: 'distinctive_form' }),
+    ]);
+    expect(decisionFor(g.decisions, 'Fixture Prom')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'], note: 'people_claim' });
+    expect(decisionFor(g.decisions, 'Fixture graduation look')).toMatchObject({ action: 'observe', rules: ['G-PEOPLE-CLAIM'] });
+    // A people-domain claim is an identity claim: dropped by G-IDENTITY with its name withheld from the trace.
+    expect(g.decisions.filter((d) => d.name === '[withheld]').map((d) => [d.action, d.rules])).toEqual([['drop', ['G-IDENTITY']]]);
+    expect(names(g.analysis.candidates)).toEqual(['Tuxedo', 'Fixture cricket']);
+    expect(g.held).toEqual([]);
+    // Backed by read text (a banner), the occasion is not a guess about the people: it goes through the text rules.
+    const banner = read('Two people under a banner', 'A man and a woman under a banner.', [
+      v2({ name: 'Fixture Prom', type: 'tradition', certainty: 0.8, domain: 'other', evidence: 'read_text', evidence_text: 'FIXTURE PROM 2026' }),
+    ]);
+    expect(decisionFor(banner.decisions, 'Fixture Prom')).toMatchObject({ action: 'hold', rules: ['G-TEXT-ECHO'] });
+  });
+
+  it("G-PEOPLE-CLAIM reads only the model's own domain: a legacy reading (no domain) is not affected", () => {
+    const g = guardQuickRead(
+      toVlmAnalysis({
+        title: 'Two people on a street',
+        interpretation: 'A man and a woman walking.',
+        candidates: [{ name: 'Fixture street style', type: 'style', relation: 'resembles', certainty: 0.6, categories: [], tag_query: 'street style' }],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+    expect(names(g.analysis.candidates)).toEqual(['Fixture street style']);
+  });
+
+  it('a weak second reading never publishes a held style (h34 shape: a named interior style on context, 0.30)', () => {
+    const g = read('Living room with a rug', 'A plain living room with a sofa and a rug.', [
+      v2({ name: 'Fixture minimalism', type: 'style', certainty: 0.3, domain: 'interior', evidence: 'context', tag_query: 'minimalism' }),
+      v2({ name: 'Fixture splatter rug', type: 'style', certainty: 0.35, domain: 'interior', evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture minimalism', 'Fixture splatter rug']);
+    const s2 = stage2(
+      g,
+      enrichment({
+        confirmed: [
+          { name: 'Fixture minimalism', rationale: 'Plain room, but nothing specific', verdict: 'weak' },
+          { name: 'Fixture splatter rug', rationale: 'Paint splatter pattern', verdict: 'supported' },
+        ],
+      }),
+    );
+    expect(names(s2.publishNow)).toEqual(['Fixture splatter rug']);
+    expect(s2.nonAnchorIds).toEqual([]);
+    expect(decisionFor(s2.decisions, 'Fixture minimalism')).toMatchObject({ action: 'observe', note: 'weak' });
+  });
+
+  it('G-EVIDENCE: a stage-2 addition on context alone is a private observation; one resting on a distinctive form publishes', () => {
+    const g = read('A pair of sneakers', 'Black sneakers on a white floor.', []);
+    const s2 = stage2(
+      g,
+      enrichment({
+        additional_candidates: [
+          { ...v2({ name: 'Fixture corsage', type: 'style', certainty: 0.6, domain: 'fashion', evidence: 'context' }), rationale: 'usually paired' },
+          { ...v2({ name: 'Slip-on fixture', type: 'style', certainty: 0.6, domain: 'fashion', evidence: 'distinctive_form' }), rationale: 'elastic gore' },
+        ],
+      }),
+    );
+    expect(names(s2.publishNow)).toEqual(['Slip-on fixture']);
+    expect(decisionFor(s2.decisions, 'Fixture corsage')).toMatchObject({ action: 'observe', note: 'context_only' });
+    expect(decisionFor(s2.decisions, 'Fixture corsage')!.rules).toContain('G-EVIDENCE');
+  });
+
+  it('a read maker stays as a text-only brand reference when the model name is not read (h43 shape)', () => {
+    const g = read('Concept car on a show stand', 'A white concept sports car in front of a board.', [
+      v2({ name: 'BMW Fixture EfficientDynamics', type: 'work', relation: 'depicted', certainty: 0.9, domain: 'vehicle', evidence: 'read_text', evidence_text: 'BMW FIXTURE' }),
+      v2({ name: 'BMW kidney grille', type: 'object', relation: 'depicted', certainty: 0.8, domain: 'vehicle', evidence: 'logo', evidence_text: 'BMW' }),
+    ]);
+    expect(names(g.held)).toEqual(['BMW Fixture EfficientDynamics', 'BMW kidney grille']);
+    const conf = (n: string) => ({ name: n, rationale: 'Board', verdict: 'supported' as const });
+    const s2 = stage2(g, enrichment({ visible_text: ['BMW FIXTURE', 'FREUDE AM FAHREN'], confirmed: [conf('BMW Fixture EfficientDynamics'), conf('BMW kidney grille')] }));
+    // One maker reference, named as written, never the model or the grille; never searched as a brand.
+    expect(s2.publishNow.map((c) => [c.name, c.type, c.text_only, c.evidence_text, c.suggested_categories, c.tag_queries])).toEqual([
+      ['BMW', 'brand', true, 'BMW FIXTURE', [], []],
+    ]);
+    expect(s2.textOnlyIds).toEqual([s2.publishNow[0]!.id]);
+    expect(brandCorroboratedIds(s2.decisions).size).toBe(0);
+    expect(decisionFor(s2.decisions, 'BMW')).toMatchObject({ action: 'publish', note: 'read_maker_text_only' });
+    expect(decisionFor(s2.decisions, 'BMW')!.rules).toContain('G-TEXT-ONLY');
+    // No maker read: nothing publishes.
+    expect(stage2(g, enrichment({ visible_text: ['FREUDE AM FAHREN'], confirmed: [conf('BMW Fixture EfficientDynamics')] })).publishNow).toEqual([]);
+    // A maker read only inside a longer word is not read.
+    expect(stage2(g, enrichment({ visible_text: ['BMWFIXTURE'], confirmed: [conf('BMW Fixture EfficientDynamics')] })).publishNow).toEqual([]);
+  });
+
+  it('a read maker is not added twice when the maker itself is already published', () => {
+    const g = read('A car badge', 'A car front with a badge.', [
+      v2({ name: 'BMW', type: 'brand', relation: 'depicted', certainty: 0.9, domain: 'vehicle', evidence: 'logo', evidence_text: 'BMW' }),
+      v2({ name: 'BMW Fixture Series', type: 'object', relation: 'depicted', certainty: 0.7, domain: 'vehicle', evidence: 'read_text', evidence_text: 'BMW' }),
+    ]);
+    const conf = (n: string) => ({ name: n, rationale: 'Badge', verdict: 'supported' as const });
+    const s2 = stage2(g, enrichment({ visible_text: ['BMW'], confirmed: [conf('BMW'), conf('BMW Fixture Series')] }));
+    expect(names(s2.publishNow)).toEqual(['BMW']);
+    expect(s2.publishNow[0]!.text_only).toBeUndefined();
   });
 });
