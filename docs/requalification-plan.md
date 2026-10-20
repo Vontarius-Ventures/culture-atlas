@@ -355,3 +355,17 @@ stage 1, sonnet stage 2, 187 requests, $1.63) fails Tune on M1 4, M4 0.335,
 M11 2 and M13 (one timeout): sonnet hedges 37 held claims, 27 of them
 context-only. h80+ is not frozen; the stage-2 verdict policy for held
 context-only claims needs a decision first.
+
+### Round 4, iteration 2 (2026-10-20): vlm-enrich-v5, guard-v13, score-v11: Tune FAIL
+
+Details in quality-plan §19.13. Stage 2 now judges each claim by its kind (a
+style, tradition, cuisine or named type is a resemblance supported by the
+features that define it; a place needs a landmark, text or a form found only
+there); on a photo with people the headline is replaced as a unit; score-v11
+lets a label's own expected name win over the medium class (h37). The live mix
+(haiku stage 1, sonnet stage 2, 188 requests, $1.70) fails Tune on M1 2, M4
+0.321, M7 and M11 1: h72 (label) and h15 ("apple" in the scorer's maker list),
+and M4 because 54 of 90 dropped good claims are stage-2 additions the policy
+never publishes. Latency, M5 0.880, M15 0.711 and M13 pass. h80+ is not
+frozen; the addition policy or the M4 definition needs an owner decision.
+

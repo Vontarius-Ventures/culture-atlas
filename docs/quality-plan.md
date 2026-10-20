@@ -2443,3 +2443,111 @@ gap; it needs a decision before h80+ is frozen.
 | **Total** | **852** | **at most $21.07** (worst-case reservations, actual cost known for the mix only) |
 
 0 Qloo, 0 Wikipedia. Round-4 caps: 1,500 requests and $60.
+
+### 19.13 Iteration 2: verdicts by kind of claim (`vlm-enrich-v5`), guard-v13, score-v11
+
+The iteration-1 blocker (19.11) was the stage-2 verdict on held claims:
+sonnet answered "weak, no text confirms it" for resemblances ("Mid-century
+modern", "Hong Kong cityscape", "Italian café culture"), because
+`vlm-enrich-v4` defined supported only as "the photo clearly supports it" and
+the stage-2 input carries the claim's name only, not that it was a
+resemblance. Simulation on the iteration-1 recordings bounded the gain: with
+every weak verdict turned into supported, M4 would still be 0.2145 (and M1 5,
+M7 fail on brands), so the verdict alone cannot reach M4 ≤ 0.20.
+
+| Change | What it decides | Class, not word |
+| --- | --- | --- |
+| `vlm-enrich-v5` | Each first-reading candidate is judged as the kind of claim it is. A style, period look, tradition, craft, cuisine or dish, or the named type of a garment, object, vehicle or building is a resemblance, never a claim of origin, date or authenticity: supported when the visible features that define it are shown (named in the rationale) even though no text names it; weak when they fit only loosely or another named style or type fits as well or better; unsupported when the photo does not show them. A place needs a landmark, legible text or a vehicle, sign or building form found only there. Brands and claims about the people keep their rules. Hash pinned in `two-stage.test.ts`; `eval:live` refuses a profile naming `vlm-enrich-v4` | Definition by claim kind; the h58 "Scandinavian ..." case is the "another named style fits better" clause, not a listed word |
+| guard-v13, headline unit | On a photo that shows people, when the people test replaces the title or the interpretation, the other line is replaced too: the two lines are written as one reading (iteration-1 h54: the interpretation "a server taking an order beside seated diners" was replaced and the title "Café table with menu and waitstaff" stayed) | No word added; "waitstaff" is still in no list |
+| score-v11 | The score-v10 rule also covers the medium class (found by the scorer's own medium words, not a forbidden pattern): a name whose every medium word lies strictly inside a match of the label's own expected or acceptable entry is not a medium claim (`mediumCovered`). h37 expects "folk painting" (pattern and alias) and lists the medium class, so its own expected "Floral folk painting" counted in M1. "Oil painting", "Painting" and equal spans stay violations | Same rule as score-v10, for a class; test in `scorer.test.ts` "score-v11" fails on score-v10 |
+
+Tests: `guardrails.test.ts` "guard-v13" (2 tests; the guard-v10 headline test
+now expects both lines replaced), `scorer.test.ts` "score-v11" (3),
+`two-stage.test.ts` (new hash and the v5 wording), `live.test.ts` (a
+`vlm-enrich-v4` profile is refused). Binding regenerated; `replay-v1` names
+guard-v13 and score-v11 and passes. typecheck, lint and `pnpm test`
+(1431/1431) passed before the commit.
+
+**Rejected as per-photo patches.** "Catcher's leg guards" (h72) stays a label
+decision (the label accepts catcher's gear, mitt, mask and helmet only); p02
+"Leafy greens and fresh produce" typed as a cuisine would need a list of
+ingredient words, and holding every context-only cuisine costs more coverage
+than it protects (12 label-good context-only cuisine claims published in the iteration-1 run alone);
+"waitstaff" is not added to a people list; lowering G-ADDITION-FLOOR was
+simulated (0.4 and 0.3) and changes nothing (iteration 2: M4 0.3214 → 0.3179;
+the low-certainty additions are context-only and stop at G-EVIDENCE or
+G-LOWCERT anyway), so it was not changed.
+
+**Replays (no request), guard-v13 and score-v11.** Recorded readings keep their
+recorded stage-2 verdicts (`vlm-enrich-v4`), so these measure the rule and
+scorer changes only.
+
+| Recordings | guard-v12, score-v10 | guard-v13, score-v11 |
+| --- | --- | --- |
+| Iteration-1 mix | FAIL M1 4, M4 0.3345, M11 2 | FAIL M1 2 (h72, p02), M4 0.3345, M11 1 (h72) |
+| Sweep haiku | FAIL M1 2, M4 0.226, M8 1, M11 1 | same (M1: h28 "Wilson", h72) |
+| Sweep sonnet | FAIL M4 0.318, stage-1 p50 | same |
+| Sweep gpt-5.4-mini | FAIL M1 4, M11 2, M4 0.251, M9, M10 2, M12 | FAIL M1 3, M11 1, M4 0.251, M9, M10 2, M12 |
+| Round-3 and older recordings, 94 tune | as 19.10 | unchanged (M1 0 on all) |
+| `replay-v1` (CI) | PASS | PASS |
+
+**The mix, live, once (haiku stage 1 `vlm-quick-v3`, sonnet stage 2
+`vlm-enrich-v5`): FAIL.** Profile `r4/profiles/mix.json` (the iteration-1
+pair with the enrich prompt version raised; the old file is kept as
+`mix-iter1.json`), out-dir `r4/iter2`, package `r4-iter2-mix`, 94 tune photos,
+no Qloo, no verifier.
+
+- **Requests**: 188, all answered, 0 invalid, 0 incomplete; $1.703 at list
+  rate (stage 1 $0.043, stage 2 $1.660; worst case reserved $5.55).
+- **Gates**: FAIL on M1 2, M4 0.3214, M7 0.9714, M11 1. Passing: M2 0.0097,
+  M3 0.988, M5 0.880, M6 0.981, M8 0, M9 0.936, M10 0, M12 0.162, M13 1,
+  M15 0.711, stage 1 p50 2.56 s / p95 3.70 s, enrich p95 9.7 s.
+- **M1, M7, M11.** h72 "Catcher's leg guards" (stage-2 addition; the label,
+  as in 19.9). h15 "Apple cider doughnut" (expected by the label's doughnut
+  pattern) counts as a brand without text (M1, M7) because "apple" is in the
+  scorer's own maker list (`SCORER_MAKERS`): a word-sense collision of the
+  scorer, recorded for the owner, not changed (one photo, and the fix, a
+  maker word that is also a food word, has no clean class yet). h54's title
+  and h37 no longer count (guard-v13, score-v11). p02's cuisine claim did not
+  recur.
+- **Verdicts.** Stage 2 gave 192 supported, 83 weak, 12 unsupported
+  (iteration 1: 176 / 106 / 13). Label-good held claims lost to "weak" fell
+  from 37 to 29; stage-1 claims dropped fell from 50 to 36. One forbidden held
+  claim now publishes (h58 "Scandinavian minimalism", supported; M2 stays
+  0.0097); eight other forbidden held claims stayed weak or unsupported.
+- **Why M4 did not move.** 90 of 280 label-good claims were dropped: 36 from
+  stage 1 and 54 stage-2 additions (iteration 1: 50 and 42). Sonnet adds more
+  label-good references, most of them context-only or rated below 0.5
+  (77 of its 203 additions are rated below 0.5), and the guard never publishes
+  those by policy (an addition has no second reading to confirm it). M4
+  counts each one as an over-drop. The remaining stage-1 drops are mostly
+  "weak" on genuinely loose resemblances (Empire style, Biedermeier, athleisure,
+  Victorian terraced houses) and generic or style-of rewrites.
+- No grounding confirmation run: the tune run did not pass.
+
+**State and the decision it needs.** Safety holds on the live mix except two
+label or scorer artifacts (h72, h15); latency, M5, M15 and M12 pass with
+margin. M4 ≤ 0.20 is not reachable by verdict wording: about 60 % of the
+remaining drops are stage-2 additions that the policy never publishes. The
+choices are the owner's: (a) ask stage 2 to add only references it would rate
+0.5 or more and can tie to a read text, logo or distinctive form (the guard's
+own publication rule; fewer additions, fewer tokens, the same published
+result, and M4 falls because unpublishable additions are no longer emitted),
+(b) count M4 on stage-1 claims plus publishable additions (a metric change,
+thr-v2 stays), or (c) let a supported stage-2 addition with a distinctive
+form publish (a policy change that weakens "nothing confirms an addition").
+The h72 label and the h15 maker-word collision need the labeller and the
+owner. h80+ stays unfrozen.
+
+### 19.14 Spend (round 4 to date)
+
+| Package | Concentrate requests | Cost |
+| --- | --- | --- |
+| r4-smoke-haiku | 4 | worst case $0.03 |
+| r4-sweep-haiku / sonnet / gptmini | 188 / 188 / 188 | worst case $1.32 / $7.99 / $3.57 |
+| r4-sweep-gemini | 97 (stopped) | worst case about $2.61 |
+| r4-iter1-mix | 187 | $1.63 at list rate (worst case $5.55) |
+| r4-iter2-mix | 188 | $1.70 at list rate (worst case $5.55) |
+| **Total** | **1,040** | **at most $22.77** (worst-case reservations except the two mix runs, which are list-rate cost) |
+
+0 Qloo, 0 Wikipedia. Round-4 caps: 1,500 requests and $60.

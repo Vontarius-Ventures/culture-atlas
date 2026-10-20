@@ -117,7 +117,8 @@ fixtures/eval/
   jeans" is the fit of a garment, not a body). Only tune labels are edited
   this way; held-out labels are frozen. `pnpm eval:lint-labels --golden <dir>`
   lists names a label both accepts and forbids (score-v10 resolves an
-  accepted name that strictly contains a non-brand forbidden match); run it
+  accepted name that strictly contains a non-brand forbidden match, and score-v11 the
+  same for the medium class); run it
   on a new blind split before the freeze. On golden-v5 it reports three
   unresolved conflicts left for the labeller: h54 ("diner" the venue vs
   "diners"), h70 (a brand in the expected pattern) and h78 ("internal review").
