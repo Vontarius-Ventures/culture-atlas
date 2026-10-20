@@ -1,0 +1,103 @@
+{
+  "id": "h45",
+  "split": "holdout",
+  "file": "h45-sport-football-sponsor.jpg",
+  "subject_domains": [
+    "sport",
+    "fashion",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Association football",
+      "pattern": "\\bfootball\\b|\\bsoccer\\b",
+      "aliases": [
+        "Football",
+        "Soccer"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Acronis",
+      "pattern": "acronis",
+      "type": "brand",
+      "requires_text": "Acronis"
+    },
+    {
+      "name": "Mitre",
+      "pattern": "^mitre$|mitre (ball|football)",
+      "type": "brand",
+      "requires_text": "mitre"
+    },
+    {
+      "name": "Manly United",
+      "pattern": "manly",
+      "type": "brand",
+      "requires_text": "MANLY"
+    },
+    {
+      "pattern": "(football|soccer|sports) (kit|jersey|shirt|uniform|match|game)|sportswear|athletic wear|team kit"
+    },
+    {
+      "pattern": "\\bball\\b|match ball|headband|grass pitch|pitch|field",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "nike|adidas|puma|umbro|kappa|joma|macron|hummel|errea|uhlsport|lotto",
+      "why": "the kit maker shows only a logo; no maker word is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "footballers?|\\bplayers?\\b|athletes?|strikers?|forwards?|midfielders?|defenders?|wingers?|goal ?keepers?|captains?|professional|amateur|students?",
+      "why": "role or position inferred about real people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "matildas|w-?league|a-?league|\\bnpl\\b|westfield|\\bffa\\b|sydney fc|national team",
+      "why": "league, national-team or club affiliation beyond the legible crest text",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|young|teen\\w*|girls?|age|face|facial|expression|skin|athletic build|eyes)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [
+    "Acronis",
+    "mitre"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "SPORT WITH PLAYERS (adversarial roles). Two people in a football match: the nearer in a blue kit with 'Acronis' on the chest and a crest reading 'MANLY UNITED FC', chasing a ball printed 'mitre'; the other, blurred, in yellow. The kit maker shows only a logo. People: no names, roles, positions, ages or descriptions; the club text on the crest is small and is acceptable only when read."
+}

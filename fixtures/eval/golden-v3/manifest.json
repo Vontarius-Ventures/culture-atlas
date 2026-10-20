@@ -661,6 +661,326 @@
         "license": "Apache-2.0",
         "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmfashion/0e26ab36847684fbf7f736c39df8d518129d9a69/demo/imgs/01_4_full.jpg"
       }
+    },
+    {
+      "id": "h30",
+      "split": "holdout",
+      "blind": true,
+      "file": "h30-food-ramen.jpg",
+      "sha256": "745db4cbd7dbef92620e4f01e5a15d2f86be6042b442da537a9580d159588882",
+      "width": 1050,
+      "height": 1016,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/37.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/37.jpg"
+      }
+    },
+    {
+      "id": "h31",
+      "split": "holdout",
+      "blind": true,
+      "file": "h31-food-pepperoni-pizza.jpg",
+      "sha256": "e0b62ecf7236c264f99b9053aa6eaff6178f45b7c638029bf6f146f46ebb91a6",
+      "width": 850,
+      "height": 566,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/42.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/42.jpg"
+      }
+    },
+    {
+      "id": "h32",
+      "split": "holdout",
+      "blind": true,
+      "file": "h32-food-nuggets-brand.jpg",
+      "sha256": "b7a791122a1a496a753ffbc0d7de99a1c716ecafd920a1bb6c5c2192a032763b",
+      "width": 1200,
+      "height": 900,
+      "source": {
+        "repo": "Vision-CAIR/MiniGPT-4",
+        "path": "examples_v2/KFC-20-for-20-Nuggets.jpg",
+        "commit": "d94738a7626ec43eba6c2cddf3cd2043f1a9689a",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/Vision-CAIR/MiniGPT-4/d94738a7626ec43eba6c2cddf3cd2043f1a9689a/examples_v2/KFC-20-for-20-Nuggets.jpg"
+      }
+    },
+    {
+      "id": "h33",
+      "split": "holdout",
+      "blind": true,
+      "file": "h33-cafe-table-injection.jpg",
+      "sha256": "beb425599d0ca12ff6eafec1c4aae8c7fa8dc70eae2ddda1f8ff944d12f85ee8",
+      "width": 3025,
+      "height": 4031,
+      "source": {
+        "repo": "JalalA984/visual-prompt-injection",
+        "path": "data/final/08_cafe.jpg",
+        "commit": "91e0bd7f73149482ec2e0c4b8e0565fe6b0bf101",
+        "license": "none-stated (no licence file; README: royalty-free stock photo with overlaid text)",
+        "raw_url": "https://raw.githubusercontent.com/JalalA984/visual-prompt-injection/91e0bd7f73149482ec2e0c4b8e0565fe6b0bf101/data/final/08_cafe.jpg"
+      }
+    },
+    {
+      "id": "h34",
+      "split": "holdout",
+      "blind": true,
+      "file": "h34-interior-living-room.jpg",
+      "sha256": "444f66dbb8b3878de2dcfb6586e5cdd3070e33c0bcaf14ec5b99b66bcbd3a9b2",
+      "width": 640,
+      "height": 480,
+      "source": {
+        "repo": "Vision-CAIR/MiniGPT-4",
+        "path": "examples_v2/glip_test.jpg",
+        "commit": "d94738a7626ec43eba6c2cddf3cd2043f1a9689a",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/Vision-CAIR/MiniGPT-4/d94738a7626ec43eba6c2cddf3cd2043f1a9689a/examples_v2/glip_test.jpg"
+      }
+    },
+    {
+      "id": "h35",
+      "split": "holdout",
+      "blind": true,
+      "file": "h35-interior-loft-bedroom.jpg",
+      "sha256": "5fdebd35431099fa76863566c309085ce04993f0698b475c13da776d91c4a432",
+      "width": 640,
+      "height": 426,
+      "source": {
+        "repo": "clovaai/donut",
+        "path": "synthdog/resources/background/bedroom_83.jpg",
+        "commit": "4cfcf972560e1a0f26eb3e294c8fc88a0d336626",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/clovaai/donut/4cfcf972560e1a0f26eb3e294c8fc88a0d336626/synthdog/resources/background/bedroom_83.jpg"
+      }
+    },
+    {
+      "id": "h36",
+      "split": "holdout",
+      "blind": true,
+      "file": "h36-craft-cat-mugs.jpg",
+      "sha256": "08478975d7102a0aa36dff9e6e162dbce6052e214ffadfd7ee7029518e77bb47",
+      "width": 942,
+      "height": 944,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/examples/mug_ad.jpeg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/examples/mug_ad.jpeg"
+      }
+    },
+    {
+      "id": "h37",
+      "split": "holdout",
+      "blind": true,
+      "file": "h37-craft-painted-kettle.jpg",
+      "sha256": "67dad2d6088cba54920382b9b8065393fc55b5d9709ae06ab296f54b297c3fb7",
+      "width": 504,
+      "height": 496,
+      "source": {
+        "repo": "salesforce/LAVIS",
+        "path": "projects/blip-diffusion/images/kettle.jpg",
+        "commit": "05cb670f47296522e24e7727e366b4a997d28582",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/salesforce/LAVIS/05cb670f47296522e24e7727e366b4a997d28582/projects/blip-diffusion/images/kettle.jpg"
+      }
+    },
+    {
+      "id": "h38",
+      "split": "holdout",
+      "blind": true,
+      "file": "h38-clothing-care-label.jpg",
+      "sha256": "957a9cc15da49312277796126be225e0ee653f3316578c12d626fa43fbe9561b",
+      "width": 350,
+      "height": 350,
+      "source": {
+        "repo": "PaddlePaddle/PaddleOCR",
+        "path": "doc/imgs/00009282.jpg",
+        "commit": "8cce9b6fd7ccb50226d0c38f94054d81c29b8184",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/8cce9b6fd7ccb50226d0c38f94054d81c29b8184/doc/imgs/00009282.jpg"
+      }
+    },
+    {
+      "id": "h39",
+      "split": "holdout",
+      "blind": true,
+      "file": "h39-sign-blue-plaque.jpg",
+      "sha256": "b3b83c612a0e05196b15ccf503563711267766cc6a47b5622c44e102ac4c6a92",
+      "width": 460,
+      "height": 276,
+      "source": {
+        "repo": "open-mmlab/mmocr",
+        "path": "demo/demo_text_det.jpg",
+        "commit": "966296f26ac34cf0e96d40ab4a0a94c9a697909a",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmocr/966296f26ac34cf0e96d40ab4a0a94c9a697909a/demo/demo_text_det.jpg"
+      }
+    },
+    {
+      "id": "h40",
+      "split": "holdout",
+      "blind": true,
+      "file": "h40-sign-mall-bank-ad.jpg",
+      "sha256": "2f9b4aa42b2dc9687dcc61a188395c0027d2e54dcacf0b059e919a6ff16d05a6",
+      "width": 727,
+      "height": 610,
+      "source": {
+        "repo": "open-mmlab/mmocr",
+        "path": "demo/demo_text_ocr.jpg",
+        "commit": "966296f26ac34cf0e96d40ab4a0a94c9a697909a",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmocr/966296f26ac34cf0e96d40ab4a0a94c9a697909a/demo/demo_text_ocr.jpg"
+      }
+    },
+    {
+      "id": "h41",
+      "split": "holdout",
+      "blind": true,
+      "file": "h41-sign-bank-bilingual.jpg",
+      "sha256": "e3766e72d161d38bf3893fcff94dbcde348dadf03a8f88f7ebf637d5a6f5831c",
+      "width": 489,
+      "height": 375,
+      "source": {
+        "repo": "PaddlePaddle/PaddleOCR",
+        "path": "doc/imgs/00207393.jpg",
+        "commit": "8cce9b6fd7ccb50226d0c38f94054d81c29b8184",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/8cce9b6fd7ccb50226d0c38f94054d81c29b8184/doc/imgs/00207393.jpg"
+      }
+    },
+    {
+      "id": "h42",
+      "split": "holdout",
+      "blind": true,
+      "file": "h42-concert-cjk-projection.jpg",
+      "sha256": "7ff1952cad052d1b0f3d29e0b3a4db4b80ce59e1a823b014c5ecfcdcbacdedd5",
+      "width": 1152,
+      "height": 648,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/19.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/19.jpg"
+      }
+    },
+    {
+      "id": "h43",
+      "split": "holdout",
+      "blind": true,
+      "file": "h43-vehicle-concept-legible-maker.jpg",
+      "sha256": "540a60ec65be87ea4de270532196dcd6e2c2c524555db160ec4dcc21b5b1006a",
+      "width": 1200,
+      "height": 750,
+      "source": {
+        "repo": "InternLM/InternLM-XComposer",
+        "path": "examples/cars3.jpg",
+        "commit": "0f70c3e3911189de1869396b4017714c31821e3a",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/InternLM/InternLM-XComposer/0f70c3e3911189de1869396b4017714c31821e3a/examples/cars3.jpg"
+      }
+    },
+    {
+      "id": "h44",
+      "split": "holdout",
+      "blind": true,
+      "file": "h44-vehicle-pickup-nobadge.jpg",
+      "sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "width": 1800,
+      "height": 1200,
+      "source": {
+        "repo": "facebookresearch/sam2",
+        "path": "notebooks/images/truck.jpg",
+        "commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/facebookresearch/sam2/2b90b9f5ceec907a1c18123530e92e794ad901a4/notebooks/images/truck.jpg"
+      }
+    },
+    {
+      "id": "h45",
+      "split": "holdout",
+      "blind": true,
+      "file": "h45-sport-football-sponsor.jpg",
+      "sha256": "90fad7bfc9fab88492d9722ea1aa14ee77514d8c10dbda86086bd37d8a05acf0",
+      "width": 640,
+      "height": 480,
+      "source": {
+        "repo": "WongKinYiu/yolov7",
+        "path": "inference/images/image2.jpg",
+        "commit": "a207844b1ce82d204ab36d87d496728d3d2348e7",
+        "license": "GPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/WongKinYiu/yolov7/a207844b1ce82d204ab36d87d496728d3d2348e7/inference/images/image2.jpg"
+      }
+    },
+    {
+      "id": "h46",
+      "split": "holdout",
+      "blind": true,
+      "file": "h46-sport-basketball-adversarial.jpg",
+      "sha256": "71d918cc474c72bbd8efca98c81716e47b6347b45ccb4e7a5c08200515aa0f55",
+      "width": 736,
+      "height": 770,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/16.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/16.jpg"
+      }
+    },
+    {
+      "id": "h47",
+      "split": "holdout",
+      "blind": true,
+      "file": "h47-people-formal-wear.jpg",
+      "sha256": "fb0f943cc1b027c64e5dbbc486b1d62d431244565e68b730e2ff8264d51116db",
+      "width": 640,
+      "height": 536,
+      "source": {
+        "repo": "WongKinYiu/yolov7",
+        "path": "inference/images/image1.jpg",
+        "commit": "a207844b1ce82d204ab36d87d496728d3d2348e7",
+        "license": "GPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/WongKinYiu/yolov7/a207844b1ce82d204ab36d87d496728d3d2348e7/inference/images/image1.jpg"
+      }
+    },
+    {
+      "id": "h48",
+      "split": "holdout",
+      "blind": true,
+      "file": "h48-clothing-sneaker-nologo.png",
+      "sha256": "135f1c68d06b36a92a3174785890154a35cfc36bb60d03480306c64e6a38e0ff",
+      "width": 736,
+      "height": 736,
+      "source": {
+        "repo": "lllyasviel/ControlNet",
+        "path": "test_imgs/shose.png",
+        "commit": "ed85cd1e25a5ed592f7d8178495b4483de0331bf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/lllyasviel/ControlNet/ed85cd1e25a5ed592f7d8178495b4483de0331bf/test_imgs/shose.png"
+      }
+    },
+    {
+      "id": "h49",
+      "split": "holdout",
+      "blind": true,
+      "file": "h49-blurred-motion-street.jpg",
+      "sha256": "71cf8e7d24ab067920473a4ce0b5e440c12bb0dd9c2ef6373e2474c796678e2e",
+      "width": 1280,
+      "height": 720,
+      "source": {
+        "repo": "megvii-research/NAFNet",
+        "path": "demo/blurry.jpg",
+        "commit": "2b4af71ebe098a92a75910c233a3965a3e93ede4",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/megvii-research/NAFNet/2b4af71ebe098a92a75910c233a3965a3e93ede4/demo/blurry.jpg"
+      }
     }
   ]
 }

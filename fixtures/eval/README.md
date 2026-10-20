@@ -17,8 +17,8 @@ fixtures/eval/
     FREEZE.md        the freeze procedure for the blind split
     freeze.json      sha256 of every held-out label and manifest entry (checked by labels.test.ts),
                      plus the blind_run record that consumes the split (scripts/eval/freeze.ts)
-  golden-v3/         round 2: every golden-v2 photo as tune (h14-h29 included), h26 label fixed;
-                     no held-out split yet (a fresh blind h30+ split is added before any photo role qualifies)
+  golden-v3/         round 2: tune = every golden-v2 photo (h14-h29 included), h26 label fixed;
+                     held-out = h30-h49 (fresh blind split; FREEZE.md, freeze.json as in golden-v2)
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -80,10 +80,11 @@ fixtures/eval/
   `split: "tune"`, except that h26's expected "Classic roadster" pattern is
   anchored to the body type (the unanchored "roadster" counted "MG MGA roadster",
   a make read off the shape, as label-good); h26's `history` records the change.
-  golden-v2 and its frozen files are not edited. golden-v3 has no held-out split
-  and no `freeze.json` yet, and the photo roles still require golden-v2, so no
-  photo role qualifies until a fresh blind split (`h30`+) is labelled, frozen
-  and bound as `FREEZE.md` describes.
+  golden-v2 and its frozen files are not edited. The fresh blind held-out split
+  `h30`–`h49` was added on `r2/blind` and merged into this tune set (see
+  "golden-v3 blind split" below); no photo role qualifies until golden-v3 is
+  bound for the photo roles and its blind split is run once, as
+  `golden-v3/FREEZE.md` describes.
 - **Version bumps and the binding.** Editing a label, the manifest,
   `thresholds.json`, a scorer, a text fixture or prompt builder, or any guard
   rule changes `EVAL_BINDING` (`pnpm eval:binding`; the test suite fails until
@@ -165,3 +166,19 @@ verifier can only contest a claim, never remove it; how Tune uses them is in
 docs/requalification-plan.md). `eval:live --roles ...,vision_verify` stores
 the verifier's reply with each recording, and `eval:replay --verifier both`
 scores the same readings with and without it.
+
+## golden-v3 blind split (round 2)
+
+`golden-v3/` adds a fresh blind held-out split `h30`–`h49` (20 photos from 12
+repositories that golden-v1 and golden-v2 never used) to the round-2 tune set
+(`p01`–`p15`, `h01`–`h29`, all tune). It covers food dishes (one with a legible
+brand), a café table whose overlaid text is a prompt injection, home
+interiors, ceramics and painted metalwork, a garment care label (brand and
+Chinese text), Latin and Chinese signage, a commemorative plaque that names a
+person only in text (standing in for a museum label), a concert with a
+Chinese-text projection, vehicles with and without a legible maker, sport with
+players, two real well-known people, two private people in formal wear, a
+sneaker without a legible logo and a motion-blurred unusable photo. Labels
+were written before any model saw the photos and are frozen
+(`golden-v3/freeze.json`, procedure in `golden-v3/FREEZE.md`); no person is
+named. The photos and `SOURCES.md` live outside git (`blind-v3/`).

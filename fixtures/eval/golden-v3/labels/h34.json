@@ -1,0 +1,67 @@
+{
+  "id": "h34",
+  "split": "holdout",
+  "file": "h34-interior-living-room.jpg",
+  "subject_domains": [
+    "interior"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [],
+  "acceptable": [
+    {
+      "pattern": "paint[- ]splatter (rug|carpet)|splatter rug|colou?rful rug|area rug|rug",
+      "generic": true
+    },
+    {
+      "pattern": "bookcase|bookshelf|books|sofa|couch|slipcover|coffee table|pouf|ottoman|television|\\btv\\b|flowers|vase|lilies|dining table|living room|studio apartment|apartment",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "ikea|billy|ektorp|\\black\\b|kallax|hemnes",
+      "why": "no label or brand is visible; furniture models from shape are forbidden",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "nemo|finding nemo|pixar|disney|dory",
+      "why": "a clownfish cushion is not a film reference; no title or logo is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "pollock|abstract expressionis",
+      "why": "a paint-splatter rug is not a work or style of a named painter"
+    },
+    {
+      "pattern": "mid-century|scandinavian|art deco|bohemian|boho|japandi|industrial|victorian|hygge",
+      "why": "nothing in the room supports a named interior style"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Small apartment living room: tall black bookcase full of unreadable book spines with figurines on top, white slipcovered sofa with a clownfish cushion, black coffee table, green pouf, flat TV, a paint-splatter rug, striped sofa in front, flowers on a dining table behind. Restraint case: no expected reference. Book spines are not legible at 768 px."
+}

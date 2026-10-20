@@ -166,15 +166,23 @@ describe('golden-v3 (fixtures/eval/golden-v3): round-2 tune labels', () => {
   const v2Dir = path.join(root, 'fixtures/eval/golden-v2');
   const v3Dir = path.join(root, 'fixtures/eval/golden-v3');
 
-  it('is golden-v2 with every photo in tune (h14-h29 joined after their failed blind run), and no blind split yet', async () => {
+  it('tunes on golden-v2 with every photo in tune (h14-h29 joined after their failed blind run); only h30+ is held out', async () => {
     const v2 = await loadGoldenSet(v2Dir);
     const v3 = await loadGoldenSet(v3Dir);
     expect(v3.manifest.version).toBe('golden-v3');
-    expect(v3.manifest.photos.every((p) => p.split === 'tune' && p.blind === undefined)).toBe(true);
+    const tune = v3.manifest.photos.filter((p) => p.split === 'tune');
+    const v2Ids = new Set(v2.manifest.photos.map((p) => p.id));
+    expect(tune.every((p) => p.blind === undefined)).toBe(true);
+    // Every golden-v2 photo is in tune, and nothing else is: the held-out split is only the fresh h30+ photos.
+    expect(tune.map((p) => p.id)).toEqual([...v2Ids]);
+    expect(v3.manifest.photos.filter((p) => p.split !== 'tune').every((p) => !v2Ids.has(p.id) && Number(p.id.slice(1)) >= 30)).toBe(true);
     // Same photos, files, hashes and sources; only the split (and the held-out blind flag) differ.
-    expect(v3.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest)).toEqual(v2.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest));
-    expect(await loadFreezeRecord(v3Dir)).toBeNull();
+    expect(tune.map(({ split: _s, blind: _b, ...rest }) => rest)).toEqual(v2.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest));
+    // The freeze record covers only the h30+ held-out split (golden-v3/FREEZE.md), never a tune photo.
+    const freeze = await loadFreezeRecord(v3Dir);
+    expect(Object.keys(freeze?.photos ?? {}).filter((id) => v2Ids.has(id))).toEqual([]);
     for (const [id, l3] of v3.labels) {
+      if (!v2Ids.has(id)) continue;
       const l2 = v2.labels.get(id)!;
       expect(l3.split).toBe('tune');
       if (id === 'h26') continue;
@@ -295,5 +303,82 @@ describe('entry matching', () => {
     expect(entryMatches(entries[0]!, 'Madrid', 'exact')).toBe(false);
     expect(entryMatches(entries[0]!, 'Madrid', 'fuzzy')).toBe(true);
     expect(entryMatches({ name: '愚园路', aliases: [], generic: false }, '愚园路')).toBe(true);
+  });
+});
+
+describe('golden-v3 (fixtures/eval/golden-v3): round-2 blind held-out set h30+', () => {
+  const v2Dir = path.join(root, 'fixtures/eval/golden-v2');
+  const v3Dir = path.join(root, 'fixtures/eval/golden-v3');
+  const ids = (prefix: string, from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => `${prefix}${String(from + i).padStart(2, '0')}`);
+
+  it('tunes on every golden-v2 photo and holds out 16-20 fresh photos h30+, blind until a failed blind run', async () => {
+    const { manifest, labels } = await loadGoldenSet(v3Dir);
+    expect(manifest.version).toBe('golden-v3');
+    expect(labels.size).toBe(manifest.photos.length);
+    const consumed = blindConsumed(await loadFreezeRecord(v3Dir));
+    const tune = manifest.photos.filter((p) => p.split === 'tune');
+    const holdout = manifest.photos.filter((p) => p.split === 'holdout');
+    expect(tune.map((p) => p.id)).toEqual([...ids('p', 1, 15), ...ids('h', 1, 29)]);
+    expect(tune.every((p) => p.blind === undefined)).toBe(true);
+    expect(holdout.length).toBeGreaterThanOrEqual(16);
+    expect(holdout.length).toBeLessThanOrEqual(20);
+    expect(holdout.map((p) => p.id)).toEqual(ids('h', 30, 29 + holdout.length));
+    for (const p of holdout) {
+      expect(p.blind).toBe(!consumed);
+      expect(p.source.raw_url).toContain(`/${p.source.repo}/${p.source.commit}/`);
+      expect(labels.get(p.id)!.split).toBe('holdout');
+    }
+  });
+
+  it('uses only photos and repositories that no earlier golden set used', async () => {
+    const earlier = [await loadGoldenSet(goldenDir), await loadGoldenSet(v2Dir)];
+    const hashes = new Set(earlier.flatMap((g) => g.manifest.photos.map((p) => p.sha256)));
+    const repos = new Set(earlier.flatMap((g) => g.manifest.photos.map((p) => p.source.repo.toLowerCase())));
+    const v3 = await loadGoldenSet(v3Dir);
+    const holdout = v3.manifest.photos.filter((x) => x.split === 'holdout');
+    expect(holdout.length).toBeGreaterThan(0);
+    for (const p of holdout) {
+      expect(hashes.has(p.sha256), p.id).toBe(false);
+      expect(repos.has(p.source.repo.toLowerCase()), `${p.id} ${p.source.repo}`).toBe(false);
+    }
+  });
+
+  it('covers the cases the round-2 blind set must test', async () => {
+    const { labels } = await loadGoldenSet(v3Dir);
+    const blind = [...labels.values()].filter((l) => l.split === 'holdout');
+    type L = (typeof blind)[number];
+    const has = (fn: (l: L) => boolean) => blind.some(fn);
+    const brandWithoutText = (l: L) => l.forbidden.some((f) => f.class === 'brand_without_text');
+    const readBrand = (l: L) => [...l.expected, ...l.acceptable].some((e) => e.type === 'brand' && !!e.requires_text);
+    const nonLatin = (t: string) => /[^\p{Script=Latin}\p{N}\p{P}\p{S}\s]/u.test(t);
+    expect(blind.filter((l) => l.allowed_categories.includes('eat')).length).toBeGreaterThanOrEqual(2); // food dishes
+    expect(blind.filter((l) => l.subject_domains.includes('interior')).length).toBeGreaterThanOrEqual(2); // home and café interiors
+    expect(blind.filter((l) => l.subject_domains.includes('craft')).length).toBeGreaterThanOrEqual(2); // ceramics, painted metalwork
+    expect(has((l) => l.subject_domains.includes('signage') && l.must_read_text.some((t) => !nonLatin(t)))).toBe(true);
+    expect(has((l) => l.subject_domains.includes('signage') && l.must_read_text.some(nonLatin))).toBe(true);
+    // A plaque read like a museum label: a person named only by legible text, never shown.
+    expect(has((l) => l.subject_domains.includes('signage') && !l.people.present && l.expected.some((e) => e.type === 'creator' && !!e.requires_text))).toBe(true);
+    expect(has((l) => l.subject_domains.includes('vehicle') && l.expected.some((e) => e.type === 'brand') && l.must_read_text.length > 0)).toBe(true);
+    expect(has((l) => l.subject_domains[0] === 'vehicle' && brandWithoutText(l) && !l.must_read_text.length)).toBe(true);
+    expect(has((l) => l.subject_domains.includes('fashion') && readBrand(l) && l.must_read_text.length > 0)).toBe(true); // legible logo
+    expect(has((l) => l.subject_domains.includes('fashion') && brandWithoutText(l) && !readBrand(l))).toBe(true); // no legible logo
+    // Sport with players: roles are forbidden on more than one photo.
+    expect(blind.filter((l) => l.subject_domains.includes('sport') && l.people.present && l.forbidden.some((f) => f.class === 'role_inference')).length).toBeGreaterThanOrEqual(2);
+    expect(has((l) => l.people.present && l.forbidden.some((f) => f.class === 'person_identity') && l.forbidden.some((f) => f.class === 'role_inference'))).toBe(true);
+    expect(has((l) => l.people.present && l.forbidden.some((f) => f.field === 'observations' && f.class === 'person_descriptor'))).toBe(true);
+    // An unusable photo, and a photo whose text is a prompt injection that must never be obeyed.
+    expect(has((l) => !l.quality.usable && l.forbidden_classes.includes('unusable_with_candidates'))).toBe(true);
+    expect(has((l) => l.forbidden.some((f) => f.field === 'text' && /injection/i.test(f.why)))).toBe(true);
+    for (const l of blind) expect(l.must_not_read_text.every((p) => !l.must_read_text.some((t) => new RegExp(p, 'iu').test(t)))).toBe(true);
+  });
+
+  it('the held-out labels and manifest entries are exactly the frozen ones (golden-v3/FREEZE.md)', async () => {
+    const { freeze, violations } = await checkFreeze(v3Dir);
+    expect(freeze?.golden_set).toBe('golden-v3');
+    expect(freeze?.model_runs_before_freeze).toBe(0);
+    expect(violations).toEqual([]);
+    // Frozen before any model run: no blind run is recorded yet (FREEZE.md step 5 adds one, once).
+    expect(freeze?.blind_run).toBeUndefined();
   });
 });
