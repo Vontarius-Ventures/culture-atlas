@@ -48,9 +48,9 @@ export const PHOTO_GOLDEN_SETS = ['golden-v1', 'golden-v2', 'golden-v3', 'golden
 export const BOUND_CODE: Record<string, readonly string[]> = {
   'golden-v1': PHOTO_CODE,
   'golden-v2': PHOTO_CODE,
-  // The round-2 requalification set (docs/requalification-plan.md): the photo roles qualify only on it.
+  // The round-2 requalification set (docs/requalification-plan.md); its blind split is consumed.
   'golden-v3': PHOTO_CODE,
-  // The round-3 tune set (docs/requalification-plan.md, round 3 item 3).
+  // The round-3 requalification set (docs/requalification-plan.md, round 3): the photo roles qualify only on it.
   'golden-v4': PHOTO_CODE,
   'text-v1': [
     'scripts/eval/text-scorer.ts',

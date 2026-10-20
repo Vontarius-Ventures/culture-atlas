@@ -141,13 +141,13 @@ export type CatalogSnapshot = z.infer<typeof CatalogSnapshotSchema>;
  * transport-only qualification until a golden set exists for them.
  */
 export const REQUIRED_GOLDEN_SET: Partial<Record<ModelRole, string>> = {
-  // golden-v3 (docs/requalification-plan.md, round 2): tune = p01-p15 + h01-h29, blind held-out = h30-h49, frozen in
-  // fixtures/eval/golden-v3/FREEZE.md. Artifacts scored on golden-v1 or golden-v2 (whose blind split a failed
-  // blind run consumed) no longer qualify a photo role.
-  vision_photo: 'golden-v3',
-  vision_photo_enrich: 'golden-v3',
+  // golden-v4 (docs/requalification-plan.md, round 3): tune = p01-p15 + h01-h49, blind held-out = h50-h79, frozen in
+  // fixtures/eval/golden-v4/FREEZE.md. Artifacts scored on golden-v1, golden-v2 or golden-v3 (whose blind splits
+  // failed blind runs consumed) no longer qualify a photo role.
+  vision_photo: 'golden-v4',
+  vision_photo_enrich: 'golden-v4',
   // The verifier is a photo role: it qualifies only on the same golden set, the same binding and a blind held-out split.
-  vision_verify: 'golden-v3',
+  vision_verify: 'golden-v4',
   research_text: 'text-v1',
   composer: 'text-v1',
 };

@@ -285,7 +285,7 @@ export async function qualifyProfile(
     /** vision_video_frame and text roles: the fixture directory. Photo roles use `golden` instead. */
     fixturesDir?: string;
     /**
-     * Photo roles (required): the golden set (fixtures/eval/golden-v3 since requalification round 2) and the
+     * Photo roles (required): the golden set (fixtures/eval/golden-v4 since requalification round 3) and the
      * directory holding its photos outside git. Every photo of both splits is
      * hash-checked before any request; outputs are scored in memory against
      * the live gates and never written.
