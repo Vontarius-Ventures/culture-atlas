@@ -1,0 +1,80 @@
+{
+  "id": "h67",
+  "split": "tune",
+  "file": "h67-vehicle-roadster-model-badge.jpg",
+  "subject_domains": [
+    "vehicle",
+    "place"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Z4",
+      "pattern": "^z4( roadster| convertible| coupe)?$",
+      "type": "brand",
+      "requires_text": "Z4"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "BMW",
+      "pattern": "\\bbmw\\b",
+      "type": "brand",
+      "requires_text": "BMW",
+      "note": "the roundel on the boot lid is a logo whose letters are not legible at 768 px; 'BMW' (and 'BMW Z4') count only when read"
+    },
+    {
+      "name": "California",
+      "pattern": "california",
+      "type": "place",
+      "requires_text": "California"
+    },
+    {
+      "pattern": "roadster|convertible|hardtop convertible|retractable hardtop|sports car|two-seater|champagne|beige|silver|alloy wheels|twin exhausts|hillside|canyon road|mountain road|winding road",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\b(z3|z8|e89|sdrive\\s?\\d+i|35is?|30i|m roadster|mercedes|slk|audi|tt|porsche|boxster|mazda|mx-?5|miata)\\b",
+      "why": "only the 'Z4' badge is legible; trim, generation or another maker is read off the shape",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "los angeles|malibu|mulholland|angeles crest|pacific coast highway|big sur|san francisco",
+      "why": "the plate says California; no text names a road or city"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "Z4"
+  ],
+  "must_not_read_text": [
+    "6\\s?GQR\\s?959",
+    "GQR\\s?959"
+  ],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A champagne-coloured hardtop roadster from the rear three-quarter, driving on a road below a dry hillside. The boot-lid badge 'Z4' is legible; the maker roundel is a logo. A California licence plate is legible: the state name may be read, the plate number must not be transcribed (must_not_read_text). A driver is barely visible through the glass (not a subject)."
+}

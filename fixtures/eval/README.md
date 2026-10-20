@@ -21,6 +21,9 @@ fixtures/eval/
                      held-out = h30-h49 (no longer blind: its blind run failed; FREEZE.md, freeze.json as in golden-v2)
   golden-v4/         round 3: tune = every golden-v3 photo, label fixes on h31, h43, h46, h01;
                      held-out = h50-h79 (no longer blind: its blind run failed; FREEZE.md, freeze.json as in golden-v2)
+  golden-v5/         round 4: tune = every golden-v4 photo (p01-p15, h01-h79, 94 photos); the person-descriptor
+                     "tall"/"height" patterns scoped to people (14 labels, each in its history); no held-out split
+                     yet: the fresh blind split h80+ is added and frozen before any photo role can qualify
   replay-v1/         hand-written synthetic readings (FIXTURE- ids) used by CI
   text-v1/           text-role prompts and content checks (owned by the text package, §8)
 ```
@@ -104,8 +107,12 @@ fixtures/eval/
   decision 1). h26 in golden-v3 is the second (its roadster pattern, round 2);
   h31, h43, h46 and h01 in golden-v4 follow (round 3); h31 has a second
   entry from round-3 Tune (its alias "Pizza" matched "Neapolitan-style pizza"
-  by name similarity, so the first fix had no effect). Only tune labels are
-  edited this way; held-out labels are frozen.
+  by name similarity, so the first fix had no effect). golden-v5 (round 4)
+  scopes the person-descriptor words "tall" and "height" to people on h27,
+  h29, h46 and h54, h65, h69-h76, h79 (the consumed h50-h79 labels, now tune):
+  the unscoped words matched "a tall exhaust stack", "tall dry grasses" and "a
+  tall pole" in the round-3 blind run. Only tune labels are edited this way;
+  held-out labels are frozen.
 - **thr-v2** (docs/requalification-plan.md decisions 3 and 4). `two_stage_only`
   lists the metrics gated only on a two-stage scorecard (M5, M9): a split
   scored on stage 1 alone reports them but is gated on M15 ≥ 0.60 for

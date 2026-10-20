@@ -1,0 +1,76 @@
+{
+  "id": "h19",
+  "split": "tune",
+  "file": "h19-craft-ceramic-head.jpg",
+  "subject_domains": [
+    "craft",
+    "art"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Pre-Columbian art",
+      "pattern": "pre-?columbian|precolumbian",
+      "aliases": [
+        "Pre-Columbian ceramics"
+      ],
+      "type": "tradition"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "mesoamerica|ancient americas?|ancient mexic"
+    },
+    {
+      "pattern": "terra-?cotta|earthenware|ceramic|pottery|\\bclay\\b"
+    },
+    {
+      "pattern": "ear ?(spools?|flares?|ornaments?)"
+    },
+    {
+      "pattern": "\\bhead\\b|\\bface\\b|figur(e|ine)|effigy|sculpture|vessel|whistle|rattle",
+      "generic": true
+    },
+    {
+      "pattern": "museum (object|artifact|piece)|archaeolog|artifact|antiquit"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "chin(a|ese)|japan(ese)?|haniwa|jomon|korea|egypt|greek|greece|\\broman\\b|etruscan|celtic|\\btang\\b|han dynasty|\\bming\\b|\\bnok\\b|benin|yoruba|african|\\bindia\\b|indus",
+      "why": "the ear spools and modelling are of the ancient Americas; no Old World tradition is evidenced"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Museum-style photo of a small ceramic head with ear spools on a plain ground. The repository does not state the culture: the label expects only Pre-Columbian and leaves specific cultures (Veracruz, Maya, West Mexico, Ecuador...) unlabelled. A faint ink catalogue number on the forehead is not legible at 768 px."
+}

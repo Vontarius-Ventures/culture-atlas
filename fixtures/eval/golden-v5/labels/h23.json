@@ -1,0 +1,99 @@
+{
+  "id": "h23",
+  "split": "tune",
+  "file": "h23-sign-road-japan.jpg",
+  "subject_domains": [
+    "place",
+    "signage",
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "ENEOS",
+      "pattern": "eneos",
+      "type": "brand",
+      "requires_text": "ENEOS"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Michelin",
+      "pattern": "michelin",
+      "type": "brand",
+      "requires_text": "MICHELIN"
+    },
+    {
+      "name": "Asahi Shimbun",
+      "pattern": "asahi",
+      "type": "brand",
+      "requires_text": "朝日"
+    },
+    {
+      "pattern": "瀬田|\\bseta\\b",
+      "type": "place",
+      "requires_text": "瀬田"
+    },
+    {
+      "pattern": "housing (plaza|exhibition|park)|model homes?|ハウジングプラザ|住宅展示場",
+      "requires_text": "ハウジングプラザ"
+    },
+    {
+      "pattern": "^japan$|japanese (road|street|highway|city|suburb|signage|traffic)|street in japan",
+      "type": "place"
+    },
+    {
+      "pattern": "car (carrier|transporter)|auto transporter|vehicle transporter|car[- ]carrying truck",
+      "generic": true
+    },
+    {
+      "pattern": "(gas|petrol|filling|service) station|tyre|tire (shop|store)|traffic|arterial road|highway|median|kei car|minivan|pickup|truck|taxi|overpass|pedestrian bridge",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "chin(a|ese)|korea|taiwan",
+      "why": "the signs are Japanese"
+    },
+    {
+      "pattern": "shell|esso|exxon|mobil|idemitsu|cosmo|apollostation|showa",
+      "why": "the fuel sign reads ENEOS",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "toyota|nissan|honda|mazda|subaru|suzuki|daihatsu|mitsubishi|lexus|isuzu|hino|fuso|bridgestone|yokohama|dunlop",
+      "why": "no vehicle or tyre badge other than MICHELIN is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "ENEOS"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Arterial road seen from a footbridge: an ENEOS sign (250m先), a yellow banner ハウジングプラザ瀬田 50m先, a vertical MICHELIN sign, a car-carrier truck. 瀬田 exists in more than one prefecture, so no city is labelled."
+}

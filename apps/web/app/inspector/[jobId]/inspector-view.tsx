@@ -75,6 +75,11 @@ export const DECISION_NOTE_LABEL: Record<string, string> = {
   context_only: 'Kept private: rests only on context, with nothing to confirm it',
   people_claim: 'Kept private: a claim about the people in the photo that no text in it backs',
   read_maker_text_only: 'Text-only reference: the maker is read in the photo, the full model name is not',
+  // guard-v11 (round 4): hold until confirmed, read model, a work named by its form.
+  held_people_present: 'Held for the second reading: a style or tradition on a photo with people',
+  held_context_only: 'Held for the second reading: rests only on context',
+  read_model_text_only: 'Text-only reference: the model name is read in the photo, the maker is not',
+  work_title_by_form: 'Shown after the second reading supported it: a well-known work named by its form',
   verifier_no: 'Verifier: not supported by the photo; not shown',
   verifier_unsure: 'Verifier: unsure; not shown',
   verifier_unanswered: 'Verifier: no answer for this claim; not shown',

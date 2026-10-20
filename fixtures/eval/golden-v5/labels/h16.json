@@ -1,0 +1,70 @@
+{
+  "id": "h16",
+  "split": "tune",
+  "file": "h16-food-espresso.png",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Espresso",
+      "pattern": "espresso",
+      "aliases": [
+        "Caffè espresso"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "\\bcoffee\\b|caff[eè]|crema"
+    },
+    {
+      "pattern": "italian (coffee|espresso|caf[eé]|bar)|coffee culture|coffee (bar|house|shop)|caf[eé] culture"
+    },
+    {
+      "pattern": "demitasse|saucer|teaspoon|spoon|\\bcup\\b|wooden (table|counter)",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "cappuccino|latte|flat white|macchiato|cortado|americano|turkish coffee|\\btea\\b",
+      "why": "a small cup of black espresso with crema; no milk foam"
+    },
+    {
+      "pattern": "illy|lavazza|starbucks|nespresso|costa|segafredo|kimbo|pikolo",
+      "why": "the cup and saucer carry no brand and no text names the bar",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "scikit-image documents this photo as courtesy of a named espresso bar (CC0); no text in the frame names it, so the bar may not be named."
+}

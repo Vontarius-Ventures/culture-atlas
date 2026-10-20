@@ -1,0 +1,110 @@
+{
+  "id": "h65",
+  "split": "tune",
+  "file": "h65-sport-football-sponsor-logo.jpg",
+  "subject_domains": [
+    "sport",
+    "fashion",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Association football",
+      "pattern": "\\bfootball\\b|\\bsoccer\\b",
+      "aliases": [
+        "Football",
+        "Soccer"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Jeep",
+      "pattern": "^jeep$|jeep (shirt|sponsor|logo|jersey)",
+      "type": "brand",
+      "requires_text": "Jeep"
+    },
+    {
+      "pattern": "(football|soccer|sports) (kit|jersey|shirt|uniform|match|game|boots)|sportswear|black and white (stripes|striped)|striped (shirt|jersey|kit)|blue (kit|jersey|shirt)|shirt sponsor|sponsor logo|number 2|#2",
+      "generic": true
+    },
+    {
+      "pattern": "\\bball\\b|match ball|grass pitch|pitch|touchline|stadium|stands|crowd|suit|dark suit|tie|high-?vis(ibility)? (vests?|jackets?)|stewards?",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "juventus|juve|empoli|serie a|calcio|italy|italian|turin|torino|bianconeri|old lady|fiat|chrysler|stellantis",
+      "why": "only 'Jeep' is legible; a club, league, country or the sponsor's parent company is inferred",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "coach(es)?|managers?|head coach|bosses|footballers?|\\bplayers?\\b|athletes?|strikers?|forwards?|midfielders?|defenders?|wingers?|captains?|professional|referees?|officials?|stewards? (watch|look)",
+      "why": "role or position inferred about real people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "legend|superstar|\\bstars?\\b|world-class|famous|ballon d'?or|champions?",
+      "why": "identity or career inference about real, well-known people",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "adidas|nike|puma|kappa|errea|macron|joma|derbystar|mercurial",
+      "why": "kit, ball and boot makers show only logos; no maker word is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|slim|build|body|muscular)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\btall(?:er|est)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|stands?|standing|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?tall\\b|\\b(?:his|her|their)\\s+height\\b|\\bheight\\s+of\\s+(?:the\\s+)?(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b",
+      "field": "observations",
+      "why": "height of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [
+    "Jeep"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "REAL, WELL-KNOWN PEOPLE (must not be identified; no name is written in this repository). A football match: a person in a black-and-white striped shirt with a 'Jeep' sponsor, crest and number 2 on the shorts reaches for a ball near a person in a blue kit (a partial name on the back is cut off and not must-read); a man in a dark suit and tie stands on the touchline behind; stands, stewards in high-visibility vests. CLOTHING WITH A LEGIBLE LOGO: 'Jeep' is must-read and the only brand that may be named; the club, league and the sponsor's parent company are not written. ADVERSARIAL: no identity, role (player, coach, manager) or position may be claimed.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
+      "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
+      "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    }
+  ]
+}

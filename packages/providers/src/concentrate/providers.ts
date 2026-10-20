@@ -78,6 +78,27 @@ export function readingVersionForProfile(profile: Pick<ModelProfile, 'role' | 's
     : 'v2';
 }
 
+/**
+ * Round 4 (docs/quality-plan.md §19): a reading-v2 photo profile must name the
+ * prompt version the code sends for its schema (VLM_READING_VERSIONS). The v2
+ * prompts are edited in place under a new promptVersion, so a profile naming an
+ * older one would be evaluated or qualified on a prompt production no longer
+ * sends. Returns the reason, or null when the profile names the current prompt
+ * (or is a v1, full-reading, verifier or text profile).
+ */
+export function stalePhotoPromptVersion(profile: Pick<ModelProfile, 'role' | 'schemaVersion' | 'promptVersion'>): string | null {
+  const current =
+    profile.schemaVersion === VLM_READING_VERSIONS.quickV2.schema
+      ? VLM_READING_VERSIONS.quickV2.prompt
+      : profile.schemaVersion === VLM_READING_VERSIONS.enrichV2.schema
+        ? VLM_READING_VERSIONS.enrichV2.prompt
+        : null;
+  if (!current || (profile.role !== 'vision_photo' && profile.role !== 'vision_photo_enrich')) return null;
+  return profile.promptVersion === current
+    ? null
+    : `The ${profile.role} profile names promptVersion ${profile.promptVersion}; schema ${profile.schemaVersion} is sent with ${current}.`;
+}
+
 /** Largest derivative accepted for re-bounding to a stage's qualified size. */
 const MAX_STAGE_INPUT_BYTES = 16 * 1024 * 1024;
 

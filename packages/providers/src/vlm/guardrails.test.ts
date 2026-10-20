@@ -19,7 +19,12 @@ import {
   brandResidue,
   isBrandLike,
   looksLikePlate,
+  namesGarment,
+  peopleShown,
+  readModel,
   sanitizeObservations,
+  sportActivity,
+  titledWork,
   sanitizeVisibleText,
   stage2Request,
   type GuardDecision,
@@ -98,7 +103,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v10');
+    expect(GUARDRAIL_VERSION).toBe('guard-v11');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -380,9 +385,12 @@ describe('G-DEPICTED on a named place or work seen on context only (guard-v2)', 
       ]),
       { twoStage: true },
     );
-    expect(names(g.held)).toEqual(['Fixture Road']);
-    expect(decisionFor(g.decisions, 'Fixture Road')).toMatchObject({ action: 'hold', rules: ['G-DEPICTED'] });
-    expect(g.analysis.candidates.map((c) => [c.name, c.relation])).toEqual([['Fixture neon style', 'resembles']]);
+    // guard-v11: the style rests on context alone, so it is held for stage 2 too (G-EVIDENCE), downgraded to a resemblance.
+    expect(names(g.held)).toEqual(['Fixture Road', 'Fixture neon style']);
+    expect(decisionFor(g.decisions, 'Fixture Road')).toMatchObject({ action: 'hold', rules: ['G-DEPICTED', 'G-EVIDENCE'] });
+    expect(decisionFor(g.decisions, 'Fixture neon style')).toMatchObject({ action: 'hold', rules: ['G-DEPICTED', 'G-EVIDENCE'], note: 'held_context_only' });
+    expect(g.held.map((c) => [c.name, c.relation])).toEqual([['Fixture Road', 'resembles'], ['Fixture neon style', 'resembles']]);
+    expect(g.analysis.candidates).toEqual([]);
     const s2 = stage2(
       g,
       enrichment({
@@ -396,7 +404,9 @@ describe('G-DEPICTED on a named place or work seen on context only (guard-v2)', 
     expect(decisionFor(s2.decisions, 'Fixture Avenue')).toMatchObject({ action: 'observe', note: 'context_only' });
     expect(decisionFor(s2.decisions, 'Fixture Avenue')!.rules).toContain('G-EVIDENCE');
     expect(decisionFor(s2.decisions, 'Fixture Road')).toMatchObject({ action: 'drop' });
-    expect(names(s2.analysis.candidates)).toEqual(['Fixture neon style', 'Fixture Café']);
+    // Stage 2 gave no verdict on either held claim: neither publishes.
+    expect(decisionFor(s2.decisions, 'Fixture neon style')).toMatchObject({ action: 'drop', note: 'no_confirmation' });
+    expect(names(s2.analysis.candidates)).toEqual(['Fixture Café']);
   });
 });
 
@@ -555,7 +565,8 @@ describe('G-PLACE, G-TEXT-ECHO, G-LOWCERT', () => {
     expect(g.decisions.map((d) => [d.name, d.action, d.rules])).toEqual([
       ['Art Deco', 'hold', ['G-TEXT-ECHO']],
       ['Les Arts Décoratifs', 'publish', ['G-CATEGORY']],
-      ['Haussmannian architecture', 'hold', ['G-LOWCERT']],
+      // guard-v11: a style on context alone is also held as context-only.
+      ['Haussmannian architecture', 'hold', ['G-EVIDENCE', 'G-LOWCERT']],
     ]);
   });
 });
@@ -681,8 +692,9 @@ describe('stage 2: G-VERDICT and G-BRAND-CORROBORATE', () => {
   it('FAST-02: published candidates stay in order; unsupported ones are advisory vetoes only', () => {
     const g = quick([
       v2({ name: 'Road cycling', type: 'tradition', certainty: 0.6, tag_query: 'road cycling', domain: 'sport' }),
-      // A thing domain: guard-v8 holds a tradition with no thing domain as a possible claim about people.
-      v2({ name: 'Porch culture', type: 'tradition', certainty: 0.6, tag_query: 'porch', domain: 'architecture' }),
+      // A thing domain: guard-v8 holds a tradition with no thing domain as a possible claim about people,
+      // and a distinctive form: guard-v11 holds a tradition resting on context alone.
+      v2({ name: 'Porch culture', type: 'tradition', certainty: 0.6, tag_query: 'porch', domain: 'architecture', evidence: 'distinctive_form' }),
     ]);
     const s2 = stage2(
       g,
@@ -877,8 +889,9 @@ describe('guard-v3: G-CUISINE-FOOD and G-CATEGORY do not take the model domain o
 
   it('a domain the name contradicts is replaced by the name\'s own domain ("Bossa Nova" claimed as food plays, never eats)', () => {
     const g = cathedral([
-      v2({ name: 'Bossa Nova', type: 'style', domain: 'food', certainty: 0.6, tag_query: 'bossa nova' }),
-      v2({ name: 'Gothic Revival', type: 'style', domain: 'fashion', certainty: 0.6, tag_query: 'gothic revival' }),
+      // A distinctive form (guard-v11 holds a style on context alone for stage 2).
+      v2({ name: 'Bossa Nova', type: 'style', domain: 'food', certainty: 0.6, tag_query: 'bossa nova', evidence: 'distinctive_form' }),
+      v2({ name: 'Gothic Revival', type: 'style', domain: 'fashion', certainty: 0.6, tag_query: 'gothic revival', evidence: 'distinctive_form' }),
     ]);
     expect(g.analysis.candidates.map((c) => [c.name, c.domain, c.suggested_categories])).toEqual([
       ['Bossa Nova', 'music', ['play']],
@@ -892,11 +905,12 @@ describe('guard-v3: G-CUISINE-FOOD and G-CATEGORY do not take the model domain o
     expect(categoriesFor(style, { domains: new Set(['fashion']) })).toEqual(['wear']);
     // A coat on a person in the title shows clothing.
     const person = guardQuickRead(
-      toVlmAnalysis({ title: 'Woman in a long coat', interpretation: 'A street portrait.', candidates: [v2({ name: 'Fixture look', domain: 'fashion', tag_query: 'fixture look' })], quality: { usable: true, issue: null } }),
+      // A garment named as such: guard-v11 holds other styles on a photo with people for stage 2.
+      toVlmAnalysis({ title: 'Woman in a long coat', interpretation: 'A street portrait.', candidates: [v2({ name: 'Fixture look coat', domain: 'fashion', tag_query: 'fixture look', evidence: 'distinctive_form' })], quality: { usable: true, issue: null } }),
       { twoStage: true },
     );
     expect(person.analysis.candidates[0]!.suggested_categories).toEqual(['wear']);
-    const building = cathedral([v2({ name: 'Fixture look', domain: 'fashion', tag_query: 'fixture look' })]);
+    const building = cathedral([v2({ name: 'Fixture look', domain: 'fashion', tag_query: 'fixture look', evidence: 'distinctive_form' })]);
     expect(building.analysis.candidates[0]!.suggested_categories).toEqual([]);
   });
 
@@ -1559,7 +1573,8 @@ describe('guard-v8: publication by evidence class', () => {
     // Nothing in the quick read shows people, so the occasion waits instead of publishing in the first section.
     expect(names(g.analysis.candidates)).toEqual(['Boutonnière']);
     expect(names(g.held)).toEqual(['Fixture Prom']);
-    expect(decisionFor(g.decisions, 'Fixture Prom')).toMatchObject({ action: 'hold', rules: ['G-PEOPLE-CLAIM'] });
+    // guard-v11: it also rests on context alone (G-EVIDENCE).
+    expect(decisionFor(g.decisions, 'Fixture Prom')).toMatchObject({ action: 'hold', rules: ['G-PEOPLE-CLAIM', 'G-EVIDENCE'] });
     const conf = [
       { name: 'Boutonnière', rationale: 'A white rose on the lapel', verdict: 'supported' as const },
       { name: 'Fixture Prom', rationale: 'Formal wear suggests a dance', verdict: 'supported' as const },
@@ -1814,7 +1829,7 @@ describe('guard-v10: people claims in the headline, read text that names the cla
 
   it("the headline may not repeat a withheld people claim's words, except words a published claim also uses", () => {
     const g = read('Professional fixtureball game', 'A fixtureball game at a ceremonial fixture parade.', [
-      v2({ name: 'Professional fixtureball', type: 'style', domain: 'sport', certainty: 0.8 }),
+      v2({ name: 'Professional fixtureball', type: 'style', domain: 'sport', certainty: 0.8, evidence: 'distinctive_form' }),
       v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'distinctive_form' }),
       v2({ name: 'Ceremonial fixture parade', type: 'tradition', domain: 'other', certainty: 0.6 }),
     ]);
@@ -1833,18 +1848,19 @@ describe('guard-v10: people claims in the headline, read text that names the cla
   });
 
   it('stage 2 re-checks the published headline with the people it shows: a role seen as a role only then is retracted', () => {
-    const g = read('Youth fixtureball batter and catcher', 'A batter swings on a dirt infield.', [
+    // guard-v11: "youth" and "catcher" are people words; this headline has none ("batter" alone can be tempura batter).
+    const g = read('Fixtureball batter at the plate', 'A batter swings on a dirt infield.', [
       v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'distinctive_form' }),
     ]);
-    // Nothing in the quick read is a people word ("batter" alone can be tempura batter): the headline stays.
-    expect(g.analysis.title).toBe('Youth fixtureball batter and catcher');
+    // Nothing in the quick read is a people word: the headline stays.
+    expect(g.analysis.title).toBe('Fixtureball batter at the plate');
     const conf = { confirmed: [{ name: 'Fixtureball', rationale: 'Bat and diamond', verdict: 'supported' as const }] };
     const players = stage2(g, enrichment({ ...conf, observations: [{ text: 'Two players on a dirt infield.', kind: 'object' }] }));
     expect(players.headlineChanged).toBe(true);
     expect([players.analysis.title, players.analysis.interpretation]).toEqual([NEUTRAL_PEOPLE_TITLE, NEUTRAL_PEOPLE_INTERPRETATION]);
     const empty = stage2(g, enrichment({ ...conf, observations: [{ text: 'A bat leans on a fence.', kind: 'object' }] }));
     expect(empty.headlineChanged).toBe(false);
-    expect(empty.analysis.title).toBe('Youth fixtureball batter and catcher');
+    expect(empty.analysis.title).toBe('Fixtureball batter at the plate');
   });
 
   it("read text backs a people claim only when the text names it (review probe: 'Wedding ceremony' read off 'EXIT')", () => {
@@ -1893,5 +1909,168 @@ describe('guard-v10: people claims in the headline, read text that names the cla
     expect(names(shelf.held)).toEqual(['Wedding cake']);
     const cake = stage2(shelf, enrichment({ confirmed: [{ name: 'Wedding cake', rationale: 'Tiers and sugar flowers', verdict: 'supported' }], observations: [{ text: 'Sugar flowers on white tiers.', kind: 'food' }] }));
     expect(names(cake.publishNow)).toEqual(['Wedding cake']);
+  });
+});
+
+/*
+ * guard-v11 (round 4, owner option C "hold until confirmed", docs/quality-plan.md §19). Each rule test fails on
+ * guard-v10: a style, tradition or occasion on a photo with people, and a style, tradition or place resting only on
+ * context, published at stage 1 and stage 2 could not take it back (round-3 blind run: h58, h72, h73, h74). FIXTURE
+ * shapes only.
+ */
+describe('guard-v11: hold until confirmed, people presence by words, read model, naming residue', () => {
+  const read = (title: string, interpretation: string, cands: VlmQuickCandidate[]) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates: cands, quality: { usable: true, issue: null } }), { twoStage: true });
+  const ok = (name: string) => ({ name, rationale: 'Visible', verdict: 'supported' as const });
+  const weak = (name: string) => ({ name, rationale: 'Plausible', verdict: 'weak' as const });
+
+  it('on a photo with people a style or tradition is held whatever its domain; garments, sports named alone, objects and food publish', () => {
+    const g = read('Two men in suits at a table', 'Two men in dark suits share a cake.', [
+      // h74 / h73 shapes without the closed-list words: a tradition filed under food, a sport qualified by a nation.
+      v2({ name: 'Fixture celebration cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' }),
+      v2({ name: 'Brazilian fixtureball', type: 'tradition', domain: 'sport', certainty: 0.6, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture neon signage', type: 'style', domain: 'signage', certainty: 0.7, evidence: 'distinctive_form' }),
+      v2({ name: 'Floral print dress', type: 'style', domain: 'fashion', certainty: 0.5, evidence: 'context' }),
+      v2({ name: 'Fixtureball', type: 'tradition', domain: 'sport', certainty: 0.9, evidence: 'context' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture celebration cake', 'Brazilian fixtureball', 'Fixture neon signage']);
+    expect(decisionFor(g.decisions, 'Fixture celebration cake')).toMatchObject({ action: 'hold', rules: ['G-PEOPLE-CLAIM'], note: 'held_people_present' });
+    expect(names(g.analysis.candidates)).toEqual(['Floral print dress', 'Fixtureball']);
+    const objects = read('A woman at a market stall', 'A woman beside a fruit stall.', [
+      v2({ name: 'White buttercream cake', type: 'cuisine', domain: 'food', certainty: 0.5, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture tram', type: 'object', domain: 'vehicle', certainty: 0.7, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture Market', type: 'place', relation: 'depicted', domain: 'place', certainty: 0.9, evidence: 'read_text', evidence_text: 'FIXTURE MARKET' }),
+    ]);
+    expect(names(objects.analysis.candidates)).toEqual(['White buttercream cake', 'Fixture tram', 'Fixture Market']);
+    expect(objects.held).toEqual([]);
+  });
+
+  it('a held claim publishes only on a supported second reading that passes the stage-2 rules; a hedge retracts nothing shown (FAST-02)', () => {
+    const g = read('Two men in suits at a table', 'Two men in dark suits share a cake.', [
+      v2({ name: 'Fixture celebration cake', type: 'tradition', domain: 'food', certainty: 0.6, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture neon signage', type: 'style', domain: 'signage', certainty: 0.7, evidence: 'distinctive_form' }),
+      v2({ name: 'Floral print dress', type: 'style', domain: 'fashion', certainty: 0.5, evidence: 'context' }),
+    ]);
+    const people = [{ text: 'Two men in dark suits stand at a table.', kind: 'person_style' as const }, { text: 'A white cake on a stand.', kind: 'food' as const }];
+    const s2 = stage2(g, enrichment({ observations: people, confirmed: [weak('Fixture celebration cake'), ok('Fixture neon signage'), { name: 'Floral print dress', rationale: 'No', verdict: 'unsupported' }] }));
+    // The hedged claim was never shown, so it simply stays private; the supported one publishes now.
+    expect(decisionFor(s2.decisions, 'Fixture celebration cake')).toMatchObject({ action: 'observe', note: 'weak' });
+    expect(names(s2.publishNow)).toEqual(['Fixture neon signage']);
+    // A card already shown stays (advisory veto only).
+    expect(names(s2.analysis.candidates)).toEqual(['Floral print dress', 'Fixture neon signage']);
+    expect(s2.advisoryVetoes).toEqual(['Floral print dress']);
+    // Without a verdict (or without stage 2) a held claim never publishes.
+    expect(stage2(g, enrichment({ observations: people })).publishNow).toEqual([]);
+  });
+
+  it('a style, tradition or place resting only on context is held on any photo (h58 shape); read text and distinctive forms are not', () => {
+    const g = read('White speckled mug', 'A white speckled-glaze mug with a clay base.', [
+      v2({ name: 'Fixture minimalist design', type: 'style', domain: 'design', certainty: 0.6, evidence: 'context' }),
+      v2({ name: 'Fixture stoneware', type: 'tradition', domain: 'craft', certainty: 0.55, evidence: 'distinctive_form' }),
+      v2({ name: 'Fixture shopping street', type: 'place', domain: 'place', certainty: 0.6, evidence: 'context' }),
+      v2({ name: 'Fixture Lane', type: 'place', relation: 'depicted', domain: 'place', certainty: 0.9, evidence: 'read_text', evidence_text: 'FIXTURE LANE' }),
+      v2({ name: 'Fixture home cooking', type: 'cuisine', domain: 'food', certainty: 0.7, evidence: 'context' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture minimalist design', 'Fixture shopping street']);
+    expect(decisionFor(g.decisions, 'Fixture minimalist design')).toMatchObject({ action: 'hold', rules: ['G-EVIDENCE'], note: 'held_context_only' });
+    // A cuisine is food, not a style claim: G-CUISINE-FOOD decides it (no food in this headline).
+    expect(decisionFor(g.decisions, 'Fixture home cooking')).toMatchObject({ action: 'drop', rules: ['G-CUISINE-FOOD'] });
+    expect(names(g.analysis.candidates)).toEqual(['Fixture stoneware', 'Fixture Lane']);
+    const s2 = stage2(g, enrichment({ confirmed: [weak('Fixture minimalist design'), ok('Fixture shopping street')] }));
+    expect(names(s2.publishNow)).toEqual(['Fixture shopping street']);
+    expect(decisionFor(s2.decisions, 'Fixture minimalist design')).toMatchObject({ action: 'observe' });
+  });
+
+  it('a legacy reading (no model evidence) and a garment or sport named alone are not held', () => {
+    const legacy = guardQuickRead(
+      toVlmAnalysis({
+        title: 'Two people on a street',
+        interpretation: 'A man and a woman walking.',
+        candidates: [{ name: 'Fixture street style', type: 'style', relation: 'resembles', certainty: 0.6, categories: [], tag_query: 'street style' }],
+        quality: { usable: true, issue: null },
+      }),
+      { twoStage: true },
+    );
+    expect(names(legacy.analysis.candidates)).toEqual(['Fixture street style']);
+    expect(namesGarment('Varsity jacket')).toBe(true);
+    expect(namesGarment('Running shoes')).toBe(true);
+    expect(namesGarment('Whites (cricket clothing)')).toBe(false);
+    expect(namesGarment('Streetwear')).toBe(false);
+    const sport = (name: string) => sportActivity({ name, type: 'tradition', domain: 'sport' });
+    expect(['Baseball', 'association football', 'Test cricket', 'streetball', 'Road cycling'].map(sport)).toEqual([true, true, true, true, true]);
+    expect(
+      ['Little League baseball', 'Professional basketball', 'Youth baseball', 'Croatia national football team', 'Brazilian football', 'NBA basketball', 'Fixture FC football'].map(sport),
+    ).toEqual([false, false, false, false, false, false, false]);
+    expect(sportActivity({ name: 'Baseball', type: 'style', domain: 'sport' })).toBe(false);
+  });
+
+  it("people presence comes from the reading's words, never from the model's domain label alone", () => {
+    const shown = (title: string, interpretation = 'A photo.', over: Partial<VlmAnalysis> = {}) =>
+      peopleShown({ title, interpretation, observations: [], candidates: [], regions: [], ...over });
+    expect(shown('Two friends in orange sweatshirts')).toBe(true);
+    expect(shown('Hand with ring in field')).toBe(true);
+    expect(shown('Youth baseball batter and catcher')).toBe(true);
+    expect(shown('Mint dress', 'Her dress has bell sleeves.')).toBe(true);
+    expect(shown('A coat', 'A coat worn by someone on a bench.')).toBe(true);
+    expect(shown('Hand-painted stools', 'Handmade wooden stools in a row.')).toBe(false);
+    expect(shown('Hand painted bowls', 'A hand towel beside them.')).toBe(false);
+    expect(shown('Tempura batter in a bowl')).toBe(false);
+    // Stage-2 region labels and observations count too.
+    expect(shown('A cake', 'A white cake.', { regions: [{ id: 'r1', label: 'Man feeding cake with fork', box: { x: 0, y: 0, w: 1, h: 1 } }] })).toBe(true);
+    // Filed under food and sport, the claims on a photo the headline shows people in are held all the same.
+    const g = read('Hand with ring in field', 'A ring held up in a dry field.', [
+      v2({ name: 'Fixture ring-giving tradition', type: 'tradition', domain: 'craft', certainty: 0.6, evidence: 'distinctive_form' }),
+      v2({ name: 'Ring', type: 'object', domain: 'fashion', certainty: 0.8, evidence: 'distinctive_form' }),
+    ]);
+    expect(names(g.held)).toEqual(['Fixture ring-giving tradition']);
+  });
+
+  it('read model: the model code read without the maker publishes as written, text-only (h67 "BMW Z4")', () => {
+    expect(readModel('BMW Z4', ['Z4', 'California'])).toEqual({ model: 'Z4', text: 'Z4' });
+    // The maker is read: readMaker's case, not this one. No model code: nothing.
+    expect(readModel('BMW Z4', ['BMW', 'Z4'])).toBeNull();
+    expect(readModel('Volkswagen Beetle', ['BEETLE'])).toBeNull();
+    expect(readModel('Spalding NBA basketball', ['NBA'])).toBeNull();
+    const g = read('Silver roadster on a hillside road', 'A two-seat roadster seen from behind.', [
+      v2({ name: 'BMW Z4', type: 'brand', relation: 'depicted', certainty: 0.9, domain: 'vehicle', evidence: 'logo', evidence_text: 'Z4' }),
+      v2({ name: 'BMW', type: 'brand', relation: 'depicted', certainty: 0.9, domain: 'vehicle', evidence: 'logo', evidence_text: null }),
+    ]);
+    const s2 = stage2(g, enrichment({ visible_text: ['Z4', 'California'], confirmed: [ok('BMW Z4'), ok('BMW')] }));
+    expect(s2.publishNow.map((c) => [c.name, c.type, c.text_only, c.evidence_text, c.suggested_categories, c.tag_queries])).toEqual([['Z4', 'brand', true, 'Z4', [], []]]);
+    expect(decisionFor(s2.decisions, 'Z4')).toMatchObject({ action: 'publish', note: 'read_model_text_only' });
+    expect(decisionFor(s2.decisions, 'BMW')).toMatchObject({ action: 'drop', note: 'not_read_at_stage_2' });
+    // Text-only: never searched in Qloo as a brand.
+    expect(brandCorroboratedIds(s2.decisions).size).toBe(0);
+    expect(s2.textOnlyIds).toEqual(['c1']);
+  });
+
+  it('brand residue keeps the naming words, not the describing ones (h70: checkerboard slip-ons next to a held "Vans Old Skool" guess)', () => {
+    expect([...brandResidue([{ name: 'Fixturo Old Skool checkerboard slip-on', type: 'brand' }])]).toEqual(['fixturo', 'skool']);
+    const g = read('Two people on a park bench', 'Matching orange tops and denim.', [
+      v2({ name: 'Fixturo Old Skool checkerboard slip-on', type: 'brand', relation: 'depicted', certainty: 0.5, domain: 'fashion', evidence: 'distinctive_form' }),
+    ]);
+    const add = { ...v2({ name: 'Checkerboard slip-on sneakers', type: 'style', certainty: 0.6, domain: 'fashion', evidence: 'distinctive_form' }), rationale: 'Pattern' };
+    const s2 = stage2(g, enrichment({ confirmed: [weak('Fixturo Old Skool checkerboard slip-on')], additional_candidates: [add] }));
+    expect(names(s2.publishNow)).toEqual(['Checkerboard slip-on sneakers']);
+    // The model name itself, repeated without its maker, is still the brand claim (guard-v5, h02 shape).
+    const beetle = { ...v2({ name: 'Old Skool', type: 'style', certainty: 0.6, domain: 'fashion', evidence: 'distinctive_form' }), rationale: 'Shape' };
+    expect(stage2(g, enrichment({ confirmed: [weak('Fixturo Old Skool checkerboard slip-on')], additional_candidates: [beetle] })).publishNow).toEqual([]);
+  });
+
+  it('a well-known work named by its form publishes on a supported second reading, never on a hedge (h61 shape)', () => {
+    const g = read('Portrait with a blue head wrap', 'A portrait of a figure in a blue and ochre head wrap.', [
+      v2({ name: 'Fixture with a Pearl Earring', type: 'work', relation: 'resembles', certainty: 0.8, domain: 'art', evidence: 'distinctive_form' }),
+      v2({ name: 'Fixturo 911 Turbo', type: 'work', relation: 'resembles', certainty: 0.8, domain: 'vehicle', evidence: 'distinctive_form' }),
+    ]);
+    // Capitalized title words make it brand-like: held at stage 1, as before.
+    expect(names(g.held)).toEqual(['Fixture with a Pearl Earring', 'Fixturo 911 Turbo']);
+    const s2 = stage2(g, enrichment({ confirmed: [ok('Fixture with a Pearl Earring'), ok('Fixturo 911 Turbo')] }));
+    expect(s2.publishNow.map((c) => [c.name, c.relation, c.text_only ?? null])).toEqual([['Fixture with a Pearl Earring', 'resembles', null]]);
+    expect(decisionFor(s2.decisions, 'Fixture with a Pearl Earring')).toMatchObject({ action: 'publish', note: 'work_title_by_form' });
+    // A model guessed from a shape still needs its name read.
+    expect(decisionFor(s2.decisions, 'Fixturo 911 Turbo')).toMatchObject({ action: 'drop', note: 'not_read_at_stage_2' });
+    expect(stage2(g, enrichment({ confirmed: [weak('Fixture with a Pearl Earring')] })).publishNow).toEqual([]);
+    expect(titledWork({ name: 'The Fixture Night', type: 'work', domain: 'art', evidence: 'context' })).toBe(false);
+    expect(titledWork({ name: 'FXB Fixture', type: 'work', domain: 'art', evidence: 'distinctive_form' })).toBe(false);
   });
 });

@@ -12,12 +12,15 @@ import {
   FOOD_EVIDENCE,
   FOOD_NAME_ENDINGS,
   FOOD_PHRASES,
+  GARMENTS,
   GENERIC_NOUNS,
   GENERIC_QUALIFIERS,
   MAKERS,
   MATERIALS,
   MUSIC,
   MUSIC_PHRASES,
+  NATIONALITIES,
+  SPORT_QUALIFIERS,
   STOP,
   STYLE_MOVEMENTS,
   foldText,
@@ -89,8 +92,34 @@ import {
  *  - a claim naming a relationship, role, occasion, team, league or unit of
  *    the people (PEOPLE_CLAIM_RE) is about them whatever type or domain the
  *    model filed it under (a backstop to the class rules, a closed list).
+ *
+ * guard-v11 (round 4, owner option C "hold until confirmed"; docs/quality-plan.md §19):
+ *  - at stage 1, on a photo with people, every style or tradition claim is
+ *    held for stage 2, unless it names a garment (GARMENTS) or a sport named
+ *    alone (sportActivity); at stage 1, every style, tradition or place
+ *    claim whose only support is context is held, with the same two
+ *    exceptions. A held claim publishes only on a "supported" stage-2 verdict
+ *    that passes the stage-2 rules; it was never shown, so stage 2's "weak"
+ *    or "unsupported" retracts nothing (FAST-02 by construction). Objects,
+ *    food, vehicles, brands (G-BRAND), places with read text or a
+ *    distinctive form, and read text keep their stage-1 rules;
+ *  - people presence (peopleShown) is read from the words of the title, the
+ *    interpretation, the observations, the region labels and the claim names
+ *    (people, relationship and presence words), never from the model's domain
+ *    label alone;
+ *  - read model: a brand claim whose model name was transcribed at stage 2
+ *    ("Z4") but whose maker was not publishes the model name as written, as a
+ *    text-only brand reference (readModel), the counterpart of readMaker;
+ *  - brand residue keeps only the naming words of a brand claim (written with
+ *    a capital or a digit), not its lower-case describing words, so
+ *    "checkerboard slip-on sneakers" next to a held "Vans Old Skool
+ *    checkerboard slip-on" is a garment, not the brand claim again;
+ *  - a well-known artwork or building named by its title on its form
+ *    (titledWork) is held at stage 1 as before (its capitalized title makes it
+ *    brand-like) and publishes on a supported stage-2 verdict as a
+ *    resemblance, without a transcription of its title.
  */
-export const GUARDRAIL_VERSION = 'guard-v10';
+export const GUARDRAIL_VERSION = 'guard-v11';
 
 /** Neutral analysis title when G-MEDIUM leaves too little of the model's title and nothing is publishable. */
 export const NEUTRAL_TITLE = 'What stood out in your photo';
@@ -388,6 +417,16 @@ const PERSON_ROLE_WORDS = String.raw`waiters?|waitress(?:es)?|baristas?|bartende
  * people a "Wedding cake" or a "server rack" is about the thing.
  */
 const PEOPLE_CONTEXT_WORDS = String.raw`weddings?|proms?|engagements?|marriage|proposals?|anniversar(?:y|ies)|birthdays?|graduations?|quincea[ñn]eras?|mitzvahs?|baptisms?|christenings?|funerals?|honeymoons?|reunions?|homecomings?|formal dances?|school dances?|winter formals?|bachelor(?:ette)?s?|retirements?|sidelines?|teams?|squads?|leagues?|regiments?|battalions?|platoons?|brigades?|cavalry|infantry|fraternit(?:y|ies)|sororit(?:y|ies)|servers?|staff|chefs?(?!(?:'s|’s)?[- ]knife|[- ]knives)`;
+/**
+ * guard-v11: words that say a person is in the photo without naming who they
+ * are: someone wearing, dressed in or posing in something, a hand ("Hand with
+ * ring in field"; "hand-painted", "hand made" and a hand towel are not hands), fielders and
+ * catchers, youths, and personal pronouns ("her dress"). Read with PEOPLE_RE
+ * and PEOPLE_NOUN_RE by peopleShown().
+ */
+export const PRESENCE_RE =
+  /\b(?:wear(?:s|ing)|worn by|dressed (?:in|up|as)|posing|poses|(?<!-)hands?(?!-)(?! (?:made|painted|crafted|drawn|carved|woven|thrown|built|blown|stitched|lettered|dyed|knit(?:ted)?|sewn|forged|tooled|rolled|towels?|soap|cream|dryers?|trucks?|carts?|saws?|tools?)\b)|fielders?|catchers?|youths?|he|she|his|her|hers|him|himself|herself)\b/i;
+
 /** guard-v10: a relationship or a person's role: always about people (headline and claims). */
 export const PEOPLE_NOUN_RE = new RegExp(String.raw`\b(?:${RELATIONSHIP_WORDS}|${PERSON_ROLE_WORDS})\b`, 'i');
 /**
@@ -400,6 +439,77 @@ export const PEOPLE_NOUN_RE = new RegExp(String.raw`\b(?:${RELATIONSHIP_WORDS}|$
  * reaches the class rules only.
  */
 export const PEOPLE_CLAIM_RE = new RegExp(String.raw`\b(?:${RELATIONSHIP_WORDS}|${PERSON_ROLE_WORDS}|${PEOPLE_CONTEXT_WORDS})\b`, 'i');
+
+/**
+ * guard-v11: a text says that people are in the photo (a people word, a
+ * relationship or role of a person, or a presence word).
+ */
+export function peopleWordIn(text: string): boolean {
+  return PEOPLE_RE.test(text) || PEOPLE_NOUN_RE.test(text) || PRESENCE_RE.test(text);
+}
+
+/**
+ * guard-v11: the reading shows people, from what it says about the photo (the
+ * title, the interpretation, the observations and the region labels) and the
+ * names of its claims, never from the model's domain label alone (round 3:
+ * h73 and h74 filed claims about people under "sport" and "food"). A
+ * `people`-domain claim still counts as one more signal.
+ */
+export function peopleShown(
+  a: Pick<VlmAnalysis, 'title' | 'interpretation' | 'observations' | 'candidates'> & { regions?: VlmAnalysis['regions'] },
+  observations: VlmAnalysis['observations'] = a.observations,
+): boolean {
+  return (
+    peopleWordIn(`${a.title} ${a.interpretation}`) ||
+    observations.some((o) => o.kind === 'person_style' || peopleWordIn(o.text)) ||
+    (a.regions ?? []).some((r) => peopleWordIn(r.label)) ||
+    a.candidates.some((c) => c.domain === 'people' || PEOPLE_RE.test(c.name))
+  );
+}
+
+/**
+ * guard-v11: the claim names something worn: its last naming word (outside
+ * parentheses) is a garment or accessory noun ("Floral print dress", "Varsity
+ * jacket", "Running shoes"). Such a claim is about the thing in the photo, so
+ * the stage-1 holds of guard-v11 do not apply to it.
+ */
+export function namesGarment(name: string): boolean {
+  const tokens = contentTokens(stripParens(name));
+  return tokens.length > 0 && GARMENTS.has(tokens[tokens.length - 1]!);
+}
+
+/**
+ * guard-v11: a sport named alone, the activity in the photo ("Baseball",
+ * "association football", "Test cricket", "streetball"): a tradition in the
+ * sport domain whose name says nothing about who plays it, i.e. no level, age
+ * group, league, team or nationality (SPORT_QUALIFIERS, NATIONALITIES,
+ * PEOPLE_CLAIM_RE), no name of an organisation (an acronym, a capitalized
+ * word after the first, a maker) and no number. "Little League baseball",
+ * "Professional basketball", "Croatia national football team" and "Brazilian
+ * football" are claims about the players.
+ */
+export function sportActivity(c: Pick<VlmCandidate, 'name' | 'type'> & { domain?: VlmDomain | null }): boolean {
+  if (c.type !== 'tradition' || c.domain !== 'sport') return false;
+  const tokens = contentTokens(stripParens(c.name));
+  if (!tokens.length || PEOPLE_CLAIM_RE.test(c.name) || acronymTokens(c.name).length || properTokensAfterFirst(c.name).length) return false;
+  return !tokens.some((t) => SPORT_QUALIFIERS.has(t) || NATIONALITIES.has(t) || MAKERS.has(t) || /\d/.test(t));
+}
+
+/**
+ * guard-v11 (round 4, h61 "Girl with a Pearl Earring" shape): a well-known
+ * artwork or building named by its title on its form: a work in the art or
+ * architecture domain, evidence distinctive_form, whose name holds no maker, no
+ * model code, no number and no acronym. Its capitalized title words make it
+ * brand-like (G-BRAND holds it at stage 1), but a title is not a brand: no text
+ * in the photo is expected to name it. It publishes on a supported stage-2
+ * verdict, as a resemblance, instead of needing a transcription. A stage-2
+ * addition of this kind still has nothing to confirm it and is not published.
+ */
+export function titledWork(c: Pick<VlmCandidate, 'name' | 'type'> & { domain?: VlmDomain | null; evidence?: VlmEvidence | null }): boolean {
+  if (c.type !== 'work' || c.evidence !== 'distinctive_form' || (c.domain !== 'art' && c.domain !== 'architecture')) return false;
+  const tokens = contentTokens(stripParens(c.name));
+  return tokens.length > 0 && !acronymTokens(c.name).length && !tokens.some((t) => MAKERS.has(t) || /\d/.test(t));
+}
 
 /**
  * guard-v10: a claim about the people rests on read text only when the text
@@ -422,6 +532,14 @@ export const EVIDENCE_NOTES = {
   contextOnly: 'context_only',
   peopleClaim: 'people_claim',
   readMaker: 'read_maker_text_only',
+  /** guard-v11: the model name was read, the maker was not (readModel). */
+  readModel: 'read_model_text_only',
+  /** guard-v11: held at stage 1 because the photo shows people (a style or tradition). */
+  heldPeople: 'held_people_present',
+  /** guard-v11: held at stage 1 because the claim rests only on context. */
+  heldContext: 'held_context_only',
+  /** guard-v11: a well-known work named by its form, held at stage 1, published on a supported second reading. */
+  workByForm: 'work_title_by_form',
   verifierNo: 'verifier_no',
   verifierUnsure: 'verifier_unsure',
   verifierUnanswered: 'verifier_unanswered',
@@ -749,8 +867,21 @@ export function brandResidue(
   const out = new Set<string>();
   for (const c of candidates) {
     if (c.type === 'place' || !isBrandLike(c, { knownWords })) continue;
+    // guard-v11: only the words the claim writes as names (a capital or a digit: "Beetle", "Old
+    // Skool"), not its lower-case describing words ("checkerboard slip-on"), h70.
+    const naming = namingTokens(c.name);
     for (const t of brandWords(c.name))
-      if (!MAKERS.has(t) && !knownWord(t) && !knownWords.has(t) && headWord(t) && !isModelCode(t)) out.add(t);
+      if (naming.has(t) && !MAKERS.has(t) && !knownWord(t) && !knownWords.has(t) && headWord(t) && !isModelCode(t)) out.add(t);
+  }
+  return out;
+}
+
+/** guard-v11: tokens of the words of a name written with a capital letter or a digit (a name, not a description). */
+function namingTokens(name: string): Set<string> {
+  const out = new Set<string>();
+  for (const word of stripParens(name).split(/\s+/)) {
+    const clean = word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    if (/^[\p{Lu}\p{N}]/u.test(clean) || (isNonLatin(clean) && !/\p{Ll}/u.test(clean))) for (const t of nameTokens(clean)) out.add(t);
   }
   return out;
 }
@@ -886,7 +1017,7 @@ interface Verdict {
  * list, so a person_style observation never counted at stage 1).
  */
 function readingFacts(
-  a: Pick<VlmAnalysis, 'title' | 'interpretation' | 'observations' | 'candidates'>,
+  a: Pick<VlmAnalysis, 'title' | 'interpretation' | 'observations' | 'candidates'> & { regions?: VlmAnalysis['regions'] },
   texts: readonly string[],
   stage2: boolean,
   peopleObservations: VlmAnalysis['observations'] = a.observations,
@@ -906,10 +1037,9 @@ function readingFacts(
     // hat", "tempura batter" on a table); the role nouns that always mean people
     // ("Referee signals a foul") are people words. A candidate named with a people word
     // ("Olympic athletes") counts, and stage 1 reads the unsanitized observations.
-    mentionsPeople:
-      PEOPLE_RE.test(head) ||
-      peopleObservations.some((o) => o.kind === 'person_style' || PEOPLE_RE.test(o.text)) ||
-      a.candidates.some((c) => c.domain === 'people' || PEOPLE_RE.test(c.name)),
+    // guard-v11: relationship, role and presence words count too ("Two friends", "Hand with ring",
+    // "batter and catcher"), and so do the stage-2 region labels (peopleShown).
+    mentionsPeople: peopleShown(a, peopleObservations),
     foodText,
     candidates: a.candidates,
     texts,
@@ -965,6 +1095,7 @@ function evaluate(
   });
   let hold = false;
   let demote = false;
+  let heldNote: string | undefined;
   const observe = (rule: GuardRule, note: string): Verdict => ({
     action: 'observe',
     rules: [...rules, rule],
@@ -1099,6 +1230,26 @@ function evaluate(
       hold = true;
     }
   }
+  // guard-v11, hold until confirmed (owner option C): at stage 1 a style or tradition on a photo
+  // with people, and a style, tradition or place resting only on context, wait for stage 2, unless
+  // the claim names a garment or a sport named alone. Only readings v2 (the model's own evidence)
+  // are concerned, as for G-EVIDENCE: a legacy reading's inferred evidence is not the model's claim.
+  if (opts.stage === 1 && input.evidence) {
+    const judgement = c.type === 'style' || c.type === 'tradition';
+    const thing = namesGarment(c.name) || sportActivity({ name: c.name, type: c.type, domain: input.domain });
+    // Read text that names the claim: the text rules (G-TEXT-ECHO) decide, not the people rule.
+    const named = c.evidence === 'read_text' && claimReadIn(c.name, [c.evidence_text, ...facts.texts]) !== null;
+    if (!thing && !named && judgement && facts.mentionsPeople && !rules.includes('G-PEOPLE-CLAIM')) {
+      rules.push('G-PEOPLE-CLAIM');
+      hold = true;
+      heldNote = EVIDENCE_NOTES.heldPeople;
+    }
+    if (!thing && (judgement || c.type === 'place') && input.evidence === 'context') {
+      rules.push('G-EVIDENCE');
+      hold = true;
+      heldNote ??= EVIDENCE_NOTES.heldContext;
+    }
+  }
   // G-LOWCERT: low-certainty resemblances wait for stage 2.
   if (c.relation === 'resembles' && c.certainty <= LOWCERT_MAX) {
     rules.push('G-LOWCERT');
@@ -1125,7 +1276,8 @@ function evaluate(
   }
   // A generic thing is never a reference, whatever stage 2 would say about it: demote beats hold.
   const action: GuardAction = demote ? 'demote' : hold ? 'hold' : 'publish';
-  return { action, rules, candidate: c, ...(replacement ? { replacement } : {}) };
+  const note = action === 'hold' ? heldNote : undefined;
+  return { action, rules, candidate: c, ...(replacement ? { replacement } : {}), ...(note ? { note } : {}) };
 }
 
 /**
@@ -1504,6 +1656,30 @@ export function readMaker(name: string, texts: readonly string[]): { maker: stri
   return null;
 }
 
+/**
+ * guard-v11 (round 4, h67 "BMW Z4" with only "Z4" read): the counterpart of
+ * readMaker. A brand claim whose maker (MAKERS) was not transcribed, but whose
+ * other brand words were, each a whole token of one stage-2 transcription,
+ * with at least one of them a model code (letters and digits: "Z4", "A4",
+ * "CAAD8"; a word such as "NBA" or "Beetle" is not enough): returns those words as they are written there ("Z4") and the
+ * transcription, or null. The words are published as a text-only brand
+ * reference, never the maker the reading could not read.
+ */
+export function readModel(name: string, texts: readonly string[]): { model: string; text: string } | null {
+  const words = brandWords(name);
+  const makers = words.filter((t) => MAKERS.has(t));
+  if (!makers.length || texts.some((text) => makers.some((t) => textHasToken(text, t)))) return null;
+  const naming = namingTokens(name);
+  const model = words.filter((t) => !MAKERS.has(t) && requiredWord(t));
+  if (!model.length || !model.some((t) => isModelCode(t) && naming.has(t))) return null;
+  for (const text of texts) {
+    if (!model.every((t) => textHasToken(text, t))) continue;
+    const written = model.map((t) => text.split(/[^\p{L}\p{N}]+/u).find((w) => foldText(w) === t)).filter((w): w is string => !!w);
+    if (written.length === model.length) return { model: written.join(' '), text };
+  }
+  return null;
+}
+
 // ---- stage 2 -------------------------------------------------------------------
 
 /**
@@ -1624,9 +1800,35 @@ export function guardEnrichment(input: {
     textOnlyIds.push(c.id);
     return true;
   };
+  /**
+   * guard-v11: a brand claim whose model name was transcribed at stage 2 ("Z4" of "BMW Z4") but
+   * whose maker was not: the model name publishes as written, as a text-only brand reference (never
+   * searched, anchored or researched), and the claim itself is dropped. Returns false when nothing was read.
+   */
+  const acceptReadModel = (c: VlmCandidate, rules: GuardRule[]): boolean => {
+    const read = readModel(c.name, stage2Texts);
+    if (!read) return false;
+    const key = candidateNameKey(read.model);
+    if (names.has(key)) return false;
+    names.add(key);
+    decisions.push({ candidateId: c.id, name: read.model, action: 'publish', rules: [...rules, 'G-TEXT-ONLY'], note: EVIDENCE_NOTES.readModel });
+    publishNow.push({
+      ...c,
+      name: read.model,
+      type: 'brand',
+      relation: 'depicted',
+      evidence: 'read_text',
+      evidence_text: read.text.slice(0, 60),
+      suggested_categories: [],
+      tag_queries: [],
+      text_only: true,
+    });
+    textOnlyIds.push(c.id);
+    return true;
+  };
   const notRead = (c: VlmCandidate, rules: GuardRule[], note: string) => {
     decisions.push(decision(c, 'drop', rules, note));
-    acceptReadMaker(c, rules);
+    if (!acceptReadMaker(c, rules)) acceptReadModel(c, rules);
   };
 
   for (const id of merge.heldIds) {
@@ -1671,6 +1873,11 @@ export function guardEnrichment(input: {
         continue;
       }
       accept({ ...guarded, evidence: 'read_text', evidence_text: read.slice(0, 60) }, ['G-VERDICT', 'G-IDENTITY']);
+      continue;
+    }
+    // guard-v11: a well-known work named by its form needs the second reading's support, not a transcription.
+    if (brandLike && titledWork({ ...guarded, evidence: c.evidence ?? null, domain: c.domain ?? null })) {
+      accept({ ...guarded, relation: 'resembles' }, ['G-VERDICT'], EVIDENCE_NOTES.workByForm);
       continue;
     }
     if (brandLike) {

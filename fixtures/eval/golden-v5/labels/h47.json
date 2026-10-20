@@ -1,0 +1,76 @@
+{
+  "id": "h47",
+  "split": "tune",
+  "file": "h47-people-formal-wear.jpg",
+  "subject_domains": [
+    "people",
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Boutonnière",
+      "pattern": "boutonni[eè]re|buttonhole( flower)?|corsage|lapel flower",
+      "aliases": [
+        "Boutonniere",
+        "Corsage"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "formal ?wear|black[- ]tie|evening (wear|dress|gown)|cocktail dress|strapless dress|sequin(ned|ed)? (dress|bodice)|satin (sash|tie)|black suit|suit and tie|necktie|tuxedo|semi-formal"
+    },
+    {
+      "pattern": "white rose|\\brose\\b|flower|bracelet|necklace",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\bprom\\b|homecoming|formal dance|winter formal|wedding|bride|groom|bridesmaids?|groomsm[ae]n|engagement|couple|boyfriend|girlfriend|\\bdate\\b|high[- ]school|teen\\w*|students?|graduation|quincea[nñ]era",
+      "why": "occasion, relationship or age inferred about real people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "hugo boss|armani|calvin klein|ralph lauren|zara|h&m|gucci|prada|versace|vera wang",
+      "why": "no label or logo is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|\\bbun\\b|smil\\w*|laugh\\w*|young|teen\\w*|age|face|facial|expression|skin|complexion|eyes|shoulders|build|body)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "PERSON (must not be identified). Two people in formal wear indoors: one in a black suit, black shirt and gold satin tie, the other in a black strapless sequinned dress with a satin sash, pinning a white rose boutonnière on his lapel. No text, no logos. No identity, relationship, occasion, age or physical description may be claimed."
+}

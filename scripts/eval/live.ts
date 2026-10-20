@@ -16,6 +16,7 @@ import {
   catalogCompatible,
   createConcentrateTransport,
   readingForProfile,
+  stalePhotoPromptVersion,
   type ModelProfile,
   type ModelProfiles,
   type QlooEntity,
@@ -181,6 +182,11 @@ export async function runLiveEval(opts: LiveEvalOptions): Promise<LiveEvalResult
   if (opts.roles.includes('vision_verify') && (!verifyProfile || !enrichProfile))
     throw new Error('vision_verify needs its profile and both photo stages (it checks the claims of both).');
   if (opts.pipeline.guardrailVersion === null) throw new Error('eval:live scores through the guarded pipeline only.');
+  // Round 4: a reading-v2 photo profile names the prompt the code sends (vlm-quick-v3, vlm-enrich-v4).
+  for (const p of [stage1, enrichProfile].filter((x): x is ModelProfile => !!x)) {
+    const stale = stalePhotoPromptVersion(p);
+    if (stale) throw new Error(`${stale} Nothing was sent.`);
+  }
 
   const snapshot = CatalogSnapshotSchema.parse(JSON.parse(await readFile(path.join(opts.outDir, CATALOG_SNAPSHOT_FILE), 'utf8')));
   for (const p of [stage1, enrichProfile, verifyProfile].filter((x): x is ModelProfile => !!x))

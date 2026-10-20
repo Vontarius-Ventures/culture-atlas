@@ -307,3 +307,31 @@ recorded and was not re-run.
   spec was skipped because it needs its own mailbox). Amendment 2.2 journeys
   with fake Qloo and the fake model transport: 9/9 at 1440, 390 and 320 px
   (2.5 min). A fresh database applied all 29 migrations.
+
+## Round 4 build (2026-10-20): hold until confirmed, prompts, golden-v5, model sweep
+
+Details in [quality-plan §19](quality-plan.md#19-round-4-hold-until-confirmed-prompts-for-people-photos-stronger-models-build-2026-10-20).
+Owner decisions A (try stronger vision models), C (hold people, occasion and
+context-only claims at stage 1 until stage 2 confirms them) and D (fix the
+labels). No request was made for the build; thresholds are unchanged.
+
+- **guard-v11.** At stage 1 a style or tradition on a photo with people, and a
+  style, tradition or place resting only on context, are held unless they name
+  a garment or a sport alone; they publish only on a supported stage-2 verdict
+  (FAST-02 by construction). People presence is read from words, never from the
+  model's domain label alone. Read model ("Z4" without "BMW") publishes the code
+  as a text-only brand; brand residue keeps naming words only (h70); a
+  well-known work named by its form publishes on a supported second reading.
+- **Prompts** `vlm-quick-v3` / `vlm-enrich-v4`: garments, objects, food and
+  activities on people photos, never who they are or their event; works and
+  landmarks by title; at least three candidates on a usable photo; one verdict
+  per candidate. `eval:live` and qualification refuse a stale prompt version.
+- **golden-v5** (94 tune photos, no held-out split; "tall"/"height" scoped to
+  people), **score-v9** (M11 double count, two-character model codes),
+  `REQUIRED_GOLDEN_SET` → golden-v5: nothing qualifies until a frozen h80+
+  split exists. Binding regenerated; text roles stay qualified.
+- **Cost (offline, haiku readings, old prompts):** M15 0.735 → 0.651 on the 94
+  tune readings; M4 and M5 worsen slightly; h58's forbidden style and the h72–h74
+  people claims can no longer publish. The sweep measures the new prompts on
+  haiku, sonnet, gemini-3.8-flash and gpt-5.4-mini.
+

@@ -1,0 +1,97 @@
+{
+  "id": "h72",
+  "split": "tune",
+  "file": "h72-sport-youth-baseball.jpg",
+  "subject_domains": [
+    "sport",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Baseball",
+      "pattern": "baseball|\\bswing\\b|batting",
+      "aliases": [
+        "Baseball game"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "(baseball )?(uniforms?|jerseys?)|batting helmet|catcher'?s (gear|mitt|mask|helmet)|shin guards|bat|baseball bat|aluminium bat|aluminum bat|home plate|dirt infield|chalk line|foul line|outfield|chain-?link fence|dugout|ball field|ballpark|diamond",
+      "generic": true
+    },
+    {
+      "pattern": "red (jersey|uniform)|blue (jersey|uniform)|number 8|number 33|#8|#33",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "little league|cal ripken|babe ruth league|pony league|ncaa|high school|varsity|mlb|red sox|yankees|cubs|cardinals",
+      "why": "no text names a league, school or team",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "batters?|hitters?|catchers?|umpires?|coach(es)?|pitchers?|fielders?|shortstops?|players?|athletes?|kids|boys|teens?|teenagers?|children|youths?|parents|fans|spectators",
+      "why": "a role or age inferred about real people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "easton|rawlings|louisville slugger|wilson|mizuno|under armour|nike|adidas|demarini|marucci",
+      "why": "the bat's wordmark and the shoe logos are not legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|slim|build|body|muscular)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\btall(?:er|est)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|stands?|standing|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?tall\\b|\\b(?:his|her|their)\\s+height\\b|\\bheight\\s+of\\s+(?:the\\s+)?(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b",
+      "field": "observations",
+      "why": "height of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [
+    "33"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A youth baseball game: a person in a red jersey '8', grey trousers and a red helmet swings a bat; a person in a blue jersey '33' crouches in catcher's gear with a mitt; a third person stands far left near a base, a fourth by the fence at right; chain-link fence, trees and parked cars behind. The ball is in the air at left. No team, league or maker word is legible. Roles (batter, catcher, umpire, coach) and ages may not be claimed.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
+      "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
+      "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    }
+  ]
+}

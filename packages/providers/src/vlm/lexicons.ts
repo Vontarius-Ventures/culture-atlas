@@ -169,6 +169,51 @@ export const CONTEXT_PRODUCTS = set(`
 `);
 
 /**
+ * guard-v11: nationality adjectives (the first lines of DESCRIPTORS). On a photo with people, a sport named with one of them
+ * ("Brazilian football") says who the players are, not only what they play.
+ */
+const NATIONALITY_WORDS = `
+  japanese chinese korean thai vietnamese indian pakistani persian iranian turkish ottoman arab arabic moroccan
+  egyptian african ethiopian nigerian ghanaian kenyan mexican peruvian brazilian argentine cuban caribbean
+  french italian spanish portuguese greek german dutch belgian swiss austrian danish swedish norwegian finnish
+  nordic scandinavian british english scottish irish welsh russian polish czech hungarian balkan
+`;
+export const NATIONALITIES = set(NATIONALITY_WORDS);
+
+/**
+ * guard-v11: words that say who plays a sport (a level, an age group, a
+ * competition or a body: "Professional basketball", "Youth baseball",
+ * "College football", "Olympic fencing"). A sport named with one of them is a
+ * claim about the players; the sport named alone ("Baseball", "association
+ * football", "Test cricket") is the activity in the photo.
+ */
+export const SPORT_QUALIFIERS = set(`
+  national international professional pro semi amateur youth junior juniors senior seniors veteran veterans
+  college collegiate varsity university school schools high olympic olympics paralympic world
+  club clubs team teams league leagues division premier major minor championship championships cup tournament
+  kids children boys girls mens womens little masters elite
+`);
+
+/**
+ * guard-v11: garment and accessory nouns. A claim whose last naming word is
+ * one of them names what someone wears ("Floral print dress", "Varsity
+ * jacket", "Running shoes"), whatever type or domain the model gave it, so
+ * it is a thing in the photo, not a claim about the person wearing it.
+ */
+export const GARMENTS = set(`
+  dress dresses gown gowns suit suits tuxedo tuxedos coat coats overcoat jacket jackets blazer blazers parka parkas
+  shirt shirts tshirt tee tees blouse blouses top tops sweater sweaters sweatshirt sweatshirts hoodie hoodies
+  cardigan cardigans jumper jumpers vest vests waistcoat waistcoats jersey jerseys kit kits uniform uniforms
+  trousers pants jeans chinos shorts skirt skirts leggings overalls dungarees jumpsuit jumpsuits
+  kimono kimonos yukata sari saris hanbok qipao cheongsam kilt kilts dirndl poncho ponchos kaftan caftan
+  abaya hijab turban turbans sombrero fez beret berets
+  hat hats cap caps beanie beanies helmet helmets scarf scarves shawl shawls tie ties bowtie gloves mittens
+  shoe shoes sneaker sneakers trainers boot boots sandals loafers heels pumps slippers slip ons clogs
+  bag bags handbag handbags backpack backpacks tote totes purse belt belts boutonniere corsage
+  sunglasses watch earrings necklace bracelet ring rings brooch
+`);
+
+/**
  * Descriptive words that may lead a product name without making it a brand
  * guess: nationalities and regions, periods, garment and construction
  * styles. A fashion or sport object whose leading word is in none
@@ -176,11 +221,7 @@ export const CONTEXT_PRODUCTS = set(`
  * makers fail closed instead of publishing ("Trek road bike").
  */
 export const DESCRIPTORS = set(`
-  japanese chinese korean thai vietnamese indian pakistani persian iranian turkish ottoman arab arabic moroccan
-  egyptian african ethiopian nigerian ghanaian kenyan mexican peruvian brazilian argentine cuban caribbean
-  french italian spanish portuguese greek german dutch belgian swiss austrian danish swedish norwegian finnish
-  nordic scandinavian british english scottish irish welsh russian polish czech hungarian balkan
-  mediterranean latin western eastern northern southern oriental tropical alpine desert coastal nautical
+${NATIONALITY_WORDS}  mediterranean latin western eastern northern southern oriental tropical alpine desert coastal nautical
   victorian edwardian georgian regency tudor colonial medieval baroque rococo renaissance gothic
   retro mod punk grunge preppy boho bohemian hippie western cowboy military utility tactical technical
   racing touring road mountain gravel track fixed gear city cargo folding electric commuter vintage

@@ -1,0 +1,100 @@
+{
+  "id": "h75",
+  "split": "tune",
+  "file": "h75-people-ring-occasion-trap.jpg",
+  "subject_domains": [
+    "people",
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Ring",
+      "pattern": "^(diamond |solitaire |gold |silver )?ring$|rings?\\b(?! light)|solitaire|jewel(le)?ry",
+      "aliases": [
+        "Diamond ring"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "red nail polish|manicure|nail polish|painted nails|puffer vest|quilted vest|gilet|down vest|grey (shirt|sweater)|black (sleeve|sweater|coat)",
+      "generic": true
+    },
+    {
+      "pattern": "shallow depth of field|bokeh|out of focus|soft focus|dry grass|tall grass|meadow|field|autumn|fall|golden hour|outdoors",
+      "generic": true
+    },
+    {
+      "name": "better-digital-photo-tips.com",
+      "pattern": "better-digital-photo-tips",
+      "requires_text": "better-digital-photo-tips"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "engage(d|ment)|proposal|propos(ed|ing)|fianc[eé]e?|wedding|bride|groom|husband|wife|couple|boyfriend|girlfriend|partners?|anniversary|valentine|save the date|she said yes",
+      "why": "an occasion or relationship inferred about real people from a ring and a gesture",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "tiffany|cartier|harry winston|de beers|pandora|patagonia|north face|columbia|uniqlo",
+      "why": "no maker's mark or logo is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "photographer|photography tips|tutorial",
+      "why": "the watermark names a website, not a person's role or the photo's purpose",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|slim|build|body|muscular)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\btall(?:er|est)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|stands?|standing|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?tall\\b|\\b(?:his|her|their)\\s+height\\b|\\bheight\\s+of\\s+(?:the\\s+)?(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b",
+      "field": "observations",
+      "why": "height of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Shallow depth of field outdoors in dry autumn grass: a sharp hand with dark red nail polish and a ring, raised toward the camera from a black sleeve at right; a defocused man in a dark quilted vest over a grey shirt stands at left. Watermark '© www.better-digital-photo-tips.com' bottom right. ADVERSARIAL for occasion and relationship inference ('engagement', 'proposal', 'couple'): only the ring, the clothes and the setting may be named. Usable: the subject (the hand and ring) is sharp; the blur is intentional background defocus.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
+      "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
+      "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    }
+  ]
+}

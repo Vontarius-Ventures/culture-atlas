@@ -44,7 +44,7 @@ const snapshot = {
 /** A passing aggregate eval block on the role's required golden set (docs/quality-plan.md §7.5). */
 function evalBlock(role: QualificationArtifact['role'], overrides: Partial<EvalBlock> = {}): EvalBlock {
   const photo = role === 'vision_photo' || role === 'vision_photo_enrich' || role === 'vision_verify';
-  const set = REQUIRED_GOLDEN_SET[role] ?? 'golden-v4';
+  const set = REQUIRED_GOLDEN_SET[role] ?? 'golden-v5';
   // Scored on exactly the committed inputs (EVAL_BINDING), as a fresh qualification would be.
   const bound = EVAL_BINDING.sets[set as keyof typeof EVAL_BINDING.sets];
   return {
@@ -214,23 +214,23 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
 });
 
 /**
- * The committed binding with the photo roles' set (golden-v4) NOT consumed:
+ * The committed binding with the photo roles' set (golden-v5) NOT consumed:
  * what a fresh blind set looks like to the gate, whatever a later blind run
  * records in the committed binding. The photo-role gating tests run against it;
  * a consumed set refuses every photo artifact first (tested below).
  */
 const FRESH_BLIND_BINDING = {
   ...EVAL_BINDING,
-  sets: { ...EVAL_BINDING.sets, 'golden-v4': { ...EVAL_BINDING.sets['golden-v4'], blind_consumed: false } },
+  sets: { ...EVAL_BINDING.sets, 'golden-v5': { ...EVAL_BINDING.sets['golden-v5'], blind_consumed: false } },
 };
-/** The same binding after a failed blind run of golden-v4 (its freeze.json blind_run record). */
+/** The same binding after a failed blind run of golden-v5 (its freeze.json blind_run record). */
 const CONSUMED_BLIND_BINDING = {
   ...EVAL_BINDING,
-  sets: { ...EVAL_BINDING.sets, 'golden-v4': { ...EVAL_BINDING.sets['golden-v4'], blind_consumed: true } },
+  sets: { ...EVAL_BINDING.sets, 'golden-v5': { ...EVAL_BINDING.sets['golden-v5'], blind_consumed: true } },
 };
 
 describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
-  it('photo roles need a passing golden-v4 evaluation with the current guardrail version', async () => {
+  it('photo roles need a passing golden-v5 evaluation with the current guardrail version', async () => {
     const fresh = FRESH_BLIND_BINDING;
     // The verifier (vision_verify) is gated exactly like the photo roles it checks.
     for (const role of ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const) {
@@ -239,12 +239,13 @@ describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
       expect(evalGateFailure(role, evalBlock(role, { guardrail_version: 'guard-v0' }), fresh)).toBe('stale_guardrail_version');
       expect(evalGateFailure(role, evalBlock(role, { guardrail_version: null }), fresh)).toBe('stale_guardrail_version');
       expect(evalGateFailure(role, evalBlock(role, { golden_set: 'text-v1' }), fresh)).toBe('wrong_golden_set');
-      // An artifact scored on golden-v1 (whose held-out split was used for tuning), golden-v2 or golden-v3 (whose
-      // blind splits failed blind runs consumed) no longer qualifies.
-      expect(REQUIRED_GOLDEN_SET[role]).toBe('golden-v4');
+      // An artifact scored on golden-v1 (whose held-out split was used for tuning), golden-v2, golden-v3 or golden-v4
+      // (whose blind splits failed blind runs consumed) no longer qualifies.
+      expect(REQUIRED_GOLDEN_SET[role]).toBe('golden-v5');
       expect(evalGateFailure(role, evalBlock(role, { golden_set: 'golden-v1' }), fresh)).toBe('wrong_golden_set');
       expect(evalGateFailure(role, evalBlock(role, { golden_set: 'golden-v2' }), fresh)).toBe('wrong_golden_set');
       expect(evalGateFailure(role, evalBlock(role, { golden_set: 'golden-v3' }), fresh)).toBe('wrong_golden_set');
+      expect(evalGateFailure(role, evalBlock(role, { golden_set: 'golden-v4' }), fresh)).toBe('wrong_golden_set');
       expect(evalGateFailure(role, evalBlock(role, { pass: false }), fresh)).toBe('eval_failed');
     }
     const d = await dir();
@@ -263,19 +264,30 @@ describe('evaluation gating (docs/quality-plan.md §7.5)', () => {
     expect(qualificationState(vision, d, fresh)).toBe('catalog-compatible');
   });
 
+  it('round 4: golden-v5 has no held-out split yet, so no photo role qualifies on it until a frozen blind split exists', () => {
+    // golden-v5 is every golden-v4 photo as tune (h50-h79 included); its blind split (h80+) is added and frozen later.
+    expect(EVAL_BINDING.sets['golden-v5'].blind_consumed).toBe(false);
+    for (const role of ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const) {
+      // An artifact scored on the tune split alone cannot claim a blind held-out split: refused with the committed binding.
+      expect(evalGateFailure(role, evalBlock(role, { holdout_blind: false }))).toBe('holdout_not_blind');
+      expect(evalGateFailure(role, evalBlock(role, { holdout_blind: null }))).toBe('holdout_not_blind');
+    }
+  });
+
   it('after a failed blind run, no photo role qualifies on the consumed set, however its artifact scores', async () => {
-    // fixtures/eval/golden-v2/ and golden-v3/freeze.json record rounds 1 and 2's failed blind runs; the committed
-    // binding carries them.
+    // fixtures/eval/golden-v2/, golden-v3/ and golden-v4/freeze.json record rounds 1 to 3's failed blind runs; the
+    // committed binding carries them.
     expect(EVAL_BINDING.sets['golden-v2'].blind_consumed).toBe(true);
     expect(EVAL_BINDING.sets['golden-v3'].blind_consumed).toBe(true);
+    expect(EVAL_BINDING.sets['golden-v4'].blind_consumed).toBe(true);
     for (const role of ['vision_photo', 'vision_photo_enrich', 'vision_verify'] as const) {
-      for (const old of ['golden-v2', 'golden-v3'] as const) {
+      for (const old of ['golden-v2', 'golden-v3', 'golden-v4'] as const) {
         // A passing, current artifact on a consumed earlier set (e.g. a lucky re-read of h30-h49) is refused.
         const onOld = evalBlock(role, { golden_set: old, golden_sha256: EVAL_BINDING.sets[old].golden_sha256 });
         expect(evalGateFailure(role, onOld)).toBe('wrong_golden_set');
         expect(evalGateFailure(role, onOld, FRESH_BLIND_BINDING)).toBe('wrong_golden_set');
       }
-      // The same holds for golden-v4 once its blind run fails and is recorded: the gate refuses it before anything else.
+      // The same holds for golden-v5 once its blind run fails and is recorded: the gate refuses it before anything else.
       expect(evalGateFailure(role, evalBlock(role), CONSUMED_BLIND_BINDING)).toBe('blind_set_consumed');
       expect(evalGateFailure(role, evalBlock(role), FRESH_BLIND_BINDING)).toBeNull();
     }

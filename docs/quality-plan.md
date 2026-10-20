@@ -2081,3 +2081,215 @@ One guard-v6 test changed expectation with the policy: "Team captains" on a
 reading without people is now held for stage 2's people test, and still
 publishes there without people. Three score-v5/v6 tests now also count the
 headline's role noun.
+
+## 19. Round 4: hold until confirmed, prompts for people photos, stronger models (build, 2026-10-20)
+
+The three blind rounds failed for three reasons (§18.15, §18.16, §18.20): a
+rule gap (people, occasion, team and league claims and context-only styles
+published at stage 1, and stage 2 could not take them back), the model
+(`anthropic/claude-haiku-5-5`, effort none: on people photos it named events,
+teams and occasions instead of garments and objects, and it missed named
+artworks), and label or scorer artifacts ("tall" in the person-descriptor
+patterns, the M11 double count). The owner approved **A** (try stronger
+vision models), **C** (hold people, occasion and context-only claims at stage 1
+until stage 2 confirms them) and **D** (fix the labels), then a fresh blind set
+(h80+, prepared separately; nobody building this round opened it). No request
+was made for the build; thresholds (thr-v2) are unchanged.
+
+### 19.1 guard-v11: hold until confirmed (option C)
+
+| Rule | What it decides | Class, not word |
+| --- | --- | --- |
+| **Hold with people** (`G-PEOPLE-CLAIM`, note `held_people_present`) | At stage 1, on a photo with people, every style or tradition claim is held for stage 2, whatever its domain ("Wedding cake" filed under food, a national team filed under sport, a style of signage) | Exceptions by class: a claim naming something worn (`namesGarment`: its last naming word is a garment or accessory noun, "Floral print dress", "Varsity jacket", "Running shoes") and a sport named alone (`sportActivity`: a sport tradition with no level, age group, league, team, nationality, organisation or number, "Baseball", "association football", "Test cricket") |
+| **Hold on context** (`G-EVIDENCE`, note `held_context_only`) | At stage 1, every style, tradition or place claim whose only support is context (the model's own evidence) is held, people or not (h58 "Scandinavian minimalist design") | Same two exceptions. Read text decides through the text rules (G-TEXT-ECHO), and places with read text or a distinctive form keep publishing |
+| **Publish only on "supported"** | A held claim publishes only on a stage-2 `supported` verdict that passes the existing stage-2 rules (people test with read text, brand corroboration, identity). `weak`, `unsupported`, no verdict, or no stage 2: it stays private | FAST-02 holds by construction: a held claim was never shown, so a hedge retracts nothing; a published card is still never removed |
+| **People presence by words** (`peopleShown`) | The reading shows people when its title, interpretation, observations, region labels or claim names carry a people word, a relationship or role (`PEOPLE_NOUN_RE`) or a presence word (`PRESENCE_RE`: wearing, dressed in, posing, a hand, fielders, catchers, youths, personal pronouns; "hand-painted" and "handmade" are not hands) | Never from the model's domain label alone (a `people`-domain claim still counts as one more signal) |
+
+Objects, cuisines, vehicles, brands (G-BRAND as before), works, places with
+read text or a distinctive form, and read text keep their stage-1 rules.
+Legacy readings (no model evidence) are not affected. The guard-v10 closed
+lists (`PEOPLE_CLAIM_RE`, `PEOPLE_NOUN_RE`) stay as the backstop; the new
+`GARMENTS`, `SPORT_QUALIFIERS`, `NATIONALITIES` and `PRESENCE_RE` lists are
+closed too and name the exceptions and signals of the class rules, not the
+claims they withhold. Residual gap: a sport qualified by a country name that
+is not a nationality adjective ("Croatia football" without "team" or
+"national") still reads as the activity.
+
+**Read model (item 2).** The counterpart of guard-v8's read maker: a brand
+claim whose model code (letters and digits: "Z4", "A4", "CAAD8") was
+transcribed at stage 2 but whose maker was not publishes the code as written,
+as a text-only brand reference (`readModel`, note `read_model_text_only`):
+never searched, anchored or researched (h67 "BMW Z4" with only "Z4" read). A
+word such as "NBA" or "Beetle" alone is not a model code and gets nothing.
+
+**The other over-drops of §18.16.**
+
+- **h70 (fixed, by class).** "Checkerboard slip-on sneakers" was dropped as
+  brand residue of the held guess "Vans Old Skool checkerboard slip-on".
+  `brandResidue` now keeps only the words a brand claim writes as names (a
+  capital or a digit: "Old Skool", "Beetle"), not its lower-case describing
+  words ("checkerboard slip-on"). The guard-v5 case (a model name repeated
+  without its maker) is unchanged.
+- **h79 (not changed).** "Turkish street food kiosk" was typed as a cuisine
+  at certainty 0.4 with no food visible; G-CUISINE-FOOD dropped it. A fix
+  would retype food claims by a list of venue nouns (kiosk, cart, stall),
+  which is a word patch for one reading, not a class rule. The new prompt asks
+  for the named type of visible objects instead.
+
+**A named work by its form (supports item 3).** A well-known artwork or
+building named by its title on its form (`titledWork`: a work in the art or
+architecture domain, evidence distinctive_form, no maker, model code, number or
+acronym) is still held at stage 1 by G-BRAND (its capitalized title words), but
+now publishes on a supported stage-2 verdict as a resemblance instead of
+needing a transcription of its title, which no photo of a painting carries
+(h61 "Girl with a Pearl Earring" shape). A stage-2 addition of this kind still
+has nothing to confirm it and is not published.
+
+Tests: `guardrails.test.ts` "guard-v11" (8 tests, each fails on guard-v10),
+and eight earlier tests whose fixtures or expectations changed with the policy
+(context-only styles in fixtures now use a distinctive form where the test is
+about something else, or expect the hold where it is the point). Compiler and
+media tests: the guard version and two fixtures (`guarded-analysis.test.ts`,
+`analysis-run.test.ts`). The inspector names the four new reason codes.
+
+### 19.2 Prompts (item 3): `vlm-quick-v3`, `vlm-enrich-v4`
+
+Same schemas (`atlas_quick_read_v2`, `atlas_enrichment_v2`); prompts edited in
+place under new versions, hashes pinned in `two-stage.test.ts`:
+
+- Photos with people: candidates name what is worn, held, eaten, played or
+  done (the named type of each garment or accessory, objects, food,
+  instruments, vehicles, the sport itself); never who the people are, their
+  relationship, role, team, club, league, school, unit, event or occasion
+  unless legible text names it (then read_text with the text copied).
+- A well-known artwork, building or landmark recognized by its form is named
+  by its title or proper name (work or place, distinctive_form), not only by
+  its period, style or medium.
+- Stage 1 returns 3 to 5 candidates on a usable photo (garment, object, food
+  or activity types when no style stands out), never padded with a cuisine or
+  place that is not shown; the title and interpretation describe what is
+  shown, never who the people are. "Fewer is better" stays for stage-2
+  additions only, and "or return fewer candidates" left the shared rules.
+- Stage 2: exactly one verdict per first-reading candidate (held claims with
+  no verdict never publish; h42 "Mandopop live concert" had none), and a claim
+  about the people's identity, relationship, role, team, league, event or
+  occasion is unsupported unless legible text names it.
+
+`eval:live` and `qualify:concentrate` now refuse, before anything is planned,
+a reading-v2 photo profile that names an older prompt version than the one the
+code sends (`stalePhotoPromptVersion`; the v2 prompts are edited in place, so a
+`vlm-quick-v2` profile would be measured on `vlm-quick-v3` text).
+
+### 19.3 Labels, scorer and binding (item 4): golden-v5, score-v9
+
+- **golden-v5** (round-4 tune set): golden-v4's 64 tune photos plus h50–h79,
+  all 94 tune; no held-out split. The person-descriptor patterns of h27, h29,
+  h46, h54, h65, h69–h76 and h79 lose "tall" and "height"; a separate
+  `person_descriptor` entry matches them only about a person ("a tall man",
+  "he is tall", "her height"); each label's `history` records the change
+  (owner decision D). Nothing else in the labels changed. golden-v1 to
+  golden-v4 are untouched (v2–v4 stay consumed).
+- **score-v9**: M11 counts a forbidden observation once (score-v8 counted an
+  observation matching a person_descriptor pattern twice: as a person-class
+  violation and as a forbidden observation; h69, h75, h76 gave M11 6 for 3
+  observations), and a brand whose only naming word is a two-character model
+  code is corroborated when the code is read (score-v8 needed a three-letter
+  head word, so the expected, read "Z4" on h67 always counted as a brand
+  without text). Tests: `scorer.test.ts` "score-v9" (both fail on score-v8).
+  No gate or threshold changed.
+- **`REQUIRED_GOLDEN_SET` → golden-v5** for `vision_photo`,
+  `vision_photo_enrich` and `vision_verify`. A photo-role artifact needs at
+  least 10 blind held-out photos (`holdout_not_blind`), so nothing qualifies
+  until the h80+ split is added to golden-v5 and frozen;
+  `qualify:concentrate` refuses golden-v5 before the photos are even checked
+  ("0 blind held-out photo(s)"), and golden-v4 as the wrong set. Binding
+  regenerated (`pnpm eval:binding --write`): golden-v5 added
+  (`blind_consumed: false`), photo code digest and score-v9 for every photo
+  set; `text-v1` unchanged, so `research_text` and `composer` stay qualified.
+  `replay-v1` names guard-v11 and score-v9.
+
+### 19.4 Offline replays (item 6) and the cost of the hold policy
+
+Every recorded haiku run replayed with no request, verifier off, live gates,
+thr-v2. "Before" is guard-v10 and score-v8, "after" guard-v11 and score-v9; the
+tune recordings are scored on golden-v5 labels (identical to golden-v4 for
+p01–h49 except the "tall" scoping, which no tune reading matched). "94 tune" is
+the round-3 Tune readings (64 photos) plus the round-3 blind readings
+(h50–h79), all as tune. None of this is blind evidence, and the recordings were
+made with the old prompts (`vlm-quick-v2`, `vlm-enrich-v3`), so they measure
+the rules, not the new prompts.
+
+| Recordings | Before (guard-v10, score-v8) | After (guard-v11, score-v9) |
+| --- | --- | --- |
+| 94 tune (r3 Tune + r3 blind) | FAIL M1 1 (h78); M4 0.181, M5 0.807, M15 0.735, M2 0.012 (2 forbidden) | FAIL M1 1 (h78), M4 0.216, M5 0.795; M15 0.651, M2 0.006 (1 forbidden), M11 0 |
+| r3 Tune, 64 photos | PASS (M4 0.176, M5 0.911, M15 0.804) | FAIL M4 0.221 (M5 0.857, M15 0.696) |
+| r3 blind h50–h79 (as tune) | FAIL M1 1, M5 0.593, M15 0.593 (M2 0.028) | FAIL M1 1, M5 0.667, M15 0.556 (M2 0, M7 1, M11 0) |
+| r3 blind h50–h79 as recorded (golden-v4 held-out, score-v8) | FAIL M1 4, M5 0.593, M11 6, M15 0.593 | — (golden-v5 is the set now) |
+| r2 blind h30–h49 | PASS (M4 0.167, M5 0.889, M15 0.611) | FAIL M4 0.222, M15 0.444 (M5 0.833) |
+| r1 blind h14–h29 | FAIL M4 0.216 (M15 0.867) | FAIL M4 0.243 (M15 0.733) |
+| r3 fresh p01–p15 | FAIL M8 1, M9 0.867 (M5 0.833, M15 0.833) | FAIL M5 0.75, M8 1, M9 0.867 (M15 0.75) |
+| r3 fresh h30–h49, verifier off | PASS (M4 0.088, M5 0.889, M15 0.667) | FAIL M5 0.778, M15 0.50 (M4 0.176) |
+| r3 freshest 64 | FAIL M8 1 (M4 0.169, M15 0.804) | FAIL M4 0.215, M8 1 (M15 0.696) |
+| §15 Tune runs 1 / 2 | FAIL M8, M9 / PASS (M4 0.200) | FAIL M8, M9 / FAIL M4 0.233 |
+| Evaluate iterations 1 / 2 | PASS / FAIL M9 0.885 | FAIL M4 0.236 / FAIL M9 0.885 |
+| `replay-v1` (CI, golden-v1) | PASS | PASS, identical |
+
+M17 holds on every run (the unguarded readings fail M1: 99 on the 94 tune
+photos).
+
+**Cost on M15 (stage-1 publishable share), as the owner asked.** On the 94
+tune readings M15 falls from 0.735 to 0.651 (−0.084: 7 of 83 photos lose their
+only label-good first-section claim: p05, h22, h23, h33, h35, h42, h56, each a
+context-only style, tradition or place now held). Across the recorded runs the
+fall is 0.04 to 0.17; the h30–h49 readings drop below the gate (0.444 and
+0.50). On the old prompts the policy also costs coverage: M4 rises by about
+0.035 (Islamic ceramics, American diner menu style, Neoclassical furniture,
+Italian espresso bar culture, Hand-painted ceramics, Mandopop live concert,
+Italian Renaissance marble sculpture: held, then hedged or unanswered at stage
+2) and M5 loses h33, h42 and p05 while gaining h67 ("Z4", read model) and h70
+(the checkerboard sneakers). What it buys: h58's forbidden "Scandinavian
+minimalist design" no longer publishes (held, then weak), and the forbidden
+people claims of the round-3 blind run (h72, h73, h74) can no longer publish
+whatever domain the model files them under. The last forbidden published claim
+of the tune readings is p05 "Lustreware" (a distinctive-form craft tradition
+stage 2 supported). M1 1 is h78's strict paraphrase rule (§18.16).
+
+**How to read this.** On the haiku readings, the hold policy turns the
+round-3 failures of safety (M1, M2, M11) into a coverage problem: the rules
+alone pass no recorded run that the old rules failed, and they fail some that
+passed. Whether the new prompts (garments, objects and named works on stage 1)
+and stronger models recover M4, M5 and M15 is the sweep's question (19.5).
+
+### 19.5 The model sweep (item 5): profiles and commands
+
+Profiles (outside git, `r4/profiles/<name>.json`, both photo roles, prompts
+`vlm-quick-v3` / `vlm-enrich-v4`, catalog snapshot fetched 2026-10-20T13:51:45.771Z
+with `qualify:concentrate --catalog`, ZDR-listed routes only, the owner-accepted
+`privacyVerifiedAt` exception carried over as in rounds 2 and 3):
+
+| Name | Route (family) | Effort | Why | Output cap quick / enrich | Worst case, 94 photos |
+| --- | --- | --- | --- | --- | --- |
+| haiku | `anthropic/claude-haiku-5-5` (anthropic) | none | baseline | 600 / 1600 | $1.32 |
+| sonnet | `anthropic/claude-sonnet-5-5` (anthropic) | low | none is not supported (thinking cannot be disabled) | 1800 / 2800 | $7.99 |
+| gemini | `vertex/gemini-3.8-flash` (google) | low | none is not supported; images and json_schema are, so 3.5-flash is not needed; the `vertex` route lists ZDR, `ai-studio` does not | 3000 / 5000 | $5.08 |
+| gptmini | `openai/gpt-5.4-mini` (openai) | none | supported: no reasoning tokens to exhaust the output cap | 1000 / 2000 | $3.57 |
+
+The reservations are honest worst cases (input cap plus image tokens at the
+catalog's default input price, plus the output cap), so the sonnet caps are
+sized to fit the $8 cap of a run. `eval:live` and profile validation accept
+any provider family for the photo roles (`catalogCompatible` checks the route
+in the snapshot only), so no code change was needed for the other families;
+qualification artifacts still bind per route (profile hash). Each sweep run
+is 188 requests on the 94 tune photos (`--split tune`, golden-v5), no Qloo,
+its own out-dir and ledger. The exact commands are in the round's scratchpad
+(`r4/SWEEP.md`).
+
+### 19.6 Not changed, open
+
+- Thresholds (thr-v2), the verifier (off), held-out labels of earlier sets.
+- p05 "Lustreware" and h78's strict paraphrase rule (§18.16) are unchanged.
+- The h79 cuisine typing (19.1) and the country-name sport gap are named, not
+  fixed.
+- The licence questions of golden-v4/FREEZE.md and h33 are still open. For
+  the next set the owner allows generated starting images where a licence is
+  unclear.

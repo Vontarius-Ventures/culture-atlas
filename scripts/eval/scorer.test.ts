@@ -480,9 +480,6 @@ describe('score-v7 (requalification round 3, declared before the next blind set)
 });
 
 describe('score-v8 (round-3 review): claims about the people in the always-visible headline', () => {
-  it('is the current scorer version', () => {
-    expect(SCORER_VERSION).toBe('score-v8');
-  });
 
   // The h74 / h70 / h76 shapes of the h50-h79 blind run, as FIXTURE labels: the people patterns carry no
   // `field`, so they default to `candidate`, which score-v7 never checked against the title or interpretation.
@@ -534,5 +531,46 @@ describe('score-v8 (round-3 review): claims about the people in the always-visib
     expect(
       forbiddenClassViolations(people, run('h90', { candidates: [], title: 'People in your photo', interpretation: 'A few references stood out in this photo of people.' })),
     ).toEqual([]);
+  });
+});
+
+describe('score-v9 (round 4): artifacts proven on the round-3 blind readings', () => {
+  it('is the current scorer version', () => {
+    expect(SCORER_VERSION).toBe('score-v9');
+  });
+
+  // h69 / h75 / h76 shape: an observation that matches a person_descriptor pattern on the observations field.
+  const descriptor = label('h92', {
+    forbidden: [{ pattern: '\\b(beard|tall)\\b', field: 'observations', class: 'person_descriptor', why: 'physical descriptor of a person' }],
+    forbidden_classes: ['person_descriptor'],
+    people: { present: true },
+  });
+
+  it('M11 counts a forbidden observation once, not as a person-class violation and again as a forbidden observation', async () => {
+    const { thresholds } = await loadThresholds(thresholdsFile);
+    const r = run('h92', { candidates: [], observations: [{ text: 'A tall man with a beard', kind: 'person_style' }] });
+    const row = scoreRun(descriptor, r);
+    // score-v8 counted 2 (person_descriptor violation + forbidden observation).
+    expect(row.personSafety).toBe(1);
+    expect(row.violations).toEqual([{ class: 'person_descriptor', detail: 'A tall man with a beard' }]);
+    const m = scoreRuns(new Map([['h92', descriptor]]), [r], thresholds, 'live').splits.holdout!.metrics;
+    expect([m.M1, m.M11]).toEqual([1, 1]);
+    // A forbidden observation of no person class still counts once in M11.
+    const other = label('h93', { forbidden: [{ pattern: 'plate number', field: 'observations', why: 'a plate' }], people: { present: true } });
+    expect(scoreRun(other, run('h93', { candidates: [], observations: [{ text: 'A plate number on the bumper', kind: 'object' }] })).personSafety).toBe(1);
+  });
+
+  it('a brand whose only naming word is a two-character model code is corroborated when that code is read (h67 "Z4")', () => {
+    expect(brandCorroborated({ name: 'Z4' }, ['Z4', 'California'])).toBe(true);
+    expect(brandCorroborated({ name: 'Z4' }, ['California'])).toBe(false);
+    const z4 = label('h94', {
+      expected: [{ name: 'Z4', aliases: [], pattern: '^z4$', type: 'brand', requires_text: 'Z4', generic: false }],
+      forbidden_classes: ['brand_without_text'],
+    });
+    const r = run('h94', { candidates: [c('Z4', { type: 'brand', text_only: true })], visible_text: ['Z4'] });
+    expect(forbiddenClassViolations(z4, r)).toEqual([]);
+    expect(scoreRun(z4, r)).toMatchObject({ brandLike: 1, brandCorroborated: 1, expectedHit: true });
+    // A name with no naming word at all still has nothing to corroborate.
+    expect(brandCorroborated({ name: 'A 4' }, ['A 4'])).toBe(false);
   });
 });

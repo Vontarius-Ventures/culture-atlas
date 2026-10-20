@@ -39,11 +39,14 @@ const PHOTO_CODE: readonly string[] = [
  * Photo golden sets in the binding: golden-v1 (replay-v1, earlier artifacts),
  * golden-v2 (round 1; its blind split is consumed), golden-v3 (round 2: every
  * golden-v2 photo as tune, h14-h29 included, with the h26 label fix, plus the
- * blind split h30-h49, consumed by the round-2 blind run) and golden-v4
+ * blind split h30-h49, consumed by the round-2 blind run), golden-v4
  * (round 3: every golden-v3 photo as tune, with the h01, h31, h43 and h46
- * label fixes, plus the frozen blind split h50-h79).
+ * label fixes, plus the frozen blind split h50-h79, consumed by the round-3
+ * blind run) and golden-v5 (round 4: every golden-v4 photo as tune, h50-h79
+ * included, with the person-descriptor "tall"/"height" patterns scoped to
+ * people; no held-out split until the fresh blind set h80+ is added and frozen).
  */
-export const PHOTO_GOLDEN_SETS = ['golden-v1', 'golden-v2', 'golden-v3', 'golden-v4'] as const;
+export const PHOTO_GOLDEN_SETS = ['golden-v1', 'golden-v2', 'golden-v3', 'golden-v4', 'golden-v5'] as const;
 
 export const BOUND_CODE: Record<string, readonly string[]> = {
   'golden-v1': PHOTO_CODE,
@@ -52,6 +55,8 @@ export const BOUND_CODE: Record<string, readonly string[]> = {
   'golden-v3': PHOTO_CODE,
   // The round-3 requalification set (docs/requalification-plan.md, round 3): the photo roles qualify only on it.
   'golden-v4': PHOTO_CODE,
+  // The round-4 tune set (docs/quality-plan.md §19): the photo roles qualify only on it, once its blind split exists.
+  'golden-v5': PHOTO_CODE,
   'text-v1': [
     'scripts/eval/text-scorer.ts',
     'scripts/eval/text-schemas.ts',

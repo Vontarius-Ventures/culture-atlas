@@ -27,6 +27,7 @@ import {
   type CatalogSnapshot,
   type ModelProfile,
   type QualificationArtifact,
+  stalePhotoPromptVersion,
 } from '../packages/providers/src/index';
 import { parseTextFixture } from './eval/text-schemas';
 import { REQUIRED_GOLDEN_SET, type EvalBindingLike, type EvalBlock } from '../packages/providers/src/concentrate/profiles';
@@ -285,7 +286,7 @@ export async function qualifyProfile(
     /** vision_video_frame and text roles: the fixture directory. Photo roles use `golden` instead. */
     fixturesDir?: string;
     /**
-     * Photo roles (required): the golden set (fixtures/eval/golden-v4 since requalification round 3) and the
+     * Photo roles (required): the golden set (fixtures/eval/golden-v5 since requalification round 4) and the
      * directory holding its photos outside git. Every photo of both splits is
      * hash-checked before any request; outputs are scored in memory against
      * the live gates and never written.
@@ -415,6 +416,13 @@ export async function qualifyProfile(
     // The set's own record (freeze.json) is checked here; the committed binding's copy after the binding check below.
     const run = (await loadFreezeRecord(opts.golden.dir))?.blind_run;
     if (run?.result === 'fail') throw consumedBlindSet(golden.manifest.version, run);
+    // Round 4: a set without a blind held-out split (golden-v5 until h80+ is frozen) is refused before the
+    // photos are even checked: it can never qualify a photo role.
+    const blind = golden.manifest.photos.filter((p) => p.split === 'holdout' && p.blind === true).length;
+    if (blind < HOLDOUT_MIN_PHOTOS)
+      throw new Error(
+        `${golden.manifest.version} has ${blind} blind held-out photo(s); photo roles qualify only with at least ${HOLDOUT_MIN_PHOTOS} (quality plan §7.5). Nothing was sent.`,
+      );
     const verified = await verifiedGoldenPhotos(golden, opts.golden.photosDir);
     fixtures = verified.map((v) => ({ name: v.photo.file, kind: 'image', files: [{ path: v.path }] }));
     for (const v of verified) photoIds.set(v.path, v.photo.id);
@@ -422,6 +430,9 @@ export async function qualifyProfile(
     if (!opts.fixturesDir) throw new Error(`--fixtures is required for ${profile.role}.`);
     fixtures = await discoverFixtures(opts.fixturesDir, profile.role);
   }
+  // Round 4: a reading-v2 photo profile must name the prompt the code sends (VLM_READING_VERSIONS).
+  const stalePrompt = stalePhotoPromptVersion(profile);
+  if (stalePrompt) throw new Error(`${stalePrompt} Nothing was sent.`);
   if (textRole) {
     // The text fixtures are built from the current composer prompts; a profile naming an older
     // prompt version would qualify a prompt production no longer sends (round 3: composer-v2).
@@ -465,13 +476,6 @@ export async function qualifyProfile(
     });
     if (stale) throw new Error(`Evaluation inputs are not the committed ones: ${stale}. Run pnpm eval:binding --write first; nothing was sent.`);
     if (golden && binding.sets[evalSet]?.blind_consumed === true) throw consumedBlindSet(evalSet);
-  }
-  if (golden) {
-    const blind = golden.manifest.photos.filter((p) => p.split === 'holdout' && p.blind === true).length;
-    if (blind < HOLDOUT_MIN_PHOTOS)
-      throw new Error(
-        `${golden.manifest.version} has ${blind} blind held-out photo(s); photo roles qualify only with at least ${HOLDOUT_MIN_PHOTOS} (quality plan §7.5). Nothing was sent.`,
-      );
   }
   const minimum = Math.max(
     QUALIFICATION_MINIMUM_FIXTURES[profile.role],

@@ -1,0 +1,69 @@
+{
+  "id": "h50",
+  "split": "tune",
+  "file": "h50-food-shrimp-fettuccine.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Shrimp fettuccine",
+      "pattern": "fettucc?ine|tagliatelle|pasta|alfredo|scampi|linguine",
+      "aliases": [
+        "Fettuccine Alfredo",
+        "Shrimp pasta"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Italian-American cuisine",
+      "pattern": "italian|italian-american",
+      "type": "cuisine"
+    },
+    {
+      "pattern": "garlic bread|toasted bread|bread|baguette|crostini",
+      "generic": true
+    },
+    {
+      "pattern": "shrimp|prawns?|cream sauce|white sauce|butter sauce|herbs?|dill|parsley|white plate|dinner plate",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "olive garden|red lobster|carrabba|bertucci|buitoni|barilla|de cecco",
+      "why": "no restaurant or product name is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "ramen|udon|lo mein|chow mein|pad thai|noodle soup",
+      "why": "flat egg pasta in a cream sauce, not an Asian noodle dish"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A white plate of flat ribbon pasta (fettuccine) in a pale cream or butter sauce with herbs and a few shrimp, three pieces of toasted bread on the rim, a glass at the edge, a wooden table. No text, no packaging, no restaurant name. Expected: the pasta dish; Italian or Italian-American cuisine is acceptable, a named restaurant chain or pasta brand is not."
+}

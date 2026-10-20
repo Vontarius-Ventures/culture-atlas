@@ -174,8 +174,8 @@ describe('reading guardrails in the compiler', () => {
 
     const trace = await guardTrace(job_id);
     expect(trace.map((t) => [t.stage, t.version])).toEqual([
-      [1, 'guard-v10'],
-      [2, 'guard-v10'],
+      [1, 'guard-v11'],
+      [2, 'guard-v11'],
     ]);
     expect(trace[0]!.decisions.map((d) => [d.name, d.action])).toEqual([
       ['Vintage Racing', 'publish'],
@@ -287,7 +287,8 @@ describe('reading guardrails in the compiler', () => {
   });
   it('guard-v10: a role in the headline is retracted once stage 2 shows people; the capture card follows (headlineChanged)', async () => {
     const quick = VlmQuickRead.parse({
-      title: 'Youth fixtureball batter and catcher',
+      // guard-v11: "youth" and "catcher" are people words at stage 1; this title has none.
+      title: 'Fixtureball batter at the plate',
       interpretation: 'A batter swings on a dirt infield.',
       candidates: [
         { name: 'Vintage Racing', type: 'style', relation: 'resembles', certainty: 0.7, domain: 'fashion', evidence: 'distinctive_form', evidence_text: null, tag_query: 'vintage racing' },
@@ -314,7 +315,7 @@ describe('reading guardrails in the compiler', () => {
     captureId = capture_id;
     await runJobs(ctx, [job_id]);
     // Stage 1 had no people word ("batter" alone can be tempura batter): the headline was published as read.
-    expect(before).toEqual({ title: 'Youth fixtureball batter and catcher', card: 'Youth fixtureball batter and catcher' });
+    expect(before).toEqual({ title: 'Fixtureball batter at the plate', card: 'Fixtureball batter at the plate' });
     const after = await snapshot(capture_id);
     expect([after.analysis.title, after.analysis.interpretation]).toEqual(['People in your photo', 'A few references stood out in this photo of people.']);
     expect(await cardTitle()).toBe('People in your photo');

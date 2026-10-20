@@ -161,6 +161,15 @@ describe('eval:live (offline rails)', () => {
     await expect(runLiveEval({ ...common, outDir: out, maxRequests: 5, confirmPaidRequests: true, apiKey: KEY })).rejects.toThrow('--max-requests');
     await expect(runLiveEval({ ...common, outDir: out, spendCapMicros: 1000, confirmPaidRequests: true, apiKey: KEY })).rejects.toThrow('spend-cap');
     await expect(runLiveEval({ ...common, outDir: out, pipeline: unguardedPipeline, confirmPaidRequests: false })).rejects.toThrow('guarded pipeline');
+    // Round 4: a reading-v2 photo profile naming a prompt the code no longer sends is refused before anything is planned.
+    const staleQuick = { ...quickProfile, promptVersion: 'vlm-quick-v2', schemaVersion: 'atlas_quick_read_v2' } as ModelProfile;
+    const staleEnrich = { ...enrichProfile, promptVersion: 'vlm-enrich-v3', schemaVersion: 'atlas_enrichment_v2' } as ModelProfile;
+    await expect(runLiveEval({ ...common, outDir: out, profiles: { vision_photo: staleQuick, vision_photo_enrich: enrichProfile }, confirmPaidRequests: false })).rejects.toThrow(
+      'names promptVersion vlm-quick-v2; schema atlas_quick_read_v2 is sent with vlm-quick-v3',
+    );
+    await expect(
+      runLiveEval({ ...common, outDir: out, profiles: { vision_photo: { ...staleQuick, promptVersion: 'vlm-quick-v3' }, vision_photo_enrich: staleEnrich }, confirmPaidRequests: false }),
+    ).rejects.toThrow('sent with vlm-enrich-v4');
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -262,8 +271,8 @@ describe('eval:live (offline rails)', () => {
 
   it('with vision_verify, checks the first section before stage 2 and the stage-2 claims after it (binding), and re-scores with and without it', async () => {
     const { g, golden, thresholds } = await setup(['p01']);
-    const quickV2 = { ...quickProfile, promptVersion: 'vlm-quick-v2', schemaVersion: 'atlas_quick_read_v2' } as ModelProfile;
-    const enrichV2 = { ...enrichProfile, promptVersion: 'vlm-enrich-v3', schemaVersion: 'atlas_enrichment_v2', maxOutputTokens: 1600 } as ModelProfile;
+    const quickV2 = { ...quickProfile, promptVersion: 'vlm-quick-v3', schemaVersion: 'atlas_quick_read_v2' } as ModelProfile;
+    const enrichV2 = { ...enrichProfile, promptVersion: 'vlm-enrich-v4', schemaVersion: 'atlas_enrichment_v2', maxOutputTokens: 1600 } as ModelProfile;
     const verifyP = { ...enrichProfile, role: 'vision_verify', promptVersion: 'vlm-verify-v3', schemaVersion: 'atlas_verify_v1', maxOutputTokens: 600 } as ModelProfile;
     // FIXTURE replies: the stage-1 style is a target and the verifier answers "no", so it never publishes
     // and is not sent to stage 2; stage 2 adds a style, which the second check answers "yes".
@@ -351,8 +360,8 @@ describe('eval:live (offline rails)', () => {
 
   it('with vision_verify, a failed check blocks its claims (fail closed) and is recorded as null', async () => {
     const { g, golden, thresholds } = await setup(['p01']);
-    const quickV2 = { ...quickProfile, promptVersion: 'vlm-quick-v2', schemaVersion: 'atlas_quick_read_v2' } as ModelProfile;
-    const enrichV2 = { ...enrichProfile, promptVersion: 'vlm-enrich-v3', schemaVersion: 'atlas_enrichment_v2', maxOutputTokens: 1600 } as ModelProfile;
+    const quickV2 = { ...quickProfile, promptVersion: 'vlm-quick-v3', schemaVersion: 'atlas_quick_read_v2' } as ModelProfile;
+    const enrichV2 = { ...enrichProfile, promptVersion: 'vlm-enrich-v4', schemaVersion: 'atlas_enrichment_v2', maxOutputTokens: 1600 } as ModelProfile;
     const verifyP = { ...enrichProfile, role: 'vision_verify', promptVersion: 'vlm-verify-v3', schemaVersion: 'atlas_verify_v1', maxOutputTokens: 600 } as ModelProfile;
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       const name: string = JSON.parse(init.body as string).text.format.name;

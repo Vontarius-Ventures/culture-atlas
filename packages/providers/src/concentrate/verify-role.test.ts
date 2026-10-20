@@ -54,9 +54,9 @@ function runnerFor(fetchImpl: ReturnType<typeof reply>) {
 const jpeg = (w: number, h: number) => sharp({ create: { width: w, height: h, channels: 3, background: '#a63' } }).jpeg().toBuffer();
 
 describe('vision_verify role', () => {
-  it('is a model role with photo-role qualification: golden-v4, a blind held-out split, at least 10 fixtures', () => {
+  it('is a model role with photo-role qualification: golden-v5, a blind held-out split, at least 10 fixtures', () => {
     expect(MODEL_ROLE_VALUES).toContain('vision_verify');
-    expect(REQUIRED_GOLDEN_SET.vision_verify).toBe('golden-v4');
+    expect(REQUIRED_GOLDEN_SET.vision_verify).toBe('golden-v5');
     expect(QUALIFICATION_MINIMUM_FIXTURES.vision_verify).toBe(10);
     expect(readingForProfile(verifyProfile)).toBe('verify');
     // A vision profile must qualify bounded images; the verifier profile is one.

@@ -162,7 +162,8 @@ describe('media result citations (review finding: unguarded candidate names reac
   it('with the verifier opted in, its targets (styles, places, traditions, context-only claims) wait for the compile job (round-3 review)', () => {
     const aggregate = aggregateFrameReadings([
       reading('a', 1000, [
-        { name: 'Scandinavian minimalist design', type: 'style', certainty: 0.6, evidence: 'context', domain: 'design' },
+        // A distinctive form: guard-v11 holds a style resting on context alone for stage 2 (asserted below).
+        { name: 'Scandinavian minimalist design', type: 'style', certainty: 0.6, evidence: 'distinctive_form', domain: 'design' },
         { name: 'Fixture stoneware mug', type: 'object', relation: 'depicted', certainty: 0.8, evidence: 'distinctive_form', domain: 'craft' },
       ]),
     ]);
@@ -171,5 +172,13 @@ describe('media result citations (review finding: unguarded candidate names reac
     // The compiler publishes a style only on the verifier's "yes", later: the media result leaves it out.
     expect(publishableCitations(aggregate, { verifierEnabled: true }).map((c) => c.name)).toEqual(['Fixture stoneware mug']);
     expect(verifierOptedIn('true') && verifierOptedIn('1') && !verifierOptedIn(undefined) && !verifierOptedIn('false')).toBe(true);
+    // guard-v11 (round 4): a style on context alone is held at stage 1, so the media result never lists it.
+    const context = aggregateFrameReadings([
+      reading('a', 1000, [
+        { name: 'Scandinavian minimalist design', type: 'style', certainty: 0.6, evidence: 'context', domain: 'design' },
+        { name: 'Fixture stoneware mug', type: 'object', relation: 'depicted', certainty: 0.8, evidence: 'distinctive_form', domain: 'craft' },
+      ]),
+    ]);
+    expect(publishableCitations(context).map((c) => c.name)).toEqual(['Fixture stoneware mug']);
   });
 });

@@ -369,11 +369,25 @@ describe('reading v2 (quality plan §3)', () => {
   });
 
   it('the v2 prompts are pinned: an edit needs a new promptVersion and re-qualification', () => {
-    expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('ae79cce212c1004417d8d3b913b81df365a03ee9189a4fb3a11bbb32e2bc34ef');
-    expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v2');
-    // vlm-enrich-v3 (requalification tune, docs/quality-plan.md §15): was d23612b5… as vlm-enrich-v2.
-    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('b8740b2b77cfda1794dcc4ff86b264f8168d8d2330c4b42d5eb953cd5f3158de');
-    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v3');
+    // vlm-quick-v3 (round 4, docs/quality-plan.md §19): was ae79cce2… as vlm-quick-v2.
+    expect(sha256(VLM_QUICK_SYSTEM_PROMPT_V2)).toBe('d1a308e5631c07c18dead7d4d02823114f845340ec13f1008a2add7d3fbea248');
+    expect(VLM_READING_VERSIONS.quickV2.prompt).toBe('vlm-quick-v3');
+    // vlm-enrich-v4 (round 4): was b8740b2b… as vlm-enrich-v3 (requalification tune, §15), d23612b5… as vlm-enrich-v2.
+    expect(sha256(VLM_ENRICH_SYSTEM_PROMPT_V2)).toBe('8007487d0df03a35a38f1f09f467f7e6c2eccd90bd03cd005a8b2c618a7f208f');
+    expect(VLM_READING_VERSIONS.enrichV2.prompt).toBe('vlm-enrich-v4');
+  });
+
+  it('round 4 (vlm-quick-v3, vlm-enrich-v4): people photos name what is worn, held, eaten or played; works by their title', () => {
+    for (const prompt of [VLM_QUICK_SYSTEM_PROMPT_V2, VLM_ENRICH_SYSTEM_PROMPT_V2]) {
+      expect(prompt).toContain('Photos with people: spend candidates on what the people wear, hold, eat, play or do');
+      expect(prompt).toContain('Never name who they are, their relationship, role, team, club, league, school, unit, event or occasion');
+      expect(prompt).toContain('unless legible text in the photo names it');
+      expect(prompt).toContain('is named by its title or proper name');
+    }
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).toContain('never who the people are, their relationship, role or occasion');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('exactly one entry per first-reading candidate, never skipping one');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('is unsupported unless legible text names it');
+    expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('the title of a well-known artwork or landmark');
   });
 
   it('vlm-enrich-v3 lists prominent text first and transcribes partly hidden words as their visible letters', () => {
@@ -399,9 +413,10 @@ describe('reading v2 (quality plan §3)', () => {
       expect(prompt).toContain('Do not describe hair, face, skin, age, body or facial expression');
       expect(prompt).toContain('Do not identify real people.');
     }
-    expect(VLM_QUICK_SYSTEM_PROMPT_V2).toContain('return 0 to 5');
-    expect(VLM_QUICK_SYSTEM_PROMPT_V2).toContain('Never add a cuisine, place or activity only to reach a count.');
-    expect(VLM_QUICK_SYSTEM_PROMPT_V2).not.toContain('3 to 5');
+    // vlm-quick-v3: at least three candidates on a usable photo, spent on what is shown, never padded with a cuisine or place.
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).toContain('When the photo is usable, always return at least 3');
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).toContain('Never add a cuisine or place that is not shown only to reach a count.');
+    expect(VLM_QUICK_SYSTEM_PROMPT_V2).not.toContain('return 0 to 5');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('never descriptions of text');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('Never transcribe licence plates.');
     expect(VLM_ENRICH_SYSTEM_PROMPT_V2).toContain('Do not add a confirmed entry for the title.');
