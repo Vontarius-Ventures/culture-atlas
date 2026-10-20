@@ -1153,3 +1153,76 @@ refused to guess).
 This step: 32 Concentrate requests (blind run), 32 Qloo, 0 Wikipedia, all in
 the step's ledger (package `rq-blind`). Requalification round total:
 Concentrate 169 of 300 (137 tune + 32 blind), Qloo 32 of 200. No Elorian.
+
+## 17. Requalification round 2: blind-run gaps closed, text roles (2026-10-19)
+
+[Requalification plan](requalification-plan.md), "Round 2". h14–h29 are
+consumed (§16.5), so everything here is tuning on known photos, not blind
+evidence. No photo was read live in this round.
+
+### 17.1 What changed
+
+| Round-1 gap (§16.3) | Change | Version |
+| --- | --- | --- |
+| h28: "main player" / "background players" passed G-SUBJECT because the guard's people test did not count players, and "players" was not a role word | `PEOPLE_RE` counts players, athletes, crowds, spectators, onlookers, audiences, pedestrians, shoppers, diners, tourists, visitors, commuters, runners, cyclists, skaters, surfers, swimmers, dancers, musicians, performers, workers, vendors, children, students and similar words, singular or plural; people words in an observation and a role noun in the headline count as people too. `ROLE_RE` matches singular and plural role nouns and the scorer's sports roles (umpires, captains, footballers, goalkeepers …). "Player" in a playback device ("record player", "DVD players") or a "player piano" is neither. Ambiguous words that usually name things ("fans", "couple", "kid", "family") are left out | guard-v6 |
+| h26: "… photographed at dusk" kept, G-MEDIUM matched only "photograph(s)" | `MEDIUM_RE` matches inflections: `photograph\w*` (photographed, photography, photographic), rendered/renders/renderings, `sketch\w*`, watercolours/watercoloured, painterly, gouache, linocuts, cartoonish, still lifes, hand-drawn (at least every medium word the scorer counts). A participle is removed without its prepositional phrase ("a car photographed in a studio" → "a car in a studio"). "Painted", "print" and "canvas" on a craft, building, garment or vehicle stay decoration | guard-v6 |
+| The scorer's role list had "player" but not "players"; its people test only read the headline | Plural role nouns and the same people words (headline and observations); stricter only, no exception added | score-v5 |
+| h26: the expected "Classic roadster" pattern matched any name with "roadster", so the correct drop of "MG MGA roadster" counted against M4 | New tune set **golden-v3**: golden-v2's 44 photos, every one in tune (h14–h29 with no `blind` flag); h26's expected pattern is anchored to a body type with only describing words before it, so a make or model is judged by the MGA entry (good only when "MG" is read) and the forbidden makes. The label's `history` records the change. golden-v2 and its frozen files are untouched | golden-v3 |
+
+The binding binds golden-v3 with the same photo code; its `blind_consumed` is
+false because it has no held-out split yet. The photo roles still require
+golden-v2 (consumed), so nothing photo-related can qualify until a curator adds
+a fresh blind split (h30+), freezes it and the binding moves the photo roles to
+that set. Thresholds are unchanged (thr-v2).
+
+### 17.2 Offline replays (no request)
+
+Guard-v6, score-v5, thr-v2, live gates, verifier off, guarded pipeline:
+
+| Recordings | Labels | Result |
+| --- | --- | --- |
+| Round-1 blind run (h14–h29) | golden-v2 (held-out gates) | FAIL only M4 0.2105 (8/38; h26 still counts under the old label). **M1 0** (was 4), **M11 0** (was 3) |
+| Round-1 blind run (h14–h29) | golden-v3 (tune gates) | **PASS**: M1 0, M2 0.027, M3 0.97, **M4 0.1892** (7/37), M5 1.00, M6 1.00, M7 1.00, M8 0, M9 1.00, M11 0, M12 0.027, M15 0.87 |
+| Tune run 2 (§15) | golden-v2 and golden-v3 | PASS, identical to before |
+| Tune run 1 (§15) | golden-v2 and golden-v3 | FAIL M8 1, M9 0.885, identical to before |
+| Evaluate iteration 1 | golden-v2 | PASS, identical to before |
+| Evaluate iteration 2 | golden-v2 | FAIL M5 0.870, M9 0.885, identical to before |
+| `replay-v1` (CI) | golden-v1 | PASS |
+
+Every guarded metric of the tune-split replays is the same as under guard-v5:
+the broader people, role and medium tests did not drop a correct claim there.
+The unguarded readings fail M1 in every replay (M17); with score-v5 the
+unguarded blind readings score M1 13 (was 12) because the scorer now counts
+"background players" itself.
+
+The seven remaining clean drops on h14–h29 (h15 cinnamon sugar donut, h16
+Italian café culture, three Pre-Columbian claims on h19, h22 "Ramen" as a
+cuisine, h29 bomber jacket) are unchanged; "Ramen" is the scorer artifact noted
+in §16.3 (the label accepts it only as read text) and was not changed.
+
+### 17.3 Text roles (live)
+
+`research_text` and `composer`, unchanged profiles (`anthropic/claude-haiku-5-5`,
+effort none, the accepted `privacyVerifiedAt` carried over), text-v1,
+text-score-v2, thr-v2:
+
+- `research_text`: **pass**, 6/6, p50 6.1 s / p95 7.0 s, 7.7 kept claims per
+  fixture, 2.8 % unsupported specifics. `qualificationState()` reports
+  `qualified`.
+- `composer`: **fail**. A first start stopped after 5 requests because the
+  qualification request counter is cumulative per output directory and the
+  runbook's `--max-requests 11` did not count research's 6 (runbook fixed in
+  docs/concentrate.md). The full run (11 requests) passed transport 11/11 and
+  10/11 content checks; `plan-prose-limits-injection` failed T12: the reply
+  contained one of the fixture's forbidden injection echoes. The earlier
+  composer artifacts passed the same fixture, so the injection resistance is
+  not reliable. It was not re-run in search of a pass. `qualificationState()`
+  reports `catalog-compatible` (`eval_failed`). A fix needs an
+  injection-hardened plan-prose prompt (new `promptVersion`, rebuilt text
+  fixtures, regenerated binding) and a fresh run.
+
+### 17.4 Spend
+
+22 Concentrate requests (6 research, 5 + 11 composer), 0 Qloo, 0 Wikipedia,
+every call in the round's ledger (package `rq2-text`, outside the repository).
+No Elorian.

@@ -82,6 +82,15 @@ Results are in [quality-plan §16](quality-plan.md#16-requalification-blind-run-
 - **The failure is enforced, not only documented (review fix).** `fixtures/eval/golden-v2/freeze.json` records the failed run (`blind_run`), h14–h29 are marked `"blind": false`, and the binding marks golden-v2 `blind_consumed`: the qualification script refuses golden-v2 for the photo roles before any request and `evalGateFailure()` refuses every golden-v2 photo artifact (`blind_set_consumed`). No label, rule, prompt or threshold changed and the blind split was not re-run; requalifying the photo roles needs a new blind set.
 - The text roles were found stale under thr-v2 (`stale_thresholds`); their re-qualification (17 requests) is open.
 
+## Round 2 record (2026-10-19)
+
+Details in [quality-plan §17](quality-plan.md#17-requalification-round-2-blind-run-gaps-closed-text-roles-2026-10-19). Round budget: Concentrate ≤ 220, Qloo ≤ 150; used 22 and 0.
+
+- **The three blind-run gaps are closed in general (guard-v6, score-v5).** The people test counts players, athletes, crowds, spectators and other people words (headline and observations); role nouns match singular and plural, never a playback device; G-MEDIUM matches every inflection of a medium word ("photographed", "photography", "rendered" …) and keeps the "painted" decoration exception. The scorer's copies got the plurals and people words (stricter only).
+- **golden-v3** is the new tune set: golden-v2's 44 photos, all tune, with h26's expected pattern narrowed (label history entry). golden-v2 is untouched and stays consumed; the photo roles still require it, so they cannot qualify until a fresh blind split (h30+) is curated, frozen and bound. No threshold changed.
+- **Offline replay of the round-1 blind recordings:** M1 0 and M11 0 under both label sets; M4 0.2105 on golden-v2 labels, 0.1892 on golden-v3, where the split passes every (tune) gate. All earlier replays score exactly as before.
+- **Text roles:** `research_text` re-qualified (6/6, `qualified`); `composer` failed T12 on the plan-prose injection fixture (10/11 content) and stays `catalog-compatible`. It needs an injection-hardened prose prompt before another run.
+
 ## Budget
 
 Concentrate ≤ 300 requests, Qloo ≤ 200, Wikipedia as needed (polite rate). No Elorian.

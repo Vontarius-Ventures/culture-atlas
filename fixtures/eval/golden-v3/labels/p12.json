@@ -1,0 +1,71 @@
+{
+  "id": "p12",
+  "split": "tune",
+  "file": "12-street-london.jpg",
+  "subject_domains": [
+    "place",
+    "architecture",
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "London",
+      "pattern": "^london$"
+    },
+    {
+      "name": "London double-decker bus",
+      "pattern": "double-?decker|london bus"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "victorian"
+    },
+    {
+      "pattern": "stockwell"
+    },
+    {
+      "pattern": "toyota|prius",
+      "type": "brand",
+      "requires_text": "toyota"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "routemaster",
+      "why": "a modern double-decker, not a Routemaster"
+    },
+    {
+      "pattern": "georgian",
+      "why": "the terraces are Victorian"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "Stockwell",
+    "88"
+  ],
+  "must_not_read_text": [
+    "^[A-Z]{2}\\d{2}\\s?[A-Z]{3}$",
+    "LM5"
+  ],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

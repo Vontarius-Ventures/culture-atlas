@@ -162,6 +162,47 @@ describe('golden-v2 (fixtures/eval/golden-v2): blind held-out set h14+', () => {
   });
 });
 
+describe('golden-v3 (fixtures/eval/golden-v3): round-2 tune labels', () => {
+  const v2Dir = path.join(root, 'fixtures/eval/golden-v2');
+  const v3Dir = path.join(root, 'fixtures/eval/golden-v3');
+
+  it('is golden-v2 with every photo in tune (h14-h29 joined after their failed blind run), and no blind split yet', async () => {
+    const v2 = await loadGoldenSet(v2Dir);
+    const v3 = await loadGoldenSet(v3Dir);
+    expect(v3.manifest.version).toBe('golden-v3');
+    expect(v3.manifest.photos.every((p) => p.split === 'tune' && p.blind === undefined)).toBe(true);
+    // Same photos, files, hashes and sources; only the split (and the held-out blind flag) differ.
+    expect(v3.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest)).toEqual(v2.manifest.photos.map(({ split: _s, blind: _b, ...rest }) => rest));
+    expect(await loadFreezeRecord(v3Dir)).toBeNull();
+    for (const [id, l3] of v3.labels) {
+      const l2 = v2.labels.get(id)!;
+      expect(l3.split).toBe('tune');
+      if (id === 'h26') continue;
+      expect({ ...l3, split: l2.split }, id).toEqual(l2);
+    }
+  });
+
+  it('h26: the expected roadster pattern no longer counts a make or model read off the shape, and the change is in its history', async () => {
+    const v3 = await loadGoldenSet(v3Dir);
+    const v2 = await loadGoldenSet(v2Dir);
+    const h26 = v3.labels.get('h26')!;
+    const old = v2.labels.get('h26')!;
+    // Only the expected pattern and the history changed.
+    expect({ ...h26, split: old.split, expected: old.expected, history: undefined }).toEqual({ ...old, history: undefined });
+    expect(h26.history).toHaveLength(1);
+    expect(h26.history![0]).toMatchObject({ date: '2026-10-19' });
+    expect(h26.history![0]!.reason).toContain('MG MGA roadster');
+    const roadster = h26.expected[0]!;
+    for (const name of ['Classic roadster', 'British sports car', 'Red classic roadster', 'Vintage convertible', 'Mid-century British sports car'])
+      expect(entryMatches(roadster, name, 'exact'), name).toBe(true);
+    for (const name of ['MG MGA roadster', 'MGA roadster', 'Austin-Healey sports car'])
+      expect(entryMatches(roadster, name, 'exact'), name).toBe(false);
+    // The make is judged by the MGA entry: good only when "MG" is read.
+    expect(findEntry(h26.acceptable, 'MG MGA roadster')?.name).toBe('MGA');
+    expect(entryMatches(old.expected[0]!, 'MG MGA roadster', 'exact')).toBe(true);
+  });
+});
+
 describe('label and manifest schemas', () => {
   it('rejects an entry with neither a name nor a pattern, and an invalid regular expression', () => {
     expect(PhotoLabelSchema.safeParse({ ...label('p01'), expected: [{ aliases: [] }] }).success).toBe(false);

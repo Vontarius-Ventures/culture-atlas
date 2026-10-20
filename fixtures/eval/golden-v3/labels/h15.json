@@ -1,0 +1,75 @@
+{
+  "id": "h15",
+  "split": "tune",
+  "file": "h15-food-doughnuts.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Doughnut",
+      "pattern": "dough ?nuts?|donuts?",
+      "aliases": [
+        "Donut",
+        "Glazed doughnut"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "glaze(d)?|sugar glaze|icing"
+    },
+    {
+      "pattern": "home ?made|home baking|baking|baked goods|pastr(y|ies)|dessert|breakfast"
+    },
+    {
+      "pattern": "cooling rack|wire rack|baking (sheet|tray|pan)|kitchen knife|\\bknife\\b|countertop",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "krispy kreme|dunkin|tim hortons",
+      "why": "no brand or shop is shown",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "bagels?",
+      "why": "glazed ring pastries cooling on a rack are doughnuts, not bagels"
+    },
+    {
+      "pattern": "(italian|french|japanese|chinese|mexican|indian|thai|korean) (cuisine|food)",
+      "why": "no national cuisine is evidenced"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Nine glazed ring doughnuts on a wire rack over a baking sheet, a knife beside them. No text."
+}

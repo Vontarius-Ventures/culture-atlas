@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   GUARDRAIL_VERSION,
+  MEDIUM_RE,
   NEUTRAL_TITLE,
+  PEOPLE_RE,
+  ROLE_RE,
   brandCorroboratedIds,
   brandHeadToken,
   categoriesFor,
@@ -91,7 +94,7 @@ const names = (cs: readonly { name: string }[]) => cs.map((c) => c.name);
 
 describe('guardrails module', () => {
   it('is versioned and pure: same input, same output, input never mutated', () => {
-    expect(GUARDRAIL_VERSION).toBe('guard-v5');
+    expect(GUARDRAIL_VERSION).toBe('guard-v6');
     const a = reading([{ name: 'Still life painting' }, { name: 'Mid-century modern', tag_queries: ['mid-century modern'] }]);
     const before = structuredClone(a);
     const one = guardQuickRead(a, { twoStage: true });
@@ -1254,5 +1257,137 @@ describe('guard-v3: G-MEDIUM covers artwork, prints, canvas and nature morte', (
     expect(hasMediumWord('Leopard print coat', 'fashion')).toBe(false);
     expect(hasMediumWord('Canvas sneakers', 'fashion')).toBe(false);
     expect(hasMediumWord('Fixture lithograph', 'art')).toBe(true);
+  });
+});
+
+describe('guard-v6: people, roles and medium inflections (requalification round 2)', () => {
+  // Failure shapes from the golden-v2 blind run (docs/quality-plan.md §16.3), rewritten as fixtures.
+  const quick = (title: string, interpretation: string, candidates: VlmQuickCandidate[] = []) =>
+    guardQuickRead(toVlmAnalysis({ title, interpretation, candidates, quality: { usable: true, issue: null } }), { twoStage: true });
+
+  it('a player in the reading means people: role subjects ("main player", "background players") are dropped', () => {
+    const g = quick('Fixture sport player at the baseline', 'A casual match on an outdoor court.', [
+      v2({ name: 'Fixture court sport', type: 'tradition', domain: 'sport', certainty: 0.7 }),
+    ]);
+    const s2 = stage2(g, enrichment({ competing_subjects: ['main player', 'background players', 'Green hard court'] }));
+    expect(s2.analysis.competing_subjects.map((s) => s.label)).toEqual(['Green hard court']);
+    expect(s2.dropped.subjects).toBe(2);
+  });
+
+  it('athletes, spectators, crowds and other people words in the headline or observations count as people', () => {
+    for (const [title, observation] of [
+      ['Athletes on a running track', 'A white lane line'],
+      ['A stadium stand', 'Spectators fill the upper tier'],
+      ['A town square', 'Crowds gather near the fountain'],
+      ['An outdoor court', 'Additional players visible in the background'],
+      ['A finish line', 'A cyclist crosses the line'],
+      ['A referee signals at midfield', 'Floodlights above the stand'],
+    ] as const) {
+      const g = guardQuickRead(
+        reading([{ name: 'Team captains', tag_queries: ['captains'] }, { name: 'Night match atmosphere', tag_queries: ['stadium'] }], {
+          title,
+          observations: [{ id: 'o1', text: observation, kind: 'object', region_ids: [] }],
+        }),
+        { twoStage: true },
+      );
+      expect(names(g.analysis.candidates), title).toEqual(['Night match atmosphere']);
+      expect(g.decisions[0], title).toMatchObject({ name: '[withheld]', action: 'drop', rules: ['G-PERSON-ROLE'] });
+    }
+    // The same role word on a reading without people stays (a role is only inferred about people).
+    const empty = guardQuickRead(reading([{ name: 'Team captains', tag_queries: ['captains'] }], { title: 'An empty pitch at night' }), { twoStage: true });
+    expect(names(empty.analysis.candidates)).toEqual(['Team captains']);
+  });
+
+  it('plural role nouns are roles: "Background players", "Referees", "Sprint coaches", "Rival goalkeepers"', () => {
+    const g = guardQuickRead(
+      reading(
+        [
+          { name: 'Background players', tag_queries: ['tennis'] },
+          { name: 'Referees', tag_queries: ['refereeing'] },
+          { name: 'Sprint coaches', tag_queries: ['sprinting'] },
+          { name: 'Rival goalkeepers', tag_queries: ['football'] },
+          { name: 'Night match atmosphere', tag_queries: ['stadium'] },
+        ],
+        { title: 'People playing football in a street' },
+      ),
+      { twoStage: true },
+    );
+    expect(names(g.analysis.candidates)).toEqual(['Night match atmosphere']);
+    expect(g.decisions.filter((d) => d.action === 'drop').map((d) => d.rules)).toEqual([
+      ['G-PERSON-ROLE'],
+      ['G-PERSON-ROLE'],
+      ['G-PERSON-ROLE'],
+      ['G-PERSON-ROLE'],
+    ]);
+  });
+
+  it('a playback device is neither people nor a role; with people in the photo a device keeps its name', () => {
+    const device = guardQuickRead(
+      reading([{ name: 'Record player', type: 'object', tag_queries: ['turntable'] }], {
+        title: 'Vintage record player on a shelf',
+        interpretation: 'A DVD player and a player piano sit beside it.',
+        competing_subjects: [{ id: 's1', label: 'Record player', region_ids: [] }],
+      }),
+      { twoStage: true },
+    );
+    expect(names(device.analysis.candidates)).toEqual(['Record player']);
+    expect(device.analysis.competing_subjects.map((s) => s.label)).toEqual(['Record player']);
+    const people = guardQuickRead(
+      reading([{ name: 'Record player', type: 'object', tag_queries: ['turntable'] }, { name: 'Bass player', tag_queries: ['bass'] }], {
+        title: 'A man beside a record player',
+      }),
+      { twoStage: true },
+    );
+    expect(names(people.analysis.candidates)).toEqual(['Record player']);
+  });
+
+  it('PEOPLE_RE and ROLE_RE cover singular and plural forms and leave device and object words alone', () => {
+    for (const s of ['main player', 'background players', 'athletes', 'spectators', 'a crowd', 'crowds', 'onlookers', 'two cyclists', 'a referee'])
+      expect(PEOPLE_RE.test(s) || ROLE_RE.test(s), s).toBe(true);
+    for (const s of ['background players', 'referees', 'umpires', 'coaches', 'athletes', 'captains', 'footballers', 'actresses', 'celebrities'])
+      expect(ROLE_RE.test(s), s).toBe(true);
+    for (const s of ['record player', 'CD players', 'a player piano', 'ceiling fans', 'a couple of bowls', 'kid leather gloves', 'family-style dishes'])
+      expect(PEOPLE_RE.test(s) || ROLE_RE.test(s), s).toBe(false);
+  });
+
+  it('G-MEDIUM catches inflections ("photographed", "rendered", "sketched", "watercolours", "photography") in the headline', () => {
+    const g = guardQuickRead(
+      reading([{ name: 'British sports car', type: 'tradition', domain: 'vehicle', tag_queries: ['british sports car'] }], {
+        title: 'Red roadster photographed at dusk',
+        interpretation: 'It resembles a mid-century sports car photographed in a studio.',
+      }),
+      { twoStage: true },
+    );
+    expect(g.analysis.title).toBe('Red roadster at dusk');
+    expect(g.analysis.interpretation).toBe('It resembles a mid-century sports car in a studio.');
+    expect(g.titleChanged).toBe(true);
+    for (const [title, out] of [
+      ['A teapot rendered in soft light', 'A teapot in soft light'],
+      ['Harbour sketched in ink', 'Harbour in ink'],
+      ['Fixture harbour watercolours', 'Fixture harbour'],
+      ['Street photography of a market', 'Street market'],
+      ['A painterly view of a bridge', 'View of a bridge'],
+    ] as const) {
+      const out1 = guardQuickRead(reading([{ name: 'Wabi-sabi', tag_queries: ['wabi sabi'] }], { title }), { twoStage: true }).analysis.title;
+      expect(out1, title).toBe(out);
+      expect(MEDIUM_RE.test(out1), title).toBe(false);
+    }
+  });
+
+  it('G-MEDIUM catches inflections in candidate names; "painted" on a craft stays decoration', () => {
+    for (const name of ['Studio photography', 'Photographic print', 'Architectural renderings', 'Rendered harbour view', 'Fixture watercolours', 'Hand-drawn map', 'Gouache landscape', 'Linocut poster'])
+      expect(hasMediumWord(name, 'art'), name).toBe(true);
+    expect(hasMediumWord('Hand-painted wooden stools', 'craft')).toBe(false);
+    expect(hasMediumWord('Painted tiles', 'architecture')).toBe(false);
+    expect(hasMediumWord('Photographed tiles', 'architecture')).toBe(true);
+    const g = guardQuickRead(
+      reading([
+        { name: 'Studio photography', type: 'style', domain: 'art', tag_queries: ['photography'] },
+        { name: 'Hand-painted wooden stools', type: 'tradition', domain: 'craft', tag_queries: ['painted wooden folk furniture'] },
+      ]),
+      { twoStage: true },
+    );
+    expect(names(g.analysis.candidates)).toEqual(['Hand-painted wooden stools']);
+    expect(decisionFor(g.decisions, 'Studio photography')).toMatchObject({ action: 'drop', rules: ['G-MEDIUM'] });
   });
 });
