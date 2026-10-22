@@ -59,6 +59,11 @@ export const JobPayloads = {
     catalog_version: z.string().min(1).max(64).nullable(),
     categories: z.array(Category).min(1).max(4).default(['wear', 'play', 'watch', 'eat']),
   }),
+  analyze_audio: z.object({
+    analysis_id: Uuid,
+    asset_id: Uuid,
+    expected_generation: z.number().int().positive(),
+  }),
 } as const satisfies Record<JobType, z.ZodType>;
 
 export type JobPayload<T extends JobType> = z.infer<(typeof JobPayloads)[T]>;

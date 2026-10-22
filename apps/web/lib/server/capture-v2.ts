@@ -5,6 +5,8 @@ import type { NextRequest } from 'next/server';
 import { z } from 'zod';
 import {
   AppError,
+  AudioAnalysis,
+  AudioLibrary,
   CaptureDevice,
   MediaIntake,
   MediaAnalysis,
@@ -44,6 +46,7 @@ import {
 import { abuseLimitIp } from './http';
 import { analysisAvailability, photoAnalysisReadiness } from './model-readiness';
 import { ensureServerRuntime } from './runtime';
+import { audioAssetKind, isCreateAudioUpload, readKeepAudioBody } from './audio-http';
 
 /** Identity/P2 integration seam. Server startup must register before enabling those capabilities. */
 export interface CaptureV2Runtime {
@@ -303,14 +306,17 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
     }
     if (mutation && !grantAuthority)
       await enforceIpLimit(db, { ip: abuseLimitIp(request, config), config, now: new Date() });
-    if (mutation && body === undefined) body = await jsonBody(request);
+    const keepAudio = path === '/v2/media/audio' && method === 'POST';
+    if (mutation && body === undefined && !keepAudio) body = await jsonBody(request);
     const key = request.headers.get('idempotency-key') ?? '';
     if (mutation && !enrollment && !z.uuid().safeParse(key).success)
       throw new AppError('invalid_input', { message: 'Idempotency-Key must be a UUID.' });
     const ctx = await createCaptureV2HttpContext(authority, { db });
     const intake = new MediaIntake(ctx),
       devices = new CaptureDevice(ctx),
-      analysis = new MediaAnalysis(ctx);
+      analysis = new MediaAnalysis(ctx),
+      audioLibrary = new AudioLibrary(ctx),
+      audioAnalysis = new AudioAnalysis(ctx);
     let result: unknown,
       status = 200,
       match: RegExpExecArray | null;
@@ -339,8 +345,14 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         ),
         evaluation,
       );
+    } else if (keepAudio) {
+      const kept = await readKeepAudioBody(request);
+      result = await audioLibrary.keepRecording(kept.meta, kept.bytes, key);
+      status = 201;
     } else if (path === '/v2/uploads' && method === 'POST') {
-      result = await intake.createUpload(body, key);
+      result = isCreateAudioUpload(body)
+        ? await audioLibrary.createUpload(body, key)
+        : await intake.createUpload(body, key);
       status = 201;
     } else if ((match = /^\/v2\/uploads\/([^/]+)(?:\/(parts|complete|resume))?$/.exec(path))) {
       const id = z.uuid().parse(match[1]);
@@ -366,6 +378,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
       ))
     ) {
       const id = z.uuid().parse(match[1]);
+      const kind = await audioAssetKind(ctx, id);
       if (match[2] === 'content' && match[3] && method === 'GET') {
         const range = parseByteRange(request.headers.get('range'));
         if (range === 'invalid') return new Response(null, { status: 416, headers });
@@ -395,16 +408,23 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         });
       }
       if (match[2] === 'analysis' && method === 'POST' && !match[3]) {
-        result = await analysis.request(id, body, key);
+        result =
+          kind === 'audio'
+            ? await audioAnalysis.request(id, body, key)
+            : await analysis.request(id, body, key);
         status = 202;
       } else if (match[2] === 'preparation' && method === 'POST' && !match[3]) {
         result = await intake.retryPreparation(id, body, key);
         status = 202;
       } else if (match[2] === 'analysis' && method === 'GET' && match[3])
-        result = await analysis.get(id, z.uuid().parse(match[3]));
+        result =
+          kind === 'audio'
+            ? await audioAnalysis.get(id, z.uuid().parse(match[3]))
+            : await analysis.get(id, z.uuid().parse(match[3]));
       else if (match[2] === 'analysis' && method === 'DELETE' && match[3])
         result = await analysis.cancel(id, z.uuid().parse(match[3]), key);
-      else if (!match[2] && method === 'GET') result = await intake.detail(id);
+      else if (!match[2] && method === 'GET')
+        result = kind === 'audio' ? await audioLibrary.detail(id) : await intake.detail(id);
       else if (!match[2] && method === 'PATCH') result = await intake.updateMedia(id, body, key);
       else if (!match[2] && method === 'DELETE') {
         result = await intake.deleteMedia(id, body, key);

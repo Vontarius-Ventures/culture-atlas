@@ -1,47 +1,44 @@
 /**
  * Browser Music Mode client (amendment 2.3).
  *
- * Domain audio APIs are not merged on this server: uploads still accept
- * photo/video only, and there is no qualified recognizer. This module is the
- * named web seam against `specs/capture-platform-v2/audio-contract.examples.json`.
- * Honest unavailable states; never invent Qloo or recognition ids.
- *
- * AUD01: getUserMedia is audio-only. No video tracks, no camera preview.
+ * Keep and Explore call the audio domain over HTTP. This slice is WAV/PCM
+ * only. AUD01: getUserMedia is `{ audio: true }` with no `video` key.
+ * Missing recognizer stays honest unavailable/partial; never invent Qloo ids.
+ * Do not send recordings to ElevenLabs.
  */
 import { cameraProblem, type CameraProblem } from './camera-logic';
 import { formatDuration } from './media-format';
 
-/** Constraints passed to getUserMedia in Music Mode. `video` is always false. */
-export const MUSIC_GET_USER_MEDIA_CONSTRAINTS = { audio: true, video: false } as const;
+/** Matches domain `musicModeGetUserMediaConstraints()`. No `video` key. */
+export const MUSIC_GET_USER_MEDIA_CONSTRAINTS = { audio: true } as const;
 
-/** Spec default: browser audio capture up to 120 seconds. */
 export const MUSIC_CAPTURE_LIMIT_MS = 120_000;
+export const MUSIC_SAMPLE_RATE_HZ = 16_000;
 
-export const ACCEPT_AUDIO =
-  'audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-wav,audio/flac,audio/webm,audio/ogg,audio/opus,.mp3,.m4a,.aac,.wav,.flac,.webm,.ogg';
+export const ACCEPT_AUDIO = 'audio/wav,audio/wave,audio/x-wav,.wav';
 
 export type MicProblem = CameraProblem;
 
 export const MIC_PROBLEM_TEXT: Record<MicProblem, { title: string; body: string }> = {
   denied: {
     title: 'Microphone access is off',
-    body: 'Allow microphone access for this site in your browser settings, then try again. You can also choose an audio file instead.',
+    body: 'Allow microphone access for this site in your browser settings, then try again. You can also choose a WAV file instead.',
   },
   insecure: {
     title: 'Microphone needs a secure page',
-    body: 'Open culture atlas over https to record, or choose an audio file instead.',
+    body: 'Open culture atlas over https to record, or choose a WAV file instead.',
   },
   unavailable: {
     title: 'No microphone found',
-    body: 'This device has no microphone we can use. Choose an audio file instead.',
+    body: 'This device has no microphone we can use. Choose a WAV file instead.',
   },
   busy: {
     title: 'The microphone is busy',
-    body: 'Another app may be using the microphone. Close it and try again, or choose an audio file instead.',
+    body: 'Another app may be using the microphone. Close it and try again, or choose a WAV file instead.',
   },
   error: {
     title: 'The microphone did not start',
-    body: 'Try again, or choose an audio file instead.',
+    body: 'Try again, or choose a WAV file instead.',
   },
 };
 
@@ -50,14 +47,14 @@ export function micProblem(err: unknown): MicProblem {
 }
 
 /**
- * True only when the call is audio-only. Any truthy `video` constraint
- * (boolean true or a MediaTrackConstraints object) fails AUD01.
+ * True only when the call is audio-only and never names a video track.
+ * A `video: false` key still fails AUD01 (domain constraints omit `video`).
  */
 export function isAudioOnlyGetUserMedia(
   constraints: MediaStreamConstraints | undefined | null,
 ): boolean {
   if (!constraints) return false;
-  if (constraints.video) return false;
+  if ('video' in constraints) return false;
   return constraints.audio === true || typeof constraints.audio === 'object';
 }
 
@@ -71,29 +68,56 @@ export function assertAudioOnlyStream(stream: {
   }
 }
 
-export function pickAudioRecorderType(isTypeSupported: (t: string) => boolean): {
-  mimeType: string;
-  contentType: 'audio/webm' | 'audio/mp4' | 'audio/ogg';
-  extension: 'webm' | 'm4a' | 'ogg';
-} | null {
-  const candidates: Array<
-    [string, 'audio/webm' | 'audio/mp4' | 'audio/ogg', 'webm' | 'm4a' | 'ogg']
-  > = [
-    ['audio/webm;codecs=opus', 'audio/webm', 'webm'],
-    ['audio/webm', 'audio/webm', 'webm'],
-    ['audio/mp4', 'audio/mp4', 'm4a'],
-    ['audio/ogg;codecs=opus', 'audio/ogg', 'ogg'],
-    ['audio/ogg', 'audio/ogg', 'ogg'],
-  ];
-  for (const [mimeType, contentType, extension] of candidates)
-    if (isTypeSupported(mimeType)) return { mimeType, contentType, extension };
-  return null;
+export function isQualifiedWavFile(file: { name: string; type: string }): boolean {
+  return /^audio\/(wav|wave|x-wav)$/i.test(file.type) || /\.wav$/i.test(file.name);
 }
 
-export function musicFileName(extension: string, at: Date): string {
+/** 16-bit PCM WAV. Domain parsePcmWav accepts this container only. */
+export function encodePcmWav(samples: Float32Array, sampleRateHz: number): Blob {
+  const dataSize = samples.length * 2;
+  const bytes = new Uint8Array(44 + dataSize);
+  const view = new DataView(bytes.buffer);
+  writeAscii(bytes, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeAscii(bytes, 8, 'WAVE');
+  writeAscii(bytes, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRateHz, true);
+  view.setUint32(28, sampleRateHz * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(bytes, 36, 'data');
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]!));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+  return new Blob([bytes], { type: 'audio/wav' });
+}
+
+export function concatPcm(chunks: Float32Array[]): Float32Array {
+  const length = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function writeAscii(bytes: Uint8Array, offset: number, text: string): void {
+  for (let i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i);
+}
+
+export function musicFileName(_extension: string, at: Date): string {
   const p = (n: number) => String(n).padStart(2, '0');
   const stamp = `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`;
-  return `music-${stamp}.${extension}`;
+  return `music-${stamp}.wav`;
 }
 
 export function musicLimitText(
@@ -107,37 +131,50 @@ export function musicLimitText(
   return { text: `${formatDuration(limitMs)} max`, soon: false };
 }
 
-/** Server-side audio pipeline is not on this tree. Keep recordings local. */
 export const MUSIC_SERVER = {
-  audio_upload: 'unavailable',
-  music_match: 'unavailable',
   transcription: 'off',
+  elevenlabs: 'disabled',
   reason:
-    'Audio library upload and music identification are not on this server yet. Recordings stay on this device.',
+    'Audio identification is not configured on this server yet. Recordings stay in your library without a match.',
 } as const;
 
-/**
- * Explore action for a kept clip. Matches the spec contract's music_match
- * component selection; returns unavailable with null catalog ids.
- */
-export function exploreMusic(selection?: { start_ms: number; end_ms: number }) {
-  return {
-    contract_version: 2 as const,
-    requested_components: ['music_match'] as const,
-    selection: selection ?? { start_ms: 0, end_ms: 15_000 },
-    components: {
-      music_match: {
-        status: 'unavailable' as const,
-        reason: 'no_qualified_recognizer',
-        recognition_id: null,
-        qloo_entity_id: null,
-      },
-    },
-    notice: MUSIC_SERVER.reason,
-  };
+export function exploreNotice(analysis: {
+  state: string;
+  error_code?: string | null;
+  result?: unknown;
+}): string {
+  const result = analysis.result as
+    | {
+        components?: { music_match?: { state?: string; reason?: string | null } };
+        qloo_seeds?: Array<{ entity_id?: string | null }>;
+        recognition_id?: string | null;
+      }
+    | null
+    | undefined;
+  const match = result?.components?.music_match;
+  if (analysis.state === 'queued' || analysis.state === 'running') {
+    return 'Looking up the music. This stays in your library either way.';
+  }
+  if (match?.state === 'unavailable' || analysis.state === 'partial') {
+    return (
+      match?.reason === 'not_configured'
+        ? MUSIC_SERVER.reason
+        : 'Music identification is unavailable. Nothing was invented.'
+    );
+  }
+  if (match?.state === 'no_result' || analysis.state === 'complete') {
+    const seeds = result?.qloo_seeds ?? [];
+    if (!seeds.length || !result?.recognition_id) {
+      return 'No reliable match. Culture atlas did not invent a catalog id.';
+    }
+    return 'Match found.';
+  }
+  if (analysis.state === 'failed') {
+    return 'Explore could not finish. The recording is still in your library.';
+  }
+  return MUSIC_SERVER.reason;
 }
 
-/** Glasses microphone is a separate native qualification; the browser cannot verify it. */
 export function glassesMicrophoneAvailability(): { available: false; label: string } {
   return { available: false, label: 'Glasses microphone unavailable' };
 }

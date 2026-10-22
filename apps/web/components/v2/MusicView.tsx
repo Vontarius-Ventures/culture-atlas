@@ -7,21 +7,26 @@ import {
   ACCEPT_AUDIO,
   assertAudioOnlyStream,
   BROWSER_MICROPHONE_LABEL,
-  exploreMusic,
+  concatPcm,
+  encodePcmWav,
+  exploreNotice,
   glassesMicrophoneAvailability,
   isAudioOnlyGetUserMedia,
+  isQualifiedWavFile,
   MIC_PROBLEM_TEXT,
   micProblem,
   MUSIC_CAPTURE_LIMIT_MS,
   MUSIC_GET_USER_MEDIA_CONSTRAINTS,
+  MUSIC_SAMPLE_RATE_HZ,
   MUSIC_SERVER,
   musicFileName,
   musicLimitText,
-  pickAudioRecorderType,
   type MicProblem,
 } from './music-mode';
 import { formatDuration } from './media-format';
+import { isSignedOutError, mediaApi, mediaErrorMessage } from './media-api';
 import { V2Icon } from './V2Icon';
+import { newIdempotencyKey } from '@/lib/client/api';
 
 type Phase =
   | 'idle'
@@ -36,15 +41,20 @@ type Phase =
 interface Draft {
   blob: Blob;
   url: string;
-  extension: string;
+  durationMs: number;
   interrupted: boolean;
+}
+
+interface Kept {
+  asset_id: string;
+  generation: number;
+  duration_ms: number;
 }
 
 /**
  * Browser Music Mode (reference 19): camera off, microphone only.
- * Record → Stop → Keep → Explore. File-upload fallback when getUserMedia
- * is missing or refused. Kept clips stay on this device until the server
- * accepts audio uploads.
+ * Record → Stop → Keep → Explore. Keep writes WAV/PCM through POST /v2/media/audio.
+ * Explore is music_match only. File-upload fallback is WAV.
  */
 export function MusicView() {
   const router = useRouter();
@@ -52,14 +62,21 @@ export function MusicView() {
   const [problem, setProblem] = useState<MicProblem | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [kept, setKept] = useState(false);
+  const [kept, setKept] = useState<Kept | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
-  const [exploreNotice, setExploreNotice] = useState<string | null>(null);
+  const [exploreNoticeText, setExploreNoticeText] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const stream = useRef<MediaStream | null>(null);
-  const recorder = useRef<MediaRecorder | null>(null);
-  const chunks = useRef<Blob[]>([]);
+  const capturing = useRef(false);
+  const chunks = useRef<Float32Array[]>([]);
+  const graph = useRef<{
+    context: AudioContext;
+    source: MediaStreamAudioSourceNode;
+    processor: ScriptProcessorNode;
+    mute: GainNode;
+  } | null>(null);
   const startedAt = useRef(0);
   const timer = useRef<number | null>(null);
   const interrupted = useRef(false);
@@ -69,6 +86,21 @@ export function MusicView() {
   const stopTracks = useCallback(() => {
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
+  }, []);
+
+  const tearDownGraph = useCallback(() => {
+    const g = graph.current;
+    graph.current = null;
+    capturing.current = false;
+    if (!g) return;
+    try {
+      g.source.disconnect();
+      g.processor.disconnect();
+      g.mute.disconnect();
+      void g.context.close();
+    } catch {
+      // already closed
+    }
   }, []);
 
   const startMic = async () => {
@@ -87,9 +119,9 @@ export function MusicView() {
       assertAudioOnlyStream(s);
       stream.current = s;
       s.getAudioTracks()[0]?.addEventListener('ended', () => {
-        if (recorder.current?.state === 'recording') {
+        if (capturing.current) {
           interrupted.current = true;
-          recorder.current.stop();
+          finishRecording();
         }
         setNotice('The microphone stopped. Any recording so far is kept for review.');
       });
@@ -101,20 +133,44 @@ export function MusicView() {
     }
   };
 
-  useEffect(() => () => stopTracks(), [stopTracks]);
+  useEffect(
+    () => () => {
+      tearDownGraph();
+      stopTracks();
+    },
+    [stopTracks, tearDownGraph],
+  );
 
   const finishRecording = () => {
     if (timer.current) window.clearInterval(timer.current);
     timer.current = null;
-    if (recorder.current && recorder.current.state !== 'inactive') {
-      setPhase('finalizing');
-      recorder.current.stop();
+    if (!capturing.current) return;
+    capturing.current = false;
+    setPhase('finalizing');
+    const samples = concatPcm(chunks.current);
+    chunks.current = [];
+    tearDownGraph();
+    if (!samples.length) {
+      setNotice('Nothing was recorded. Try again.');
+      setPhase(stream.current ? 'live' : 'idle');
+      return;
     }
+    const blob = encodePcmWav(samples, MUSIC_SAMPLE_RATE_HZ);
+    const durationMs = Math.round((samples.length / MUSIC_SAMPLE_RATE_HZ) * 1000);
+    setDraft({
+      blob,
+      url: URL.createObjectURL(blob),
+      durationMs: Math.max(durationMs, 1),
+      interrupted: interrupted.current,
+    });
+    setKept(null);
+    setExploreNoticeText(null);
+    setPhase('review');
   };
 
   useEffect(() => {
     const onHide = () => {
-      if (document.visibilityState === 'hidden' && recorder.current?.state === 'recording') {
+      if (document.visibilityState === 'hidden' && capturing.current) {
         interrupted.current = true;
         finishRecording();
       }
@@ -126,12 +182,11 @@ export function MusicView() {
   const startRecording = () => {
     const s = stream.current;
     if (!s) return;
-    const type =
-      typeof MediaRecorder !== 'undefined'
-        ? pickAudioRecorderType((t) => MediaRecorder.isTypeSupported(t))
-        : null;
-    if (!type) {
-      setNotice('This browser cannot record audio. Choose an audio file instead.');
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) {
+      setNotice('This browser cannot record WAV. Choose a WAV file instead.');
       return;
     }
     const audioTracks = s.getAudioTracks();
@@ -139,32 +194,23 @@ export function MusicView() {
       setNotice('No microphone track is available.');
       return;
     }
-    const rec = new MediaRecorder(new MediaStream(audioTracks), { mimeType: type.mimeType });
+    const context = new Ctx({ sampleRate: MUSIC_SAMPLE_RATE_HZ });
+    const source = context.createMediaStreamSource(new MediaStream(audioTracks));
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    const mute = context.createGain();
+    mute.gain.value = 0;
     chunks.current = [];
     interrupted.current = false;
-    rec.ondataavailable = (e) => {
-      if (e.data.size) chunks.current.push(e.data);
+    capturing.current = true;
+    processor.onaudioprocess = (event) => {
+      if (!capturing.current) return;
+      chunks.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
     };
-    rec.onstop = () => {
-      const blob = new Blob(chunks.current, { type: type.contentType });
-      recorder.current = null;
-      if (!blob.size) {
-        setNotice('Nothing was recorded. Try again.');
-        setPhase(stream.current ? 'live' : 'idle');
-        return;
-      }
-      setDraft({
-        blob,
-        url: URL.createObjectURL(blob),
-        extension: type.extension,
-        interrupted: interrupted.current,
-      });
-      setKept(false);
-      setExploreNotice(null);
-      setPhase('review');
-    };
-    rec.start(1000);
-    recorder.current = rec;
+    source.connect(processor);
+    processor.connect(mute);
+    mute.connect(context.destination);
+    graph.current = { context, source, processor, mute };
+    void context.resume();
     startedAt.current = performance.now();
     setElapsed(0);
     setPhase('recording');
@@ -182,28 +228,77 @@ export function MusicView() {
   const discard = () => {
     if (draft) URL.revokeObjectURL(draft.url);
     setDraft(null);
-    setKept(false);
-    setExploreNotice(null);
+    setKept(null);
+    setExploreNoticeText(null);
     setPhase(stream.current ? 'live' : 'idle');
     queueMicrotask(() => shutter.current?.focus());
   };
 
-  const keep = () => {
-    if (!draft) return;
-    setKept(true);
-    setAnnounce('Saved on this device');
-    setNotice(MUSIC_SERVER.reason);
+  const keep = async () => {
+    if (!draft || busy) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const form = new FormData();
+      const filename = musicFileName('wav', new Date());
+      form.append('client_capture_id', crypto.randomUUID());
+      form.append('source', 'browser_microphone');
+      form.append('source_route', 'browser_microphone');
+      form.append('filename', filename);
+      form.append('content_type', 'audio/wav');
+      form.append('recording', draft.blob, filename);
+      const saved = await mediaApi.keepAudio(form, newIdempotencyKey());
+      setKept({
+        asset_id: saved.asset_id,
+        generation: saved.generation,
+        duration_ms: saved.media.duration_ms,
+      });
+      setAnnounce('Saved to your library');
+      setNotice('Saved to your library. Explore is optional and does not change taste.');
+    } catch (err) {
+      if (isSignedOutError(err)) {
+        setNotice('Sign in to keep this recording in your library. You can still save it on this device.');
+      } else {
+        setNotice(mediaErrorMessage(err, 'Could not keep this recording.'));
+      }
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const explore = () => {
-    const duration = draft ? Math.round(elapsed) || 15_000 : 15_000;
-    const result = exploreMusic({ start_ms: 0, end_ms: Math.min(duration, MUSIC_CAPTURE_LIMIT_MS) });
-    setExploreNotice(result.notice);
-    setPhase('explored');
+  const explore = async () => {
+    if (!kept || busy) return;
+    setBusy(true);
+    try {
+      const end = Math.max(1, Math.min(kept.duration_ms, 15_000));
+      const requested = await mediaApi.analyzeAudio(
+        kept.asset_id,
+        {
+          contract_version: 2,
+          expected_generation: kept.generation,
+          requested_components: ['music_match'],
+          selection: { start_ms: 0, end_ms: end },
+        },
+        newIdempotencyKey(),
+      );
+      let latest = await mediaApi.audioAnalysis(kept.asset_id, requested.analysis_id);
+      for (let i = 0; i < 8 && (latest.state === 'queued' || latest.state === 'running'); i++) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        latest = await mediaApi.audioAnalysis(kept.asset_id, requested.analysis_id);
+      }
+      setExploreNoticeText(exploreNotice(latest));
+      setPhase('explored');
+    } catch (err) {
+      setExploreNoticeText(mediaErrorMessage(err, MUSIC_SERVER.reason));
+      setPhase('explored');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const close = () => {
-    if (recorder.current?.state === 'recording') finishRecording();
+    if (capturing.current) finishRecording();
+    tearDownGraph();
     stopTracks();
     router.push('/capture');
   };
@@ -214,14 +309,18 @@ export function MusicView() {
 
   const onPickedFile = (file: File | undefined) => {
     if (!file) return;
+    if (!isQualifiedWavFile(file)) {
+      setNotice('Use a WAV file. Other audio containers are not qualified yet.');
+      return;
+    }
     setDraft({
       blob: file,
       url: URL.createObjectURL(file),
-      extension: /\.([a-z0-9]+)$/i.exec(file.name)?.[1] ?? 'm4a',
+      durationMs: 15_000,
       interrupted: false,
     });
-    setKept(false);
-    setExploreNotice(null);
+    setKept(null);
+    setExploreNoticeText(null);
     setPhase('review');
   };
 
@@ -301,7 +400,7 @@ export function MusicView() {
                   className="button button--primary"
                   onClick={() => fileInput.current?.click()}
                 >
-                  Choose an audio file
+                  Choose a WAV file
                 </button>
                 {problem !== 'unavailable' && problem !== 'insecure' && (
                   <button
@@ -391,18 +490,23 @@ export function MusicView() {
               <button type="button" className="button button--outline v2-button" onClick={discard}>
                 Delete
               </button>
-              <button type="button" className="button button--primary v2-button" onClick={keep}>
+              <button
+                type="button"
+                className="button button--primary v2-button"
+                onClick={() => void keep()}
+                disabled={busy}
+              >
                 Keep
               </button>
             </div>
           ) : (
             <>
               <p className="camera__status" role="status">
-                Saved on this device.
+                Saved to your library.
               </p>
-              {exploreNotice && (
+              {exploreNoticeText && (
                 <p className="camera__status" role="status">
-                  {exploreNotice}
+                  {exploreNoticeText}
                 </p>
               )}
               <div className="camera__review-actions">
@@ -412,8 +516,8 @@ export function MusicView() {
                 <button
                   type="button"
                   className="button button--primary v2-button"
-                  onClick={explore}
-                  disabled={phase === 'explored'}
+                  onClick={() => void explore()}
+                  disabled={phase === 'explored' || busy}
                 >
                   Explore music
                 </button>
@@ -423,7 +527,7 @@ export function MusicView() {
           <a
             className="text-button"
             href={draft.url}
-            download={musicFileName(draft.extension, new Date())}
+            download={musicFileName('wav', new Date())}
           >
             Save to this device
           </a>
@@ -433,7 +537,7 @@ export function MusicView() {
       {phase !== 'review' && phase !== 'explored' && (
         <p className="music__fallback">
           <button type="button" className="text-button" onClick={() => fileInput.current?.click()}>
-            Choose an audio file instead
+            Choose a WAV file instead
           </button>
         </p>
       )}
