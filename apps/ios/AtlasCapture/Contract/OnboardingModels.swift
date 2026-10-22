@@ -363,6 +363,48 @@ public struct AnalyzeMediaRequest: Codable, Sendable, Equatable {
   }
 }
 
+/// Contract-2 analysis for Music Mode. Speech is never requested here.
+public struct AnalyzeAudioRequest: Codable, Sendable, Equatable {
+  public struct Selection: Codable, Sendable, Equatable {
+    public var startMS: Int
+    public var endMS: Int
+
+    public init(startMS: Int, endMS: Int) {
+      self.startMS = startMS
+      self.endMS = endMS
+    }
+
+    enum CodingKeys: String, CodingKey {
+      case startMS = "start_ms"
+      case endMS = "end_ms"
+    }
+  }
+
+  public var contractVersion: Int
+  public var expectedGeneration: Int
+  public var requestedComponents: [String]
+  public var selection: Selection
+
+  public init(expectedGeneration: Int, startMS: Int, endMS: Int, requestedComponents: [String] = ["music_match"]) {
+    self.contractVersion = 2
+    self.expectedGeneration = expectedGeneration
+    self.requestedComponents = requestedComponents
+    self.selection = Selection(startMS: startMS, endMS: endMS)
+  }
+
+  /// Music Mode explore: fingerprint/catalog match only. No transcripts.
+  public static func musicMatch(expectedGeneration: Int, startMS: Int, endMS: Int) -> AnalyzeAudioRequest {
+    AnalyzeAudioRequest(expectedGeneration: expectedGeneration, startMS: startMS, endMS: endMS)
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case selection
+    case contractVersion = "contract_version"
+    case expectedGeneration = "expected_generation"
+    case requestedComponents = "requested_components"
+  }
+}
+
 public enum AnalysisState: String, Codable, Sendable, CaseIterable {
   case queued, running, partial, complete, failed, cancelled
 }

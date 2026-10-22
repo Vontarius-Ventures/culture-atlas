@@ -1,6 +1,9 @@
-// Hosted API for this build. A host name only: xcconfig treats "//" as a
-// comment, so Info.plist builds the URL as https://$(ATLAS_API_HOST).
-// Staging/production builds override this in CI; never a LAN relay address.
+// Hosted API for this build. xcconfig treats "//" as a comment, so the
+// scheme is stored as "https:" and Info.plist assembles
+// $(ATLAS_API_SCHEME)//$(ATLAS_API_HOST). Staging/production builds override
+// the host in CI; never a LAN relay address. Debug.xcconfig points at
+// localhost:3000 over HTTP.
+ATLAS_API_SCHEME = https:
 ATLAS_API_HOST = app.cultureatlas.com
 
 // Ready notices (screen 17): silent APNs wake-ups. Development builds set

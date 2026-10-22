@@ -127,7 +127,7 @@ struct ReviewSheet: View {
 
   var body: some View {
     VStack(spacing: 16) {
-      Text(draft.kind == .photo ? "Keep this photo?" : "Keep this video?").font(.system(.title2, design: .serif))
+      Text(keepTitle).font(.system(.title2, design: .serif))
       Text("Saved on this phone. Keeping it uploads it to your private library.")
         .foregroundStyle(AtlasTheme.muted)
       if draft.interrupted {
@@ -151,6 +151,14 @@ struct ReviewSheet: View {
     }
     .padding(24)
     .presentationDetents([.medium])
+  }
+
+  private var keepTitle: String {
+    switch draft.kind {
+    case .photo: return "Keep this photo?"
+    case .video: return "Keep this video?"
+    case .audio: return "Keep this recording?"
+    }
   }
 }
 

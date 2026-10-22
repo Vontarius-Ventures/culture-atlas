@@ -8,6 +8,11 @@ import Foundation
 public enum AtlasContract {
   public static let version = "2026-10-15.1"
   public static let clipMaxSeconds = 60
+  /// Music Mode capture cap (amendment 2.3). Independent of the 60 s video clip.
+  public static let audioMaxSeconds = 120
+  public static let musicRecognitionDefaultSeconds = 15
+  public static let musicRecognitionMinSeconds = 5
+  public static let musicRecognitionMaxSeconds = 30
   public static let countdownFromSeconds = 10
   public static let remoteArmMaxSeconds = 600
   public static let heartbeatIntervalSeconds: TimeInterval = 15
@@ -20,7 +25,7 @@ public enum AtlasContract {
 }
 
 public enum MediaKind: String, Codable, Sendable, CaseIterable {
-  case photo, video
+  case photo, video, audio
 }
 
 /// Reported capture source. The server records it separately from the
@@ -29,6 +34,10 @@ public enum MediaSource: String, Codable, Sendable {
   case phoneCamera = "phone_camera"
   case metaGlasses = "meta_glasses"
   case upload
+  /// Music Mode: the phone microphone, camera off.
+  case phoneMicrophone = "phone_microphone"
+  /// Music Mode: a verified glasses microphone input (not DAT camera audio).
+  case glassesMicrophone = "glasses_microphone"
 }
 
 public enum UploadState: String, Codable, Sendable {
@@ -301,6 +310,9 @@ public struct CreateUploadRequest: Codable, Sendable, Equatable {
   public var sha256: String
   public var capturedAt: Date?
   public var captureSessionID: UUID?
+  /// Provenance of the actual input used for audio (phone_microphone or a
+  /// verified glasses mic). Omitted for photo/video so existing bodies match.
+  public var sourceRoute: String? = nil
 
   enum CodingKeys: String, CodingKey {
     case kind, source, filename, sha256
@@ -309,6 +321,23 @@ public struct CreateUploadRequest: Codable, Sendable, Equatable {
     case byteSize = "byte_size"
     case capturedAt = "captured_at"
     case captureSessionID = "capture_session_id"
+    case sourceRoute = "source_route"
+  }
+
+  /// Omit `source_route` when unset so photo/video bodies stay byte-equal to
+  /// the native-contract fixtures.
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(clientCaptureID, forKey: .clientCaptureID)
+    try container.encode(kind, forKey: .kind)
+    try container.encode(source, forKey: .source)
+    try container.encode(filename, forKey: .filename)
+    try container.encode(contentType, forKey: .contentType)
+    try container.encode(byteSize, forKey: .byteSize)
+    try container.encode(sha256, forKey: .sha256)
+    try container.encodeIfPresent(capturedAt, forKey: .capturedAt)
+    try container.encodeIfPresent(captureSessionID, forKey: .captureSessionID)
+    try container.encodeIfPresent(sourceRoute, forKey: .sourceRoute)
   }
 }
 

@@ -21,6 +21,7 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
   struct Toast: Equatable, Identifiable {
     let id: UUID
     let resultPath: String?
+    let title: String
   }
 
   @Published private(set) var toast: Toast?
@@ -82,8 +83,30 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
     do {
       let media = try await api.media(assetID)
       let status = try await api.startAnalysis(mediaID: assetID, generation: media.generation)
-      await store.watch(WatchedAnalysis(mediaID: assetID, analysisID: status.analysisID, startedAt: Date()), account: account)
+      await store.watch(
+        WatchedAnalysis(mediaID: assetID, analysisID: status.analysisID, startedAt: Date(), kind: .photo),
+        account: account)
       // Asked at the moment of use: the user just chose to explore a photo.
+      _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+      sceneActive()
+      return true
+    } catch {
+      exploring.remove(assetID)
+      return false
+    }
+  }
+
+  /// Screen 20: Explore music. Speech is never requested.
+  func exploreMusic(assetID: UUID, startMS: Int, endMS: Int) async -> Bool {
+    guard let account = await sessions.currentAccountID else { return false }
+    exploring.insert(assetID)
+    do {
+      let media = try await api.media(assetID)
+      let status = try await api.startMusicAnalysis(
+        mediaID: assetID, generation: media.generation, startMS: startMS, endMS: endMS)
+      await store.watch(
+        WatchedAnalysis(mediaID: assetID, analysisID: status.analysisID, startedAt: Date(), kind: .audio),
+        account: account)
       _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
       sceneActive()
       return true
@@ -113,11 +136,12 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
       }
       let decision = ReadyNoticePolicy.decide(
         state: state, app: presence, watched: true, notified: watch.notified, ageHours: watch.ageHours(now: now))
+      let title = watch.kind == .audio ? "Your music is ready" : ReadyNoticeCopy.title
       switch decision.notice {
-      case .notification: await postNotification(for: watch, resultPath: resultPath)
+      case .notification: await postNotification(for: watch, resultPath: resultPath, title: title)
       case .toast:
-        toast = Toast(id: watch.analysisID, resultPath: resultPath)
-        AccessibilityNotification.Announcement(ReadyNoticeCopy.title).post()
+        toast = Toast(id: watch.analysisID, resultPath: resultPath, title: title)
+        AccessibilityNotification.Announcement(title).post()
       case .none: break
       }
       if !decision.keepWatching {
@@ -129,9 +153,9 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
     return changed
   }
 
-  private func postNotification(for watch: WatchedAnalysis, resultPath: String?) async {
+  private func postNotification(for watch: WatchedAnalysis, resultPath: String?, title: String) async {
     let content = UNMutableNotificationContent()
-    content.title = ReadyNoticeCopy.title
+    content.title = title
     content.categoryIdentifier = ReadyNoticePolicy.notificationCategory
     content.sound = .default
     if let resultPath { content.userInfo = ["result_path": resultPath] }
@@ -209,7 +233,7 @@ struct ReadyToast: View {
   var body: some View {
     if let toast = notices.toast {
       HStack(spacing: 12) {
-        Text(ReadyNoticeCopy.title).font(.callout.weight(.medium))
+        Text(toast.title).font(.callout.weight(.medium))
         Spacer()
         Button(ReadyNoticeCopy.open) { notices.open(resultPath: toast.resultPath) }
           .buttonStyle(.borderedProminent)

@@ -42,7 +42,12 @@ public final class PhoneCamera: NSObject, ObservableObject {
   @Published public private(set) var microphoneOn = false
   @Published public private(set) var interruption: String?
 
-  public let session = AVCaptureSession()
+  /// Created only when the photo/video camera path starts. Music Mode must
+  /// never touch this (AUD01).
+  private var captureSession: AVCaptureSession?
+  public var session: AVCaptureSession { ensureSession() }
+  /// True only after the camera path has constructed an AVCaptureSession.
+  public var hasCaptureSession: Bool { captureSession != nil }
   private let photoOutput = AVCapturePhotoOutput()
   private let movieOutput = AVCaptureMovieFileOutput()
   private var videoInput: AVCaptureDeviceInput?
@@ -53,6 +58,13 @@ public final class PhoneCamera: NSObject, ObservableObject {
 
   public override init() {
     super.init()
+  }
+
+  @discardableResult
+  private func ensureSession() -> AVCaptureSession {
+    if let captureSession { return captureSession }
+    let session = AVCaptureSession()
+    captureSession = session
     observers.append(NotificationCenter.default.addObserver(
       forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: .main
     ) { [weak self] note in
@@ -69,6 +81,7 @@ public final class PhoneCamera: NSObject, ObservableObject {
     ) { [weak self] _ in
       MainActor.assumeIsolated { self?.interruption = nil }
     })
+    return session
   }
 
   public static var cameraAuthorized: Bool { AVCaptureDevice.authorizationStatus(for: .video) == .authorized }
@@ -93,7 +106,10 @@ public final class PhoneCamera: NSObject, ObservableObject {
 
   public func stop() {
     if movieOutput.isRecording { movieOutput.stopRecording() }
-    let session = self.session
+    guard let session = captureSession else {
+      isRunning = false
+      return
+    }
     Task.detached { session.stopRunning() }
     isRunning = false
   }

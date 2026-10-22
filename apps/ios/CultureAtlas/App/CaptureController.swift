@@ -31,7 +31,12 @@ final class CaptureController: ObservableObject {
   let transfer: BackgroundTransfer
   let receipts: ReceiptStore
   let wearables: WearablesAdapter
-  let camera = PhoneCamera()
+  /// Created on first camera use so Music Mode never initializes a capture session.
+  lazy var camera = PhoneCamera()
+  let music = MusicCapture()
+  /// Music Mode Explore: start analysis after the audio draft commits.
+  var afterCommittedExplore: ((DraftRecord) async -> Void)?
+  private var finishingExplores = false
   let arming: RemoteArming
   private(set) var commands: RemoteCommandRunner!
   private var recordingCommandID: UUID?
@@ -57,7 +62,7 @@ final class CaptureController: ObservableObject {
       await MainActor.run {
         let cameraOK = PhoneCamera.cameraAuthorized
         let readiness: DeviceReadiness = cameraOK ? .ready : .userActionRequired
-        return (caps: ["photo": cameraOK, "video": cameraOK, "microphone": PhoneCamera.microphoneAuthorized], readiness: readiness)
+        return (caps: ["photo": cameraOK, "video": cameraOK, "microphone": MusicCapture.microphoneAuthorized], readiness: readiness)
       }
     }
     self.commands = RemoteCommandRunner(api: api, receipts: receipts, executor: CommandBridge(controller: self))
@@ -120,6 +125,21 @@ final class CaptureController: ObservableObject {
     }
     drafts = draftStore.drafts(owner: account)
     lockedDraftsExist = draftStore.hasLockedDrafts(otherThan: account)
+    let pending = drafts.filter { $0.exploreAfterUpload == true && $0.status == .committed && $0.assetID != nil }
+    if !pending.isEmpty, !finishingExplores {
+      Task { await finishExplores(pending) }
+    }
+  }
+
+  func finishExplores(_ pending: [DraftRecord]) async {
+    guard let account = signedInAccount else { return }
+    finishingExplores = true
+    defer { finishingExplores = false }
+    for draft in pending {
+      _ = try? draftStore.update(draft.id, owner: account) { $0.exploreAfterUpload = false }
+      await afterCommittedExplore?(draft)
+    }
+    drafts = draftStore.drafts(owner: account)
   }
 
   // MARK: Sign-out / switch (DraftLockPolicy.signOutOrder)
@@ -130,6 +150,7 @@ final class CaptureController: ObservableObject {
     guard let account = signedInAccount else { return }
     camera.stopRecording()
     wearables.stopClip()
+    music.stop()
     camera.stop()
     wearables.endSession()
     armTimer?.cancel()
@@ -218,12 +239,48 @@ final class CaptureController: ObservableObject {
   func stopRecording() {
     camera.stopRecording()
     wearables.stopClip()
+    music.stop()
+  }
+
+  /// Music Mode: audio-only capture. Never starts the camera.
+  func recordAudio(route: AudioInputRoute) async -> DraftRecord? {
+    guard let account = signedInAccount else { return nil }
+    guard draftStore.hasRoom(forBytes: 40_000_000) else {
+      message = MusicCapture.CaptureError.storageFull.errorDescription
+      return nil
+    }
+    let source: MediaSource = route == .glassesMicrophone ? .glassesMicrophone : .phoneMicrophone
+    var draft = DraftRecord.new(
+      owner: account, kind: .audio, source: source, contentType: "audio/mp4", capturedAt: Date())
+    draft.sourceRoute = route.rawValue
+    draft.audioPresent = true
+    do { try draftStore.save(draft) } catch {
+      message = MusicCapture.CaptureError.storageFull.errorDescription
+      return nil
+    }
+    let url = draftStore.recordingURL(draft)
+    recordingDraftID = draft.id
+    defer { recordingDraftID = nil }
+    do {
+      let result = try await music.record(to: url, route: route, maxSeconds: AtlasContract.audioMaxSeconds)
+      draft.durationSeconds = result.duration
+      draft.interrupted = result.interrupted
+      draft.sourceRoute = result.inputRoute.rawValue
+      draft.source = result.inputRoute == .glassesMicrophone ? .glassesMicrophone : .phoneMicrophone
+      try draftStore.ingest(plaintext: url, into: &draft)
+      reloadDrafts()
+      return draft
+    } catch {
+      try? draftStore.delete(draft)
+      message = (error as? LocalizedError)?.errorDescription ?? "Recording could not be saved."
+      return nil
+    }
   }
 
   /// After a crash mid-recording: a fragment-written file is kept as an
   /// interrupted clip; an empty one is removed. Never silently restarted.
   private func recoverInterruptedRecordings(_ account: UUID) {
-    for draft in draftStore.drafts(owner: account) where draft.kind == .video && draft.byteSize == 0 {
+    for draft in draftStore.drafts(owner: account) where (draft.kind == .video || draft.kind == .audio) && draft.byteSize == 0 {
       let url = draftStore.recordingURL(draft)
       let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
       if size > 0 {
@@ -241,11 +298,34 @@ final class CaptureController: ObservableObject {
 
   func keep(_ draft: DraftRecord, allowCellular: Bool = false) async {
     guard let account = signedInAccount else { return }
+    if draft.kind == .audio, !allowCellular, draft.status == .awaitingReview || draft.status == .keptLocal {
+      _ = try? draftStore.update(draft.id, owner: account) { $0.status = .keptLocal }
+      reloadDrafts()
+      return
+    }
     _ = try? draftStore.update(draft.id, owner: account) {
       $0.status = .queued
       $0.allowCellular = allowCellular
     }
     reloadDrafts()
+    await uploads.drive(draft.id)
+  }
+
+  /// Explore music: upload the local recording and, once committed, start music_match.
+  func queueAudioExplore(_ draft: DraftRecord, startMS: Int, endMS: Int) async {
+    guard let account = signedInAccount else { return }
+    _ = try? draftStore.update(draft.id, owner: account) {
+      $0.exploreAfterUpload = true
+      $0.exploreStartMS = startMS
+      $0.exploreEndMS = endMS
+      if $0.status == .awaitingReview || $0.status == .keptLocal { $0.status = .queued }
+    }
+    reloadDrafts()
+    if let latest = draftStore.drafts(owner: account).first(where: { $0.id == draft.id }),
+      latest.status == .committed, latest.assetID != nil {
+      await finishExplores([latest])
+      return
+    }
     await uploads.drive(draft.id)
   }
 
