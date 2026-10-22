@@ -1148,14 +1148,14 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
 
 ## Factory integration line (2026-10-22)
 
-Live Concentrate catalog snapshot `fetched_at` 2026-10-22T03:12:23.227Z (204
+Live Concentrate catalog snapshot `fetched_at` 2026-10-22T03:13:03.746Z (204
 models, `fixtures/concentrate/catalog-snapshot.json`). Pins are exact catalog
 ids, not marketing names. `DEFAULT_MODELS.concentrate` stays empty.
 
 | Role | Pin | ZDR on catalog | Qualification |
 | --- | --- | --- | --- |
-| `research_text` | `anthropic/claude-haiku-5-5` | listed (policy + certificate on the `anthropic` route) | **catalog-compatible** in git. Historical text-v1 artifacts (2026-10-20, operator directory) are not in this repository; this pass did not re-run billed eval |
-| `composer` (`composer-v2`) | `anthropic/claude-haiku-5-5` | same route | same as research_text |
+| `research_text` | `anthropic/claude-haiku-5-5` | listed (policy + certificate on the `anthropic` route) | **qualified** on text-v1 (`rt-haiku55-none-20261022`, 6/6, p50 6.3 s / p95 7.6 s) |
+| `composer` (`composer-v2`) | `anthropic/claude-haiku-5-5` | same route | **qualified** on text-v1 (`co2-haiku55-none-20261022`, 11/11, p50 2.9 s / p95 4.8 s) |
 | `vision_photo`, `vision_photo_enrich`, `vision_video_frame` | `anthropic/claude-haiku-5-5` | same route | **not qualified**: golden-v5 has no unused blind split; the harness refuses before any request |
 | — | `claude-fable-5-1` (anthropic / vertex / azure) | **not eligible** (`zdr: false`) | not pinned |
 | — | `vertex/gemini-2.5-flash` | listed on `vertex` only | verifier candidate, not enabled |
@@ -1170,16 +1170,17 @@ rollback. Artifact: `fixtures/featherless/model-selection.json`.
 `createVlm` / `createTextModel` use the Concentrate gateway when
 `LLM_PROVIDER=concentrate`. A key plus ZDR assertions reports `unverified`
 (calls still throw) until a matching qualification artifact, durable
-`inference_attempts` ledger and the `MODEL_*_USD` ceilings are present.
-Dashboard confirmation of ZDR and no content logging for the Anthropic route
-remains a deploy gate; profiles carry the owner-accepted `privacyVerifiedAt`.
+`inference_attempts` ledger and the `MODEL_*_USD` ceilings are present; after
+a validated reply the capability becomes `available`. Photo roles stay
+catalog-compatible. Dashboard confirmation of ZDR and no content logging for
+the Anthropic route remains a deploy gate; profiles carry the owner-accepted
+`privacyVerifiedAt`.
 
 ## Remaining release gates
 
-- In this repository the factory catalog pin is **catalog-compatible**, not
-  dispatch-qualified. Historical operator-directory artifacts still record
-  **`research_text` and `composer` (`composer-v2`) as qualified** (2026-10-20
-  requalification round 3 Tune); they are not shipped here:
+- **`research_text` and `composer` (`composer-v2`) are qualified** in
+  `fixtures/concentrate/` (2026-10-22 factory line; previously 2026-10-20
+  requalification round 3 Tune in the operator directory):
   - `vision_photo` and `vision_photo_enrich` failed three blind runs: golden-v2
     (M1, M4, M11; "Requalification blind run" above), golden-v3 h30–h49 (M1,
     M2, M4, M9, M11) and golden-v4 h50–h79 (M1, M2, M5, M7, M11, M15;
