@@ -1,4 +1,5 @@
 import type { JobHandlerMap } from '../jobs/handler';
+import { analyzeAudio } from '../audio/analyze-job';
 import { analyzeCapture } from './analyze-capture';
 import { discoverRelated } from './discover-related';
 import { generatePlan } from './generate-plan';
@@ -16,4 +17,5 @@ export const JOB_HANDLERS: JobHandlerMap = {
   sensor_poll: sensorPoll,
   purge_deleted: purgeDeleted,
   taste_seed: tasteSeed,
+  analyze_audio: analyzeAudio,
 };
