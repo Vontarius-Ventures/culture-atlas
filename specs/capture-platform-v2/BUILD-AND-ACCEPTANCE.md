@@ -1,5 +1,7 @@
 # Build and release acceptance
 
+> Audio scope is extended by [amendment2.3](AUDIO-AND-MULTIMODAL.md): standalone audio, Music Mode, soundtrack/evidence analysis, provider qualification, new permissions and safe sharing migration. This amendment takes precedence for audio; other behavior is unchanged.
+
 ## Delivery sequence
 
 | Package | Work and exit condition |

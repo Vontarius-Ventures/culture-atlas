@@ -1,5 +1,7 @@
 # Product and architecture
 
+> Audio scope is extended by [amendment2.3](AUDIO-AND-MULTIMODAL.md): standalone audio, Music Mode, soundtrack/evidence analysis, provider qualification, new permissions and safe sharing migration. This amendment takes precedence for audio; other behavior is unchanged.
+
 ## Required outcome
 
 A customer signs into culture atlas, connects their own compatible glasses on their own phone, captures a photo/video, sees it in their private library across devices, and chooses what to explore. Web/phone camera capture and file uploads work independently of glasses availability. No relay setup, developer credentials, terminal, customer server, or founder authorization is part of normal public onboarding.

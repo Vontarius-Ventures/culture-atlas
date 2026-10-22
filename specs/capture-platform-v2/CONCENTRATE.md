@@ -1,5 +1,7 @@
 # Concentrate model backend
 
+> Audio scope is extended by [amendment2.3](AUDIO-AND-MULTIMODAL.md): standalone audio, Music Mode, soundtrack/evidence analysis, provider qualification, new permissions and safe sharing migration. This amendment takes precedence for audio; other behavior is unchanged.
+
 ## Decision and scope
 
 Use Concentrate as the default gateway for the v2 release, funded initially by the operator's existing credits. Customers do not supply keys. Atlas remains provider-independent through its vision/text/composer interfaces. Preserve existing Featherless/Anthropic adapters for explicitly configured operational rollback; do not automatically bill them when Concentrate credits are exhausted.
