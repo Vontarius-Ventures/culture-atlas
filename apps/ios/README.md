@@ -89,7 +89,7 @@ AUD01–AUD13, privacy labels).
 | Gate | State |
 | --- | --- |
 | Apple Development Team / device signing | Untracked `Signing.xcconfig`; may be absent |
-| Simulator compile of `CultureAtlas` | Intended on this machine after `xcodegen generate` |
+| Simulator compile of `CultureAtlas` | Verified on this machine: `xcodegen generate` then `xcodebuild -scheme CultureAtlas -destination 'platform=iOS Simulator,name=iPhone 17' test` → **TEST SUCCEEDED**, 57 tests, 0 failures. Automatic signing, no `DEVELOPMENT_TEAM` in the repo. |
 | Physical phone mic, interruptions, route loss | Not qualified |
 | Verified glasses microphone route (not DAT camera) | Not qualified; public build has no Meta SDK |
 | App Store / TestFlight submission | Has not happened |
