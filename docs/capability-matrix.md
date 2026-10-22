@@ -4,7 +4,7 @@ What each provider capability can actually do in this deployment. Source of trut
 
 Statuses: **available** (probed and working) · **degraded** (working with limits) · **unverified** (configured, not yet probed; calls attempted, failures mark it unavailable) · **unavailable** (not configured, not implemented, or inaccessible — dependent features show partial states, never simulated data).
 
-Last updated: 2026-10-22: Qloo hackathon key live-probed; Concentrate catalog pin `anthropic/claude-haiku-5-5`; Featherless rollback `google/gemma-3-27b-it` (`features.image_input: true`). Photo and text Concentrate roles stay catalog-compatible until a golden-set eval artifact matches. Earlier: 2026-10-19 live photo-stage transport; 2026-10-17 first Qloo probe.
+Last updated: 2026-10-22: Qloo hackathon key live-probed; Concentrate catalog pin `anthropic/claude-haiku-5-5`; text roles qualified on text-v1 (`rt-haiku55-none-20261022`, `co2-haiku55-none-20261022`); photo roles remain catalog-compatible (golden-v5 has no unused blind split). Featherless rollback `google/gemma-3-27b-it`. Earlier: 2026-10-19 live photo-stage transport; 2026-10-17 first Qloo probe.
 
 ## Qloo (hackathon key live)
 
