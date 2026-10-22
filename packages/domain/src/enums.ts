@@ -50,6 +50,8 @@ export const JOB_TYPES = [
   'purge_deleted',
   /** Seeds a new account's feed from its onboarding picks (spec amendment 2.2). */
   'taste_seed',
+  /** Amendment 2.3 Music Mode: explicit Explore of a private audio asset. */
+  'analyze_audio',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;

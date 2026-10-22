@@ -665,6 +665,7 @@ export class MediaIntake {
     }
     const { rows } = await this.ctx.db.query(
       `SELECT id,created_at FROM media_assets WHERE account_id=$1 AND deleted_at IS NULL
+       AND kind IN ('photo','video')
        AND ($2::text IS NULL OR kind=$2) AND ($3::text IS NULL OR status=$3) AND ($4::text IS NULL OR source=$4)
        AND ($5::timestamptz IS NULL OR (created_at,id)<($5,$6::uuid))
        ORDER BY created_at DESC,id DESC LIMIT $7`,

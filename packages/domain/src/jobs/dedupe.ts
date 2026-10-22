@@ -55,3 +55,7 @@ export function planReplacementDedupeKey(input: { planId: string; baseVersion: n
 export function tasteSeedDedupeKey(input: { owner: Owner; tasteRevision: number }): string {
   return `taste_seed:${digest([ownerKey(input.owner), input.tasteRevision])}`;
 }
+
+export function audioAnalysisDedupeKey(input: { owner: Owner; analysisId: string }): string {
+  return `analyze_audio:${digest([ownerKey(input.owner), input.analysisId])}`;
+}
