@@ -107,4 +107,12 @@ public enum CapabilityGate {
     guard let capabilities else { return PhoneCamera(photo: false, video: false) }
     return PhoneCamera(photo: capabilities.flag("camera_photo"), video: capabilities.flag("camera_video"))
   }
+
+  /// Music Mode is core capture. A missing flag does not hide it; only an
+  /// explicit false would. Glasses microphone routing is independent.
+  public static func phoneMicrophone(_ capabilities: Capabilities?) -> Bool {
+    guard let capabilities else { return true }
+    if let value = capabilities.flags["microphone_audio"] { return value }
+    return true
+  }
 }

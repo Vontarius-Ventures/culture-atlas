@@ -2,7 +2,7 @@
 # Layout follows World Observer's project.yml.
 #
 # Two app targets share the same sources:
-#   CultureAtlas              public camera/upload build. Does NOT link the Meta
+#   CultureAtlas              public camera / Music Mode / upload build. Does NOT link the Meta
 #                             SDK; the Experimental glasses entry explains it is
 #                             unavailable in this release (screen 09).
 #   CultureAtlasExperimental  links AtlasGlasses (Meta Wearables Device Access
@@ -17,8 +17,8 @@ options:
     iOS: "17.2"
   createIntermediateGroups: true
 configFiles:
-  Debug: Config/Base.xcconfig
-  Release: Config/Base.xcconfig
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
 settings:
   base:
     # DEVELOPMENT_TEAM comes from CI or an untracked Config/Signing.xcconfig.

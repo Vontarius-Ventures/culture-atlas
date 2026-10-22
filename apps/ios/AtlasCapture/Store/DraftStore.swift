@@ -8,6 +8,8 @@ public struct DraftRecord: Codable, Equatable, Identifiable, Sendable {
   public enum Status: String, Codable, Sendable {
     /// Shown for Retake/Keep (photo) or Keep/Delete (video); not uploaded.
     case awaitingReview = "awaiting_review"
+    /// Music Mode Keep: saved on this phone, not uploaded. Explore uploads.
+    case keptLocal = "kept_local"
     /// Kept; waits for network policy.
     case queued
     case uploading
@@ -33,6 +35,13 @@ public struct DraftRecord: Codable, Equatable, Identifiable, Sendable {
   public var durationSeconds: Double?
   public var audioPresent: Bool
   public var interrupted: Bool
+  /// Actual microphone route for audio drafts (`phone_microphone`, etc.).
+  public var sourceRoute: String?
+  /// Alias used by Music Mode UI (`input_route` on screen 19/20).
+  public var inputRoute: String? {
+    get { sourceRoute }
+    set { sourceRoute = newValue }
+  }
   /// Set only for remote-command captures while the session is active.
   public var captureSessionID: UUID?
   public var commandID: UUID?
@@ -49,20 +58,38 @@ public struct DraftRecord: Codable, Equatable, Identifiable, Sendable {
   public var errorCode: String?
   public var attempts: Int
   public var nextAttemptAt: Date?
+  /// Set when Explore music is chosen before the file has finished uploading.
+  public var exploreAfterUpload: Bool?
+  public var exploreStartMS: Int?
+  public var exploreEndMS: Int?
 
   public static func new(
     owner: UUID, kind: MediaKind, source: MediaSource, contentType: String, capturedAt: Date,
     commandCaptureID: UUID? = nil
   ) -> DraftRecord {
     let id = commandCaptureID ?? UUID()
-    let ext = contentType == "image/jpeg" ? "jpg" : contentType == "video/mp4" ? "mp4" : "mov"
+    let prefix: String
+    let ext: String
+    switch kind {
+    case .photo:
+      prefix = "IMG"
+      ext = contentType == "image/jpeg" ? "jpg" : "bin"
+    case .video:
+      prefix = "VID"
+      ext = contentType == "video/mp4" ? "mp4" : "mov"
+    case .audio:
+      prefix = "AUD"
+      ext = "m4a"
+    }
     return DraftRecord(
       id: id, ownerAccountID: owner, clientCaptureID: id, kind: kind, source: source, contentType: contentType,
-      filename: "\(kind == .photo ? "IMG" : "VID")-\(id.uuidString.prefix(8)).\(ext)", byteSize: 0, sha256: "",
-      capturedAt: capturedAt, durationSeconds: nil, audioPresent: false, interrupted: false,
-      captureSessionID: nil, commandID: nil, status: .awaitingReview, allowCellular: false, uploadID: nil,
-      assetID: nil, partSize: nil, partCount: nil, receipts: [], createKey: UUID(), completeKey: nil,
-      errorCode: nil, attempts: 0, nextAttemptAt: nil)
+      filename: "\(prefix)-\(id.uuidString.prefix(8)).\(ext)", byteSize: 0, sha256: "",
+      capturedAt: capturedAt, durationSeconds: nil, audioPresent: kind == .audio, interrupted: false,
+      sourceRoute: kind == .audio ? source.rawValue : nil,
+      captureSessionID: nil, commandID: nil, status: .awaitingReview, allowCellular: false,
+      uploadID: nil, assetID: nil, partSize: nil, partCount: nil, receipts: [], createKey: UUID(), completeKey: nil,
+      errorCode: nil, attempts: 0, nextAttemptAt: nil, exploreAfterUpload: nil, exploreStartMS: nil,
+      exploreEndMS: nil)
   }
 }
 
@@ -103,7 +130,13 @@ public final class DraftStore: @unchecked Sendable {
 
   /// Where an in-progress recording writes plaintext; recovered on relaunch.
   public func recordingURL(_ draft: DraftRecord) -> URL {
-    draftDirectory(draft).appendingPathComponent(draft.contentType == "video/mp4" ? "recording.mp4" : "recording.mov")
+    let name: String
+    switch draft.contentType {
+    case "video/mp4": name = "recording.mp4"
+    case "audio/mp4", "audio/m4a", "audio/x-m4a": name = "recording.m4a"
+    default: name = "recording.mov"
+    }
+    return draftDirectory(draft).appendingPathComponent(name)
   }
 
   func key(for account: UUID) throws -> SymmetricKey {

@@ -79,13 +79,15 @@ public struct WatchedAnalysis: Codable, Sendable, Equatable, Identifiable {
   public var analysisID: UUID
   public var startedAt: Date
   public var notified: Bool
+  public var kind: MediaKind?
   public var id: UUID { analysisID }
 
-  public init(mediaID: UUID, analysisID: UUID, startedAt: Date, notified: Bool = false) {
+  public init(mediaID: UUID, analysisID: UUID, startedAt: Date, notified: Bool = false, kind: MediaKind? = nil) {
     self.mediaID = mediaID
     self.analysisID = analysisID
     self.startedAt = startedAt
     self.notified = notified
+    self.kind = kind
   }
 
   public func ageHours(now: Date) -> Double { now.timeIntervalSince(startedAt) / 3600 }

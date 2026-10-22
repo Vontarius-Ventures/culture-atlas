@@ -74,6 +74,16 @@ extension AtlasAPI {
       body: AnalyzeMediaRequest(expectedGeneration: generation), idempotencyKey: key)
   }
 
+  /// Music Mode explore: music_match only. Never sends speech/transcripts.
+  public func startMusicAnalysis(
+    mediaID: UUID, generation: Int, startMS: Int, endMS: Int, key: UUID = UUID()
+  ) async throws -> AnalysisStatus {
+    try await call(
+      "POST", "/v2/media/\(mediaID.uuidString.lowercased())/analysis",
+      body: AnalyzeAudioRequest.musicMatch(expectedGeneration: generation, startMS: startMS, endMS: endMS),
+      idempotencyKey: key)
+  }
+
   public func analysis(mediaID: UUID, analysisID: UUID) async throws -> AnalysisStatus {
     try await get("/v2/media/\(mediaID.uuidString.lowercased())/analysis/\(analysisID.uuidString.lowercased())")
   }

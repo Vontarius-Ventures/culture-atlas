@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>AtlasAPIBaseURL</key>
-	<string>https://$(ATLAS_API_HOST)</string>
+	<string>$(ATLAS_API_SCHEME)//$(ATLAS_API_HOST)</string>
 	<key>AtlasPushEnvironment</key>
 	<string>$(ATLAS_PUSH_ENVIRONMENT)</string>
 	<key>CFBundleDevelopmentRegion</key>
@@ -39,14 +39,22 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>culture atlas uses the camera when you take a photo or record a video to keep in your private library.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>culture atlas records sound only when you turn on the microphone for a video.</string>
+	<string>culture atlas records sound when you choose to capture audio for your private library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>culture atlas lets you choose photos and videos to upload to your private library.</string>
+	<string>culture atlas lets you choose photos, videos, and audio files to upload to your private library.</string>
 	<key>UILaunchScreen</key>
-	<dict/>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

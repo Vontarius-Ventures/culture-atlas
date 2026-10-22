@@ -107,7 +107,7 @@ struct SignInView: View {
     VStack(alignment: .leading, spacing: 20) {
       Text("culture atlas").font(.system(.largeTitle, design: .serif))
       Text("Keep what catches your eye.").font(.system(.title3, design: .serif))
-      Text("Sign in with your email to capture and keep photos and videos in your private library.")
+      Text("Sign in with your email to capture and keep photos, videos and music in your private library.")
         .foregroundStyle(.secondary)
       TextField("Email address", text: $email)
         .textContentType(.emailAddress)

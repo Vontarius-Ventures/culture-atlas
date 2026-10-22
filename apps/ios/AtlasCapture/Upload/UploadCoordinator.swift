@@ -109,7 +109,7 @@ public actor UploadCoordinator {
       let request = CreateUploadRequest(
         clientCaptureID: draft.clientCaptureID, kind: draft.kind, source: draft.source, filename: draft.filename,
         contentType: draft.contentType, byteSize: draft.byteSize, sha256: draft.sha256,
-        capturedAt: draft.capturedAt, captureSessionID: draft.captureSessionID)
+        capturedAt: draft.capturedAt, captureSessionID: draft.captureSessionID, sourceRoute: draft.sourceRoute)
       let created: UploadResponse = try await api.call(
         "POST", "/v2/uploads", body: request, idempotencyKey: draft.createKey, expectedAccount: draft.ownerAccountID)
       draft.uploadID = created.uploadID
@@ -222,7 +222,8 @@ public actor UploadCoordinator {
     case .lockToOriginalAccount, .signInRequired:
       draft.status = .locked
     case .rejectItem, .surfaceNoRetry:
-      draft.status = .rejected
+      // Audio may not yet be on this contract: keep the local recording.
+      draft.status = draft.kind == .audio ? .failed : .rejected
     case .featureUnavailableKeepLocal:
       // e.g. glasses uploads not enabled for this account: keep the bytes local.
       draft.status = .failed

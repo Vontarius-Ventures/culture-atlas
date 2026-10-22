@@ -20,7 +20,7 @@ struct LibraryView: View {
         Section {
           VStack(alignment: .leading, spacing: 8) {
             Text("Nothing here yet").font(.system(.title3, design: .serif))
-            Text("Take a photo or video, or upload files from your phone.")
+            Text("Take a photo, record music, or upload files from your phone.")
             NavigationLink("Capture") { CaptureSourceView() }
           }
         }
@@ -45,9 +45,9 @@ struct DraftRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Image(systemName: draft.kind == .photo ? "photo" : "video")
+        Image(systemName: kindIcon)
           .accessibilityHidden(true)
-        Text(draft.kind == .photo ? "Photo" : "Video")
+        Text(kindLabel)
         if let duration = draft.durationSeconds {
           Text(ClipClock.clock(Int(duration))).foregroundStyle(AtlasTheme.muted)
         }
@@ -65,17 +65,36 @@ struct DraftRow: View {
     .accessibilityElement(children: .combine)
   }
 
+  private var kindIcon: String {
+    switch draft.kind {
+    case .photo: return "photo"
+    case .video: return "video"
+    case .audio: return "music.note"
+    }
+  }
+
+  private var kindLabel: String {
+    switch draft.kind {
+    case .photo: return "Photo"
+    case .video: return "Video"
+    case .audio: return "Audio"
+    }
+  }
+
   private var sourceText: String {
     switch draft.source {
     case .phoneCamera: return "This camera"
     case .metaGlasses: return "Meta glasses (Experimental)"
     case .upload: return "Uploaded file"
+    case .phoneMicrophone: return "Phone microphone"
+    case .glassesMicrophone: return "Glasses microphone"
     }
   }
 
   var statusText: String {
     switch draft.status {
     case .awaitingReview: return "Not kept yet"
+    case .keptLocal: return "Saved on this phone"
     case .queued: return draft.allowCellular ? "Waiting to upload" : "Waiting for Wi-Fi"
     case .uploading: return "Uploading"
     case .verifying: return "Checking on the server"
@@ -92,6 +111,14 @@ struct DraftRow: View {
       HStack {
         Button("Keep") { Task { await controller.keep(draft) } }.buttonStyle(.borderedProminent)
         Button(draft.kind == .photo ? "Retake" : "Delete", role: .destructive) { Task { await controller.discard(draft) } }
+        if draft.kind == .audio {
+          NavigationLink("Review recording") { AudioDetailView(draft: draft) }
+        }
+      }
+    case .keptLocal:
+      HStack {
+        NavigationLink("Explore music") { AudioDetailView(draft: draft) }
+        Button("Delete from this phone", role: .destructive) { Task { await controller.discard(draft) } }
       }
     case .queued where !draft.allowCellular:
       Button("Upload using mobile data") { Task { await controller.keep(draft, allowCellular: true) } }
@@ -112,6 +139,8 @@ struct DraftRow: View {
           }
         }
       }
+    case .committed where draft.kind == .audio && draft.assetID != nil:
+      NavigationLink("Explore music") { AudioDetailView(draft: draft) }
     case .failed, .rejected:
       HStack {
         if draft.status == .failed { Button("Retry") { Task { await controller.retry(draft) } } }

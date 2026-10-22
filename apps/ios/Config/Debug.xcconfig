@@ -1,0 +1,8 @@
+#include "Base.xcconfig"
+
+// xcconfig treats "//" as a comment, so the scheme is "http:" and Info.plist
+// assembles $(ATLAS_API_SCHEME)//$(ATLAS_API_HOST). Local debug only.
+ATLAS_API_SCHEME = http:
+ATLAS_API_HOST = localhost:3000
+APS_ENVIRONMENT = development
+ATLAS_PUSH_ENVIRONMENT = sandbox

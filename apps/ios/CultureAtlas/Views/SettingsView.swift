@@ -5,7 +5,9 @@ struct SettingsView: View {
   @EnvironmentObject private var controller: CaptureController
   @State private var confirmSignOut = false
 
-  private var pendingCount: Int { controller.drafts.filter { $0.status != .committed }.count }
+  private var pendingCount: Int {
+    controller.drafts.filter { ![DraftRecord.Status.committed, .keptLocal, .awaitingReview].contains($0.status) }.count
+  }
 
   var body: some View {
     List {

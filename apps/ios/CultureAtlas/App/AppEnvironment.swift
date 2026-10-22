@@ -46,7 +46,7 @@ final class AppEnvironment {
     accounts = AccountService(
       baseURL: baseURL, transport: HTTPTransport(), sessions: sessions, identities: identities, keychain: keychain,
       appVersion: version,
-      capabilities: { ["photo": true, "video": true, "meta_glasses_sdk": glassesSDK] })
+      capabilities: { ["photo": true, "video": true, "microphone": true, "meta_glasses_sdk": glassesSDK] })
     drafts = DraftStore(keychain: keychain)
     uploads = UploadCoordinator(api: api, store: drafts, transfer: transfer)
     receipts = ReceiptStore(directory: drafts.root.appendingPathComponent("commands", isDirectory: true))
@@ -58,5 +58,13 @@ final class AppEnvironment {
       api: api, sessions: sessions, directory: drafts.root.appendingPathComponent("ready", isDirectory: true))
     // Stop wake-ups for this phone before its session ends.
     controller.beforeSignOut = { [notices] in await notices.signingOut() }
+    controller.afterCommittedExplore = { [notices] draft in
+      guard let assetID = draft.assetID else { return }
+      let durationMS = Int((draft.durationSeconds ?? 0) * 1000)
+      let start = draft.exploreStartMS ?? 0
+      let defaultEnd = AtlasContract.musicRecognitionDefaultSeconds * 1000
+      let end = draft.exploreEndMS ?? min(max(durationMS, start + 1), start + defaultEnd)
+      _ = await notices.exploreMusic(assetID: assetID, startMS: start, endMS: max(start + 1, end))
+    }
   }
 }

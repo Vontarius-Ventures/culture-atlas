@@ -272,4 +272,89 @@ final class LocalMediaTests: XCTestCase {
     XCTAssertEqual(clock.display(elapsed: 59.9).countdown, 1)
     XCTAssertTrue(clock.display(elapsed: 60).shouldStop)
   }
+
+  func testAudioClockUsesTwoMinutes() {
+    let clock = MusicCapturePolicy.clock()
+    XCTAssertEqual(clock.display(elapsed: 12).elapsedText, "0:12 / 2:00")
+    XCTAssertEqual(clock.display(elapsed: 110).countdown, 10)
+    XCTAssertTrue(clock.display(elapsed: 120).shouldStop)
+  }
+}
+
+final class AudioRoutePolicyTests: XCTestCase {
+  func testPhoneBuiltInMicIsThePhoneRoute() {
+    let phone = AudioRoutePolicy.Port(uid: "1", name: "iPhone Microphone", type: "MicrophoneBuiltIn")
+    XCTAssertEqual(AudioRoutePolicy.activeRoute(inputs: [phone]), .phoneMicrophone)
+    XCTAssertTrue(AudioRoutePolicy.matches(expected: .phoneMicrophone, inputs: [phone]))
+  }
+
+  func testVerifiedGlassesInputRequiresNameAndInputPort() {
+    let glasses = AudioRoutePolicy.Port(uid: "g", name: "Ray-Ban Meta Smart Glasses", type: "BluetoothHFP")
+    XCTAssertTrue(AudioRoutePolicy.isVerifiedGlassesInput(name: glasses.name, type: glasses.type))
+    XCTAssertEqual(AudioRoutePolicy.activeRoute(inputs: [glasses]), .glassesMicrophone)
+  }
+
+  func testBluetoothOutputAloneIsNotGlasses() {
+    let output = AudioRoutePolicy.Port(uid: "out", name: "Ray-Ban Meta Smart Glasses", type: "BluetoothA2DPOutput")
+    XCTAssertFalse(AudioRoutePolicy.isVerifiedGlassesInput(name: output.name, type: output.type))
+    let options = AudioRoutePolicy.options(inputs: [], outputs: [output])
+    XCTAssertEqual(options.first { $0.route == .glassesMicrophone }?.available, false)
+    XCTAssertEqual(options.first { $0.route == .glassesMicrophone }?.title, "Glasses microphone unavailable")
+  }
+
+  func testAirPodsAreNeverLabelledGlasses() {
+    let pods = AudioRoutePolicy.Port(uid: "a", name: "Vontarius’s AirPods", type: "BluetoothHFP")
+    XCTAssertFalse(AudioRoutePolicy.isVerifiedGlassesInput(name: pods.name, type: pods.type))
+    XCTAssertNil(AudioRoutePolicy.activeRoute(inputs: [pods]))
+  }
+
+  func testGlassesMismatchNeverFallsBackToPhone() {
+    let phone = AudioRoutePolicy.Port(uid: "1", name: "iPhone Microphone", type: "MicrophoneBuiltIn")
+    XCTAssertFalse(AudioRoutePolicy.matches(expected: .glassesMicrophone, inputs: [phone]))
+    XCTAssertEqual(AudioRoutePolicy.activeRoute(inputs: [phone]), .phoneMicrophone)
+  }
+
+  func testDefaultRouteIsAlwaysThePhone() {
+    let glasses = AudioRoutePolicy.Port(uid: "g", name: "Ray-Ban Meta", type: "BluetoothHFP")
+    let options = AudioRoutePolicy.options(inputs: [glasses])
+    XCTAssertEqual(MusicCapturePolicy.defaultRoute(options: options), .phoneMicrophone)
+  }
+}
+
+final class MusicCapturePolicyTests: XCTestCase {
+  func testAUD01CameraIsOutOfBounds() {
+    XCTAssertFalse(MusicCapturePolicy.requestsCameraPermission)
+    XCTAssertFalse(MusicCapturePolicy.initializesVideoCaptureSession)
+    XCTAssertFalse(MusicCapturePolicy.initializesAVCaptureDeviceVideo)
+    XCTAssertFalse(MusicCapture.initializesCamera)
+    XCTAssertFalse(MusicCapture.usesCaptureSession)
+    XCTAssertFalse(MusicCapture.usesPhotoOutput)
+    XCTAssertFalse(MusicCapturePolicy.autoplayWithSound)
+    XCTAssertFalse(MusicCapturePolicy.speechTranscriptionDefault)
+  }
+
+  func testRecordLabelsDoNotRelyOnColour() {
+    XCTAssertEqual(MusicCapturePolicy.recordButtonLabel(isRecording: false), "Record")
+    XCTAssertEqual(MusicCapturePolicy.recordButtonLabel(isRecording: true), "Stop recording")
+    XCTAssertTrue(MusicCapturePolicy.recordAccessibility(isRecording: true, elapsed: "0:12 / 2:00").contains("Stop recording"))
+    XCTAssertTrue(MusicCapturePolicy.recordAccessibility(isRecording: false, elapsed: "0:00 / 2:00").contains("Camera off"))
+  }
+
+  func testMusicAnalysisRequestOmitsSpeech() throws {
+    let request = AnalyzeAudioRequest.musicMatch(expectedGeneration: 1, startMS: 0, endMS: 15_000)
+    XCTAssertEqual(request.requestedComponents, ["music_match"])
+    XCTAssertEqual(request.contractVersion, 2)
+    let encoded = try JSONSerialization.jsonObject(with: AtlasJSON.encoder().encode(request)) as? [String: Any]
+    XCTAssertEqual(encoded?["requested_components"] as? [String], ["music_match"])
+    XCTAssertFalse(((encoded?["requested_components"] as? [String]) ?? []).contains("speech_references"))
+  }
+
+  func testAudioDraftFilename() {
+    let draft = DraftRecord.new(
+      owner: UUID(), kind: .audio, source: .phoneMicrophone, contentType: "audio/mp4", capturedAt: Date())
+    XCTAssertTrue(draft.filename.hasPrefix("AUD-"))
+    XCTAssertTrue(draft.filename.hasSuffix(".m4a"))
+    XCTAssertEqual(draft.sourceRoute, "phone_microphone")
+    XCTAssertTrue(draft.audioPresent)
+  }
 }
