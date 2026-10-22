@@ -10,9 +10,12 @@ import kotlinx.serialization.KSerializer
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -130,6 +133,70 @@ class AtlasHttp(
         query: Map<String, String> = emptyMap(),
         bearer: String? = null,
     ): R = call<Unit, R>("GET", path, null, null, resultSerializer, query, bearer)
+
+    /**
+     * `POST /v2/media/audio`: JSON keep request plus a WAV file. No analysis.
+     */
+    suspend fun <B, R> postMultipart(
+        path: String,
+        body: B,
+        bodySerializer: KSerializer<B>,
+        file: File,
+        resultSerializer: KSerializer<R>,
+        bearer: String? = null,
+        idempotencyKey: UUID? = null,
+        expectedAccount: String? = null,
+    ): R = withContext(Dispatchers.IO) {
+        val url = baseUrl.newBuilder().apply {
+            path.trim('/').split('/').forEach { addPathSegment(it) }
+        }.build()
+        val json = AtlasContract.json.encodeToString(bodySerializer, body)
+            .toRequestBody("application/json".toMediaType())
+        val payload = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("request", null, json)
+            .addFormDataPart("file", file.name, file.asRequestBody("audio/wav".toMediaType()))
+            .build()
+        val request = Request.Builder().url(url).post(payload).apply {
+            header("Accept", "application/json")
+            bearer?.let { header("Authorization", "Bearer $it") }
+            idempotencyKey?.let { header("Idempotency-Key", it.toString().lowercase()) }
+            expectedAccount?.let { header("X-Atlas-Expected-Account", it.lowercase()) }
+        }.build()
+        val response = try {
+            client.newCall(request).execute()
+        } catch (e: IOException) {
+            throw AtlasClientException.Transport(e.javaClass.simpleName)
+        }
+        response.use {
+            val text = it.body?.string().orEmpty()
+            if (!it.isSuccessful) {
+                val retryAfter = it.header("Retry-After")?.toDoubleOrNull()
+                val parsed = runCatching { AtlasContract.json.decodeFromString(ServerErrorBody.serializer(), text) }.getOrNull()
+                val flat = if (parsed == null) {
+                    runCatching { AtlasContract.json.decodeFromString(FlatServerError.serializer(), text) }.getOrNull()
+                } else {
+                    null
+                }
+                throw if (parsed != null) {
+                    AtlasClientException.Server(
+                        it.code,
+                        parsed.error.code,
+                        parsed.error.retryable,
+                        retryAfter ?: parsed.error.retryAfterMs?.div(1000),
+                    )
+                } else if (flat != null) {
+                    AtlasClientException.Server(it.code, flat.code, flat.retryable, retryAfter ?: flat.retryAfterMs?.div(1000))
+                } else {
+                    AtlasClientException.Server(it.code, "http_${it.code}", it.code >= 500, retryAfter)
+                }
+            }
+            try {
+                AtlasContract.json.decodeFromString(resultSerializer, text.ifEmpty { "{}" })
+            } catch (e: Exception) {
+                throw AtlasClientException.Decoding(resultSerializer.descriptor.serialName)
+            }
+        }
+    }
 
     companion object {
         fun forHost(host: String): AtlasHttp = AtlasHttp("https://$host/".toHttpUrl())

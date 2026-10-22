@@ -152,11 +152,17 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
         Column(Modifier.padding(padding).fillMaxSize().background(AtlasColors.paper)) {
             when (subScreen) {
                 "camera" -> CameraScreen(graph, activity, onBack = { subScreen = null })
+                "music" -> MusicScreen(graph, onBack = { subScreen = null })
                 "glasses" -> GlassesScreen(graph, activity, onBack = { subScreen = null }, onUseCamera = { subScreen = "camera" })
                 "taste" -> TasteSettingsScreen(graph.onboarding, onBack = { subScreen = null })
                 else -> when (tab) {
                     Tab.LIBRARY -> LibraryScreen(graph.controller, graph.notices)
-                    Tab.CAPTURE -> CaptureSourceScreen(graph.controller, onCamera = { subScreen = "camera" }, onGlasses = { subScreen = "glasses" })
+                    Tab.CAPTURE -> CaptureSourceScreen(
+                        graph.controller,
+                        onCamera = { subScreen = "camera" },
+                        onMusic = { subScreen = "music" },
+                        onGlasses = { subScreen = "glasses" },
+                    )
                     Tab.SETTINGS -> SettingsScreen(graph.controller, onGlasses = { subScreen = "glasses" }, onTaste = { subScreen = "taste" })
                 }
             }

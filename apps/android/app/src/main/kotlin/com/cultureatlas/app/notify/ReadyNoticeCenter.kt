@@ -14,6 +14,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.cultureatlas.app.BuildConfig
 import com.cultureatlas.capture.core.contract.AnalysisState
+import com.cultureatlas.capture.core.contract.AnalyzeAudioRequest
+import com.cultureatlas.capture.core.contract.AudioSelection
 import com.cultureatlas.capture.core.contract.PushTokenRequest
 import com.cultureatlas.capture.core.identity.SessionManager
 import com.cultureatlas.capture.core.net.AtlasApi
@@ -22,6 +24,8 @@ import com.cultureatlas.capture.core.net.clearPushToken
 import com.cultureatlas.capture.core.net.media
 import com.cultureatlas.capture.core.net.registerPushToken
 import com.cultureatlas.capture.core.net.startAnalysis
+import com.cultureatlas.capture.core.net.startAudioAnalysis
+import com.cultureatlas.capture.core.policy.AudioPolicy
 import com.cultureatlas.capture.core.notify.ReadyNoticeCopy
 import com.cultureatlas.capture.core.notify.ReadyNoticePolicy
 import com.cultureatlas.capture.core.notify.ReadyNoticeStore
@@ -101,7 +105,7 @@ class ReadyNoticeCenter(
 
     suspend fun explore(assetId: String): Boolean {
         val account = sessions.currentAccountId ?: return false
-        _exploring.value = _exploring.value + assetId
+        _exploring.value = _exploring.value + assetId.lowercase()
         return try {
             val media = api.media(assetId)
             val status = api.startAnalysis(assetId, media.generation)
@@ -109,7 +113,31 @@ class ReadyNoticeCenter(
             onForeground(true)
             true
         } catch (e: Exception) {
-            _exploring.value = _exploring.value - assetId
+            _exploring.value = _exploring.value - assetId.lowercase()
+            false
+        }
+    }
+
+    /** Explore music: `POST /v2/media/{id}/analysis` with contract 2 and `music_match` only. */
+    suspend fun exploreAudio(assetId: String, durationMs: Int): Boolean {
+        val account = sessions.currentAccountId ?: return false
+        val range = AudioPolicy.musicSelection(durationMs) ?: return false
+        _exploring.value = _exploring.value + assetId.lowercase()
+        return try {
+            val media = api.media(assetId)
+            val status = api.startAudioAnalysis(
+                assetId,
+                AnalyzeAudioRequest(
+                    expectedGeneration = media.generation,
+                    requestedComponents = AudioPolicy.musicMatchComponents,
+                    selection = AudioSelection(startMs = range.first, endMs = range.second),
+                ),
+            )
+            store.watch(WatchedAnalysis(assetId.lowercase(), status.analysisId, Instant.now().toString()), account)
+            onForeground(true)
+            true
+        } catch (e: Exception) {
+            _exploring.value = _exploring.value - assetId.lowercase()
             false
         }
     }

@@ -5,6 +5,8 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Included from settings.gradle.kts only when an Android SDK is present.
+
 val atlasApiHost: String = providers.gradleProperty("atlasApiHost").get()
 // Ready-notice push (FCM). Supplied by CI for release builds; empty keeps push
 // off (notices then appear only while the app is open). No google-services.json

@@ -11,7 +11,9 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.cultureatlas.app.CultureAtlasApplication
+import com.cultureatlas.capture.core.contract.MediaKind
 import com.cultureatlas.capture.core.contract.PartInstruction
+import com.cultureatlas.capture.core.policy.AudioPolicy
 import com.cultureatlas.capture.core.store.DraftRecord
 import com.cultureatlas.capture.core.upload.PartTransfer
 import com.cultureatlas.capture.core.upload.UploadEngine
@@ -39,7 +41,16 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         // A different signed-in account never moves these bytes.
         if (signedIn?.lowercase() != owner.lowercase()) return Result.success()
         return when (val result = app.graph.uploadEngine.run(draftId, signedIn)) {
-            UploadEngine.Result.Done, UploadEngine.Result.Locked -> Result.success()
+            UploadEngine.Result.Done -> {
+                val draft = app.graph.drafts.drafts(owner).firstOrNull { it.id == draftId }
+                val assetId = draft?.assetId
+                if (draft?.kind == MediaKind.AUDIO && draft.exploreAfterCommit && assetId != null) {
+                    val durationMs = ((draft.durationSeconds ?: 0.0) * 1000).toInt()
+                    app.graph.notices.exploreAudio(assetId, durationMs)
+                }
+                Result.success()
+            }
+            UploadEngine.Result.Locked -> Result.success()
             UploadEngine.Result.Waiting -> Result.success()
             is UploadEngine.Result.Retry -> {
                 if (result.afterMillis <= 0) {

@@ -1,17 +1,83 @@
 # culture atlas for Android
 
 Native capture client for the culture atlas `/v2` API, written independently
-of the iOS app against the same contract fixtures. Build, test and release
-steps are in [docs/native.md](../../docs/native.md).
+of the iOS app against the same contract fixtures. Broader native notes live in
+[docs/native.md](../../docs/native.md).
 
-**Status:** `app/` is source only: this environment has no Android SDK and no
-access to Google's Maven repository, so it has never been compiled or run.
-`core/` compiles and its JUnit tests pass on a plain JVM (Kotlin 2.1.0 from
-Maven Central, see docs/native.md "Build and test").
+Product name is **culture atlas**. Application id `com.cultureatlas.app`
+(store) and `com.cultureatlas.app.experimental` (Meta DAT flavor).
 
-| Module | Contents |
+## Status
+
+| Module | State |
 | --- | --- |
-| `core/` | Pure Kotlin/JVM: wire models (incl. onboarding, push and analysis DTOs), onboarding and ready-notice rules, multipart planner, command decision table, draft-lock, capability gate, error/backoff/refresh policies, enrollment proof (payload, DER to P1363), chunked AES-GCM draft encryption, OkHttp client, session manager with refresh-request-id rotation, upload engine, command runner. `./gradlew :core:test` needs no Android SDK and reads `fixtures/native-contract`. |
-| `app/` | Android app: Keystore vault (tokens, installation EC keys with StrongBox when present, per-account draft keys), file-backed draft and receipt stores, WorkManager uploads (Wi-Fi only by default), CameraX phone camera, segmented glasses clip encoder, Compose UI; amendment 2.2 taste questionnaire (screen 14, three steps), Building your feed (15), Settings → Taste (18), "Explore this photo" with the ready notice (17: data-only FCM wake, local notification, in-app toast). |
-| `app/src/store` | Public store flavor: no Meta SDK; glasses entry explains it is unavailable. |
-| `app/src/experimental` | Meta Wearables DAT binding (`MetaDatBinding.kt`, unverified against the SDK) and adapter. |
+| `core/` | Pure Kotlin/JVM. `./gradlew :core:test` runs on a plain JDK 17+ with no Android SDK. Reads `fixtures/native-contract`. |
+| `app/` store flavor | Source complete for camera, Music Mode, uploads, onboarding, ready notices. **Not assembled in this environment:** no `ANDROID_HOME` / Android SDK 35 and Google Maven is required for AGP, AndroidX, CameraX, WorkManager and Firebase. |
+| `app/` experimental flavor | Meta Wearables DAT binding in `app/src/experimental/…/MetaDatBinding.kt` is **unverified** against the SDK. Do not treat it as qualified. |
+
+Music Mode (amendment 2.3) is audio-only. Capture → Music opens a recorder that
+never starts CameraX or a camera session (`AudioRecord` PCM WAV). It asks for
+`RECORD_AUDIO` only and works if camera permission is denied (AUD01). Keep
+saves an encrypted local draft and does **not** start analysis. Explore music
+uploads WAV (`POST /v2/media/audio`) then `POST /v2/media/{id}/analysis` with
+`contract_version: 2` and `music_match` only. Speech / ElevenLabs stay off.
+Imported files use `POST /v2/uploads` with `kind: audio` if a reservation is
+needed. The recognizer may return honest unavailable/partial until a music ID
+provider exists.
+
+## Build and test
+
+JDK 17+ is required. This machine had no Android SDK; OpenJDK 17 is enough for
+core tests.
+
+```sh
+cd apps/android
+# Once, if gradlew is missing:
+gradle wrapper --gradle-version 8.14.3
+
+./gradlew :core:test                        # JVM only; no Android SDK
+```
+
+`:app` is included only when `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or
+`local.properties` `sdk.dir` is set, so a missing SDK does not fail core tests.
+
+When an Android SDK 35 install and Google Maven access exist:
+
+```sh
+export ANDROID_HOME=/path/to/sdk            # platforms;android-35 and build-tools
+./gradlew :app:assembleStoreDebug           # public flavor, no Meta SDK
+./gradlew :app:assembleExperimentalDebug    # Meta SDK flavor; confirm MetaDatBinding first
+```
+
+API host: `-PatlasApiHost=…` (default `app.cultureatlas.com` in
+`gradle.properties`). No secrets belong in the APK; FCM options are empty unless
+CI passes `-PatlasFcm*`. Experimental Meta app id / client token come from
+`META_APP_ID` / `META_CLIENT_TOKEN` environment variables, never from source.
+
+## Music Mode entry points
+
+- Capture tab → **Music** (`MusicScreen`, `AudioCaptureController` PCM WAV)
+- Library row for an audio draft → **Keep** (local, no analysis) then **Explore music**
+  (`POST /v2/media/audio`, then analysis `music_match` only; poll
+  `GET /v2/media/{id}/analysis/{analysisId}`)
+- Music screen → **Upload an audio file** (WAV keep path; other types stay local
+  until qualified)
+
+`AudioCaptureController` has no CameraX / camera imports. Phone camera capture
+stays on Capture → This camera. Store-flavor glasses entry still explains that
+glasses capture is unavailable. A Bluetooth headset is labeled as a headset,
+never as glasses, unless a verified glasses microphone route exists (this
+store build does not claim one).
+
+## Remaining Play / device gates
+
+These are not done here and must not be inferred from source landing:
+
+- Install Android SDK 35, assemble and run `assembleStoreDebug` on a device
+- Play Console: data safety, microphone / camera / photos declarations, package
+  signing, `assetlinks.json` for the App Link
+- Physical AUD01–AUD03 (camera-off instrumentation, route loss, codecs)
+- Experimental Meta DAT compile, license copy into the experimental APK, and
+  Play / Meta tester-channel eligibility (`docs/native.md`)
+- Server schema2 audio upload and analysis (`kind: audio`, `music_match`);
+  Explore will keep the local recording if the host rejects audio

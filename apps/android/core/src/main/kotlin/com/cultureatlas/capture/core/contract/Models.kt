@@ -13,6 +13,7 @@ import kotlinx.serialization.json.Json
 object AtlasContract {
     const val VERSION = "2026-10-15.1"
     const val CLIP_MAX_SECONDS = 60
+    const val AUDIO_MAX_SECONDS = 120
     const val COUNTDOWN_FROM_SECONDS = 10
     const val REMOTE_ARM_MAX_SECONDS = 600
     const val HEARTBEAT_INTERVAL_SECONDS = 15L
@@ -34,11 +35,16 @@ object AtlasContract {
 fun String.wireId(): String = lowercase()
 
 @Serializable
-enum class MediaKind { @SerialName("photo") PHOTO, @SerialName("video") VIDEO }
+enum class MediaKind {
+    @SerialName("photo") PHOTO,
+    @SerialName("video") VIDEO,
+    @SerialName("audio") AUDIO,
+}
 
 @Serializable
 enum class MediaSource {
     @SerialName("phone_camera") PHONE_CAMERA,
+    @SerialName("phone_microphone") PHONE_MICROPHONE,
     @SerialName("meta_glasses") META_GLASSES,
     @SerialName("upload") UPLOAD,
 }
@@ -215,6 +221,8 @@ data class CreateUploadRequest(
     val sha256: String,
     @SerialName("captured_at") val capturedAt: String? = null,
     @SerialName("capture_session_id") val captureSessionId: String? = null,
+    @SerialName("source_route") val sourceRoute: String? = null,
+    @SerialName("capture_mode") val captureMode: String? = null,
 )
 
 @Serializable

@@ -1,7 +1,10 @@
 package com.cultureatlas.capture.core.net
 
 import com.cultureatlas.capture.core.contract.AnalysisStatus
+import com.cultureatlas.capture.core.contract.AnalyzeAudioRequest
 import com.cultureatlas.capture.core.contract.AnalyzeMediaRequest
+import com.cultureatlas.capture.core.contract.KeepAudioRecordingRequest
+import com.cultureatlas.capture.core.contract.KeptAudioResponse
 import com.cultureatlas.capture.core.contract.CompleteOnboardingResponse
 import com.cultureatlas.capture.core.contract.CreatePickRequest
 import com.cultureatlas.capture.core.contract.CreatePickResponse
@@ -88,5 +91,36 @@ suspend fun AtlasApi.startAnalysis(mediaId: String, generation: Int, key: UUID =
         AnalyzeMediaRequest.serializer(), AnalysisStatus.serializer(), idempotencyKey = key,
     )
 
+/** Explore music: `contract_version: 2` and `music_match` only. Keep never calls this. */
+suspend fun AtlasApi.startAudioAnalysis(
+    mediaId: String,
+    request: AnalyzeAudioRequest,
+    key: UUID = UUID.randomUUID(),
+): AnalysisStatus =
+    call(
+        "POST", "/v2/media/${mediaId.lowercase()}/analysis", request,
+        AnalyzeAudioRequest.serializer(), AnalysisStatus.serializer(), idempotencyKey = key,
+    )
+
 suspend fun AtlasApi.analysis(mediaId: String, analysisId: String): AnalysisStatus =
     get("/v2/media/${mediaId.lowercase()}/analysis/${analysisId.lowercase()}", AnalysisStatus.serializer())
+
+/**
+ * Keep a Music Mode WAV on the account. Does not start analysis.
+ * Multipart: JSON [KeepAudioRecordingRequest] + `audio/wav` file.
+ */
+suspend fun AtlasApi.keepAudioRecording(
+    request: KeepAudioRecordingRequest,
+    wav: java.io.File,
+    key: UUID = UUID.randomUUID(),
+    owner: String? = null,
+): KeptAudioResponse =
+    callMultipart(
+        "/v2/media/audio",
+        request,
+        KeepAudioRecordingRequest.serializer(),
+        wav,
+        KeptAudioResponse.serializer(),
+        key,
+        owner,
+    )

@@ -50,6 +50,7 @@ import com.cultureatlas.app.notify.ReadyNoticeCenter
 import com.cultureatlas.capture.core.contract.AgentConnection
 import com.cultureatlas.capture.core.contract.MediaKind
 import com.cultureatlas.capture.core.contract.MediaSource
+import com.cultureatlas.capture.core.policy.AudioPolicy
 import com.cultureatlas.capture.core.policy.CapabilityGate
 import com.cultureatlas.capture.core.policy.ClipClock
 import com.cultureatlas.capture.core.store.DraftRecord
@@ -66,7 +67,7 @@ fun LibraryScreen(controller: AppController, notices: ReadyNoticeCenter) {
             Text("Your library is private. Choose what to explore.", color = AtlasColors.muted)
             Text("Uploading does not start analysis.", color = AtlasColors.muted)
         }
-        if (drafts.isEmpty()) item { Text("Nothing here yet. Take a photo or video, or upload files from your phone.") }
+        if (drafts.isEmpty()) item { Text("Nothing here yet. Take a photo or video, record music, or upload files from your phone.") }
         items(drafts, key = { it.id }) { DraftRow(controller, notices, it) }
         if (locked) item { LockedDraftsNotice() }
     }
@@ -80,25 +81,43 @@ private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draf
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
         Row {
-            Text(if (draft.kind == MediaKind.PHOTO) "Photo" else "Video", Modifier.padding(end = 8.dp))
+            Text(kindText(draft.kind), Modifier.padding(end = 8.dp))
             draft.durationSeconds?.let { Text(ClipClock.clock(it.toInt()), color = AtlasColors.muted) }
         }
         // Status is always in words, never colour alone.
-        Text("${sourceText(draft.source)} · ${statusText(draft)}", color = AtlasColors.muted)
+        Text("${sourceText(draft)} · ${statusText(draft)}", color = AtlasColors.muted)
         if (draft.interrupted) Text("Recording was interrupted. The part before the interruption was kept.")
+        if (draft.kind == MediaKind.AUDIO) Text(AudioPolicy.CAMERA_OFF_LABEL, color = AtlasColors.muted)
         when (draft.status) {
             DraftRecord.Status.AWAITING_REVIEW -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { controller.keep(draft) }) { Text("Keep") }
-                OutlinedButton(onClick = { controller.discard(draft) }) { Text(if (draft.kind == MediaKind.PHOTO) "Retake" else "Delete") }
+                OutlinedButton(onClick = { controller.discard(draft) }) {
+                    Text(if (draft.kind == MediaKind.PHOTO) "Retake" else "Delete")
+                }
             }
-            DraftRecord.Status.QUEUED -> if (!draft.allowCellular) {
-                TextButton(onClick = { controller.keep(draft, allowCellular = true) }) { Text("Upload using mobile data") }
+            DraftRecord.Status.KEPT_LOCAL -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    scope.launch { controller.exploreMusic(draft) }
+                }) { Text(AudioPolicy.EXPLORE_LABEL) }
+                OutlinedButton(onClick = { controller.discard(draft) }) { Text("Delete") }
+            }
+            DraftRecord.Status.QUEUED -> {
+                if (draft.kind == MediaKind.AUDIO && draft.exploreAfterCommit) {
+                    Text("Uploading so we can explore this recording.", color = AtlasColors.muted)
+                }
+                if (!draft.allowCellular) {
+                    TextButton(onClick = { controller.keep(draft, allowCellular = true) }) { Text("Upload using mobile data") }
+                }
             }
             DraftRecord.Status.COMMITTED -> {
                 val assetId = draft.assetId
+                val watching = assetId?.lowercase() in exploring || draft.id.lowercase() in exploring
                 if (draft.kind == MediaKind.PHOTO && assetId != null) {
                     // The user starts exploring; screen 17 tells them when it is ready.
-                    if (assetId.lowercase() in exploring) {
+                    if (watching) {
                         Text(
                             "Looking at your photo. This takes a few seconds.",
                             color = AtlasColors.muted,
@@ -117,6 +136,22 @@ private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draf
                         }) { Text("Explore this photo") }
                     }
                 }
+                if (draft.kind == MediaKind.AUDIO && assetId != null) {
+                    if (watching) {
+                        Text(
+                            "Looking at your recording. This takes a few seconds.",
+                            color = AtlasColors.muted,
+                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                        )
+                    } else {
+                        TextButton(onClick = {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            scope.launch { controller.exploreMusic(draft) }
+                        }) { Text(AudioPolicy.EXPLORE_LABEL) }
+                    }
+                }
             }
             DraftRecord.Status.FAILED, DraftRecord.Status.REJECTED -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (draft.status == DraftRecord.Status.FAILED) Button(onClick = { controller.retry(draft) }) { Text("Retry") }
@@ -128,14 +163,26 @@ private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draf
     }
 }
 
-private fun sourceText(source: MediaSource) = when (source) {
+private fun kindText(kind: MediaKind) = when (kind) {
+    MediaKind.PHOTO -> "Photo"
+    MediaKind.VIDEO -> "Video"
+    MediaKind.AUDIO -> "Audio"
+}
+
+private fun sourceText(draft: DraftRecord) = when (draft.source) {
     MediaSource.PHONE_CAMERA -> "This camera"
-    MediaSource.META_GLASSES -> "Meta glasses (Experimental)"
+    MediaSource.PHONE_MICROPHONE -> draft.sourceRoute?.let { "${AudioPolicy.labelForInput(it, false)} · $it" } ?: "This phone"
+    MediaSource.META_GLASSES -> if (draft.kind == MediaKind.AUDIO) {
+        draft.sourceRoute?.let { "Glasses microphone · $it" } ?: "Glasses microphone · Verified input"
+    } else {
+        "Meta glasses (Experimental)"
+    }
     MediaSource.UPLOAD -> "Uploaded file"
 }
 
 private fun statusText(draft: DraftRecord) = when (draft.status) {
     DraftRecord.Status.AWAITING_REVIEW -> "Not kept yet"
+    DraftRecord.Status.KEPT_LOCAL -> "Saved on this phone"
     DraftRecord.Status.QUEUED -> if (draft.allowCellular) "Waiting to upload" else "Waiting for Wi-Fi"
     DraftRecord.Status.UPLOADING -> "Uploading"
     DraftRecord.Status.VERIFYING -> "Checking on the server"
@@ -145,9 +192,9 @@ private fun statusText(draft: DraftRecord) = when (draft.status) {
     DraftRecord.Status.FAILED -> "Upload paused"
 }
 
-/** Screen 02: This camera, Meta glasses (Experimental), Upload files. */
+/** Screen 02: This camera, Music, Meta glasses (Experimental), Upload files. */
 @Composable
-fun CaptureSourceScreen(controller: AppController, onCamera: () -> Unit, onGlasses: () -> Unit) {
+fun CaptureSourceScreen(controller: AppController, onCamera: () -> Unit, onMusic: () -> Unit, onGlasses: () -> Unit) {
     val capabilities by controller.capabilities.collectAsState()
     val camera = CapabilityGate.phoneCamera(capabilities)
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -155,10 +202,13 @@ fun CaptureSourceScreen(controller: AppController, onCamera: () -> Unit, onGlass
         uris.forEach { uri -> controller.importFile(uri, context.contentResolver.getType(uri)) }
     }
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Keep what catches your eye.", style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif))
+        Text("Keep what catches your eye, or a little of what you hear.", style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif))
         Text("Your library is private. Choose what to explore.", color = AtlasColors.muted)
         Button(onClick = onCamera, enabled = camera.photo || camera.video, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text("This camera")
+        }
+        Button(onClick = onMusic, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+            Text("Music")
         }
         OutlinedButton(onClick = onGlasses, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text("Meta glasses · Experimental")
@@ -272,7 +322,15 @@ fun CameraScreen(graph: AppGraph, activity: ComponentActivity, onBack: () -> Uni
 fun ReviewDialog(controller: AppController, draft: DraftRecord, onDone: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDone,
-        title = { Text(if (draft.kind == MediaKind.PHOTO) "Keep this photo?" else "Keep this video?") },
+        title = {
+            Text(
+                when (draft.kind) {
+                    MediaKind.PHOTO -> "Keep this photo?"
+                    MediaKind.VIDEO -> "Keep this video?"
+                    MediaKind.AUDIO -> "Keep this recording?"
+                },
+            )
+        }
         text = {
             Column {
                 Text("Saved on this phone. Keeping it uploads it to your private library.")
