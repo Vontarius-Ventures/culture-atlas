@@ -326,7 +326,7 @@ final class MusicCapturePolicyTests: XCTestCase {
   func testAUD01CameraIsOutOfBounds() {
     XCTAssertFalse(MusicCapturePolicy.requestsCameraPermission)
     XCTAssertFalse(MusicCapturePolicy.initializesVideoCaptureSession)
-    XCTAssertFalse(MusicCapturePolicy.initializesAVCaptureDeviceVideo)
+    XCTAssertFalse(MusicCapturePolicy.initializesCaptureDeviceVideo)
     XCTAssertFalse(MusicCapture.initializesCamera)
     XCTAssertFalse(MusicCapture.usesCaptureSession)
     XCTAssertFalse(MusicCapture.usesPhotoOutput)

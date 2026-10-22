@@ -16,7 +16,7 @@ final class MusicCaptureTests: XCTestCase {
     XCTAssertFalse(MusicCapture.speechAnalysisEnabled)
     XCTAssertFalse(MusicCapturePolicy.requestsCameraPermission)
     XCTAssertFalse(MusicCapturePolicy.initializesVideoCaptureSession)
-    XCTAssertFalse(MusicCapturePolicy.initializesAVCaptureDeviceVideo)
+    XCTAssertFalse(MusicCapturePolicy.initializesCaptureDeviceVideo)
     XCTAssertFalse(MusicCapturePolicy.autoplayWithSound)
     XCTAssertFalse(MusicCapturePolicy.speechTranscriptionDefault)
   }
@@ -167,6 +167,7 @@ final class MusicCaptureTests: XCTestCase {
     let files = [
       "AtlasCapture/Capture/MusicCapture.swift",
       "AtlasCapture/Policy/AudioRoutePolicy.swift",
+      "AtlasCapture/Policy/MusicCapturePolicy.swift",
       "CultureAtlas/Views/MusicView.swift",
       "CultureAtlas/Views/AudioDetailView.swift",
     ]

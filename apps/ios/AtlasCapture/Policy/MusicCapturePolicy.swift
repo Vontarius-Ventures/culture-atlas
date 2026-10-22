@@ -22,7 +22,7 @@ public enum MusicCapturePolicy {
   /// Music Mode must not construct or start a camera capture session.
   public static let initializesVideoCaptureSession = false
   /// Music Mode must not open a capture-device video input.
-  public static let initializesAVCaptureDeviceVideo = false
+  public static let initializesCaptureDeviceVideo = false
   /// Playback starts paused. The person taps Play.
   public static let autoplayWithSound = false
   /// Speech transcription is off until an explicit later action.
