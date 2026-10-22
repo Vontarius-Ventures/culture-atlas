@@ -10,7 +10,10 @@
  */
 import { z } from 'zod';
 import {
+  AnalyzeAudioResponse,
   AnalyzeMediaResponse,
+  AudioAsset,
+  AudioDetailResponse,
   BatchDeleteMediaResponse,
   CaptureCapabilitiesResponse,
   CaptureDeviceResponse,
@@ -18,6 +21,8 @@ import {
   MediaLibraryResponse,
   MediaUploadResponse,
   UploadPartInstruction,
+  type AnalyzeAudioRequest,
+  type CreateAudioUploadRequest,
   type CreateMediaUploadRequest,
 } from '@culture-atlas/domain/schemas';
 import { api, ApiError, CSRF_HEADER, newIdempotencyKey, type ApiErrorBody } from '@/lib/client/api';
@@ -50,6 +55,23 @@ const DevicesResponse = z.object({
   next_cursor: z.string().nullable(),
 });
 const CollectionMediaResult = z.object({ collection_id: z.uuid(), asset_id: z.uuid() });
+const KeptAudioResponse = z.object({
+  media: AudioAsset,
+  generation: z.number().int().positive(),
+  revision: z.number().int().positive(),
+  track_id: z.string(),
+  asset_id: z.uuid(),
+  analysis_status: z.literal('not_requested'),
+});
+const AudioUploadCreated = z.object({
+  asset_id: z.uuid().nullable(),
+  upload_id: z.uuid(),
+  part_size: z.number().int().positive().optional(),
+  reused: z.boolean(),
+});
+const AudioAnalysisGet = AnalyzeAudioResponse.extend({
+  result: z.unknown().nullable().optional(),
+});
 
 interface CallOptions<T> {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT';
@@ -94,8 +116,10 @@ export async function v2<T>(path: string, options: CallOptions<T>, retried = fal
     }
     headers['idempotency-key'] = options.idempotencyKey ?? newIdempotencyKey();
   }
-  let body: string | undefined;
-  if (options.body !== undefined) {
+  let body: BodyInit | undefined;
+  if (options.body instanceof FormData) {
+    body = options.body;
+  } else if (options.body !== undefined) {
     headers['content-type'] = 'application/json';
     body = JSON.stringify(options.body);
   }
@@ -237,6 +261,24 @@ export const mediaApi = {
     v2(`/v2/collections/${encodeURIComponent(collectionId)}/media/${encodeURIComponent(assetId)}`, {
       method: 'PUT',
       schema: CollectionMediaResult,
+    }),
+  keepAudio: (form: FormData, idempotencyKey?: string) =>
+    v2('/v2/media/audio', { method: 'POST', body: form, idempotencyKey, schema: KeptAudioResponse }),
+  createAudioUpload: (body: CreateAudioUploadRequest, idempotencyKey: string) =>
+    v2('/v2/uploads', { method: 'POST', body, idempotencyKey, schema: AudioUploadCreated }),
+  audioMedia: (id: string, signal?: AbortSignal) =>
+    v2(`/v2/media/${encodeURIComponent(id)}`, { schema: AudioDetailResponse, signal }),
+  analyzeAudio: (id: string, body: AnalyzeAudioRequest, idempotencyKey?: string) =>
+    v2(`/v2/media/${encodeURIComponent(id)}/analysis`, {
+      method: 'POST',
+      body,
+      idempotencyKey,
+      schema: AnalyzeAudioResponse,
+    }),
+  audioAnalysis: (id: string, analysisId: string, signal?: AbortSignal) =>
+    v2(`/v2/media/${encodeURIComponent(id)}/analysis/${encodeURIComponent(analysisId)}`, {
+      schema: AudioAnalysisGet,
+      signal,
     }),
 };
 

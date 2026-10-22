@@ -36,7 +36,7 @@ Captured photos and videos appear only when the owner turned on "Include capture
 - **G6:** `/mcp` passes a live capture context to media tools (`apps/web/app/mcp/route.ts`).
 - **G7:** bearer `cat_` requests to `/v2/library`, `/v2/media/{id}`, `/v2/media/{id}/analysis`, `/v2/uploads/**` and the `/v2/agent-media/{id}/content/{variant}` preview links are served by `apps/web/lib/server/agent-media-http.ts` with the same services as MCP. Device, capability and owner library management stay closed to agents.
 - **`analyze_media`** (MCP) / `POST /v2/media/{id}/analysis` (REST): explicit, requires `media:analyze` on media inside the live grant; queued work is fenced to the connection's authorization version; agents get no result links and poll `get_operation` (kind `analysis`).
-- **Phone-side delivery:** `GET /v2/device/commands` (bounded long poll, re-authorized each claim) and `POST /v2/device/commands/{id}/ack`, for enrolled installation sessions (`cna_…`) only. They work in production once the identity module registers `resolveNativePrincipal` (gap G1).
+- **Phone-side delivery:** `GET /v2/device/commands` (bounded long poll, re-authorized each claim) and `POST /v2/device/commands/{id}/ack`, for enrolled installation sessions (`cna_…`) only. Production runtime registers `resolveNativePrincipal` and the capture identity adapter (`docs/native.md`).
 
 ## Not done here
 

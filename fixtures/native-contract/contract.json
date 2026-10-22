@@ -111,11 +111,11 @@
     },
     "poll_commands": {
       "route": "GET /v2/device/commands",
-      "server": "domain_only"
+      "server": "routed"
     },
     "ack_command": {
       "route": "POST /v2/device/commands/{id}/ack",
-      "server": "domain_only"
+      "server": "routed"
     }
   },
   "uploads": {

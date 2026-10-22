@@ -98,6 +98,16 @@ export function SourceView() {
           </Link>
         </li>
         <li>
+          <Link href="/capture/music" className="source-option">
+            <V2Icon name="mic" size={34} className="source-option__icon" />
+            <span>
+              <span className="source-option__title">Music</span>
+              <span className="source-option__sub">Record what you hear, camera off</span>
+            </span>
+            <Icon name="chevronRight" size={24} />
+          </Link>
+        </li>
+        <li>
           <Link href="/capture/glasses" className="source-option">
             <V2Icon name="glasses" size={38} className="source-option__icon" />
             <span>
