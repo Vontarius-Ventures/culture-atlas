@@ -9,8 +9,12 @@ import com.cultureatlas.capture.core.contract.AtlasContract
 import com.cultureatlas.capture.core.contract.Capabilities
 import com.cultureatlas.capture.core.contract.CreateCaptureSessionRequest
 import com.cultureatlas.capture.core.contract.DeviceStatusRequest
+import com.cultureatlas.capture.core.contract.KeepAudioRecordingRequest
 import com.cultureatlas.capture.core.contract.MediaKind
 import com.cultureatlas.capture.core.contract.MediaSource
+import com.cultureatlas.capture.core.net.AtlasClientException
+import com.cultureatlas.capture.core.net.keepAudioRecording
+import com.cultureatlas.capture.core.policy.AudioPolicy
 import com.cultureatlas.capture.core.policy.CommandLocalState
 import com.cultureatlas.capture.core.policy.CommandProcessor
 import com.cultureatlas.capture.core.store.DraftRecord
@@ -122,6 +126,7 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
     suspend fun signOut(deleteDrafts: Boolean) {
         val account = signedInAccount ?: return
         graph.camera.stopRecording()
+        graph.audio.stop()
         graph.glasses.stopClip()
         graph.camera.stop()
         graph.glasses.stopStream()
@@ -151,6 +156,7 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
         } else {
             // Background disarms (server and local) and stops recording safely.
             graph.camera.stopRecording()
+            graph.audio.stop()
             graph.glasses.stopClip()
             _armed.value = null
             commands.stop()
@@ -173,11 +179,12 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
     private suspend fun reportStatus(appState: String) {
         val account = signedInAccount ?: return
         val cameraOk = graph.camera.cameraPermitted
+        val micOk = graph.audio.microphonePermitted
         graph.api.reportStatus(
             DeviceStatusRequest(
                 sequence = graph.vault.installations.nextStatusSequence(account),
-                capabilities = mapOf("photo" to cameraOk, "video" to cameraOk),
-                readiness = if (cameraOk) "ready" else "user_action_required",
+                capabilities = mapOf("photo" to cameraOk, "video" to cameraOk, "microphone" to micOk),
+                readiness = if (cameraOk || micOk) "ready" else "user_action_required",
                 appState = appState,
             ),
         )
@@ -241,27 +248,160 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
 
     fun stopRecording() {
         graph.camera.stopRecording()
+        graph.audio.stop()
         graph.glasses.stopClip()
+    }
+
+    /** Music Mode: AudioRecord PCM WAV. Never opens CameraX or a camera session. */
+    suspend fun recordAudio(maxSeconds: Int = AtlasContract.AUDIO_MAX_SECONDS): DraftRecord? {
+        if (!graph.drafts.hasRoom(40_000_000)) {
+            message.value = "Your phone is out of space. Free some space to keep capturing."
+            return null
+        }
+        val draft = newDraft(MediaKind.AUDIO, MediaSource.PHONE_MICROPHONE, AudioPolicy.CONTENT_TYPE) ?: return null
+        val target = graph.drafts.recordingFile(draft)
+        return try {
+            val clip = graph.audio.record(target, maxSeconds)
+            graph.drafts.ingest(
+                clip.file,
+                draft.copy(
+                    source = AudioPolicy.wireSource(clip.verifiedGlasses),
+                    durationSeconds = clip.durationSeconds,
+                    interrupted = clip.interrupted,
+                    audioPresent = true,
+                    sourceRoute = clip.sourceRoute,
+                    sampleRateHz = clip.sampleRateHz,
+                    channels = clip.channels,
+                    codec = clip.codec,
+                    cameraActive = false,
+                ),
+            ).also { reloadDrafts() }
+        } catch (e: com.cultureatlas.app.capture.AudioCaptureController.AudioError) {
+            graph.drafts.delete(draft)
+            message.value = when (e.reason) {
+                com.cultureatlas.app.capture.AudioCaptureController.AudioError.Reason.PERMISSION_DENIED ->
+                    "Microphone access is off. Turn it on in Settings to record in Music Mode. The camera stays off."
+                com.cultureatlas.app.capture.AudioCaptureController.AudioError.Reason.ROUTE_LOST ->
+                    "The microphone you chose is no longer available. Recording stopped. It was not saved as glasses sound."
+                com.cultureatlas.app.capture.AudioCaptureController.AudioError.Reason.ROUTE_MISMATCH ->
+                    "Recording used a different microphone than the one you chose, so it was not kept."
+                com.cultureatlas.app.capture.AudioCaptureController.AudioError.Reason.STORAGE_FULL ->
+                    "Your phone is out of space. Free some space to keep capturing."
+                com.cultureatlas.app.capture.AudioCaptureController.AudioError.Reason.INTERRUPTED_EMPTY ->
+                    "Recording could not be saved."
+                else -> "The recording wasn't saved. Try again."
+            }
+            null
+        } catch (e: Exception) {
+            graph.drafts.delete(draft)
+            message.value = "Recording could not be saved."
+            null
+        }
     }
 
     /** Crash mid-recording: keep a non-empty file (or closed glasses segments) as an interrupted clip. */
     private fun recoverInterruptedRecordings(account: String) {
-        for (draft in graph.drafts.drafts(account).filter { it.kind == MediaKind.VIDEO && it.byteSize == 0L }) {
+        for (draft in graph.drafts.drafts(account).filter { it.kind != MediaKind.PHOTO && it.byteSize == 0L }) {
             val target = graph.drafts.recordingFile(draft)
-            val segments = graph.drafts.segmentDir(draft)
-            val recovered = (target.exists() && target.length() > 0) ||
-                com.cultureatlas.app.capture.SegmentedClipEncoder.recover(segments, target)
-            if (recovered) graph.drafts.ingest(target, draft.copy(interrupted = true)) else graph.drafts.delete(draft)
+            val recovered = if (draft.kind == MediaKind.AUDIO) {
+                target.exists() && target.length() > 0
+            } else {
+                (target.exists() && target.length() > 0) ||
+                    com.cultureatlas.app.capture.SegmentedClipEncoder.recover(graph.drafts.segmentDir(draft), target)
+            }
+            if (recovered) {
+                graph.drafts.ingest(target, draft.copy(interrupted = true))
+            } else {
+                graph.drafts.delete(draft)
+            }
         }
         reloadDrafts()
     }
 
     fun keep(draft: DraftRecord, allowCellular: Boolean = false) {
+        if (AudioPolicy.keepSavesLocal(draft.kind) && draft.status == DraftRecord.Status.AWAITING_REVIEW) {
+            graph.drafts.update(draft.id, draft.ownerAccountId) {
+                it.copy(status = DraftRecord.Status.KEPT_LOCAL)
+            }
+            reloadDrafts()
+            return
+        }
         val updated = graph.drafts.update(draft.id, draft.ownerAccountId) {
             it.copy(status = DraftRecord.Status.QUEUED, allowCellular = allowCellular)
         } ?: return
         UploadWorker.enqueue(graph.app, updated)
         reloadDrafts()
+    }
+
+    /** Keep stays local. Explore uploads WAV then `music_match` only. */
+    suspend fun exploreMusic(draft: DraftRecord): Boolean {
+        if (draft.kind != MediaKind.AUDIO) return false
+        val durationMs = ((draft.durationSeconds ?: 0.0) * 1000).toInt()
+        if (AudioPolicy.musicSelection(durationMs) == null && draft.status != DraftRecord.Status.COMMITTED) {
+            message.value = "Record at least 5 seconds to explore music. Your recording is still on this phone."
+            return false
+        }
+        when (draft.status) {
+            DraftRecord.Status.AWAITING_REVIEW, DraftRecord.Status.KEPT_LOCAL -> {
+                if (draft.source == MediaSource.UPLOAD) {
+                    if (!AudioPolicy.qualifiedKeepContentType(draft.contentType)) {
+                        message.value = "Use a WAV recording. Other audio containers are not qualified yet."
+                        return false
+                    }
+                    val updated = graph.drafts.update(draft.id, draft.ownerAccountId) {
+                        it.copy(status = DraftRecord.Status.QUEUED, exploreAfterCommit = true)
+                    } ?: return false
+                    UploadWorker.enqueue(graph.app, updated)
+                    reloadDrafts()
+                    return true
+                }
+                if (!AudioPolicy.qualifiedKeepContentType(draft.contentType)) {
+                    message.value = "Use a WAV recording. Other audio containers are not qualified yet."
+                    return false
+                }
+                val wav = graph.drafts.openForPlayback(draft)
+                return try {
+                    val kept = graph.api.keepAudioRecording(
+                        KeepAudioRecordingRequest(
+                            clientCaptureId = draft.clientCaptureId,
+                            source = draft.source,
+                            filename = draft.filename,
+                            contentType = AudioPolicy.CONTENT_TYPE,
+                            capturedAt = draft.capturedAt,
+                            captureSessionId = draft.captureSessionId,
+                            sourceRoute = draft.sourceRoute ?: "phone_microphone",
+                        ),
+                        wav,
+                        owner = draft.ownerAccountId,
+                    )
+                    val assetId = kept.resolvedAssetId()
+                    if (assetId == null) {
+                        message.value = "Exploring isn't available right now. Your recording is safe on this phone."
+                        return false
+                    }
+                    graph.drafts.update(draft.id, draft.ownerAccountId) {
+                        it.copy(status = DraftRecord.Status.COMMITTED, assetId = assetId)
+                    }
+                    reloadDrafts()
+                    val ok = graph.notices.exploreAudio(assetId, durationMs)
+                    if (!ok) message.value = "Exploring isn't available right now. Your recording is safe on this phone."
+                    ok
+                } catch (e: AtlasClientException) {
+                    message.value = "Exploring isn't available right now. Your recording is safe on this phone."
+                    false
+                } finally {
+                    wav.delete()
+                }
+            }
+            DraftRecord.Status.QUEUED, DraftRecord.Status.UPLOADING, DraftRecord.Status.VERIFYING -> return true
+            DraftRecord.Status.COMMITTED -> {
+                val assetId = draft.assetId ?: return false
+                val ok = graph.notices.exploreAudio(assetId, durationMs)
+                if (!ok) message.value = "Exploring isn't available right now. Your recording is safe on this phone."
+                return ok
+            }
+            else -> return false
+        }
     }
 
     fun discard(draft: DraftRecord) {
@@ -281,14 +421,19 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
     /** Each picked file is an independent draft; one failure never blocks siblings. */
     fun importFile(uri: Uri, mime: String?) {
         val account = signedInAccount ?: return
-        val contentType = when (mime) {
-            "image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime", "video/webm" -> mime
+        val contentType = when {
+            mime in setOf("image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime", "video/webm") -> mime
+            AudioPolicy.supportedAudioContentType(mime) -> mime
             else -> {
-                message.value = "This file type isn't supported yet. Use JPEG, PNG, WebP, MP4, MOV or WebM."
+                message.value = "This file type isn't supported yet. Use JPEG, PNG, WebP, MP4, MOV, WebM, MP3, M4A, WAV, FLAC, OGG or WebM audio."
                 return
             }
+        } ?: return
+        val kind = when {
+            contentType.startsWith("image/") -> MediaKind.PHOTO
+            contentType.startsWith("audio/") -> MediaKind.AUDIO
+            else -> MediaKind.VIDEO
         }
-        val kind = if (contentType.startsWith("image/")) MediaKind.PHOTO else MediaKind.VIDEO
         val draft = DraftRecord.new(account, kind, MediaSource.UPLOAD, contentType, Instant.now().toString())
             .copy(status = DraftRecord.Status.QUEUED)
         try {

@@ -28,6 +28,12 @@ data class DraftRecord(
     val durationSeconds: Double? = null,
     val audioPresent: Boolean = false,
     val interrupted: Boolean = false,
+    val sourceRoute: String? = null,
+    val sampleRateHz: Int? = null,
+    val channels: Int? = null,
+    val codec: String? = null,
+    val cameraActive: Boolean = false,
+    val exploreAfterCommit: Boolean = false,
     val captureSessionId: String? = null,
     val commandId: String? = null,
     val status: Status = Status.AWAITING_REVIEW,
@@ -45,8 +51,10 @@ data class DraftRecord(
 ) {
     @Serializable
     enum class Status {
-        /** Retake/Keep (photo) or Keep/Delete (video); not uploaded. */
+        /** Retake/Keep (photo) or Keep/Delete (video/audio); not uploaded. */
         @SerialName("awaiting_review") AWAITING_REVIEW,
+        /** Music Mode Keep: encrypted on this phone until Explore authorizes upload. */
+        @SerialName("kept_local") KEPT_LOCAL,
         @SerialName("queued") QUEUED,
         @SerialName("uploading") UPLOADING,
         @SerialName("verifying") VERIFYING,
@@ -74,9 +82,19 @@ data class DraftRecord(
                 "image/png" -> "png"
                 "image/webp" -> "webp"
                 "video/quicktime" -> "mov"
-                else -> "mp4"
+                "audio/mp4", "audio/aac", "audio/x-m4a" -> "m4a"
+                "audio/mpeg" -> "mp3"
+                "audio/wav", "audio/wave", "audio/x-wav" -> "wav"
+                "audio/flac" -> "flac"
+                "audio/ogg", "audio/opus" -> "ogg"
+                "audio/webm" -> "webm"
+                else -> if (kind == MediaKind.AUDIO) "wav" else "mp4"
             }
-            val prefix = if (kind == MediaKind.PHOTO) "IMG" else "VID"
+            val prefix = when (kind) {
+                MediaKind.PHOTO -> "IMG"
+                MediaKind.VIDEO -> "VID"
+                MediaKind.AUDIO -> "AUD"
+            }
             return DraftRecord(
                 id = id,
                 ownerAccountId = owner.lowercase(),

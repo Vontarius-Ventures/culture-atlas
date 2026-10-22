@@ -1,6 +1,7 @@
 package com.cultureatlas.app
 
 import android.app.Application
+import com.cultureatlas.app.capture.AudioCaptureController
 import com.cultureatlas.app.capture.GlassesAdapter
 import com.cultureatlas.app.capture.GlassesFactory
 import com.cultureatlas.app.capture.PhoneCameraController
@@ -48,6 +49,7 @@ class AppGraph(val app: Application) {
     val receipts = FileReceiptRepository(app)
     val uploadEngine = UploadEngine(api, drafts, OkHttpPartTransfer())
     val camera = PhoneCameraController(app)
+    val audio = AudioCaptureController(app)
     val glasses: GlassesAdapter = GlassesFactory.create(app)
     val accounts = AccountClient(
         http = http,
@@ -55,7 +57,14 @@ class AppGraph(val app: Application) {
         keys = vault.installations,
         pending = vault.pendingSignIn,
         appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-        capabilities = { mapOf("photo" to true, "video" to true, "meta_glasses_sdk" to BuildConfig.META_DAT) },
+        capabilities = {
+            mapOf(
+                "photo" to true,
+                "video" to true,
+                "microphone" to true,
+                "meta_glasses_sdk" to BuildConfig.META_DAT,
+            )
+        },
     )
 
     val controller: AppController by lazy { AppController(this) }

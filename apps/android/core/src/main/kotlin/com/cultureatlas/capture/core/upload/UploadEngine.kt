@@ -2,6 +2,7 @@ package com.cultureatlas.capture.core.upload
 
 import com.cultureatlas.capture.core.contract.CompleteUploadRequest
 import com.cultureatlas.capture.core.contract.CreateUploadRequest
+import com.cultureatlas.capture.core.contract.MediaKind
 import com.cultureatlas.capture.core.contract.PartInstruction
 import com.cultureatlas.capture.core.contract.PartReceipt
 import com.cultureatlas.capture.core.contract.UploadState
@@ -76,6 +77,8 @@ class UploadEngine(
                     sha256 = draft.sha256,
                     capturedAt = draft.capturedAt,
                     captureSessionId = draft.captureSessionId,
+                    sourceRoute = draft.sourceRoute,
+                    captureMode = if (draft.kind == MediaKind.AUDIO) "music" else null,
                 ),
                 UUID.fromString(draft.createKey),
                 owner,

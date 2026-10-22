@@ -21,6 +21,7 @@ import com.cultureatlas.capture.core.contract.UploadResponse
 import com.cultureatlas.capture.core.contract.WearableLink
 import com.cultureatlas.capture.core.identity.SessionManager
 import kotlinx.serialization.KSerializer
+import java.io.File
 import java.util.UUID
 
 /**
@@ -55,6 +56,31 @@ class AtlasApi(val http: AtlasHttp, val sessions: SessionManager) {
                     method, path, body, bodySerializer, resultSerializer, query, token, key,
                     if (mutation) owner else null,
                 )
+            } catch (e: AtlasClientException.Server) {
+                if (e.code == "token_expired" && attempt == 1) sessions.refresh() else throw e
+            }
+        }
+    }
+
+    suspend fun <B, R> callMultipart(
+        path: String,
+        body: B,
+        bodySerializer: KSerializer<B>,
+        file: File,
+        resultSerializer: KSerializer<R>,
+        idempotencyKey: UUID? = null,
+        expectedAccount: String? = null,
+    ): R {
+        val signedIn = sessions.currentAccountId ?: throw AtlasClientException.NotSignedIn()
+        val owner = (expectedAccount ?: signedIn).lowercase()
+        if (owner != signedIn.lowercase()) throw AtlasClientException.DraftLocked()
+        val key = idempotencyKey ?: UUID.randomUUID()
+        var attempt = 0
+        while (true) {
+            attempt++
+            val token = sessions.accessToken()
+            try {
+                return http.postMultipart(path, body, bodySerializer, file, resultSerializer, token, key, owner)
             } catch (e: AtlasClientException.Server) {
                 if (e.code == "token_expired" && attempt == 1) sessions.refresh() else throw e
             }
