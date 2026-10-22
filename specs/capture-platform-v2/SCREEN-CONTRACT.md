@@ -1,5 +1,7 @@
 # Screens and interaction contract
 
+> Audio scope is extended by [amendment2.3](AUDIO-AND-MULTIMODAL.md): standalone audio, Music Mode, soundtrack/evidence analysis, provider qualification, new permissions and safe sharing migration. This amendment takes precedence for audio; other behavior is unchanged.
+
 The gallery contains nine visual capture references and four editable interface mockups covering agent and sharing additions. These are design references, not implemented application screens. Written contracts and exact copy take precedence over generated lettering or incidental layout differences.
 
 ## Layout and navigation

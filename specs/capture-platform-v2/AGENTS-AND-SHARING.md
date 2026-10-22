@@ -1,5 +1,7 @@
 # Agent access and collection sharing
 
+> Audio scope is extended by [amendment2.3](AUDIO-AND-MULTIMODAL.md): standalone audio, Music Mode, soundtrack/evidence analysis, provider qualification, new permissions and safe sharing migration. This amendment takes precedence for audio; other behavior is unchanged.
+
 Version 2.1 · October 15, 2026 · Required build scope.
 
 Every account can authorize its own agents to inspect permitted setup and preferences and act through the same domain services as the first-party apps. A connection is always bound to one account. An agent cannot enumerate users, inherit the operator's account, or grant itself permissions. Collection sharing is a separate, read-only audience grant; it never conveys device or agent control.

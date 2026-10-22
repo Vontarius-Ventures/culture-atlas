@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "audio_asset": {
+    "id": "med_audio_example",
+    "kind": "audio",
+    "source": "meta_glasses",
+    "capture_mode": "music",
+    "duration_ms": 15000,
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "codec": "aac",
+    "source_route": "bluetooth_headset_input",
+    "status": "ready",
+    "camera_active": false,
+    "note": "Illustrative observed route/sample rate, not a hardware guarantee"
+  },
+  "analysis_request": {
+    "contract_version": 2,
+    "expected_generation": 1,
+    "requested_components": [
+      "music_match"
+    ],
+    "selection": {
+      "track_id": "track_example",
+      "start_ms": 0,
+      "end_ms": 15000
+    }
+  },
+  "evidence_example": {
+    "id": "ev_audio_example",
+    "modality": "audio",
+    "track_id": "track_example",
+    "start_ms": 2000,
+    "end_ms": 12000,
+    "method": "fingerprint",
+    "status": "no_match",
+    "recognition_id": null,
+    "qloo_entity_id": null
+  },
+  "share_migration_defaults": {
+    "include_audio": false,
+    "include_transcripts": false
+  }
+}

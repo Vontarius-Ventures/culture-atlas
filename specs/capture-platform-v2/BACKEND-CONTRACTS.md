@@ -1,5 +1,7 @@
 # Backend and device contracts
 
+> Audio scope is extended by [amendment2.3](AUDIO-AND-MULTIMODAL.md): standalone audio, Music Mode, soundtrack/evidence analysis, provider qualification, new permissions and safe sharing migration. This amendment takes precedence for audio; other behavior is unchanged.
+
 All operations below are required v2 contracts, not claims that routes exist. Existing v1 capture endpoints retain their old behavior through a compatibility adapter. New media lifecycle endpoints live under `/v2` to avoid colliding with existing `/v1/media` signed-image serving.
 
 ## Ownership and persistence invariants

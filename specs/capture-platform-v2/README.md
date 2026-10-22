@@ -26,3 +26,9 @@ The [prior research scope](../../research/independent-multi-user-capture-scope.m
 Two unrelated users on independent networks use their own phones/glasses, cameras and uploads while all founder devices and Observer processes are off. Their data and commands remain isolated; interruptions recover; images/videos play; Concentrate produces validated discoveries when available; credit exhaustion never loses captures. Both iOS and Android ship the supported experimental implementation through permitted channels. Public release eligibility is separately verified for each platform; the word Experimental does not override SDK or store restrictions.
 
 Agent API access and revocable collection sharing are required scope. The gallery includes nine generated capture references and four editable agent/sharing interface mockups.
+
+## Audio amendment2.3
+
+[Audio and multimodal discovery](AUDIO-AND-MULTIMODAL.md) makes audio core: camera-off Music Mode, video soundtrack extraction, timestamped sound/visual evidence, Qloo resolution, agent scopes and explicit sound sharing. [New screens19–23](design/audio.html), [contract examples](audio-contract.examples.json), and [configuration additions](audio.env.example). Reviewed against integration branch a5dd54e and preserves its onboarding amendment2.2. The historical v2.1 documents below remain baseline context;2.3 takes precedence for audio.
+
+ElevenLabs Scribe v2 is the preferred transcription candidate in2.3, subject to privacy/account and quality qualification; music identification remains a separate adapter.
