@@ -10,7 +10,8 @@ import type { ResearchProvider } from './research/types';
 import { createObjectStorage } from './storage';
 import type { ObjectStorage } from './storage/types';
 import type { TextModelProvider } from './text/types';
-import { UnavailableVlmEnricher, UnavailableVlmVerifier } from './unavailable';
+import type { MusicRecognitionProvider } from './music/types';
+import { UnavailableMusicRecognition, UnavailableVlmEnricher, UnavailableVlmVerifier } from './unavailable';
 import type { VlmEnricher, VlmProvider } from './vlm/types';
 import type { VlmVerifier } from './vlm/verify';
 
@@ -34,6 +35,11 @@ export interface ProviderRegistry {
   readonly composer: TextModelProvider;
   readonly research: ResearchProvider;
   readonly qloo: QlooProvider;
+  /**
+   * Licensed fingerprint/catalog music recognition. Unavailable until a
+   * provider is procured; never returns invented matches.
+   */
+  readonly music: MusicRecognitionProvider;
   readonly storage: ObjectStorage;
   /** Present only with LLM_PROVIDER=concentrate (the default). */
   readonly modelGateway?: ReturnType<typeof createModelGateway>;
@@ -73,6 +79,7 @@ export function createProviderRegistry(
   const fallbackVlm = elorianEnabled(config) ? createElorianVlm(config) : undefined;
   const research = overrides.research ?? createWikipediaResearch(config, text);
   const qloo = overrides.qloo ?? createQlooProvider(config);
+  const music = overrides.music ?? new UnavailableMusicRecognition('not_implemented');
   const storage = overrides.storage ?? createObjectStorage(config);
 
   return {
@@ -84,6 +91,7 @@ export function createProviderRegistry(
     composer,
     research,
     qloo,
+    music,
     storage,
     modelGateway,
     fallbackVlm,
@@ -104,6 +112,7 @@ export function createProviderRegistry(
         'qloo.trends_entity': q.trendsEntity,
         // No track catalog adapter in this release: artist recommendations only.
         'catalog.tracks': { status: 'unavailable', reason: 'not_implemented' },
+        'music.recognize': music.capability(),
         'storage.objects': s.objects,
         'storage.signed_urls': s.signedUrls,
       };

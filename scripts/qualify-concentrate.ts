@@ -38,6 +38,7 @@
  * the out dir to the worker as CONCENTRATE_QUALIFICATION_DIR to mark the role qualified.
  */
 import { fetchCatalog, qualifyProfile, readApiKey } from './qualify-concentrate-lib';
+import { selectPinnedConcentrateRoutes } from '../packages/providers/src/concentrate/catalog';
 import { loadModelProfiles } from '../packages/providers/src/concentrate/profiles';
 import { runtimeTextScorer } from './eval/golden-photos';
 import { runtimeGuardedPipeline } from './eval/pipeline';
@@ -70,6 +71,12 @@ if (flag('catalog')) {
   log(
     `catalog snapshot: ${snapshot.models.length} models over ${snapshot.pages} page(s), fetched_at ${snapshot.fetched_at}`,
   );
+  const pins = selectPinnedConcentrateRoutes(snapshot);
+  if (pins) {
+    log(`catalog pins: vision ${pins.vision.model}; text ${pins.text.model} (ZDR listed; not a dispatch default)`);
+  } else {
+    log('catalog pins: none — no ZDR-eligible vision+text route; fail closed');
+  }
   process.exit(0);
 }
 

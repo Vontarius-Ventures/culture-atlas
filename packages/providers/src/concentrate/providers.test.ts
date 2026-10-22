@@ -35,8 +35,8 @@ describe('role profiles and adapters, offline', () => {
     });
     expect(loadProviderConfig({}).LLM_PROVIDER).toBe('concentrate');
     expect(loadProviderConfig({ LLM_PROVIDER: 'featherless' }).LLM_PROVIDER).toBe('featherless');
-    expect(reg.vlm.capability().status).toBe('unavailable');
-    expect(reg.text.capability().status).toBe('unavailable');
+    expect(reg.vlm.capability().status).toBe('unverified');
+    expect(reg.text.capability().status).toBe('unverified');
     expect(reg.storage.capability().objects.status).toBe('available');
     expect(reg.qloo.id).not.toContain('concentrate');
   });
@@ -54,7 +54,7 @@ describe('role profiles and adapters, offline', () => {
     );
     expect(gateway.text.capability().status).toBe('unverified');
     expect(gateway.composer.capability().status).toBe('unavailable');
-    expect(gateway.vlm.capability().status).toBe('unavailable');
+    expect(gateway.vlm.capability().status).toBe('unverified');
   });
   it('requires explicit environment privacy assertions and no gateway fallback', () => {
     const config = loadProviderConfig({
@@ -63,6 +63,12 @@ describe('role profiles and adapters, offline', () => {
       CONCENTRATE_REQUIRE_ZDR: 'false',
     });
     expect(createModelGateway(config).text.capability().status).toBe('unavailable');
+    const logging = loadProviderConfig({
+      LLM_PROVIDER: 'concentrate',
+      CONCENTRATE_API_KEY: 'synthetic',
+      CONCENTRATE_ALLOW_CONTENT_LOGGING: 'true',
+    });
+    expect(createModelGateway(logging).text.capability().status).toBe('unavailable');
     expect(() => loadProviderConfig({ CONCENTRATE_GATEWAY_FALLBACKS_ENABLED: 'true' })).toThrow();
   });
   it('transforms actual VLM and nullable composer-style schemas without allowing extra keys/default omissions', () => {

@@ -1,0 +1,87 @@
+{
+  "kind": "concentrate-catalog-snapshot",
+  "fetched_at": "2026-10-22T03:07:50.426Z",
+  "pages": 1,
+  "models": [
+    {
+      "id": "claude-fable-5-1",
+      "author": { "slug": "anthropic" },
+      "capabilities": {
+        "image_input": { "supported": true },
+        "structured_outputs": { "supported": true }
+      },
+      "providers": {
+        "anthropic": {
+          "zdr": false,
+          "image_processing": { "supported_formats": ["png", "jpeg", "gif", "webp"] }
+        }
+      }
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "author": { "slug": "anthropic" },
+      "capabilities": {
+        "image_input": { "supported": true },
+        "structured_outputs": { "supported": true }
+      },
+      "providers": {
+        "anthropic": {
+          "zdr": {
+            "policy_url": "https://platform.claude.com/docs/en/build-with-claude/zero-data-retention",
+            "certificate_url": "https://concentrate.ai/legal/anthropic-zdr-certificate-2026-03-03.pdf"
+          },
+          "image_processing": { "supported_formats": ["png", "jpeg", "gif", "webp"] }
+        },
+        "vertex": {
+          "zdr": false,
+          "image_processing": { "supported_formats": ["png", "jpeg", "gif", "webp"] }
+        }
+      }
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "author": { "slug": "google" },
+      "capabilities": {
+        "image_input": { "supported": true },
+        "structured_outputs": { "supported": true }
+      },
+      "providers": {
+        "vertex": {
+          "zdr": { "policy_url": "https://ai.google.dev/gemini-api/docs/zdr" },
+          "image_processing": { "supported_formats": ["png", "jpeg", "webp"] }
+        },
+        "ai-studio": {
+          "zdr": false,
+          "image_processing": { "supported_formats": ["png", "jpeg", "webp"] }
+        }
+      }
+    },
+    {
+      "id": "fixture-text-only",
+      "author": { "slug": "fixture" },
+      "capabilities": {
+        "image_input": { "supported": false },
+        "structured_outputs": { "supported": true }
+      },
+      "providers": {
+        "fixture": {
+          "zdr": { "policy_url": "https://example.test/zdr" }
+        }
+      }
+    },
+    {
+      "id": "fixture-vision-no-jpeg",
+      "author": { "slug": "fixture" },
+      "capabilities": {
+        "image_input": { "supported": true },
+        "structured_outputs": { "supported": true }
+      },
+      "providers": {
+        "fixture": {
+          "zdr": { "policy_url": "https://example.test/zdr" },
+          "image_processing": { "supported_formats": ["png", "webp"] }
+        }
+      }
+    }
+  ]
+}

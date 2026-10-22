@@ -7,7 +7,15 @@ import {
   type ReadinessDetail,
 } from '../model-gateway/runner';
 import type { ModelIdentity, ModelRole, StructuredTransport } from '../model-gateway/types';
-import { UnavailableTextModel, UnavailableVlm, UnavailableVlmEnricher, UnavailableVlmVerifier } from '../unavailable';
+import {
+  UnavailableTextModel,
+  UnavailableVlm,
+  UnavailableVlmEnricher,
+  UnavailableVlmVerifier,
+  UnverifiedTextModel,
+  UnverifiedVlm,
+} from '../unavailable';
+import { PINNED_CONCENTRATE_ROUTES } from './catalog';
 import type { VlmEnricher, VlmProvider } from '../vlm/types';
 import type { VlmVerifier } from '../vlm/verify';
 import type { TextModelProvider } from '../text/types';
@@ -127,7 +135,7 @@ export function createModelGateway(
   const ledger =
     options.ledger ??
     (db && limits ? new ModelSpendLedger(new PostgresSpendStore(db), limits) : undefined);
-  if (!ledger || (!ledger.store.durable && !options.allowTestStore)) return unavailable();
+  const canDispatch = !!(ledger && (ledger.store.durable || options.allowTestStore));
   const profiles = configuredProfiles(config, options);
   const qualify =
     options.qualification ??
@@ -146,12 +154,13 @@ export function createModelGateway(
     // The verifier should be a different model family from the reader (quality plan §7.6); its profile pins it.
     vision_verify: undefined,
   } satisfies Record<ModelRole, string | undefined>;
-  const transport =
-    options.transport ??
-    createConcentrateTransport({
-      apiKey: config.CONCENTRATE_API_KEY,
-      baseUrl: config.CONCENTRATE_BASE_URL,
-    });
+  const transport = canDispatch
+    ? (options.transport ??
+      createConcentrateTransport({
+        apiKey: config.CONCENTRATE_API_KEY,
+        baseUrl: config.CONCENTRATE_BASE_URL,
+      }))
+    : undefined;
   for (const role of MODEL_ROLES) {
     const profile = profiles[role];
     // Optional environment IDs are assertions against qualified profiles, never replacements.
@@ -159,17 +168,23 @@ export function createModelGateway(
       continue;
     states[role] = qualify(profile);
     // Only a qualified profile may dispatch. Lower states are reported, not used.
-    if (states[role] !== 'qualified') continue;
+    if (states[role] !== 'qualified' || !canDispatch || !transport || !ledger) continue;
     runners[role] = new StructuredResponseRunner(profile, transport, ledger, {
       identity: options.identity,
       allowTestStore: options.allowTestStore,
       onAlert: options.onAlert,
     });
   }
+  const vlmModel =
+    (states.vision_photo && profiles.vision_photo?.model) ||
+    models.vision_photo ||
+    PINNED_CONCENTRATE_ROUTES.vision.model;
+  const textModel =
+    (states.research_text && profiles.research_text?.model) ||
+    models.research_text ||
+    PINNED_CONCENTRATE_ROUTES.text.model;
   return {
-    vlm: runners.vision_photo
-      ? new ConcentrateVlm(runners.vision_photo)
-      : new UnavailableVlm('not_configured'),
+    vlm: runners.vision_photo ? new ConcentrateVlm(runners.vision_photo) : new UnverifiedVlm(vlmModel),
     vlmEnrich: runners.vision_photo_enrich
       ? new ConcentrateVlmEnricher(runners.vision_photo_enrich)
       : new UnavailableVlmEnricher('not_configured'),
@@ -181,7 +196,7 @@ export function createModelGateway(
       : new UnavailableVlm('not_configured'),
     text: runners.research_text
       ? new ConcentrateTextModel(runners.research_text)
-      : new UnavailableTextModel('not_configured'),
+      : new UnverifiedTextModel(textModel),
     composer: runners.composer
       ? new ConcentrateTextModel(runners.composer)
       : new UnavailableTextModel('not_configured'),

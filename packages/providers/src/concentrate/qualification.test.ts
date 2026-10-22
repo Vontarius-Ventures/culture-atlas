@@ -165,7 +165,7 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
     expect(gateway.runners.research_text).toBeDefined();
     // Same artifact id but a different profile hash: catalog-compatible, not dispatchable.
     expect(gateway.runners.vision_photo).toBeUndefined();
-    expect(gateway.vlm.capability().status).toBe('unavailable');
+    expect(gateway.vlm.capability().status).toBe('unverified');
     await expect(gateway.readiness()).resolves.toEqual({
       vision_photo: {
         role: 'vision_photo',

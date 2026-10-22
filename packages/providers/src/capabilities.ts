@@ -18,6 +18,7 @@ export const CAPABILITY_NAMES = [
   'qloo.trending',
   'qloo.trends_entity',
   'catalog.tracks',
+  'music.recognize',
   'storage.objects',
   'storage.signed_urls',
 ] as const;

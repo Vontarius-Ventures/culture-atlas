@@ -1,5 +1,6 @@
 import { unavailable, type CapabilityEntry, type CapabilityReason } from './capabilities';
 import { ProviderError } from './errors';
+import type { MusicRecognitionProvider } from './music/types';
 import type { QlooCapabilities, QlooProvider } from './qloo/types';
 import type { ResearchProvider } from './research/types';
 import type { ObjectStorage } from './storage/types';
@@ -25,6 +26,33 @@ export class UnavailableVlm implements VlmProvider {
   }
   async analyzeImage(): Promise<never> {
     return fail('vlm', this.reason);
+  }
+}
+
+/**
+ * Key is present and a catalog pin / profile names a model, but the role is
+ * not dispatchable (no qualified artifact, or no durable ledger). Health reports
+ * `unverified`; every call still throws. Never contacts the gateway.
+ */
+export class UnverifiedVlm implements VlmProvider {
+  readonly id: string;
+  constructor(
+    private readonly model: string,
+    private readonly detail = 'Configured; not dispatchable until a matching qualification artifact exists',
+  ) {
+    this.id = `vlm:concentrate:unverified:${model}`;
+  }
+  capability(): CapabilityEntry {
+    return {
+      status: 'unverified',
+      reason: 'probe_pending',
+      provider: `concentrate:${this.model}`,
+      detail: this.detail,
+      checked_at: null,
+    };
+  }
+  async analyzeImage(): Promise<never> {
+    return fail('vlm', 'probe_pending');
   }
 }
 
@@ -63,6 +91,29 @@ export class UnavailableTextModel implements TextModelProvider {
   }
 }
 
+/** Same as UnverifiedVlm for research/composer text roles. */
+export class UnverifiedTextModel implements TextModelProvider {
+  readonly id: string;
+  constructor(
+    private readonly model: string,
+    private readonly detail = 'Configured; not dispatchable until a matching qualification artifact exists',
+  ) {
+    this.id = `text:concentrate:unverified:${model}`;
+  }
+  capability(): CapabilityEntry {
+    return {
+      status: 'unverified',
+      reason: 'probe_pending',
+      provider: `concentrate:${this.model}`,
+      detail: this.detail,
+      checked_at: null,
+    };
+  }
+  async generateStructured(): Promise<never> {
+    return fail('text', 'probe_pending');
+  }
+}
+
 export class UnavailableResearch implements ResearchProvider {
   readonly id = 'research:unavailable';
   constructor(private readonly reason: CapabilityReason = 'not_implemented') {}
@@ -74,6 +125,21 @@ export class UnavailableResearch implements ResearchProvider {
   }
   async extractClaims(): Promise<never> {
     return fail('research', this.reason);
+  }
+}
+
+/**
+ * Music recognition is not implemented this release. Calls throw; they never
+ * invent a track, artist or recording id.
+ */
+export class UnavailableMusicRecognition implements MusicRecognitionProvider {
+  readonly id = 'music:unavailable';
+  constructor(private readonly reason: CapabilityReason = 'not_implemented') {}
+  capability(): CapabilityEntry {
+    return unavailable(this.reason, 'No licensed music-recognition provider is configured');
+  }
+  async recognize(): Promise<never> {
+    return fail('music', this.reason);
   }
 }
 

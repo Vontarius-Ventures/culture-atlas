@@ -7,6 +7,7 @@ export * from './vlm/types';
 export * from './text/types';
 export * from './research/types';
 export * from './qloo/types';
+export * from './music/types';
 export * from './storage/types';
 export * from './storage/multipart-types';
 export * from './storage/multipart-s3';

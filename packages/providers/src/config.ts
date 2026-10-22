@@ -9,12 +9,29 @@ const optional = z
  * Provider configuration from environment variables (all documented in .env.example).
  * Absent keys never throw: the matching capability reports 'unavailable/not_configured'.
  */
+/**
+ * Live Featherless catalog pin (2026-10-22 `GET /v1/models`, HTTP 200).
+ * Explicit `LLM_PROVIDER=featherless` rollback only — never an automatic
+ * fallback from Concentrate. The catalog listed `features.image_input: true`.
+ */
+export const PINNED_FEATHERLESS_ROLLBACK = {
+  catalogFetchedAt: '2026-10-22T03:19:12.000Z',
+  model: 'google/gemma-3-27b-it',
+  imageInput: true,
+} as const;
+
 /** Default models per LLM provider (override with VLM_MODEL / RESEARCH_MODEL / COMPOSER_MODEL). */
 export const DEFAULT_MODELS = {
   // Featherless serves vision on Gemma- and Mistral-class models; Gemma 3 27B handles both image and text.
-  featherless: { vlm: 'google/gemma-3-27b-it', text: 'google/gemma-3-27b-it' },
+  featherless: {
+    vlm: PINNED_FEATHERLESS_ROLLBACK.model,
+    text: PINNED_FEATHERLESS_ROLLBACK.model,
+  },
   anthropic: { vlm: 'claude-sonnet-5-5', text: 'claude-sonnet-5-5' },
-  // No route is qualified by default. Profiles must supply exact catalog IDs.
+  // Empty on purpose: a catalog pin is not a dispatch default. After the
+  // 2026-10-22 live catalog run the documented IDs are anthropic/claude-haiku-5-5
+  // (PINNED_CONCENTRATE_ROUTES). Set VLM_MODEL / RESEARCH_MODEL as assertions
+  // against a profile file; do not bake a marketing-page example here.
   concentrate: { vlm: '', text: '' },
 } as const;
 

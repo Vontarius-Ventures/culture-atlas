@@ -1,0 +1,106 @@
+{
+  "kind": "concentrate-catalog-selection",
+  "product": "culture atlas",
+  "created_at": "2026-10-22T03:13:03.746Z",
+  "catalog_snapshot_at": "2026-10-22T03:13:03.746Z",
+  "catalog_models": 204,
+  "catalog_pages": 1,
+  "method": "GET /v1/models (paginated, no inference). Pins are catalog-eligible routes, not golden-set qualifications.",
+  "pins": {
+    "vision_and_text": {
+      "model": "anthropic/claude-haiku-5-5",
+      "provider": "anthropic",
+      "catalog_id": "claude-haiku-5-5",
+      "family": "anthropic",
+      "image_input": {
+        "supported": true
+      },
+      "structured_outputs": {
+        "supported": true
+      },
+      "provider_image": {
+        "png": true,
+        "jpg": true,
+        "webp": true,
+        "gif": true
+      },
+      "json_schema": true,
+      "reasoning_effort_none": true,
+      "zdr": {
+        "policy_url": "https://platform.claude.com/docs/en/build-with-claude/zero-data-retention",
+        "certificate_url": "https://concentrate.ai/legal/anthropic-zdr-certificate-2026-03-03.pdf"
+      },
+      "image_processing": {
+        "max_images_per_request": 100,
+        "supported_formats": [
+          "png",
+          "jpeg",
+          "gif",
+          "webp"
+        ],
+        "size_mb": {
+          "max_total": 24,
+          "max_per_image": 7.5
+        },
+        "max_dimension": 8000
+      }
+    },
+    "verifier_candidate_not_enabled": {
+      "model": "vertex/gemini-2.5-flash",
+      "provider": "vertex",
+      "catalog_id": "gemini-2.5-flash",
+      "family": "google",
+      "image_input": {
+        "supported": true
+      },
+      "structured_outputs": {
+        "supported": true
+      },
+      "provider_image": {
+        "png": true,
+        "jpg": true,
+        "webp": true,
+        "gif": false
+      },
+      "json_schema": true,
+      "reasoning_effort_none": true,
+      "zdr": {
+        "policy_url": "https://ai.google.dev/gemini-api/docs/zdr"
+      },
+      "image_processing": {
+        "max_images_per_request": 3000,
+        "supported_formats": [
+          "png",
+          "jpeg",
+          "webp"
+        ],
+        "size_mb": {
+          "max_total": 7
+        },
+        "max_dimension": null
+      },
+      "reason": "Independent family (google) with vertex ZDR listed; vision_verify stays off until a fresh golden-v5 blind split exists and the operator confirms the vertex route."
+    }
+  },
+  "roles": {
+    "vision_photo": "catalog-compatible only; golden-v5 has no unused blind split (h80+ required)",
+    "vision_photo_enrich": "catalog-compatible only; same golden-v5 gap",
+    "vision_video_frame": "catalog-compatible only; transport-only until a video golden set exists",
+    "research_text": "catalog-compatible; text-v1 eval not re-run in this factory pass",
+    "composer": "catalog-compatible; text-v1 eval not re-run in this factory pass",
+    "vision_verify": "not pinned; candidate vertex/gemini-2.5-flash recorded above"
+  },
+  "privacy": {
+    "requireZdr": true,
+    "contentLoggingEnabled": false,
+    "catalog_zdr_listed_for_anthropic_claude_haiku_5_5": true,
+    "dashboard_confirmation": "pending",
+    "privacyVerifiedAt": "2026-10-19T01:11:57.000Z",
+    "privacyVerifiedAt_note": "Owner-accepted exception for this Anthropic route, carried unchanged. Dashboard ZDR/no-logging confirmation is still required before production."
+  },
+  "notes": [
+    "DEFAULT_MODELS.concentrate stays empty; these ids live in profiles.json.",
+    "No passing concentrate-qualification artifact is written: photo roles cannot qualify on golden-v5 yet, and this pass did not send billed eval requests.",
+    "Fail closed if CONCENTRATE_REQUIRE_ZDR is not true or CONCENTRATE_ALLOW_CONTENT_LOGGING is true."
+  ]
+}

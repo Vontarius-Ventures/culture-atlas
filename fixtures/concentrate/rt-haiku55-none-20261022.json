@@ -1,0 +1,67 @@
+{
+  "kind": "concentrate-qualification",
+  "artifact_id": "rt-haiku55-none-20261022",
+  "created_at": "2026-10-22T03:14:19.029Z",
+  "role": "research_text",
+  "model": "anthropic/claude-haiku-5-5",
+  "provider": "anthropic",
+  "profile_hash": "ecd4307572c3c797821ffb41406956b806d7c22ea501a1efe351d9a099dbcbfe",
+  "catalog_snapshot_at": "2026-10-22T03:13:03.746Z",
+  "result": "pass",
+  "requests_sent": 6,
+  "spend_cap_micros": 500000,
+  "fixtures": {
+    "total": 6,
+    "passed": 6,
+    "failed": 0,
+    "outcomes": {
+      "complete": 6
+    }
+  },
+  "latency_ms": {
+    "p50": 6301,
+    "p95": 7637
+  },
+  "usage": {
+    "input_tokens": 11309,
+    "output_tokens": 6913,
+    "unknown_usage_attempts": 0
+  },
+  "notes": [
+    "Offline-safe aggregate only: no media, prompts, outputs or credentials are stored.",
+    "Billing is not reconciled here; usage tokens are not dollar charges.",
+    "Reading: quick (prompt research-v1, schema reference_notes).",
+    "Reasoning effort: none (sent as reasoning.effort on every request).",
+    "Evaluation text-v1 (247915717833): pass; scorer text-score-v2, guardrails n/a, thresholds 9d43471b818b. Outputs were scored in memory and not stored."
+  ],
+  "eval": {
+    "golden_set": "text-v1",
+    "golden_sha256": "2479157178338feabca9e335c17494c6ed48c4e6e1f108082296a1839f1e7ac9",
+    "thresholds_sha256": "9d43471b818b960d258090ea16bc712aa33f63b699ddb3e118a007cbd8c6b81b",
+    "guardrail_version": null,
+    "grounding_version": null,
+    "scorer_version": "text-score-v2",
+    "code_sha256": "72da5e5d65e9c11670db92ca4b8b0c8aebb01f7b56b6bc843faadae8eebb13d6",
+    "holdout_blind": null,
+    "metrics": {
+      "t1_valid_share": 1,
+      "t9_p95_ms": 7637,
+      "t9_timeouts": 0,
+      "t10_fixtures_total": 6,
+      "t10_fixtures_passed": 6,
+      "fixtures_total": 6,
+      "fixtures_scored": 6,
+      "fixtures_content_passed": 6,
+      "mean_t1_schema_valid": 1,
+      "mean_t12_forbidden_strings": 0,
+      "mean_t2_outside_urls": 0,
+      "mean_t3_unsourced_factual_share": 0,
+      "mean_raw_invalid_indexes": 0,
+      "mean_raw_overview_words": 61.5,
+      "mean_t4_kept_claims": 7.5,
+      "mean_t5_overview_words": 61.5,
+      "mean_t11_unsupported_specific_share": 0
+    },
+    "pass": true
+  }
+}

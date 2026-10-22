@@ -1,0 +1,25 @@
+{
+  "kind": "featherless-catalog-selection",
+  "product": "culture atlas",
+  "created_at": "2026-10-22T03:19:12.000Z",
+  "endpoint": "https://api.featherless.ai/v1/models",
+  "http_status": 200,
+  "model_count": 22323,
+  "preferred_rollback": {
+    "id": "google/gemma-3-27b-it",
+    "present": true,
+    "available_on_current_plan": true,
+    "model_class": "gemma3-27b",
+    "owned_by": "Feather",
+    "context_length": 32768,
+    "features": { "image_input": true }
+  },
+  "role": "explicit LLM_PROVIDER=featherless rollback only",
+  "notes": [
+    "Concentrate remains the v2 default (LLM_PROVIDER=concentrate). Nothing auto-falls back to Featherless.",
+    "The classified rc_ key is FEATHERLESS_API_KEY. Never logged or committed.",
+    "Adapter: packages/providers/src/featherless/transport.ts (OpenAI-compatible Chat Completions).",
+    "DEFAULT_MODELS.featherless.vlm and .text stay google/gemma-3-27b-it because the live catalog listed it with features.image_input true.",
+    "v2 media analysis is unavailable under a rollback provider."
+  ]
+}

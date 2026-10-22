@@ -6,7 +6,9 @@ rollbacks (`LLM_PROVIDER=featherless|anthropic`); nothing ever falls back to
 them automatically, and v2 media analysis is unavailable under a rollback
 provider. Qloo stays independent.
 
-**No qualified profile ships in this repository.** Of the model roles
+**No qualified profile ships in this repository.** Catalog IDs are pinned after
+a live `GET /v1/models` run (below) but are not dispatch defaults:
+`DEFAULT_MODELS.concentrate` stays empty. Of the model roles
 `research_text` and `composer` (`composer-v2`) have qualifying artifacts now
 (in the operator's directory; "Requalification round 3: Tune" below);
 `composer` had failed its round-2 re-qualification on the injection fixture. Every test uses synthetic ids such as `fixture/model-1`,
@@ -25,6 +27,34 @@ spend ceilings every role reports `unavailable`; capture, library, uploads and
 playback keep working.
 
 Authority: `specs/capture-platform-v2/CONCENTRATE.md`.
+
+## Catalog pin (2026-10-22)
+
+Live `GET /v1/models` returned 204 models (1 page). The committed snapshot in
+`fixtures/concentrate/catalog-snapshot.json` is the ZDR-relevant subset
+(fable / haiku / gemini-2.5-flash) with `fetched_at` 2026-10-22T03:13:03.746Z.
+Selection is `selectPinnedConcentrateRoutes` in
+`packages/providers/src/concentrate/catalog.ts`: ZDR must be a policy object
+on the provider route (boolean `false` is ineligible), structured output must
+be listed, and vision additionally needs `image_input` plus JPEG in
+`image_processing.supported_formats`. Content logging is a key/dashboard
+setting (`CONCENTRATE_ALLOW_CONTENT_LOGGING=false`), not a catalog field.
+
+| Role | Catalog ID | Why |
+| --- | --- | --- |
+| vision (`VLM_MODEL`) | `anthropic/claude-haiku-5-5` | `image_input`, JPEG, `structured_outputs`, ZDR policy + certificate on the `anthropic` route (`vertex` lists `zdr: false` and is not eligible) |
+| text (`RESEARCH_MODEL` / `COMPOSER_MODEL`) | `anthropic/claude-haiku-5-5` | same route; text roles may share a vision-capable model |
+
+These IDs are documented pins and health labels, not silent dispatch defaults.
+Set `VLM_MODEL` / `RESEARCH_MODEL` / `COMPOSER_MODEL` to them as assertions
+against `CONCENTRATE_PROFILE_FILE`. Dashboard confirmation of ZDR and no
+content logging is still pending. Photo-role quality qualification is still
+fail-closed (golden-v5 has no unused blind split). Text-role artifacts
+`rt-haiku55-none-20261022` and `co2-haiku55-none-20261022` in
+`fixtures/concentrate/` pass text-v1; they dispatch only with a durable
+ledger. With `CONCENTRATE_API_KEY` and the ZDR env assertions,
+`vlm.analyze_image` and `text.generate` report `unverified` rather than
+`not_configured`.
 
 ## What runs where
 
@@ -1116,11 +1146,40 @@ tried completed and were schema-valid; replies stayed in the scratchpad.
   tortilla and an almond-flour cake under a gluten exclusion. The case passed,
   because 2 of the 4 dishes survive the filter.
 
+## Factory integration line (2026-10-22)
+
+Live Concentrate catalog snapshot `fetched_at` 2026-10-22T03:12:23.227Z (204
+models, `fixtures/concentrate/catalog-snapshot.json`). Pins are exact catalog
+ids, not marketing names. `DEFAULT_MODELS.concentrate` stays empty.
+
+| Role | Pin | ZDR on catalog | Qualification |
+| --- | --- | --- | --- |
+| `research_text` | `anthropic/claude-haiku-5-5` | listed (policy + certificate on the `anthropic` route) | **catalog-compatible** in git. Historical text-v1 artifacts (2026-10-20, operator directory) are not in this repository; this pass did not re-run billed eval |
+| `composer` (`composer-v2`) | `anthropic/claude-haiku-5-5` | same route | same as research_text |
+| `vision_photo`, `vision_photo_enrich`, `vision_video_frame` | `anthropic/claude-haiku-5-5` | same route | **not qualified**: golden-v5 has no unused blind split; the harness refuses before any request |
+| — | `claude-fable-5-1` (anthropic / vertex / azure) | **not eligible** (`zdr: false`) | not pinned |
+| — | `vertex/gemini-2.5-flash` | listed on `vertex` only | verifier candidate, not enabled |
+
+**Featherless explicit rollback.** Live `GET https://api.featherless.ai/v1/models`
+HTTP 200 (22,323 models). `google/gemma-3-27b-it` is present, on the current
+plan, with `features.image_input: true`. That is `DEFAULT_MODELS.featherless`
+and `PINNED_FEATHERLESS_ROLLBACK`. Use it only with `LLM_PROVIDER=featherless`;
+Concentrate never auto-falls back. v2 media analysis is unavailable under
+rollback. Artifact: `fixtures/featherless/model-selection.json`.
+
+`createVlm` / `createTextModel` use the Concentrate gateway when
+`LLM_PROVIDER=concentrate`. A key plus ZDR assertions reports `unverified`
+(calls still throw) until a matching qualification artifact, durable
+`inference_attempts` ledger and the `MODEL_*_USD` ceilings are present.
+Dashboard confirmation of ZDR and no content logging for the Anthropic route
+remains a deploy gate; profiles carry the owner-accepted `privacyVerifiedAt`.
+
 ## Remaining release gates
 
-- Qualified profiles exist only in the operator's directory. **`research_text`
-  and `composer` (`composer-v2`) are qualified now** (2026-10-20,
-  requalification round 3 Tune):
+- In this repository the factory catalog pin is **catalog-compatible**, not
+  dispatch-qualified. Historical operator-directory artifacts still record
+  **`research_text` and `composer` (`composer-v2`) as qualified** (2026-10-20
+  requalification round 3 Tune); they are not shipped here:
   - `vision_photo` and `vision_photo_enrich` failed three blind runs: golden-v2
     (M1, M4, M11; "Requalification blind run" above), golden-v3 h30–h49 (M1,
     M2, M4, M9, M11) and golden-v4 h50–h79 (M1, M2, M5, M7, M11, M15;
