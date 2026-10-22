@@ -54,7 +54,8 @@ export async function fetchCatalogSnapshot(input: {
 }
 
 /**
- * Live catalog pin from 2026-10-22 (`GET /v1/models`, 204 models).
+ * Live catalog pin from 2026-10-22 (`GET /v1/models`, 204 models; committed
+ * subset in `fixtures/concentrate/catalog-snapshot.json`).
  * ZDR listed as a policy object on `providers.anthropic` (certificate URL present),
  * `capabilities.image_input.supported`, JPEG in `image_processing.supported_formats`,
  * and `capabilities.structured_outputs.supported`.
