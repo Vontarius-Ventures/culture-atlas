@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { loadProviderConfig } from '../config';
+import { DEFAULT_MODELS, PINNED_FEATHERLESS_ROLLBACK, loadProviderConfig } from '../config';
 import { createTextModel, createVlm } from '../llm';
+import { resolveFromWorkspace } from '../paths';
 import { createFeatherlessTransport, extractJsonText } from './transport';
 
 const validAnalysis = {
@@ -50,6 +52,24 @@ describe('featherless provider', () => {
     const vlm = createVlm(loadProviderConfig({ LLM_PROVIDER: 'featherless', FEATHERLESS_API_KEY: 'fk' }));
     expect(vlm.id).toBe('vlm:featherless:google/gemma-3-27b-it');
     expect(vlm.capability()).toMatchObject({ status: 'unverified', provider: 'featherless:google/gemma-3-27b-it' });
+  });
+
+  it('keeps google/gemma-3-27b-it as the vision-capable rollback pin from the live catalog', () => {
+    expect(PINNED_FEATHERLESS_ROLLBACK.model).toBe('google/gemma-3-27b-it');
+    expect(PINNED_FEATHERLESS_ROLLBACK.imageInput).toBe(true);
+    expect(DEFAULT_MODELS.featherless).toEqual({
+      vlm: PINNED_FEATHERLESS_ROLLBACK.model,
+      text: PINNED_FEATHERLESS_ROLLBACK.model,
+    });
+    const selection = JSON.parse(
+      readFileSync(resolveFromWorkspace('fixtures/featherless/model-selection.json'), 'utf8'),
+    );
+    expect(selection.preferred_rollback).toMatchObject({
+      id: 'google/gemma-3-27b-it',
+      present: true,
+      features: { image_input: true },
+    });
+    expect(selection.http_status).toBe(200);
   });
 
   it('sends an OpenAI-compatible request with bearer auth, text before the image, and validates the reply', async () => {
