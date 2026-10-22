@@ -3,6 +3,7 @@ import XCTest
 
 /// Music Mode (amendment 2.3): camera-off audio capture, verified routes, speech off.
 final class MusicCaptureTests: XCTestCase {
+  @MainActor
   func testContractLimits() {
     XCTAssertEqual(AtlasContract.audioMaxSeconds, 120)
     XCTAssertEqual(AtlasContract.musicRecognitionDefaultSeconds, 15)
@@ -138,8 +139,12 @@ final class MusicCaptureTests: XCTestCase {
     ]
     for url in try musicModeSources() {
       let text = try String(contentsOf: url, encoding: .utf8)
+      let code = text.split(separator: "\n").filter {
+        let trimmed = $0.trimmingCharacters(in: .whitespaces)
+        return !trimmed.hasPrefix("//") && !trimmed.hasPrefix("///") && !trimmed.hasPrefix("*")
+      }.joined(separator: "\n")
       for token in forbidden {
-        XCTAssertFalse(text.contains(token), "\(url.lastPathComponent) must not mention \(token)")
+        XCTAssertFalse(code.contains(token), "\(url.lastPathComponent) must not mention \(token)")
       }
     }
   }

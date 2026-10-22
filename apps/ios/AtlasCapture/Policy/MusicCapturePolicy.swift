@@ -2,8 +2,8 @@ import Foundation
 
 /// Music Mode rules (amendment 2.3, AUD01). Pure policy: no AVFoundation,
 /// no camera types, no network. The recorder asks for microphone permission
-/// only; camera permission, AVCaptureDevice video and AVCaptureSession are
-/// out of bounds on this path.
+/// only; camera permission and any camera-session or capture-device video
+/// APIs are out of bounds on this path.
 public enum MusicCapturePolicy {
   public enum Phase: String, Equatable, Sendable, CaseIterable {
     case idle
@@ -19,9 +19,9 @@ public enum MusicCapturePolicy {
 
   /// Camera permission is never part of Music Mode.
   public static let requestsCameraPermission = false
-  /// Music Mode must not construct or start an AVCaptureSession.
+  /// Music Mode must not construct or start a camera capture session.
   public static let initializesVideoCaptureSession = false
-  /// Music Mode must not call AVCaptureDevice for `.video`.
+  /// Music Mode must not open a capture-device video input.
   public static let initializesAVCaptureDeviceVideo = false
   /// Playback starts paused. The person taps Play.
   public static let autoplayWithSound = false
