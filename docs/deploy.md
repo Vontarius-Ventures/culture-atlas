@@ -1,26 +1,34 @@
 # Deploying culture atlas
 
-The demo runs as two processes from one Docker image, `web` (Next.js app, REST `/v1`, MCP `/mcp`) and `worker` (job worker), plus PostgreSQL 16 and S3-compatible object storage. The World Sensor bridge is **not** deployed with them: it runs next to the relay (see [sensor.md](sensor.md)).
+The demo runs as three processes from one Docker image — `web` (Next.js app, REST `/v1` and `/v2`, MCP `/mcp`), `worker` (jobs) and `media-worker` (ffmpeg verify/prepare) — plus PostgreSQL 16. The World Sensor bridge is **not** deployed with them: it runs next to the relay (see [sensor.md](sensor.md)).
 
-> Neither the Docker build nor the Render blueprint has been run from this repository yet: the build environment had no Docker or Render access. Locally verified: `pnpm build`, `next start` with the worker and migrations, and the full sensor flow against that server. Treat the first deploy as a check of these files.
+**Hosting is not live.** There is no Render API key in this repository (`rc_` keys are Featherless, `FEATHERLESS_API_KEY`, not Render). Render cannot host this app for free: background workers have no free plan (paid `starter` / `0.5c-512mb`), and `render.yaml` is web + two workers + Postgres `basic-256mb`. Do not apply that blueprint and do not spend money.
 
-AWS (one small EC2 instance, RDS or on-instance PostgreSQL, private S3, a 1 USD budget alert): see [deploy-aws.md](deploy-aws.md), which also covers what the AWS free offers do and do not include. Operational runbooks: [runbooks/README.md](runbooks/README.md).
+**Default for this run: Compose self-host** (`docker-compose.yml`). Concentrate is the v2 model gateway (`LLM_PROVIDER=concentrate`). The Qloo hackathon key has arrived: set `QLOO_API_KEY` in a gitignored `.env`, never in the blueprint or compose file. Missing keys keep those capabilities `unavailable`; nothing is invented.
 
-## Option A: Render blueprint (`render.yaml`)
+Locally verified earlier: `pnpm build`, `next start` with the worker and migrations. Treat the first Compose up as a check of these files.
 
-1. Push the repository to GitHub, then in Render choose **New > Blueprint** and select the repo. The blueprint creates:
-   - `culture-atlas-db` (Postgres 16);
-   - `culture-atlas-web` (Docker web service, health check `/v1/health`, migrations as the pre-deploy command);
-   - `culture-atlas-worker` (Docker background worker, `pnpm worker`);
-   - the shared env group `culture-atlas-shared`.
-2. Fill in the `sync: false` variables when prompted (see the table below). `SESSION_SECRET` is generated once and shared by both services.
-3. Create a bucket (Cloudflare R2, S3, MinIO…) and set the `S3_*` variables. Local disk storage cannot work here because web and worker run on different machines.
-4. After the first deploy, set `APP_BASE_URL` on both services to the web service's public `https://` URL and redeploy. Cookies are `Secure` when it is https.
-5. Check `https://<app>/v1/health`: `ok: true`, and capability statuses that match the keys you set.
+AWS (one small EC2 instance, RDS or on-instance PostgreSQL, private S3, a 1 USD budget alert): see [deploy-aws.md](deploy-aws.md). Operational runbooks: [runbooks/README.md](runbooks/README.md).
 
-Plan names in `render.yaml` (`starter`, `basic-256mb`) are examples; check Render's current plans.
+## Option A: Compose self-host (`docker-compose.yml`)
 
-## Option B: any Docker host
+Postgres 16, web bound to `0.0.0.0:$PORT`, worker, media-worker, and a named volume for local object storage (shared by all three app processes).
+
+```sh
+cp .env.example .env
+# Required: SESSION_SECRET (openssl rand -hex 32)
+# For live analysis/discovery: CONCENTRATE_API_KEY, QLOO_API_KEY
+# Optional rollback: FEATHERLESS_API_KEY (with LLM_PROVIDER=featherless)
+docker compose up --build
+```
+
+Then `http://localhost:3000/v1/health`. Cookies follow `APP_BASE_URL` (default `http://localhost:3000`). Identity email stays fail-closed until `IDENTITY_MAIL_DRIVER` is configured.
+
+## Option B: paid Render blueprint (`render.yaml`) — do not apply for this run
+
+Only if someone later chooses to pay. The blueprint names `LLM_PROVIDER=concentrate`, `CONCENTRATE_API_KEY` (`sync: false`), `CONCENTRATE_BASE_URL`, `QLOO_API_KEY` (`sync: false`) and `QLOO_API_URL=https://hackathon.api.qloo.com`. It still needs a real Render account key, an S3-compatible bucket, and `APP_BASE_URL` after the first deploy. Workers are not free.
+
+## Option C: any Docker host
 
 ```sh
 docker build -t culture-atlas .
@@ -45,8 +53,8 @@ Every name is listed in `.env.example`. An empty value counts as unset.
 | `APP_BASE_URL` | yes | Public https URL |
 | `SESSION_SECRET` | yes | Same value on web and worker; startup fails in production without it |
 | `STORAGE_DRIVER` + `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE` | yes | `s3` for any multi-machine deploy. Private bucket; disable versioning or expire old versions (see [privacy.md](privacy.md)). |
-| `CONCENTRATE_API_KEY` + `CONCENTRATE_PROFILES_JSON` (or `CONCENTRATE_PROFILE_FILE`) + `CONCENTRATE_QUALIFICATION_DIR` + `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` | for analysis | Concentrate is the default model gateway. Each role needs a qualified profile ([concentrate.md](concentrate.md)); missing pieces keep that role `unavailable` while capture, library and uploads keep working. Explicit rollback only: `LLM_PROVIDER=featherless` + `FEATHERLESS_API_KEY` (or `anthropic` + `ANTHROPIC_API_KEY`); v2 media analysis is unavailable under a rollback provider. |
-| `QLOO_API_KEY` | for Qloo discoveries | Pending. Without it every Qloo capability is `unavailable` and discovery categories show partial states, never invented results. Run `pnpm qloo:probe` once it arrives ([qloo-probes.md](qloo-probes.md)). |
+| `LLM_PROVIDER` + `CONCENTRATE_API_KEY` + `CONCENTRATE_BASE_URL` + `CONCENTRATE_PROFILES_JSON` (or `CONCENTRATE_PROFILE_FILE`) + `CONCENTRATE_QUALIFICATION_DIR` + `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` | for analysis | Concentrate is the v2 model gateway (`LLM_PROVIDER=concentrate` in Compose and the paid blueprint). Each role needs a qualified profile ([concentrate.md](concentrate.md)); missing pieces keep that role `unavailable` while capture, library and uploads keep working. Explicit rollback only: `LLM_PROVIDER=featherless` + `FEATHERLESS_API_KEY` (`rc_` keys belong here, not as a Render API key) or `anthropic` + `ANTHROPIC_API_KEY`; v2 media analysis is unavailable under a rollback provider. |
+| `QLOO_API_KEY` + `QLOO_API_URL` | for Qloo discoveries | The hackathon key has arrived: set `QLOO_API_KEY` in `.env` / a paid dashboard, never in git. Default URL `https://hackathon.api.qloo.com`. Without the key every Qloo capability is `unavailable` and discovery categories show partial states, never invented results. |
 | `WIKIMEDIA_USER_AGENT` | recommended | Descriptive User-Agent with contact info (Wikimedia policy) |
 | `CREDENTIAL_ENCRYPTION_KEY` | for Sensor poll mode | `openssl rand -base64 32`. Not needed for bridge mode. Changing it makes stored viewer credentials unreadable (connections report `credential_key_mismatch`). |
 | `SENSOR_ALLOWED_ORIGINS` | for Sensor poll mode | Comma-separated https relay origins the server may poll. Keep it empty if you only use the bridge. Never list internal or loopback addresses on a public server. |

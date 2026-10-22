@@ -234,6 +234,21 @@ describe('production identity runtime (G1, G2, G8)', () => {
     );
     expect(status.status).toBe(200);
     expect(await status.json()).toEqual({ accepted_sequence: 1 });
+    // Native command poll and arming-sheet list must not 503 once identity is wired.
+    const commands = await capture('/v2/device/commands?wait=0', 'GET', undefined, {
+      authorization: `Bearer ${access}`,
+    });
+    expect(commands.status).toBe(200);
+    expect(await commands.json()).toMatchObject({ items: [] });
+    const { GET: listAgents } = await import('../../app/v2/agent-connections/route');
+    const agents = await listAgents(
+      new NextRequest('http://localhost:3310/v2/agent-connections', {
+        headers: { authorization: `Bearer ${access}` },
+      }),
+      { params: Promise.resolve({}) },
+    );
+    expect(agents.status).toBe(200);
+    expect(await agents.json()).toMatchObject({ connections: [] });
     // Out-of-order heartbeat is ignored, not applied.
     const stale = await capture(
       '/v2/device/status',

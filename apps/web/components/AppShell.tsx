@@ -30,7 +30,7 @@ export function sectionFor(pathname: string): Section {
  *  - default: header, footer and (mobile) bottom navigation with Capture above it.
  */
 export function chromeFor(pathname: string): 'immersive' | 'welcome' | 'flow' | 'default' {
-  if (/^\/capture\/camera(\/|$)/.test(pathname)) return 'immersive';
+  if (/^\/capture\/(camera|music)(\/|$)/.test(pathname)) return 'immersive';
   // Amendment 2.2 screens 14-15: a plain header the page owns, no navigation.
   if (/^\/welcome(\/|$)/.test(pathname)) return 'welcome';
   if (

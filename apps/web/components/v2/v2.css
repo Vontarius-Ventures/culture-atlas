@@ -2731,3 +2731,130 @@ a.device-card:hover {
 .uploads__footer {
   margin-top: 24px;
 }
+
+/* ---- Music Mode (19) --------------------------------------------------------- */
+
+.music__title {
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+
+.music__badge {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--quiet);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.music__lede {
+  margin: 4px 4px 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.music__route {
+  display: grid;
+  gap: 6px;
+  margin: 12px 4px 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.music__route select {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.music__stage {
+  background: #1f211e;
+}
+
+.music__wave {
+  position: absolute;
+  inset: 28% 16px;
+  height: 90px;
+  margin: auto 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 7px,
+    #566347 7px 10px,
+    transparent 10px 16px
+  );
+  clip-path: polygon(
+    0 45%,
+    5% 30%,
+    10% 40%,
+    15% 15%,
+    20% 30%,
+    25% 5%,
+    30% 25%,
+    35% 40%,
+    40% 10%,
+    45% 35%,
+    50% 20%,
+    55% 0,
+    60% 35%,
+    65% 20%,
+    70% 40%,
+    75% 5%,
+    80% 25%,
+    85% 10%,
+    90% 35%,
+    95% 20%,
+    100% 45%,
+    100% 55%,
+    95% 80%,
+    90% 65%,
+    85% 90%,
+    80% 75%,
+    75% 95%,
+    70% 60%,
+    65% 80%,
+    60% 65%,
+    55% 100%,
+    50% 80%,
+    45% 65%,
+    40% 90%,
+    35% 60%,
+    30% 75%,
+    25% 95%,
+    20% 70%,
+    15% 85%,
+    10% 60%,
+    5% 70%,
+    0 55%
+  );
+  opacity: 0.45;
+}
+
+.music__wave--live {
+  opacity: 1;
+}
+
+.music__review {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #1f211e;
+}
+
+.music__review audio {
+  width: min(100%, 360px);
+}
+
+.music__fallback {
+  margin-top: 12px;
+  text-align: center;
+}

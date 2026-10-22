@@ -279,27 +279,32 @@ cannot be guaranteed while the app is suspended.
 These are outside `apps/ios`, `apps/android` and `fixtures/native-contract`:
 
 1. **Device command routes** `GET /v2/device/commands` and
-   `POST /v2/device/commands/{id}/ack` exist only as domain functions
-   (`contract.json` marks them `domain_only`; the TS test fails when they get
-   routed so the fixture is updated). Remote capture cannot run until they are
-   routed.
-2. **Production identity wiring** (gap report G1, G2, G8): without a
-   `CaptureIdentityAdapter`, `resolveNativePrincipal`, the authority lifecycle
-   hook and a mail adapter, enrollment and every `cna_` call return
-   `service_unavailable` and email sign-in fails closed. The TS test wires the
-   real identity services itself to prove the protocol.
-3. **Agent names for the arming sheet**: `GET /v2/agent-connections` requires
-   an account-owner principal, so an installation token gets `scope_denied`.
-   The apps fall back to telling the person to choose agents on the web; a
-   read-only, installation-safe agent list is needed for the local sheet to
-   work.
+   `POST /v2/device/commands/{id}/ack` are routed (`apps/web/app/v2/device/commands/**`,
+   `captureV2Route`, `contract.json` `server: routed`). Only an enrolled
+   installation `cna_` session may claim or ack; cookies and agent tokens are
+   refused. Covered by `device-commands-http.test.ts` and
+   `production-runtime.test.ts`.
+2. **Production identity wiring** (gap report G1, G2, G8):
+   `apps/web/lib/server/runtime.ts` registers `CaptureIdentityAdapter`,
+   `resolveNativePrincipal`, `endCaptureAuthority` and the mail adapter from
+   env. Enrollment and `cna_` calls work when identity is configured
+   (`production-runtime.test.ts`). Mail/identity misconfiguration fails closed
+   (`503 service_unavailable` / no adapter) and does not pretend to deliver.
+3. **Agent names for the arming sheet**: `GET /v2/agent-connections` with a
+   `cna_` bearer returns a read-only list of `{id, client_name, scopes}` for
+   active agents that may command that installation (`arming-agents-http.ts`).
+   Cookie sessions still get the owner Settings DTO. Creating/narrowing
+   connections stays owner-only (`scope_denied` for installations).
 4. **Expired or aborted uploads keep their `client_capture_id`**: a new
    `POST /v2/uploads` with the same id returns the dead upload. The apps
    recover by assigning a new client capture id (nothing was committed, so no
    duplicate asset can result); a server-side restart rule would be cleaner.
-5. **Glasses capabilities**: `/v2/capabilities` hard-codes every glasses gate
-   off; server evaluation of build/channel/rollout/device gates is needed
-   before any experimental build can capture.
+5. **Glasses capabilities**: `/v2/capabilities` stays glasses-off unless the
+   operator sets the qualification env (`META_GLASSES_QUALIFIED_BUILDS`,
+   `META_GLASSES_ENTITLED_PLATFORMS`, `META_GLASSES_ROLLOUT`). Client query
+   flags are ignored. Do not treat an experimental phone build as a server
+   gate. `production-runtime.test.ts` covers both the default-off response and
+   an explicit activation.
 6. **Push wake-ups for remote commands** are not sent by the server yet; the
    apps poll commands only while armed in the foreground.
 7. **Ready-notice wake-ups (amendment 2.2):** wired on the server since the

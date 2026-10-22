@@ -1,0 +1,123 @@
+# culture atlas self-host (docs/deploy.md). Default for this run: Compose, not Render.
+#
+# Render background workers have no free plan, so the paid render.yaml blueprint
+# is not applied. This file runs Postgres 16, web, worker and media-worker
+# locally. Secrets come from a gitignored `.env` (copy `.env.example`); nothing
+# secret is committed here.
+#
+#   cp .env.example .env   # then set SESSION_SECRET, CONCENTRATE_API_KEY, QLOO_API_KEY
+#   docker compose up --build
+#
+# Web binds 0.0.0.0:$PORT inside the container (Dockerfile: next start -H 0.0.0.0).
+
+name: culture-atlas
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    NODE_ENV: production
+    PORT: '3000'
+    APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+    DATABASE_URL: postgres://culture_atlas:${POSTGRES_PASSWORD:-culture_atlas}@postgres:5432/culture_atlas
+    SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env (openssl rand -hex 32)}
+    STORAGE_DRIVER: local
+    STORAGE_LOCAL_DIR: /data/objects
+    LLM_PROVIDER: concentrate
+    CONCENTRATE_BASE_URL: ${CONCENTRATE_BASE_URL:-https://api.concentrate.ai/v1}
+    CONCENTRATE_API_KEY: ${CONCENTRATE_API_KEY:-}
+    QLOO_API_URL: ${QLOO_API_URL:-https://hackathon.api.qloo.com}
+    QLOO_API_KEY: ${QLOO_API_KEY:-}
+    # Rollback only. The rc_ key is Featherless, not a Render API key.
+    FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+    TRUSTED_PROXY_HOPS: '1'
+  volumes:
+    - objects:/data/objects
+  depends_on:
+    postgres:
+      condition: service_healthy
+    objects-init:
+      condition: service_completed_successfully
+  restart: unless-stopped
+  init: true
+
+services:
+  postgres:
+    image: postgres:16.4-bookworm
+    environment:
+      POSTGRES_DB: culture_atlas
+      POSTGRES_USER: culture_atlas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-culture_atlas}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U culture_atlas -d culture_atlas']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Named volume is root-owned on first create; the image runs as uid 1000 (node).
+  objects-init:
+    image: busybox:1.37
+    user: root
+    volumes:
+      - objects:/data/objects
+    command: ['chown', '-R', '1000:1000', '/data/objects']
+    restart: 'no'
+
+  migrate:
+    <<: *app
+    command: ['pnpm', 'db:migrate']
+    restart: 'no'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      objects-init:
+        condition: service_completed_successfully
+
+  web:
+    <<: *app
+    ports:
+      - '0.0.0.0:${PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      objects-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *app
+    command: ['pnpm', 'worker']
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      objects-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+
+  media-worker:
+    <<: *app
+    command: ['pnpm', 'media-worker']
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      objects-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  objects:

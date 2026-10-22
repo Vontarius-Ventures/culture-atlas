@@ -30,6 +30,8 @@ import {
   auth,
   captures,
   createServiceContext,
+  agentCommands,
+  schemas,
 } from '@culture-atlas/domain';
 import {
   LocalMultipartStorage,
@@ -442,6 +444,19 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         match[2] === 'arm'
           ? await devices.arm(id, body, key)
           : await devices.endSession(id, body, key);
+    } else if (path === '/v2/device/commands' && method === 'GET') {
+      if (authority.kind !== 'installation') throw new AppError('unauthenticated');
+      const query = schemas.NativeCommandQuery.parse(Object.fromEntries(url.searchParams));
+      const deadline = Date.now() + query.wait * 1000;
+      let batch = await agentCommands.claimCommands(ctx, query.after_sequence);
+      while (!batch.items.length && Date.now() < deadline && !request.signal.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        batch = await agentCommands.claimCommands(ctx, query.after_sequence);
+      }
+      result = batch;
+    } else if ((match = /^\/v2\/device\/commands\/([^/]+)\/ack$/.exec(path)) && method === 'POST') {
+      if (authority.kind !== 'installation') throw new AppError('unauthenticated');
+      result = await agentCommands.acknowledgeCommand(ctx, z.uuid().parse(match[1]), body, key);
     } else throw new AppError('not_found');
     return Response.json(result, { status, headers });
   } catch (error) {

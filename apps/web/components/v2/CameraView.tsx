@@ -387,6 +387,11 @@ export function CameraView() {
               </button>
             </li>
             <li>
+              <Link href="/capture/music" className="camera__source-item" onClick={stopTracks}>
+                <V2Icon name="mic" /> Music
+              </Link>
+            </li>
+            <li>
               <Link href="/capture/glasses" className="camera__source-item" onClick={stopTracks}>
                 <V2Icon name="glasses" /> {COPY['capture.glasses']}
               </Link>

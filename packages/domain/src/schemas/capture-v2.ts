@@ -333,4 +333,6 @@ export const CAPTURE_V2_ROUTES = {
   captureSession: 'POST /v2/device/capture-sessions',
   armCaptureSession: 'POST /v2/device/capture-sessions/{id}/arm',
   endCaptureSession: 'POST /v2/device/capture-sessions/{id}/end',
+  pollCommands: 'GET /v2/device/commands',
+  ackCommand: 'POST /v2/device/commands/{id}/ack',
 } as const;

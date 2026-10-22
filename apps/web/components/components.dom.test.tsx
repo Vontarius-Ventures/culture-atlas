@@ -15,7 +15,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import { sectionFor } from './AppShell';
+import { chromeFor, sectionFor } from './AppShell';
 import { CoverMosaic } from './CollectionCover';
 import { Dialog } from './Dialog';
 import { DiscoveryCard } from './DiscoveryCard';
@@ -222,6 +222,9 @@ describe('view logic', () => {
     expect(sectionFor('/collections/later')).toBe('collections');
     expect(sectionFor('/plans/1')).toBe('plans');
     expect(sectionFor('/settings')).toBeNull();
+    expect(chromeFor('/capture/camera')).toBe('immersive');
+    expect(chromeFor('/capture/music')).toBe('immersive');
+    expect(chromeFor('/capture')).toBe('flow');
   });
 
   it('picks the remembered save destination, else the most recent collection, else Save for later', () => {
