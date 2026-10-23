@@ -74,7 +74,22 @@ describe('AGT-01 / DEV-02 locally armed device commands', () => {
     const command = await requestCapture(f.agent, f.id, f.input, randomUUID());
     expect((await claimCommands(f.phone)).items).toHaveLength(1);
     await rotateConnection(f.ctx, f.created.connection.id);
-    await expect(acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' })).rejects.toMatchObject({ code: 'token_revoked' });
+    // The phone's own credential is fine: it gets the command back cancelled, never 401.
+    expect(await acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' })).toMatchObject({
+      state: 'cancelled', error_code: 'agent_revoked',
+    });
+  });
+  it('revoking the agent between claim and the executing ack cancels the command (no 401 to the phone)', async () => {
+    const f = await fixture();
+    const command = await requestCapture(f.agent, f.id, f.input, randomUUID());
+    expect((await claimCommands(f.phone)).items).toHaveLength(1);
+    await revokeAgentConnection(f.ctx, { id: f.created.connection.id });
+    expect(await acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' })).toMatchObject({
+      state: 'cancelled', error_code: 'agent_revoked',
+    });
+    expect((await getCommand(f.ctx, command.command_id)).state).toBe('cancelled');
+    // A later report for the cancelled command is a conflict, not an auth failure.
+    await expect(acknowledgeCommand(f.phone, command.command_id, { sequence: 2, state: 'succeeded' })).rejects.toMatchObject({ code: 'conflict' });
   });
   it('expires starts instead of executing after reconnection', async () => {
     const f = await fixture();
@@ -98,7 +113,9 @@ describe('AGT-01 / DEV-02 locally armed device commands', () => {
     await claimCommands(f.phone);
     await acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' }, key);
     await revokeAgentConnection(f.ctx, { id: f.created.connection.id });
-    await expect(acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' }, key)).rejects.toMatchObject({ code: 'token_revoked' });
+    expect(await acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' }, key)).toMatchObject({
+      state: 'cancelled', error_code: 'agent_revoked',
+    });
   });
   it('rejects changed acknowledgements under one idempotency key', async () => {
     const f = await fixture(), key = randomUUID();
@@ -107,13 +124,32 @@ describe('AGT-01 / DEV-02 locally armed device commands', () => {
     await acknowledgeCommand(f.phone, command.command_id, { sequence: 1, state: 'executing' }, key);
     await expect(acknowledgeCommand(f.phone, command.command_id, { sequence: 2, state: 'succeeded' }, key)).rejects.toMatchObject({ code: 'idempotency_conflict' });
   });
-  it('never exposes setup identifiers or raw capability data, and stale devices are not ready', async () => {
+  it('never exposes raw capability data, and stale devices are not ready', async () => {
     const f = await fixture();
     await db.query(`UPDATE mobile_installations SET last_seen_at=now()-interval '31 seconds' WHERE id=$1`, [f.id]);
     const setup = await getSetup(f.agent);
     expect(setup.installations[0]).toMatchObject({ stale: true, capabilities: { photo: false, video: false } });
     const serialized = JSON.stringify(setup);
-    for (const forbidden of [f.id, 'hardware_serial', 'push_token', 'ip_address', 'secret']) expect(serialized).not.toContain(forbidden);
+    for (const forbidden of ['hardware_serial', 'push_token', 'ip_address', 'secret']) expect(serialized).not.toContain(forbidden);
+  });
+  it('gives a devices:command connection its installation id and armed session, and nobody else', async () => {
+    const f = await fixture();
+    const setup = await getSetup(f.agent);
+    expect(setup.installations[0]).toMatchObject({
+      id: f.id,
+      armed_session: { session_id: f.sessionId, generation: 1, mode: 'photo', source: 'phone_camera' },
+    });
+    expect(setup.available_actions).toContain('request_capture');
+    // The ids are exactly what request_capture needs.
+    const { session_id, generation } = setup.installations[0]!.armed_session!;
+    expect(await requestCapture(f.agent, setup.installations[0]!.id!, { ...f.input, session_id, generation }, randomUUID()))
+      .toMatchObject({ state: 'queued' });
+    const reader = await createConnection(f.ctx, { client_name: 'Reader', scopes: ['setup:read'] });
+    const readerCtx = testContext((await resolvePrincipal(db, { authorization: `Bearer ${reader.credential}` }))!);
+    const plain = await getSetup(readerCtx);
+    expect(JSON.stringify(plain)).not.toContain(f.id);
+    expect(JSON.stringify(plain)).not.toContain(f.sessionId);
+    expect(plain.available_actions).not.toContain('request_capture');
   });
 });
 

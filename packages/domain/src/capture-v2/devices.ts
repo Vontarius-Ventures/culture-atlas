@@ -293,8 +293,10 @@ export class CaptureDevice {
     const input = DeviceStatusRequest.parse(raw),
       id = this.installationId();
     return captureMutation(this.ctx, 'device-status', key, input, async (tx) => {
+      // Heartbeats merge capability keys: a heartbeat that omits a key enrolled
+      // earlier (e.g. meta_glasses_sdk) must not erase it; send false to clear.
       const changed = await tx.query(
-        `UPDATE mobile_installations SET capabilities=$3,readiness=$4,app_state=$5,status_sequence=$6,last_seen_at=$7
+        `UPDATE mobile_installations SET capabilities=COALESCE(capabilities,'{}'::jsonb)||$3::jsonb,readiness=$4,app_state=$5,status_sequence=$6,last_seen_at=$7
          WHERE account_id=$1 AND id=$2 AND status_sequence<$6`,
         [
           this.ctx.authority.accountId,

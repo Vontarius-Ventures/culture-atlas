@@ -167,7 +167,8 @@ export async function claimCommands(ctx: CommandContext, afterSequence = 0) {
       } catch (err) {
         if (!(err instanceof AppError)) throw err;
         await tx.query(`UPDATE device_commands SET state=$2,error_code=$3 WHERE id=$1`,
-          [command.id, command.expires_at <= ctx.now() ? 'expired' : 'cancelled', err.code]);
+          [command.id, command.expires_at <= ctx.now() ? 'expired' : 'cancelled',
+            err.code === 'token_revoked' ? 'agent_revoked' : err.code]);
       }
     }
     return { items, next_sequence: Math.max(afterSequence, ...rows.map((r) => r.delivery_sequence)) };
@@ -195,7 +196,22 @@ export async function acknowledgeCommand(ctx: CommandContext, id: string, raw: u
     }
     if (body.state === 'executing' && ['delivered', 'awaiting_user', 'executing'].includes(row.state)) {
       if (row.expires_at <= ctx.now()) throw new AppError('action_required');
-      await assertCommandLive(tx, row, ctx.now(), ctx.glassesEnabled, ctx.config ?? getDomainConfig());
+      try {
+        await assertCommandLive(tx, row, ctx.now(), ctx.glassesEnabled, ctx.config ?? getDomainConfig());
+      } catch (err) {
+        // The AGENT's authority ended (owner revoked/narrowed it, or it expired).
+        // That says nothing about the phone's own credential: never answer the
+        // phone with 401 token_revoked (native clients sign out on it). Cancel
+        // the command and return it so the phone simply does not capture.
+        if (err instanceof AppError && err.code === 'token_revoked') {
+          const cancelled = await tx.query<Command>(
+            `UPDATE device_commands SET state='cancelled',error_code='agent_revoked' WHERE id=$1 RETURNING *`,
+            [id],
+          );
+          return dto(cancelled.rows[0]!);
+        }
+        throw err;
+      }
     }
     if (body.sequence <= row.ack_sequence) return dto(row);
     if (['succeeded', 'failed', 'expired', 'cancelled', 'unknown'].includes(row.state)) throw new AppError('conflict');

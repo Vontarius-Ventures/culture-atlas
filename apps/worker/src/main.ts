@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { JOB_HANDLERS, devicePush, getDb, getDomainConfig, loadRootEnv, setAnalysisReadyListener } from '@culture-atlas/domain';
+import { JOB_HANDLERS, devicePush, getDb, getDomainConfig, loadRootEnv, setAnalysisReadyListener, setAudioOriginalStorage } from '@culture-atlas/domain';
 import { configureProviderRuntime, createPushDriverFromEnv, getProviders } from '@culture-atlas/providers';
 import { createCaptureStorage } from './capture-storage';
 import { MediaAnalysisWorker } from './media-analysis';
@@ -28,6 +28,8 @@ setAnalysisReadyListener(async (event) => {
   // IDs and an outcome code only; never the device token.
   console.log('[worker] ready_notice', JSON.stringify({ analysis_id: event.analysisId, state: event.state, outcome }));
 });
+// Music Mode reads recordings from the capture-v2 namespace (POST /v2/media/audio), not the legacy store.
+setAudioOriginalStorage(createCaptureStorage(providers.config, config.SESSION_SECRET));
 const worker = new Worker({ db: getDb(), providers, config, handlers: JOB_HANDLERS });
 
 // v2 media analysis (Concentrate). Disable only for a dedicated non-analysis worker.
@@ -54,17 +56,26 @@ console.log(
 if (providers.modelGateway)
   void providers.modelGateway
     .readiness()
-    .then((r) =>
+    .then((r) => {
       console.log(
         '[worker] model roles:',
         Object.fromEntries(
           Object.entries(r).map(([role, d]) => [
             role,
-            d.reason ? `${d.state} (${d.reason})` : d.state,
+            `${d.reason ? `${d.state} (${d.reason})` : d.state}${d.experimental ? ' [experimental demo override]' : ''}`,
           ]),
         ),
-      ),
-    )
+      );
+      const unqualified = Object.values(r)
+        .filter((d) => d.reason === 'not_qualified')
+        .map((d) => d.role);
+      if (unqualified.length)
+        console.error(
+          `\x1b[31m[worker] UNQUALIFIED model roles (analysis for them fails closed): ${unqualified.join(', ')}. ` +
+            'Commit passing qualification artifacts, set MODEL_FALLBACK=elorian, or (non-production demo only) ' +
+            `CONCENTRATE_DEMO_ALLOW_ROLES=${unqualified.join(',')}.\x1b[0m`,
+        );
+    })
     .catch(() => console.error('[worker] model readiness unavailable'));
 worker.start();
 analysis?.start();

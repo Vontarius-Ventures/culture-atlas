@@ -237,10 +237,28 @@ does.
 | Android `store` flavor | Google Play production | No | Entry visible, explains unavailability |
 | Android `experimental` flavor | Play internal testing / closed testing, or Meta's tester channel | Yes | Only if server capabilities allow it |
 
-Server policy stays authoritative: `GET /v2/capabilities` currently reports
-`meta_glasses_capture_enabled: false` with every distribution reason (the
-route hard-codes the glasses gates off), so even experimental builds show the
-unavailable state until the server evaluates real gates.
+Server policy stays authoritative. The gate reads the capability keys the
+apps send at enrollment and in every `PUT /v2/device/status` heartbeat
+(heartbeats merge keys, so a heartbeat that omits one keeps its last value):
+`meta_glasses_sdk` (or the spec's `meta_wearables_sdk`) proves the SDK build,
+and `meta_wearables_supported_os` is assumed true for an SDK build unless the
+app sends `false` (`fixtures/native-contract/capability-gate.json`,
+`device_capability_keys`).
+
+Owner checklist for a glasses hand test:
+
+1. Build the `CultureAtlasExperimental` scheme (or the Android `experimental`
+   flavor) with `ATLAS_META_DAT` and the MWDAT MetaAppID/ClientToken, or Meta
+   Developer Mode.
+2. `META_GLASSES_QUALIFIED_BUILDS='ios@<CFBundleShortVersionString> (<CFBundleVersion>)'`
+   exactly as the app reports its version, `META_GLASSES_ENTITLED_PLATFORMS=ios`,
+   and `META_GLASSES_ROLLOUT=all` (or `allowlist` with
+   `META_GLASSES_ROLLOUT_ACCOUNT_IDS`).
+3. Register the glasses in the Meta AI app and grant camera permission; the
+   phone reports the wearable with `POST /v2/device/wearables`.
+4. Glasses audio additionally needs `META_GLASSES_AUDIO_QUALIFIED=true`, the
+   wearable's `audio` capability and the phone's `microphone_permission` and
+   `glasses_microphone_selected` keys.
 
 Gate checklist. Record evidence, owner and next check date for each row
 before submitting (BUILD-AND-ACCEPTANCE "Platform release gates"); a runtime

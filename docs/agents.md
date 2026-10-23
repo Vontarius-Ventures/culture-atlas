@@ -32,11 +32,13 @@ The response contains `credential` (`cat_<prefix>_<secret>`), shown exactly once
 
 ### Library access
 
-- `selected_collections` limits the agent to the items and media of those collections, their compiled context, their related discoveries and plans made entirely from granted items. Unfiled saves, other collections and the global taste profile stay private (`get_taste` requires `collection_id`). New collections are not added automatically. Global unsave, hide/unhide and capture deletion are refused (`scope_denied`).
+- `selected_collections` limits the agent to the items and media of those collections, their compiled context, their related discoveries and plans made entirely from granted items. Unfiled saves, other collections and the global taste profile stay private (`get_taste` requires `collection_id`). New collections are not added automatically. Global unsave, hide/unhide and capture deletion are refused (`scope_denied`). The agent can add or remove memberships in granted collections with `collections:write`.
 - `all` is the whole library. Only `collections:write` with whole-library access can create collections.
 - `none` gives no library access.
 - `PATCH /v2/agent-connections/{id}` narrows the grant (scopes, `collection_ids`, `installation_ids`, `expires_at`). It takes effect on the agent's next call, including for plans and preview links that depend on it.
 - `DELETE /v2/agent-connections/{id}` revokes immediately. The next REST or MCP call fails with `401 token_revoked`; expired tokens fail with `401 token_expired`.
+- `discover_related` needs no extra scope (it reads items already in the grant), but it starts a bounded Qloo job that writes related discovery items to the account. It always counts as a mutation against the per-connection budget (10 mutations and 60 reads a minute, REST v1 and MCP alike), so a read-only grant cannot run unbounded paid discovery.
+- Every successful v1 or MCP mutation (collections, memberships, preferences, related discovery, plans, captures, uploads) is listed in the owner's agent activity (`GET /v2/agent-activity`) with the collection, plan or item name.
 
 ## 2. Configure the client
 
@@ -45,6 +47,9 @@ The response contains `credential` (`cat_<prefix>_<secret>`), shown exactly once
 - Job-starting tools (`analyze_capture`, `discover_related`, `create_plan`, `replace_plan_section`) return a `job_id` at once. Poll `get_job` until the state is `complete`, `partial`, `failed` or `cancelled`. Media uploads, media analysis and capture commands return an operation id instead: check it with `get_operation`.
 - Errors: tool results with `isError: true` and `structuredContent.error = {code, message, retryable, request_id}`, the same codes as REST. Records outside the grant always look like `not_found`.
 - Optional idempotency: pass `_meta: { "idempotency_key": "..." }` on mutating tool calls (media tools take an explicit `idempotency_key` argument).
+- Reading results: `list_captures` (newest captures with analysis titles, references and recommended item ids), `get_item` (an item plus the `related[]` that `discover_related` found), `get_discoveries` (the interest feed), `list_saved`, `list_plans`. `get_media` adds `analysis_summary` (the compiled result) when the grant also holds `captures:read`.
+- `tools/list` shows only the tools this connection's scopes allow; each description ends with `Requires: <scopes>`. Error text names the missing scope or the invalid fields (e.g. `invalid_input: The request is not valid. (target_id: Required)`).
+- Phone capture: with `devices:command`, `get_setup` returns each permitted installation's `id` and, while the owner has armed it for this connection, `armed_session {session_id, generation, mode, source, remote_arm_expires_at}`; pass these to `request_capture`. If the owner revokes the agent after the phone claimed a command, the phone's executing acknowledgement returns the command `cancelled` with `error_code: agent_revoked` (never a 401 to the phone).
 - Media links (`links.playback`, `links.poster`, `frames[].thumbnail_url`) are absolute URLs on `APP_BASE_URL` under `/v2/agent-media/{id}/content/{variant}`. Fetch them with the same bearer token; they stop working the moment the grant no longer covers the media.
 
 ### Photos
@@ -124,7 +129,7 @@ Every scope below is accepted by `POST /v2/agent-connections` and the OAuth cons
 | `media:analyze` | Explicitly request analysis of permitted media (never automatic). |
 | `devices:command` | Request capture on an explicitly granted, locally armed phone. |
 
-### MCP tools (25, catalog 2.1.1)
+### MCP tools (30, catalog 2.2.0)
 
 | Tool | Scopes | Returns | What it does |
 | --- | --- | --- | --- |
@@ -134,13 +139,17 @@ Every scope below is accepted by `POST /v2/agent-connections` and the OAuth cons
 | `complete_upload` | `media:write` | result | Submit signed byte-transfer receipts for a draft created by this connection. Check get_operation using upload_id. Analysis is never automatic. |
 | `analyze_media` | `media:analyze` | result | Explicitly request analysis of one permitted, prepared photo or selected video moments. Analysis is never automatic; consent, the daily allowance and spend limits apply. Returns an analysis_id: check it with get_operation. No result links or private reasoning are returned. |
 | `get_operation` | none (grant-checked) | result | Check an authorized asynchronous upload, analysis or capture command. This does not broaden resource access. |
-| `request_capture` | `devices:command` | result | Request capture on an explicitly selected phone and fresh locally armed session. Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request. |
+| `request_capture` | `devices:command` | result | Request capture on an explicitly selected phone and fresh locally armed session. Take installation_id from get_setup installations[].id and command.session_id / command.generation from that installation's armed_session (present only while the owner has armed the phone for this connection). Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request. |
 | `get_setup` | `setup:read` | result | Read safe capabilities and device aliases. Observations never grant OS permissions or arm a camera. |
 | `get_preferences` | `preferences:read` | result | Read explicit and effective ordinary account preferences. This does not reveal taste. |
 | `update_preferences` | `preferences:write` | result | Change only ordinary preferences using the version returned by get_preferences. Cannot enable capture, microphones, sharing or automatic analysis. |
 | `analyze_capture` | `captures:write` | job_id (poll `get_job`) | Start discovery for a photo you uploaded via POST /v1/uploads (pass its upload_id; URLs and file paths are not accepted). Returns immediately with job_id; call get_job until complete, then get_capture. |
 | `get_job` | none (grant-checked) | result | Get the state, progress stage and completed sections of a job started by another tool. |
 | `get_capture` | `captures:read` | result | Get a capture’s interpretation, references and recommended discoveries. |
+| `list_captures` | `captures:read` | result | List the newest captures this connection can see, newest first: compiled analysis title, detected references and recommended discovery item ids (open them with get_item). Use this for "things like my last capture". No photos or private reasoning. |
+| `get_item` | none (grant-checked) | result | Read one discovery item (film, music, place, dish, style...) with its related items (related[] and related_state). Call this after discover_related completes to see what it found. Selected-collection connections pass the collection_id containing the item. |
+| `get_discoveries` | `taste:read` | result | Read the user’s personal discovery feed (cards with title, category, image and why_this), optionally for one category. Cursor-paginated; pass next_cursor to continue. |
+| `list_saved` | `taste:read` | result | List items the user explicitly saved, newest first (cursor-paginated). filter "unfiled" returns saved items in no collection. |
 | `explore_reference` | none (grant-checked) | result | Get a concise sourced reference page (overview, sections, claims with sources). |
 | `get_taste` | `taste:read` | result | Get the user’s explicit interest summary. Connections limited to selected collections must pass collection_id. |
 | `record_preference` | `taste:write` | result | Save, remove (unsave everywhere), hide or unhide an item. Only call this when the user has explicitly said they like or dislike the item in this conversation. |
@@ -152,6 +161,7 @@ Every scope below is accepted by `POST /v2/agent-connections` and the OAuth cons
 | `discover_related` | none (grant-checked) | job_id (poll `get_job`) | Start a bounded related-discovery job for an item. Selected-collection connections pass the collection_id containing the item. Returns immediately; poll get_job. |
 | `create_plan` | `plans:write`, `collections:read` | job_id (poll `get_job`) | Create a movie-night plan (film, food and music; the only plan template) from 2-5 items of one collection (include expected_revision). Returns immediately; poll get_job, then get_plan. For any other board (a dinner party, a trip, a mood board), use create_collection and add_collection_item instead. |
 | `get_plan` | `plans:read` | result | Get a plan’s current version: film, food, music and section states. |
+| `list_plans` | `plans:read` | result | List the user’s movie-night plans, newest first (cursor-paginated). Open one with get_plan. |
 | `replace_plan_section` | `plans:write` | job_id (poll `get_job`) | Replace the film, food or music section, keeping the others. Returns immediately; poll get_job. |
 
 <!-- generated:agent-reference:end -->

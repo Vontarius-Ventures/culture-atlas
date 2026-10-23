@@ -197,6 +197,37 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
     expect(transport).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['development', true],
+    ['production', false],
+  ])('CONCENTRATE_DEMO_ALLOW_ROLES dispatches a catalog-compatible role as experimental (NODE_ENV=%s)', async (env, allowed) => {
+    const d = await dir();
+    await writeFile(path.join(d, CATALOG_SNAPSHOT_FILE), JSON.stringify(snapshot));
+    await writeFile(path.join(d, `${profile.qualificationArtifactId}.json`), JSON.stringify(artifact()));
+    const gateway = createModelGateway(
+      loadProviderConfig({
+        CONCENTRATE_API_KEY: 'synthetic',
+        CONCENTRATE_QUALIFICATION_DIR: d,
+        CONCENTRATE_DEMO_ALLOW_ROLES: 'vision_photo, not_a_role',
+        NODE_ENV: env,
+      }),
+      {
+        ledger: new ModelSpendLedger(new MemorySpendStore(), limits),
+        profiles: { research_text: profile, vision_photo: visionProfile },
+        transport: vi.fn(async () => response),
+        allowTestStore: true,
+      },
+    );
+    expect(!!gateway.runners.vision_photo).toBe(allowed);
+    const readiness = await gateway.readiness();
+    expect(readiness.vision_photo).toEqual(
+      allowed
+        ? { role: 'vision_photo', model: 'fixture/model-1', state: 'qualified', experimental: true }
+        : { role: 'vision_photo', model: 'fixture/model-1', state: 'catalog-compatible', reason: 'not_qualified' },
+    );
+    expect(readiness.research_text.experimental).toBeUndefined();
+  });
+
   it('accepts profiles inline from a hosted secret/parameter value', () => {
     const gateway = createModelGateway(
       loadProviderConfig({

@@ -46,7 +46,8 @@ const providerKeys = Object.keys(
 /** Read only by the web edge (client address). */
 const WEB_ONLY = ['TRUSTED_PROXY_HOPS', 'CLIENT_IP_HEADER'];
 /** Deliberately not wired: production forces s3 and never replays Qloo recordings. */
-const NOT_IN_PRODUCTION = ['STORAGE_LOCAL_DIR', 'QLOO_REPLAY_DIR'];
+// CONCENTRATE_DEMO_ALLOW_ROLES is refused in production; Compose must never pass it.
+const NOT_IN_PRODUCTION = ['STORAGE_LOCAL_DIR', 'QLOO_REPLAY_DIR', 'CONCENTRATE_DEMO_ALLOW_ROLES'];
 const missingFrom = (service: string, keys: string[]) => keys.filter((k) => !(k in env(service)));
 
 /** `${NAME}`, `${NAME:-default}` or `${NAME:?message}` -> NAME. */

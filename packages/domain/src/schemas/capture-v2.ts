@@ -123,6 +123,20 @@ export const MediaDetailResponse = z.object({
       thumbnail_url: z.string(),
     }),
   ),
+  /**
+   * Agents (get_media) holding captures:read: the compiled result of the
+   * latest finished analysis (title, detected references, recommended
+   * discovery item ids). Never the photo, frames' reasoning or model text.
+   */
+  analysis_summary: z
+    .object({
+      capture_id: CaptureV2Uuid,
+      title: z.string().nullable(),
+      references: z.array(z.object({ id: CaptureV2Uuid, name: z.string(), type: z.string() })),
+      discovery_item_ids: z.array(CaptureV2Uuid),
+    })
+    .nullable()
+    .optional(),
 });
 export const AnalyzeMediaRequest = z
   .object({
@@ -230,6 +244,19 @@ export const EnrolledCaptureDeviceResponse = z.object({
   }),
 });
 export const SafeCaptureDeviceSetup = z.object({
+  /** Installation id: only for connections holding devices:command on this installation (pass to request_capture). */
+  id: z.string().uuid().optional(),
+  /** A capture session the owner armed on the phone for THIS connection (request_capture needs session_id + generation). */
+  armed_session: z
+    .object({
+      session_id: z.string().uuid(),
+      generation: z.number().int().positive(),
+      mode: z.string(),
+      source: z.string(),
+      remote_arm_expires_at: DateTime,
+    })
+    .nullable()
+    .optional(),
   alias: z.string(),
   app_version: z.string(),
   last_seen_at: DateTime,

@@ -71,24 +71,45 @@ export async function getSetup(ctx: ServiceContext) {
   ctx = await authorizeAgent(ctx, 'setup:read');
   const account = requireAccount(ctx.principal);
   const { rows } = await ctx.db.query<{
-    platform: string; app_version: string; last_seen_at: Date; app_state: string; readiness: string; capabilities: Record<string, unknown>;
+    id: string; platform: string; app_version: string; last_seen_at: Date; app_state: string; readiness: string; capabilities: Record<string, unknown>;
   }>(
-    `SELECT platform,app_version,last_seen_at,app_state,readiness,capabilities FROM mobile_installations
+    `SELECT id,platform,app_version,last_seen_at,app_state,readiness,capabilities FROM mobile_installations
      WHERE account_id=$1 AND revoked_at IS NULL ORDER BY created_at,id LIMIT 100`, [account.accountId],
   );
+  // Connections allowed to command a phone learn that phone's id and any
+  // session the owner armed for them, so request_capture is callable from MCP.
+  const commandable = new Set<string>(
+    ctx.principal.kind === 'agent' && ctx.principal.scopes.includes('devices:command')
+      ? (ctx.principal.allowedInstallationIds ?? []) : [],
+  );
+  const armed = new Map<string, { session_id: string; generation: number; mode: string; source: string; remote_arm_expires_at: string }>();
+  if (commandable.size && ctx.principal.kind === 'agent') {
+    const sessions = await ctx.db.query<{ id: string; installation_id: string; generation: number; media_mode: string; source: string; remote_arm_expires_at: Date }>(
+      `SELECT id,installation_id,generation,media_mode,source,remote_arm_expires_at FROM capture_sessions
+       WHERE account_id=$1 AND installation_id=ANY($2::uuid[]) AND state='active' AND remote_arm_expires_at>$3
+         AND $4=ANY(allowed_agent_connection_ids)
+       ORDER BY remote_arm_expires_at DESC`,
+      [account.accountId, [...commandable], ctx.now(), ctx.principal.connectionId],
+    );
+    for (const r of sessions.rows)
+      if (!armed.has(r.installation_id))
+        armed.set(r.installation_id, { session_id: r.id, generation: r.generation, mode: r.media_mode, source: r.source,
+          remote_arm_expires_at: r.remote_arm_expires_at.toISOString() });
+  }
   await agentActivity(ctx, 'setup.read');
   return {
     ...meta(ctx), observed_at: ctx.now().toISOString(),
     installations: rows.map((r) => {
+      const control = commandable.has(r.id) ? { id: r.id, armed_session: armed.get(r.id) ?? null } : {};
       const stale = ctx.now().getTime() - r.last_seen_at.getTime() > 30_000 || r.app_state !== 'foreground';
       const capabilities: Record<string, boolean> = {};
       for (const key of ['photo', 'video', 'phone_camera', 'meta_glasses', 'microphone']) {
         capabilities[key] = !stale && r.readiness === 'ready' && r.capabilities[key] === true;
       }
-      return { alias: `${r.platform} phone`, app_version: r.app_version, last_seen_at: r.last_seen_at.toISOString(),
+      return { ...control, alias: `${r.platform} phone`, app_version: r.app_version, last_seen_at: r.last_seen_at.toISOString(),
         stale, capabilities, unavailable_reasons: stale ? ['device_disconnected_or_stale'] : r.readiness === 'ready' ? [] : ['local_permission_required'] };
     }),
-    available_actions: ['view_preferences', 'upload_files'],
+    available_actions: ['view_preferences', 'upload_files', ...(armed.size ? ['request_capture'] : [])],
     permission_summary: 'Observed permissions only. OS access and remote capture require local consent.' as const,
   };
 }
@@ -172,7 +193,12 @@ export async function getActivity(ctx: ServiceContext) {
     id: string; connection_id: string; client_name: string; action: string; target_id: string | null;
     target_label: string | null; created_at: Date;
   }>(
-    `SELECT a.id,a.connection_id,ac.client_name,a.action,a.target_id,c.name AS target_label,a.created_at FROM agent_activity a
+    `SELECT a.id,a.connection_id,ac.client_name,a.action,a.target_id,
+       COALESCE(c.name,(SELECT pv.title FROM plans p JOIN plan_versions pv ON pv.plan_id=p.id
+          WHERE p.id=a.target_id AND p.owner_account_id=a.account_id ORDER BY pv.version DESC LIMIT 1),
+         (SELECT di.title FROM discovery_items di WHERE di.id=a.target_id
+            AND (di.owner_account_id IS NULL OR di.owner_account_id=a.account_id))) AS target_label,
+       a.created_at FROM agent_activity a
      JOIN agent_connections ac ON ac.id=a.connection_id AND ac.owner_account_id=a.account_id
      LEFT JOIN collections c ON c.id=a.target_id AND c.owner_account_id=a.account_id
      WHERE a.account_id=$1 AND ac.purpose='agent' ORDER BY a.created_at DESC,a.id LIMIT 100`, [owner.accountId],

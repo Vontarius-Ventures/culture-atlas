@@ -70,7 +70,10 @@ export function toFailure(err: unknown): { failure: JobFailure; retryAfterMs?: n
     const message =
       err.kind === 'rate_limited'
         ? 'We’re a little busy right now. Try again shortly.'
-        : err.provider === 'vlm'
+        : err.provider === 'vlm' && !err.retryable && err.kind === 'unavailable' && !err.retryAfterMs
+          ? // Unconfigured/unqualified vision is a server state: never promise a retry.
+            'Photo reading isn’t available on this server yet. Your photo is saved.'
+          : err.provider === 'vlm'
           ? 'We can’t look at photos right now. Try again in a little while.'
           : 'Part of this is taking longer than usual. Try again in a little while.';
     // An open circuit (kind unavailable, with the time until its next trial) is transient too.

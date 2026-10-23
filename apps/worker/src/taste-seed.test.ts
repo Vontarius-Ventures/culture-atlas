@@ -263,11 +263,18 @@ describe('taste seed job', () => {
     const searches = q.calls.filter((u) => u.pathname === '/search');
     expect(searches.map((u) => u.searchParams.get('query'))).toEqual([`${PICK_FOOD.name} restaurant`]);
     expect(searches[0]!.searchParams.get('types')).toBe('urn:entity:place');
+    // Each category is asked with the picks made in it (a food pick never steers a film or a brand).
+    const expected: Record<string, { tags: string | null; entities: string | null }> = {
+      'urn:entity:brand': { tags: PICK_TAGS[0]!.id, entities: null },
+      'urn:entity:movie': { tags: PICK_TAGS[1]!.id, entities: null },
+      'urn:entity:artist': { tags: null, entities: PICK_ARTIST.id },
+    };
     for (const url of q.calls.filter((u) => u.pathname !== '/search')) {
       expect(url.pathname).toBe('/v2/insights');
       if (url.searchParams.get('filter.type') === 'urn:tag') continue;
-      expect(url.searchParams.get('signal.interests.tags')!.split(',').sort()).toEqual([...PICK_TAGS.map((t) => t.id), PICK_FOOD.id].sort());
-      expect(url.searchParams.get('signal.interests.entities')).toBe(PICK_ARTIST.id);
+      const want = expected[url.searchParams.get('filter.type')!]!;
+      expect(url.searchParams.get('signal.interests.tags')).toBe(want.tags);
+      expect(url.searchParams.get('signal.interests.entities')).toBe(want.entities);
     }
     // Eat is asked with the food pick only (S-EAT-SIGNAL), for cuisine tags.
     const eatCall = q.calls.find((u) => u.searchParams.get('filter.type') === 'urn:tag')!;
@@ -306,9 +313,18 @@ describe('taste seed job', () => {
     expect(titles).not.toContain('Not A Cuisine');
     expect(titles).not.toContain('Fixture Dim Sum Hall'); // a place without a photo never becomes a card
     for (const dropped of ['Dim Sums', 'Film Noir Fare', 'Obscure Noodle Hut', 'Hand-Pulled Noodle']) expect(titles).not.toContain(dropped);
-    expect(recs.find((r) => r.title === 'Sichuanese')!.display_reason).toBe(`From your picks: ${PICK_FOOD.name}.`);
+    expect(recs.find((r) => r.title === 'Sichuanese')!.display_reason).toBe(`Because you picked ${PICK_FOOD.name}.`);
     expect(recs.find((r) => r.title === 'Fixture Night Trio')!.display_reason).toBe(`Because you picked ${PICK_ARTIST.name}.`);
-    expect(recs.find((r) => r.title === 'Fixture Oak Studio')!.display_reason).toMatch(/^From your picks: /);
+    // A Wear card names the Wear pick that was actually sent, never the food pick.
+    expect(recs.find((r) => r.title === 'Fixture Oak Studio')!.display_reason).toBe(`Because you picked ${PICK_TAGS[0]!.name}.`);
+    for (const r of recs.filter((x) => x.category !== 'eat')) expect(r.display_reason).not.toContain(PICK_FOOD.name);
+    // Seeding never saves its own recommendations (no auto-filed Interests saves).
+    const autoSaved = await getTestDb().query(
+      `SELECT 1 FROM saved_items si JOIN recommendations r ON r.discovery_item_id = si.discovery_item_id
+        JOIN taste_seed_runs tr ON tr.id = r.taste_seed_run_id WHERE tr.owner_account_id = $1`,
+      [accountId],
+    );
+    expect(autoSaved.rowCount).toBe(0);
 
     // The personal feed follows the usual rules and labels nothing seeded as an example.
     const feed = await wholeFeed(ctx);

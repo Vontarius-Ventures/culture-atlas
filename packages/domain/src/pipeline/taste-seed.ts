@@ -23,7 +23,7 @@ import type { Owner } from '../principal';
 import type { SeedCategoryState } from '../schemas/onboarding';
 import { fillInterestsBoard } from '../services/collections';
 import { rebuildFeedSnapshots } from '../services/discovery';
-import { destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, type DisplayImage } from '../services/display';
+import { clipText, destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, type DisplayImage } from '../services/display';
 import {
   ensureSeedRun,
   readFoodExclusions,
@@ -117,6 +117,10 @@ export interface SeedSignal {
   name: string;
   /** A cuisine tag, a food item or an Eat pick: the only signals Eat is asked with. */
   food: boolean;
+  /** The onboarding pick the user saw ("Late-night cinema"), when this signal came from one. */
+  pickLabel?: string | null;
+  /** That pick's category; signals are asked in their own category first. */
+  pickCategory?: Category | null;
 }
 
 /** Cuisine tags under this floor were obscure one-offs in live Eat responses (e.g. "Shanghainese Dim Sum" at 0.23). */
@@ -127,10 +131,35 @@ export function isFoodSignal(input: { id: string; kind: string | null; category:
   return input.id.startsWith('urn:tag:cuisine:') || input.kind === 'food' || input.category === 'eat';
 }
 
-/** S-EAT-SIGNAL: Eat is asked with food signals only; the other categories with every signal. */
+/**
+ * S-EAT-SIGNAL: Eat is asked with food signals only. Watch, Play and Wear are
+ * asked with the picks made in that category ("Late-night cinema" -> Art House,
+ * Film-noir for Watch); with none there, with every NON-food signal. A food
+ * pick never steers a film, artist or brand, so it never appears in their reason.
+ */
 export function signalsFor(category: Category, signals: SeedSignals): SeedSignals {
-  if (category !== 'eat') return signals;
-  return { tags: signals.tags.filter((s) => s.food), entities: signals.entities.filter((s) => s.food) };
+  if (category === 'eat') return { tags: signals.tags.filter((s) => s.food), entities: signals.entities.filter((s) => s.food) };
+  const own = (list: SeedSignal[]) => list.filter((s) => s.pickCategory === category);
+  if (own(signals.tags).length + own(signals.entities).length > 0) return { tags: own(signals.tags), entities: own(signals.entities) };
+  const nonFood = { tags: signals.tags.filter((s) => !s.food), entities: signals.entities.filter((s) => !s.food) };
+  return nonFood.tags.length + nonFood.entities.length > 0 ? nonFood : signals;
+}
+
+/** The words the user saw: a pick's label, else the signal's own name. */
+function shownName(signal: SeedSignal): string {
+  return signal.pickLabel?.trim() || signal.name;
+}
+
+/**
+ * "Because you picked Late-night cinema." only for the user's own picks; a
+ * signal taken from cards already in the feed (interest expand) is
+ * "Related to Tous in your feed." — never a pick the user did not make.
+ */
+export function reasonFor(contributors: readonly SeedSignal[]): string | null {
+  if (!contributors.length) return null;
+  const picks = [...new Set(contributors.filter((s) => s.pickLabel).map(shownName))];
+  if (picks.length) return `Because you picked ${namesList(picks)}.`;
+  return `Related to ${namesList([...new Set(contributors.map(shownName))])} in your feed.`;
 }
 
 /** Place search queries from food signals. "Sichuan" → "Sichuan restaurant". */
@@ -228,13 +257,29 @@ export interface CategoryOutput {
 /** Real Qloo ids from the account's current explicit saves, most recent first. */
 export async function loadSeedSignals(db: Queryable, accountId: string): Promise<SeedSignals> {
   // Entities carry `qloo`; tags (onboarding catalog picks, compiler style refs) carry `qloo_tag`.
-  const { rows } = await db.query<{ title: string; kind: string | null; category: string | null; qloo_id: string }>(
+  // Explicit saves are taste signals; a seed recommendation that was only
+  // filed automatically is not an endorsement.
+  const { rows } = await db.query<{
+    title: string; kind: string | null; category: string | null; qloo_id: string;
+    pick_label: string | null; pick_category: Category | null;
+  }>(
     `SELECT di.title, di.kind, di.category,
             CASE WHEN jsonb_typeof(di.external_ids->'qloo') = 'string' THEN di.external_ids->>'qloo'
-                 ELSE di.external_ids->>'qloo_tag' END AS qloo_id
+                 ELSE di.external_ids->>'qloo_tag' END AS qloo_id,
+            pick.label AS pick_label, pick.category AS pick_category
        FROM saved_items si JOIN discovery_items di ON di.id = si.discovery_item_id
+       LEFT JOIN LATERAL (
+         SELECT op.label, op.category FROM onboarding_pick_items opi JOIN onboarding_picks op ON op.id = opi.pick_id
+          WHERE opi.discovery_item_id = di.id AND opi.account_id = si.owner_account_id
+          ORDER BY op.created_at DESC LIMIT 1) pick ON true
       WHERE si.owner_account_id = $1
         AND (jsonb_typeof(di.external_ids->'qloo') = 'string' OR jsonb_typeof(di.external_ids->'qloo_tag') = 'string')
+        -- A seed/expand recommendation that was only filed (older Interests auto-board) is not a signal.
+        AND (pick.label IS NOT NULL
+             OR NOT EXISTS (SELECT 1 FROM recommendations r JOIN taste_seed_runs tr ON tr.id = r.taste_seed_run_id
+                             WHERE r.discovery_item_id = di.id AND tr.owner_account_id = si.owner_account_id)
+             OR EXISTS (SELECT 1 FROM preference_events pe WHERE pe.owner_account_id = si.owner_account_id
+                         AND pe.action = 'save' AND pe.target_type = 'discovery_item' AND pe.target_id = di.id))
       ORDER BY si.saved_at DESC, si.id
       LIMIT 200`,
     [accountId],
@@ -246,7 +291,15 @@ export async function loadSeedSignals(db: Queryable, accountId: string): Promise
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const list = id.startsWith('urn:tag:') ? out.tags : out.entities;
-    if (list.length < SEED_SIGNALS_MAX) list.push({ id, name: r.title, food: isFoodSignal({ id, kind: r.kind, category: r.category }) });
+    if (list.length < SEED_SIGNALS_MAX)
+      list.push({
+        id,
+        name: r.title,
+        food: isFoodSignal({ id, kind: r.kind, category: r.pick_category ?? r.category }),
+        // An explicit save is the user's pick too ("Because you picked <title>").
+        pickLabel: r.pick_label ?? r.title,
+        pickCategory: r.pick_category ?? (r.category as Category | null),
+      });
   }
   return out;
 }
@@ -276,19 +329,36 @@ function namesList(names: readonly string[]): string {
 
 function textProp(props: Record<string, unknown>, key: string): string | null {
   const v = props[key];
-  return typeof v === 'string' && v.trim() ? v.trim().slice(0, 280) : null;
+  return typeof v === 'string' && v.trim() ? clipText(v) : null;
+}
+
+const GENERIC_VENUE_WORDS = new Set([
+  'restaurant', 'restaurante', 'ristorante', 'restaurants', 'style', 'food', 'cuisine', 'kitchen', 'house', 'shop',
+  'the', 'a', 'and', 'de', 'del', 'la', 'le', 'el', 'cafe', 'bar', 'noodle', 'noodles', 'place', 'eatery', 'diner',
+]);
+
+/**
+ * "Ramen restaurant" or "Restaurante de Sichuan" names a cuisine, not a
+ * place worth a card: nothing is left once the searched cuisine and generic
+ * venue words are removed.
+ */
+export function isGenericVenueName(title: string, query: string): boolean {
+  const words = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  const cuisine = new Set(words(query));
+  return words(title).every((w) => cuisine.has(w) || GENERIC_VENUE_WORDS.has(w));
 }
 
 async function eatPlaceCards(
   session: QlooSession,
   signals: SeedSignals,
-  signalNames: Map<string, string>,
+  signalNames: Map<string, SeedSignal>,
   generic: string,
   foodExclusions: readonly string[],
   maxSearches: number,
 ): Promise<SeedCard[]> {
   const cards: SeedCard[] = [];
   const seen = new Set<string>();
+  const seenTitles = new Set<string>();
   if (maxSearches <= 0) return cards;
   for (const placeQuery of eatPlaceSearchQueries(signals, maxSearches)) {
     try {
@@ -307,6 +377,10 @@ async function eatPlaceCards(
       for (const { e, image } of probed) {
         if (!image) continue;
         if (violatedExclusions({ title: e.name, cuisine: e.name }, foodExclusions).length) continue;
+        // One card per name, and never a venue whose name is just the cuisine.
+        const titleKey = e.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+        if (seenTitles.has(titleKey) || isGenericVenueName(e.name, placeQuery)) continue;
+        seenTitles.add(titleKey);
         const key = canonicalKeyFor({ kind: 'food', title: e.name, qlooId: e.entity_id });
         if (seen.has(key)) continue;
         seen.add(key);
@@ -327,7 +401,7 @@ async function eatPlaceCards(
           destination_url: destinationFromQlooProperties(e.properties),
           origin,
           provider_query_id: queryId,
-          reason: contributors.length ? `Because you picked ${namesList(contributors)}.` : generic,
+          reason: reasonFor(contributors) ?? generic,
         });
       }
     } catch (err) {
@@ -361,10 +435,10 @@ export async function fetchCategory(
   // S-EAT-EMPTY: no food picks, no Eat request; the labeled examples fill Eat.
   if (signals.tags.length + signals.entities.length === 0) return { state: 'empty', cards: [], queries: [] };
   const signalIds = new Set([...input.signals.tags, ...input.signals.entities].map((s) => s.id));
-  const signalNames = new Map([...signals.tags, ...signals.entities].map((s) => [s.id, s.name]));
-  const allNames = [...signals.tags, ...signals.entities].map((s) => s.name);
+  // Reasons name only the signals actually sent for THIS category, in the words the user saw.
+  const signalNames = new Map([...signals.tags, ...signals.entities].map((s) => [s.id, s]));
   const ownQueries = () => session.recorded.filter((q) => q.query_context['category'] === category);
-  const generic = `From your picks: ${namesList(allNames)}.`;
+  const generic = reasonFor([...signals.tags, ...signals.entities]) ?? 'From your interests.';
   const seen = new Set<string>();
   const cards: SeedCard[] = [];
   const consider = (card: SeedCard) => {
@@ -440,7 +514,7 @@ export async function fetchCategory(
         destination_url: destinationFromQlooProperties(e.properties),
         origin,
         provider_query_id: queryId,
-        reason: contributors.length ? `Because you picked ${namesList(contributors)}.` : generic,
+        reason: reasonFor(contributors) ?? generic,
       });
     }
   }
@@ -563,13 +637,19 @@ function retryError(failures: readonly Failure[]): unknown {
   return new AppError('provider_unavailable', { message: 'Part of this is taking longer than usual. Try again in a little while.', retryable: true });
 }
 
-async function fileInterestsBoard(db: Queryable, accountId: string, runId: string): Promise<void> {
+/**
+ * The Interests board holds what the user picked (already explicit saves),
+ * never the seed's recommendations: filing those would mark every feed card
+ * saved and feed Qloo's own output back in as if the user endorsed it.
+ */
+async function fileInterestsBoard(db: Queryable, accountId: string, _runId: string): Promise<void> {
   const { rows } = await db.query<{ discovery_item_id: string }>(
-    `SELECT DISTINCT r.discovery_item_id
-       FROM recommendations r
-       JOIN discovery_items di ON di.id = r.discovery_item_id
-      WHERE r.taste_seed_run_id = $1 AND di.is_sample IS NOT TRUE`,
-    [runId],
+    `SELECT DISTINCT opi.discovery_item_id
+       FROM onboarding_pick_items opi
+       JOIN saved_items si ON si.discovery_item_id = opi.discovery_item_id AND si.owner_account_id = opi.account_id
+       JOIN discovery_items di ON di.id = opi.discovery_item_id
+      WHERE opi.account_id = $1 AND di.is_sample IS NOT TRUE`,
+    [accountId],
   );
   await fillInterestsBoard(
     db,

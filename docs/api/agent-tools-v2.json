@@ -1,6 +1,6 @@
 {
   "schema_version": "2.1",
-  "catalog_version": "2.1.1",
+  "catalog_version": "2.2.0",
   "tools": [
     {
       "name": "list_media",
@@ -329,7 +329,7 @@
     },
     {
       "name": "request_capture",
-      "description": "Request capture on an explicitly selected phone and fresh locally armed session. Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request.",
+      "description": "Request capture on an explicitly selected phone and fresh locally armed session. Take installation_id from get_setup installations[].id and command.session_id / command.generation from that installation's armed_session (present only while the owner has armed the phone for this connection). Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request.",
       "scopes": [
         "devices:command"
       ],
@@ -661,6 +661,114 @@
         "required": [
           "capture_id"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_captures",
+      "description": "List the newest captures this connection can see, newest first: compiled analysis title, detected references and recommended discovery item ids (open them with get_item). Use this for \"things like my last capture\". No photos or private reasoning.",
+      "scopes": [
+        "captures:read"
+      ],
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_item",
+      "description": "Read one discovery item (film, music, place, dish, style...) with its related items (related[] and related_state). Call this after discover_related completes to see what it found. Selected-collection connections pass the collection_id containing the item.",
+      "scopes": [],
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "collection_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "item_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_discoveries",
+      "description": "Read the user’s personal discovery feed (cards with title, category, image and why_this), optionally for one category. Cursor-paginated; pass next_cursor to continue.",
+      "scopes": [
+        "taste:read"
+      ],
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "wear",
+              "play",
+              "watch",
+              "eat"
+            ]
+          },
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_saved",
+      "description": "List items the user explicitly saved, newest first (cursor-paginated). filter \"unfiled\" returns saved items in no collection.",
+      "scopes": [
+        "taste:read"
+      ],
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          },
+          "filter": {
+            "type": "string",
+            "enum": [
+              "all",
+              "unfiled"
+            ]
+          }
+        },
         "additionalProperties": false
       }
     },
@@ -1020,6 +1128,30 @@
         "required": [
           "plan_id"
         ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_plans",
+      "description": "List the user’s movie-night plans, newest first (cursor-paginated). Open one with get_plan.",
+      "scopes": [
+        "plans:read"
+      ],
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          }
+        },
         "additionalProperties": false
       }
     },

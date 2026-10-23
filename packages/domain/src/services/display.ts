@@ -36,6 +36,25 @@ export const DisplayMetadata = z.object({
 export type DisplayMetadata = z.infer<typeof DisplayMetadata>;
 
 /** Lenient parse for stored rows (bad data degrades to no image rather than throwing). */
+/**
+ * Shortens provider prose without cutting a word: the last full sentence that
+ * fits, else the last whole word plus an ellipsis. Text already cut mid-word
+ * by an older writer (no closing punctuation at the cap) is repaired the same way.
+ */
+export function clipText(text: string | null | undefined, max = 280): string | null {
+  const t = (text ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return null;
+  const looksCut = t.length >= max - 12 && !/[.!?…"”')\]]$/.test(t);
+  if (t.length <= max && !looksCut) return t;
+  const window = t.slice(0, Math.min(t.length, max));
+  const sentenceEnd = Math.max(window.lastIndexOf('. '), window.lastIndexOf('! '), window.lastIndexOf('? '));
+  if (sentenceEnd >= max * 0.5) return window.slice(0, sentenceEnd + 1);
+  const room = window.slice(0, Math.min(window.length, max - 1));
+  const space = room.lastIndexOf(' ');
+  const cut = (space > 0 ? room.slice(0, space) : room).replace(/[\s,;:–—-]+$/, '');
+  return `${cut}…`;
+}
+
 export function readDisplayMetadata(value: unknown): DisplayMetadata {
   const parsed = DisplayMetadata.safeParse(value ?? {});
   return parsed.success ? parsed.data : {};

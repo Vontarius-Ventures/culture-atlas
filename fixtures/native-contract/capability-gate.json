@@ -3,6 +3,13 @@
   "note": "Effective Meta glasses availability on a phone is the intersection of the server capability policy and local state (PRODUCT-AND-ARCHITECTURE 'Experimental release policy', feature-flags.json). Client flags never grant access. Distribution reasons from the server block the feature with no reconnect action; only local reasons (permission/user action) can be resolved on the phone. The entry stays visible and labelled Experimental; unavailable states always offer camera and uploads.",
   "distribution_reasons": ["build_unsupported", "release_channel_ineligible", "rollout_unavailable", "device_unsupported", "temporarily_disabled"],
   "local_reasons": ["permission_required", "user_action_required"],
+  "device_capability_keys": {
+    "note": "Keys the server reads from enroll and PUT /v2/device/status capabilities. Heartbeats MERGE keys: an omitted key keeps its last value; send false to clear it.",
+    "sdk_present": ["meta_glasses_sdk", "meta_wearables_sdk"],
+    "supported_os": "meta_wearables_supported_os (optional; treated as true when an sdk_present key is true, false clears it)",
+    "glasses_audio": ["microphone_permission", "glasses_microphone_selected"],
+    "wearable_connection_capabilities": ["photo", "video", "audio"]
+  },
   "cases": [
     {
       "name": "public_build_without_sdk",

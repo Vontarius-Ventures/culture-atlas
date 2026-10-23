@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelGateway, ReadinessDetail, ModelRole } from '@culture-atlas/providers';
-import { roleAvailability } from './model-readiness';
+import { photoAnalysisReadiness, roleAvailability } from './model-readiness';
 
 function gateway(detail: ReadinessDetail | Error): ModelGateway {
   return {
@@ -36,5 +36,21 @@ describe('v2 analysis availability (read-only, no paid probe)', () => {
     await expect(roleAvailability('vision_photo', gateway(new Error('db down')))).resolves.toBe(
       'unavailable',
     );
+  });
+});
+
+describe('analysis readiness reports one cause per input', () => {
+  it.each([
+    [{ state: 'catalog-compatible', reason: 'not_qualified' }, { qualityQualified: false, budgetAvailable: true, providerReady: true }],
+    [{ state: 'unavailable', reason: 'credits' }, { qualityQualified: true, budgetAvailable: false, providerReady: true }],
+    [{ state: 'unavailable', reason: 'auth' }, { qualityQualified: true, budgetAvailable: true, providerReady: false }],
+    [{ state: 'qualified' }, { qualityQualified: true, budgetAvailable: true, providerReady: true }],
+  ] as Array<[ReadinessDetail, Record<string, boolean>]>)('%j', async (detail, expected) => {
+    await expect(photoAnalysisReadiness(gateway(detail), false)).resolves.toMatchObject(expected);
+  });
+
+  it('labels a demo-override reading experimental', async () => {
+    await expect(photoAnalysisReadiness(gateway({ state: 'qualified', experimental: true } as ReadinessDetail), false))
+      .resolves.toMatchObject({ experimental: true, qualityQualified: true, providerReady: true });
   });
 });

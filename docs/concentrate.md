@@ -166,9 +166,32 @@ role circuits. Do this only after restoring credits or re-qualifying.
 
 Only `qualified` profiles get a dispatching runner. `GET /v2/capabilities`
 reports `concentrate_analysis_enabled` true only when the photo role is
-qualified/available now. `POST /v2/media/{id}/analysis` refuses with “Exploration
-is temporarily unavailable.” (503) **before** using the daily allowance when the
-role is unavailable; during a credit or rate pause it accepts and queues.
+qualified/available now. `POST /v2/media/{id}/analysis` refuses with
+“Exploration is not available on this server yet.” (503, `retryable: false`)
+**before** using the daily allowance when the role is unavailable; during a
+credit or rate pause it accepts and queues. Availability reasons have one cause
+each: an unqualified role reports only `model_unqualified` (budget comes from
+the spend ledger, provider readiness from gateway health). The worker prints
+unqualified roles in red at startup.
+
+### Demo override (never production)
+
+The vision roles have not passed requalification (tune split M5/M9 above), so
+on a fresh server every photo and video-frame analysis fails closed. For a
+local or hand-test server an operator can name the roles that may dispatch on
+their catalog-compatible profile anyway:
+
+```
+CONCENTRATE_DEMO_ALLOW_ROLES=vision_photo,vision_video_frame,vision_photo_enrich
+```
+
+It is ignored when `NODE_ENV=production`. Readiness marks those roles
+`experimental: true`, and `GET /v2/capabilities` adds
+`availability.analysis = {available: true, experimental: true, label:
+"Experimental reading"}` so clients label the result. Spend limits, the
+ledger and every other gate still apply. Live check (2026-10-23, sample
+"cafe", haiku-5-5): v1 capture complete in 22 s with three references
+(Croissant, Espresso, bentwood chair) and Eat suggestions.
 
 ## v2 media analysis
 

@@ -218,10 +218,14 @@ async function loadExpandSignals(
     const id = r.qloo_id.trim();
     if (!id || seen.has(id)) continue;
     seen.add(id);
+    // Feed cards, not picks: reasons say "Related to X in your feed", and they
+    // steer only their own category.
     fromPool.push({
       id,
       name: r.title,
       food: isFoodSignal({ id, kind: r.kind, category: r.category }),
+      pickLabel: null,
+      pickCategory: (r.category as SeedSignal['pickCategory']) ?? null,
     });
   }
   const fallback = await loadSeedSignals(db, accountId);

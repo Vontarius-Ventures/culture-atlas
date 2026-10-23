@@ -38,8 +38,10 @@ export class MediaAnalysis {
     // Unconfigured/unqualified/circuit-open AI is refused before any allowance is
     // used. A credit or rate pause still accepts and queues: captures never wait on AI.
     if (ctx.analysisAvailability && (await ctx.analysisAvailability(input.mode)) === 'unavailable')
+      // Unconfigured/unqualified is a server state, not an outage: nothing to retry.
       throw new AppError('service_unavailable', {
-        message: 'Exploration is temporarily unavailable.',
+        message: 'Exploration is not available on this server yet.',
+        retryable: false,
       });
     return captureMutation(ctx, `analyze:${id}`, key, input, async (tx) => {
       const { rows } = await tx.query(

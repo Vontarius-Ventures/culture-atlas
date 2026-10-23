@@ -13,7 +13,7 @@ import { AgentConnectionDto } from '../../domain/src/schemas/agent-connections';
 import { AgentAnalysisResponse, AgentOperationResponse } from '../../domain/src/schemas/agent-media';
 
 /** Tool catalog version: bump on any tool addition or input change. */
-export const TOOL_CATALOG_VERSION = '2.1.1';
+export const TOOL_CATALOG_VERSION = '2.2.0';
 
 /** Named JSON Schemas published under docs/api/schemas/ (and in components.schemas). */
 export const NAMED_SCHEMAS: Record<string, z.ZodType> = {
