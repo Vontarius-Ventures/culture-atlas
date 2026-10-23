@@ -8,7 +8,24 @@ const ARTIST_TYPE = 'urn:entity:artist';
  * Qloo seeds are returned catalog IDs only (AUD07). Recognition confidence is
  * never copied onto affinity; albums are metadata, not Insights targets.
  */
-export function artistSeedsFromQlooEntities(entities: readonly QlooEntity[]): {
+function normalizedName(name: string): string {
+  return name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/^the\s+/, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Qloo search for an artist name usually returns several artists (the artist
+ * plus tribute acts, collaborations, similarly named projects). When `query`
+ * (the text the recognizer or transcript actually produced) names exactly one
+ * of the returned artists, that artist is resolved; two or more exact-name
+ * artists stay ambiguous. Only ids Qloo returned are ever used.
+ */
+export function artistSeedsFromQlooEntities(entities: readonly QlooEntity[], query?: string): {
   seeds: QlooAudioSeed[];
   status: 'resolved' | 'ambiguous' | 'unresolved';
 } {
@@ -32,7 +49,12 @@ export function artistSeedsFromQlooEntities(entities: readonly QlooEntity[]): {
       ],
     };
   }
-  if (artists.length > 1) return { status: 'ambiguous', seeds: [] };
+  if (artists.length > 1) {
+    const wanted = query ? normalizedName(query) : '';
+    const exact = wanted ? artists.filter((a) => normalizedName(a.name) === wanted) : [];
+    if (exact.length === 1) return artistSeedsFromQlooEntities(exact);
+    return { status: 'ambiguous', seeds: [] };
+  }
   return { status: 'unresolved', seeds: [] };
 }
 
