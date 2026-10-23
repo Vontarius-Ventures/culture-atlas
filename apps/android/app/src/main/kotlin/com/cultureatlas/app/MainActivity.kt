@@ -33,6 +33,8 @@ class MainActivity : ComponentActivity() {
 
     /** Verified App Link on the store host or this build's API host. */
     private fun handle(intent: Intent?) {
+        // A ready-notice tap carries ids only (validated in ReadyNoticeCenter).
+        graph.notices.openFromIntent(intent)
         val data = intent?.data ?: return
         val hosts = setOf("app.cultureatlas.com", BuildConfig.ATLAS_API_HOST)
         if (data.scheme == "https" && data.host in hosts && data.path == "/identity/callback") {

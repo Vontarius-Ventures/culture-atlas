@@ -1,9 +1,6 @@
 package com.cultureatlas.app.ui
 
-import android.graphics.BitmapFactory
-import android.util.LruCache
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -22,6 +19,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -38,16 +46,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -67,11 +71,7 @@ import com.cultureatlas.capture.core.contract.SeedCategoryState
 import com.cultureatlas.capture.core.contract.TasteCategory
 import com.cultureatlas.capture.core.onboarding.OnboardingCopy
 import com.cultureatlas.capture.core.onboarding.OnboardingPolicy
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 
 // Screen 14 (taste picks) on a phone: three steps with a step indicator, no
 // bottom navigation, built against
@@ -198,9 +198,23 @@ fun ImagePickStep(onboarding: OnboardingController, settings: Boolean) {
 
 @Composable
 private fun PickTile(entry: OnboardingCatalogEntry, picked: Boolean, enabled: Boolean, modifier: Modifier, onToggle: () -> Unit) {
+    val haptics = rememberHaptics()
+    val source = remember { MutableInteractionSource() }
+    val ring by animateDpAsState(if (picked) 3.dp else 0.dp, spring(dampingRatio = 0.6f), label = "pick-ring")
     Column(
         modifier
-            .toggleable(value = picked, enabled = enabled, role = Role.Checkbox, onValueChange = { onToggle() })
+            .pressScale(source)
+            .toggleable(
+                value = picked,
+                enabled = enabled,
+                role = Role.Checkbox,
+                interactionSource = source,
+                indication = LocalIndication.current,
+                onValueChange = {
+                    haptics.tick()
+                    onToggle()
+                },
+            )
             .semantics(mergeDescendants = true) {
                 contentDescription = entry.image?.alt?.let { "${entry.label}. $it" } ?: entry.label
             },
@@ -210,9 +224,14 @@ private fun PickTile(entry: OnboardingCatalogEntry, picked: Boolean, enabled: Bo
             RemoteImage(
                 entry.image,
                 Modifier.fillMaxWidth().aspectRatio(4f / 5f).clip(RoundedCornerShape(12.dp))
-                    .border(BorderStroke(if (picked) 3.dp else 0.dp, if (picked) AtlasColors.olive else AtlasColors.paper), RoundedCornerShape(12.dp)),
+                    .border(BorderStroke(ring, if (ring > 0.dp) AtlasColors.olive else AtlasColors.paper), RoundedCornerShape(12.dp)),
             )
-            if (picked) {
+            // The check pops in with a little spring; leaving fades quickly.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = picked,
+                enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium)) + fadeIn(),
+                exit = scaleOut(tween(140)) + fadeOut(tween(140)),
+            ) {
                 Box(Modifier.padding(8.dp).size(28.dp).clip(CircleShape).background(AtlasColors.olive), contentAlignment = Alignment.Center) {
                     Text("✓", color = AtlasColors.paper, fontWeight = FontWeight.Bold)
                 }
@@ -327,13 +346,28 @@ fun ExclusionEditor(onboarding: OnboardingController) {
 /** Filter-pill toggle: olive outline and a check when selected (not colour alone). */
 @Composable
 fun PillToggle(label: String, selected: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
+    val haptics = rememberHaptics()
+    val source = remember { MutableInteractionSource() }
+    val fill by animateColorAsState(if (selected) AtlasColors.quiet else AtlasColors.paper, tween(200), label = "pill-fill")
+    val edge by animateColorAsState(if (selected) AtlasColors.olive else AtlasColors.line, tween(200), label = "pill-edge")
     Row(
         Modifier
             .heightIn(min = 48.dp)
+            .pressScale(source)
             .clip(RoundedCornerShape(50))
-            .background(if (selected) AtlasColors.quiet else AtlasColors.paper)
-            .border(if (selected) 2.dp else 1.dp, if (selected) AtlasColors.olive else AtlasColors.line, RoundedCornerShape(50))
-            .toggleable(value = selected, enabled = enabled, role = Role.Checkbox, onValueChange = { onToggle() })
+            .background(fill)
+            .border(if (selected) 2.dp else 1.dp, edge, RoundedCornerShape(50))
+            .toggleable(
+                value = selected,
+                enabled = enabled,
+                role = Role.Checkbox,
+                interactionSource = source,
+                indication = LocalIndication.current,
+                onValueChange = {
+                    haptics.tick()
+                    onToggle()
+                },
+            )
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -460,10 +494,8 @@ fun OnboardingRetryScreen(onRetry: () -> Unit) {
     }
 }
 
-// Images: catalog assets are public paths on the API host ("/samples/…").
-
-private val imageClient by lazy { OkHttpClient() }
-private val imageCache = LruCache<String, ImageBitmap>(32)
+// Images: catalog assets are public paths on the API host ("/samples/…"). Loaded by the app's
+// Coil ImageLoader (memory + disk cache, request sizing) and crossfaded in over a soft shimmer.
 
 @Composable
 fun RemoteImage(image: OnboardingImage?, modifier: Modifier) {
@@ -472,23 +504,7 @@ fun RemoteImage(image: OnboardingImage?, modifier: Modifier) {
 
 @Composable
 fun RemoteImage(url: String?, modifier: Modifier, contentDescription: String? = null) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = url?.let { imageCache.get(it) }, url) {
-        if (url == null || value != null) return@produceState
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                imageClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                    if (!response.isSuccessful) return@use null
-                    response.body?.bytes()?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
-                }
-            }.getOrNull()
-        }?.also { imageCache.put(url, it) }
-    }
-    val current = bitmap
-    if (current != null) {
-        Image(current, contentDescription = contentDescription, modifier = modifier, contentScale = ContentScale.Crop)
-    } else {
-        Box(modifier.background(AtlasColors.quiet))
-    }
+    AtlasImage(url, modifier, contentDescription)
 }
 
 /** Polite toast: "Your photo is ready" with Open and Dismiss (screen 17). */

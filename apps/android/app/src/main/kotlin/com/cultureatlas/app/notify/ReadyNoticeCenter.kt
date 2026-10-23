@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.cultureatlas.app.BuildConfig
+import com.cultureatlas.app.MainActivity
 import com.cultureatlas.capture.core.contract.AnalysisState
 import com.cultureatlas.capture.core.contract.AnalyzeAudioRequest
 import com.cultureatlas.capture.core.contract.AudioSelection
@@ -30,6 +31,7 @@ import com.cultureatlas.capture.core.notify.ReadyNoticeCopy
 import com.cultureatlas.capture.core.notify.ReadyNoticePolicy
 import com.cultureatlas.capture.core.notify.ReadyNoticeStore
 import com.cultureatlas.capture.core.notify.WatchedAnalysis
+import com.cultureatlas.capture.core.result.ResultRoute
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -44,7 +46,8 @@ import java.time.Instant
 
 /**
  * Screen 17 on Android: "Your photo is ready" with Open, for analyses the user
- * started from this phone ("Explore this photo" in the library).
+ * started from this phone ("Explore this photo" in the library). Open shows
+ * the native result screen ([openRequest]); nothing leaves for the browser.
  *
  * - FCM messages are data-only wake-ups carrying an opaque reference
  *   (ReadyNoticePolicy.isValidWake); nothing in them is shown or trusted. On a
@@ -63,12 +66,15 @@ class ReadyNoticeCenter(
     private val scope: CoroutineScope,
     directory: File,
 ) {
-    data class Toast(val analysisId: String, val resultPath: String?)
+    data class Toast(val mediaId: String, val analysisId: String, val resultPath: String?)
 
     private val store = ReadyNoticeStore(directory)
     private val checking = Mutex()
     private val _toast = MutableStateFlow<Toast?>(null)
     val toast: StateFlow<Toast?> = _toast
+    private val _openRequest = MutableStateFlow<ResultRoute?>(null)
+    /** A result the user asked to open (toast, notification): the shell pushes the native result screen. */
+    val openRequest: StateFlow<ResultRoute?> = _openRequest
     private val _exploring = MutableStateFlow<Set<String>>(emptySet())
     val exploring: StateFlow<Set<String>> = _exploring
     @Volatile private var presence = ReadyNoticePolicy.Presence.BACKGROUND
@@ -159,7 +165,7 @@ class ReadyNoticeCenter(
             )
             when (decision.notice) {
                 ReadyNoticePolicy.Notice.NOTIFICATION -> postNotification(watch, status?.resultUrl)
-                ReadyNoticePolicy.Notice.TOAST -> _toast.value = Toast(watch.analysisId, status?.resultUrl)
+                ReadyNoticePolicy.Notice.TOAST -> _toast.value = Toast(watch.mediaId, watch.analysisId, status?.resultUrl)
                 ReadyNoticePolicy.Notice.NONE -> Unit
             }
             if (!decision.keepWatching) {
@@ -183,7 +189,7 @@ class ReadyNoticeCenter(
         ) {
             return
         }
-        val open = openIntent(resultPath)
+        val open = openIntent(watch)
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_gallery)
             .setContentTitle(ReadyNoticeCopy.TITLE)
@@ -194,11 +200,23 @@ class ReadyNoticeCenter(
         NotificationManagerCompat.from(context).notify(watch.analysisId.hashCode(), notification)
     }
 
-    /** The result page lives in the web app; the path comes from our own API. */
-    private fun openIntent(resultPath: String?): PendingIntent? {
-        val uri = resultUri(resultPath) ?: return null
-        val intent = Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return PendingIntent.getActivity(context, uri.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE)
+    /** Opens this app on the native result screen (never the browser). */
+    private fun openIntent(watch: WatchedAnalysis): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_MEDIA, watch.mediaId)
+            .putExtra(EXTRA_ANALYSIS, watch.analysisId)
+        return PendingIntent.getActivity(
+            context, watch.analysisId.hashCode(), intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
+    /** From a notification tap: ids are validated as UUIDs before they reach an API path. */
+    fun openFromIntent(intent: Intent?) {
+        val route = ResultRoute.parse(intent?.getStringExtra(EXTRA_MEDIA), intent?.getStringExtra(EXTRA_ANALYSIS)) ?: return
+        _toast.value = null
+        _openRequest.value = route
     }
 
     fun resultUri(resultPath: String?): Uri? =
@@ -224,13 +242,27 @@ class ReadyNoticeCenter(
         _toast.value = null
     }
 
-    fun open(resultPath: String?) {
+    /** "Open" on the in-app toast: the shell shows the native result. */
+    fun open(toast: Toast) {
         _toast.value = null
-        val uri = resultUri(resultPath) ?: return
-        context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        _openRequest.value = ResultRoute.parse(toast.mediaId, toast.analysisId)
+    }
+
+    fun consumeOpenRequest() {
+        _openRequest.value = null
+    }
+
+    /** The user started exploring from a screen that shows the result itself (library, result screen). */
+    suspend fun watch(mediaId: String, analysisId: String) {
+        val account = sessions.currentAccountId ?: return
+        _exploring.value = _exploring.value + mediaId.lowercase()
+        store.watch(WatchedAnalysis(mediaId.lowercase(), analysisId, Instant.now().toString()), account)
+        onForeground(true)
     }
 
     companion object {
         const val CHANNEL = "ready_notice"
+        const val EXTRA_MEDIA = "com.cultureatlas.app.result.media"
+        const val EXTRA_ANALYSIS = "com.cultureatlas.app.result.analysis"
     }
 }

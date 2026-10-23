@@ -113,6 +113,7 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.firebase.messaging)
+    implementation(libs.coil.compose)
 
     "experimentalImplementation"(libs.meta.wearables.core)
     "experimentalImplementation"(libs.meta.wearables.camera)
