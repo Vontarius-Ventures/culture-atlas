@@ -16,16 +16,18 @@ struct MusicView: View {
     let glassesAvailable = glasses?.available == true
     let glassesSelectedButMissing = selectedRoute == .glassesMicrophone && !glassesAvailable
     VStack(alignment: .leading, spacing: 16) {
-      HStack {
-        Text("Music").font(.system(.title2, design: .serif))
-        Text("Camera off")
+      HStack(alignment: .firstTextBaseline) {
+        Text("Keep a little of what you hear.")
+          .font(.system(.title3, design: .serif))
+        Spacer()
+        Label("Camera off", systemImage: "video.slash")
           .font(.caption)
+          .foregroundStyle(AtlasTheme.muted)
           .padding(.horizontal, 8)
-          .padding(.vertical, 2)
+          .padding(.vertical, 3)
           .background(Capsule().fill(AtlasTheme.quiet))
           .accessibilityLabel("Camera off")
       }
-      Text("Keep a little of what you hear.").foregroundStyle(AtlasTheme.muted)
 
       Picker("Microphone", selection: $selectedRoute) {
         Text("Phone microphone").tag(AudioInputRoute.phoneMicrophone)
@@ -54,8 +56,8 @@ struct MusicView: View {
           .accessibilityAddTraits(.isStaticText)
       }
 
-      LevelMeter(level: music.level, recording: music.isRecording)
-        .frame(height: 90)
+      LiveWaveform(level: music.level, recording: music.isRecording)
+        .frame(height: 96)
         .accessibilityLabel("Microphone levels")
         .accessibilityValue(music.isRecording ? "Recording" : "Idle")
 
@@ -81,26 +83,15 @@ struct MusicView: View {
 
       if let error { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText) }
 
-      if music.isRecording {
-        Button(role: .destructive) {
+      RecordButton(recording: music.isRecording, disabled: glassesSelectedButMissing) {
+        if music.isRecording {
           controller.stopRecording()
-        } label: {
-          Text("Stop recording").frame(maxWidth: .infinity, minHeight: 48)
-        }
-        .buttonStyle(.borderedProminent)
-        .accessibilityLabel("Stop recording")
-        .accessibilityValue("Recording audio")
-      } else {
-        Button {
+        } else {
           Task { await startRecording() }
-        } label: {
-          Text("Record").frame(maxWidth: .infinity, minHeight: 48)
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(glassesSelectedButMissing)
-        .accessibilityLabel("Record")
-        .accessibilityValue("Ready")
       }
+      .frame(maxWidth: .infinity)
+      .sensoryFeedback(.impact(weight: .medium), trigger: music.isRecording)
 
       Text("Speech transcription is off. Review before keeping.")
         .font(.footnote)
@@ -110,6 +101,7 @@ struct MusicView: View {
     .padding(20)
     .background(AtlasTheme.ivory.ignoresSafeArea())
     .navigationTitle("Music")
+    .navigationBarTitleDisplayMode(.inline)
     .toolbar(.hidden, for: .tabBar)
     .task { music.refreshRoutes() }
     .onChange(of: glassesAvailable) { _, available in
@@ -147,7 +139,9 @@ struct MusicView: View {
     if let draft {
       review = draft
     } else {
-      error = controller.message
+      // Report once: inline on this screen, not also as an alert.
+      error = controller.message ?? "Recording could not be saved."
+      controller.message = nil
     }
   }
 }
@@ -187,26 +181,79 @@ private struct MusicReviewSheet: View {
     }
     .padding(24)
     .presentationDetents([.medium])
+    .presentationCornerRadius(24)
+    .tint(AtlasTheme.olive)
   }
 }
 
-struct LevelMeter: View {
+/// Live microphone level as a rolling waveform: the newest sample enters on
+/// the right and older ones slide left, so it reads as sound, not a gauge.
+struct LiveWaveform: View {
   let level: Float
   let recording: Bool
+  @State private var history: [CGFloat] = Array(repeating: 0.06, count: 36)
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     GeometryReader { geo in
-      let bars = 24
-      HStack(alignment: .center, spacing: 4) {
-        ForEach(0..<bars, id: \.self) { index in
-          let threshold = Float(index) / Float(bars)
+      let count = history.count
+      let gap: CGFloat = 4
+      let barWidth = max(3, (geo.size.width - CGFloat(count - 1) * gap) / CGFloat(count))
+      HStack(alignment: .center, spacing: gap) {
+        ForEach(0..<count, id: \.self) { index in
           Capsule()
-            .fill(recording && level > threshold ? AtlasTheme.olive : AtlasTheme.quiet)
-            .frame(width: max(4, (geo.size.width - CGFloat(bars - 1) * 4) / CGFloat(bars)),
-                   height: reduceMotion ? geo.size.height * 0.4 : geo.size.height * CGFloat(0.25 + 0.75 * abs(sin(Double(index) * 0.4))))
+            .fill(recording ? AtlasTheme.olive.opacity(0.35 + 0.65 * Double(index) / Double(count)) : AtlasTheme.line)
+            .frame(width: barWidth, height: max(6, geo.size.height * history[index]))
         }
       }
+      .frame(width: geo.size.width, height: geo.size.height)
+      .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: history)
     }
+    .onChange(of: level) { _, value in
+      guard recording else { return }
+      history.removeFirst()
+      history.append(max(0.06, min(1, CGFloat(value))))
+    }
+    .onChange(of: recording) { _, on in
+      if !on { withAnimation(.easeOut(duration: 0.4)) { history = Array(repeating: 0.06, count: history.count) } }
+    }
+  }
+}
+
+/// Round record control: a red dot that morphs into a stop square.
+private struct RecordButton: View {
+  let recording: Bool
+  let disabled: Bool
+  let action: () -> Void
+  @State private var pulse = false
+
+  var body: some View {
+    Button(action: action) {
+      ZStack {
+        Circle()
+          .stroke(AtlasTheme.ink.opacity(0.85), lineWidth: 4)
+          .frame(width: 84, height: 84)
+        if recording {
+          Circle()
+            .stroke(Color.red.opacity(0.35), lineWidth: 6)
+            .frame(width: 84, height: 84)
+            .scaleEffect(pulse ? 1.18 : 1)
+            .opacity(pulse ? 0 : 1)
+        }
+        RoundedRectangle(cornerRadius: recording ? 8 : 34, style: .continuous)
+          .fill(Color.red)
+          .frame(width: recording ? 32 : 68, height: recording ? 32 : 68)
+      }
+      .animation(AtlasMotion.spring, value: recording)
+    }
+    .buttonStyle(.pressableCard)
+    .disabled(disabled)
+    .opacity(disabled ? 0.4 : 1)
+    .onChange(of: recording) { _, on in
+      pulse = false
+      if on { withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) { pulse = true } }
+    }
+    .accessibilityLabel(recording ? "Stop recording" : "Record")
+    .accessibilityValue(recording ? "Recording audio" : "Ready")
   }
 }
