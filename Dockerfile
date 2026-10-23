@@ -73,6 +73,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /app /app
+# On-prem identity mailbox (the spec's file mailbox; no email is sent). A named
+# volume mounted here inherits this node-owned, private directory.
+RUN mkdir -p /var/lib/culture-atlas/mail \
+ && chown node:node /var/lib/culture-atlas/mail \
+ && chmod 700 /var/lib/culture-atlas/mail
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \

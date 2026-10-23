@@ -154,6 +154,21 @@ describe('identity mail adapters', () => {
     ).toBeDefined();
     expect(() =>
       createIdentityMailFromEnv({ IDENTITY_MAIL_DRIVER: 'file', NODE_ENV: 'production' }),
+    ).toThrow(/IDENTITY_MAIL_FILE_ALLOW_PRODUCTION/);
+    // On-prem production uses the file mailbox only with the explicit opt-in.
+    expect(
+      createIdentityMailFromEnv({
+        IDENTITY_MAIL_DRIVER: 'file',
+        NODE_ENV: 'production',
+        IDENTITY_MAIL_FILE_ALLOW_PRODUCTION: 'true',
+      }),
+    ).toBeDefined();
+    expect(() =>
+      createIdentityMailFromEnv({
+        IDENTITY_MAIL_DRIVER: 'file',
+        NODE_ENV: 'production',
+        IDENTITY_MAIL_FILE_ALLOW_PRODUCTION: 'yes',
+      }),
     ).toThrow();
     expect(() => createIdentityMailFromEnv({ IDENTITY_MAIL_DRIVER: 'smtp' })).toThrow(
       /ses, file or none/,

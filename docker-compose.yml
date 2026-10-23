@@ -12,7 +12,7 @@
 # service receives only the settings it uses (no blanket env_file).
 #
 # Order: postgres + garage healthy -> preflight (refuses unsafe production
-# settings, e.g. IDENTITY_MAIL_DRIVER=file) -> migrate (forward-only) -> web,
+# settings, e.g. a cloud mail driver or a weak secret) -> migrate (forward-only) -> web,
 # worker, media-worker. Caddy terminates TLS for APP_HOST and MEDIA_HOST.
 
 name: culture-atlas
@@ -156,17 +156,15 @@ x-provider-env: &provider-env
   PUSH_FCM_CLIENT_EMAIL: ${PUSH_FCM_CLIENT_EMAIL:-}
   PUSH_FCM_PRIVATE_KEY: ${PUSH_FCM_PRIVATE_KEY:-}
 
-# Web only: identity email (Amazon SES, owner decision), native app links, edge.
+# Web only: identity email, native app links, edge.
+# Mail is the spec's file mailbox (prp/2026-10-22-interest-feed: no email is
+# sent) and, like everything else here, stays on this host: no cloud mail
+# service. Sign-in links land as 0600 JSON files in the `mailbox` volume; the
+# operator opens them (docs/deploy.md "Sign-in links").
 x-web-env: &web-env
-  IDENTITY_MAIL_DRIVER: ${IDENTITY_MAIL_DRIVER:-ses}
-  IDENTITY_MAIL_FROM: ${IDENTITY_MAIL_FROM:-}
-  IDENTITY_MAIL_SES_REGION: ${IDENTITY_MAIL_SES_REGION:-}
-  IDENTITY_MAIL_SES_CONFIGURATION_SET: ${IDENTITY_MAIL_SES_CONFIGURATION_SET:-}
-  # On-prem there is no instance role: the AWS SDK default chain reads these
-  # (an IAM user allowed only ses:SendEmail from the verified identity).
-  AWS_REGION: ${AWS_REGION:-}
-  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  IDENTITY_MAIL_DRIVER: file
+  IDENTITY_MAIL_FILE_ALLOW_PRODUCTION: 'true'
+  IDENTITY_MAIL_FILE_DIR: /var/lib/culture-atlas/mail
   APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
   ANDROID_ASSETLINKS_SHA256: ${ANDROID_ASSETLINKS_SHA256:-}
   # Caddy is one hop that appends to X-Forwarded-For. Add one per extra proxy.
@@ -280,7 +278,8 @@ services:
       retries: 3
 
   # One-shot: refuses unsafe production settings (IDENTITY_MAIL_DRIVER other
-  # than ses, http APP_BASE_URL, missing secrets...). Names only in its output.
+  # than the on-prem file mailbox, http APP_BASE_URL, missing secrets...).
+  # Names only in its output.
   preflight:
     <<: *app
     restart: 'no'
@@ -328,6 +327,9 @@ services:
     environment:
       <<: [*base-env, *provider-env, *web-env]
       PORT: '3000'
+    volumes:
+      - ${CONCENTRATE_CONFIG_DIR:-./fixtures/concentrate}:/etc/culture-atlas/concentrate:ro
+      - mailbox:/var/lib/culture-atlas/mail
     ports:
       # Loopback only: clients reach web through Caddy over https. Exposing
       # plain http publicly would bypass TLS and the proxy hop count.
@@ -426,6 +428,7 @@ services:
 
 volumes:
   pgdata:
+  mailbox:
   garage-meta:
   garage-data:
   caddy-data:

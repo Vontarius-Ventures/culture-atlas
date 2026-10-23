@@ -159,8 +159,8 @@ describe('on-prem production Compose', () => {
       expect(env('worker')).toHaveProperty(key);
   });
 
-  it('keeps provider keys and SES credentials to the services that use them', () => {
-    for (const key of ['IDENTITY_MAIL_DRIVER', 'IDENTITY_MAIL_FROM', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'APPLE_TEAM_ID', 'ANDROID_ASSETLINKS_SHA256']) {
+  it('keeps provider keys and mail settings to the services that use them', () => {
+    for (const key of ['IDENTITY_MAIL_DRIVER', 'IDENTITY_MAIL_FILE_DIR', 'APPLE_TEAM_ID', 'ANDROID_ASSETLINKS_SHA256']) {
       expect(env('web')).toHaveProperty(key);
       for (const other of ['worker', 'media-worker', 'migrate', 'storage-init', 'ops']) expect(env(other)).not.toHaveProperty(key);
     }
@@ -168,9 +168,14 @@ describe('on-prem production Compose', () => {
       for (const other of ['media-worker', 'migrate', 'storage-init', 'ops']) expect(env(other)).not.toHaveProperty(key);
   });
 
-  it('pins the production choices: SES mail, private S3 on Garage, Concentrate, no replay', () => {
+  it('pins the production choices: on-prem file mailbox, private S3 on Garage, Concentrate, no replay', () => {
     const web = env('web');
-    expect(web.IDENTITY_MAIL_DRIVER).toBe('${IDENTITY_MAIL_DRIVER:-ses}');
+    // The spec's mail provider is the file mailbox, kept on this host: no cloud mail.
+    expect(web.IDENTITY_MAIL_DRIVER).toBe('file');
+    expect(web.IDENTITY_MAIL_FILE_ALLOW_PRODUCTION).toBe('true');
+    expect(web.IDENTITY_MAIL_FILE_DIR).toBe('/var/lib/culture-atlas/mail');
+    expect(svc('web').volumes).toContain('mailbox:/var/lib/culture-atlas/mail');
+    expect(composeText).not.toMatch(/IDENTITY_MAIL_SES|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY/);
     expect(web.NODE_ENV).toBe('production');
     expect(web.STORAGE_DRIVER).toBe('s3');
     expect(web.S3_FORCE_PATH_STYLE).toBe('true');
@@ -266,17 +271,13 @@ describe('on-prem production Compose', () => {
       S3_ENDPOINT: 'https://media.example.org',
       S3_ACCESS_KEY_ID: 'GK-fake',
       S3_SECRET_ACCESS_KEY: 'fake',
-      IDENTITY_MAIL_FROM: 'culture atlas <no-reply@example.org>',
-      IDENTITY_MAIL_SES_REGION: 'us-east-1',
-      AWS_ACCESS_KEY_ID: 'fake',
-      AWS_SECRET_ACCESS_KEY: 'fake',
     };
     const resolved = Object.fromEntries(
       Object.entries(env('preflight')).map(([k, v]) => [k, resolveWith(String(v), dotenv)]),
     );
     expect(checkProductionEnv(resolved).errors).toEqual([]);
-    // ...and refuses the development mailbox even when an operator sets it.
-    expect(checkProductionEnv({ ...resolved, IDENTITY_MAIL_DRIVER: 'file' }).errors.join()).toMatch(/refused in production/);
+    // ...and refuses a cloud mail service even when an operator sets it.
+    expect(checkProductionEnv({ ...resolved, IDENTITY_MAIL_DRIVER: 'ses' }).errors.join()).toMatch(/must be file/);
   });
 
   it('keeps the paid Render blueprint unapplied and honest', () => {

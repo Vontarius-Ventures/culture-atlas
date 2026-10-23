@@ -96,30 +96,21 @@ export function checkProductionEnv(env: Env): PreflightReport {
   else if (/:\/\/culture_atlas:culture_atlas@/.test(value(env, 'DATABASE_URL')!))
     errors.push('DATABASE_URL uses the development password; set POSTGRES_PASSWORD.');
 
-  // --- Identity email: Amazon SES (owner decision; on-prem hosts still send via SES)
+  // --- Identity email: the spec's file mailbox, on this host -------------
+  // prp/2026-10-22-interest-feed: "this build uses a file mailbox; no email is
+  // sent". The whole deployment is on-prem, so no cloud mail service (SES) is
+  // used: sign-in links are written to the mailbox volume for the operator.
   const mail = value(env, 'IDENTITY_MAIL_DRIVER') ?? 'none';
-  if (mail === 'file')
+  if (mail !== 'file')
     errors.push(
-      'IDENTITY_MAIL_DRIVER=file is a local development mailbox and is refused in production; use ses.',
+      'IDENTITY_MAIL_DRIVER must be file (the on-prem file mailbox from the spec); ses is a cloud service and none fails sign-in with 503.',
     );
-  else if (mail !== 'ses')
-    errors.push(
-      'IDENTITY_MAIL_DRIVER must be ses in production (Amazon SES); otherwise email sign-in and recovery fail with 503.',
-    );
-  if (mail === 'ses') {
-    if (!has('IDENTITY_MAIL_FROM'))
-      errors.push('IDENTITY_MAIL_FROM is required with IDENTITY_MAIL_DRIVER=ses (a verified SES identity).');
-    if (!has('IDENTITY_MAIL_SES_REGION') && !has('AWS_REGION'))
-      errors.push('IDENTITY_MAIL_SES_REGION (or AWS_REGION) is required with IDENTITY_MAIL_DRIVER=ses.');
-    // On-prem there is no instance role: the AWS SDK default chain reads these.
-    const keyPair = has('AWS_ACCESS_KEY_ID') && has('AWS_SECRET_ACCESS_KEY');
-    const otherChain = has('AWS_PROFILE') || has('AWS_SHARED_CREDENTIALS_FILE') || has('AWS_WEB_IDENTITY_TOKEN_FILE');
-    if (has('AWS_ACCESS_KEY_ID') !== has('AWS_SECRET_ACCESS_KEY'))
-      errors.push('AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be set together.');
-    else if (!keyPair && !otherChain)
-      errors.push(
-        'SES credentials are missing: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY for an IAM user limited to ses:SendEmail.',
-      );
+  else {
+    if (value(env, 'IDENTITY_MAIL_FILE_ALLOW_PRODUCTION') !== 'true')
+      errors.push('IDENTITY_MAIL_FILE_ALLOW_PRODUCTION must be true for the on-prem file mailbox.');
+    const dir = value(env, 'IDENTITY_MAIL_FILE_DIR');
+    if (!dir || !dir.startsWith('/'))
+      errors.push('IDENTITY_MAIL_FILE_DIR must be an absolute path on a persistent volume.');
   }
 
   // --- Object storage: private S3 API (on-prem Garage) ----------------------

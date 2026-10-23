@@ -9,9 +9,12 @@ with every owner action, is [production-readiness.md](production-readiness.md).
   are Featherless, `FEATHERLESS_API_KEY`).
 - **Not AWS EC2/RDS.** [deploy-aws.md](deploy-aws.md) and `infra/aws/` remain
   as reference only.
-- **Email is Amazon SES.** The on-prem host sends identity mail through SES
-  (`IDENTITY_MAIL_DRIVER=ses`) with an IAM user's keys; see
-  [production-readiness.md §5](production-readiness.md#5-amazon-ses-production-email).
+- **Email is the spec's file mailbox, on this host.** The interest-feed spec
+  (`prp/2026-10-22-interest-feed`) says no email is sent, and the whole
+  deployment is on-prem, so there is no cloud mail service: Compose fixes
+  `IDENTITY_MAIL_DRIVER=file` and sign-in links are written to the `mailbox`
+  volume for the operator; see
+  [production-readiness.md §5](production-readiness.md#5-identity-mail-on-prem-file-mailbox).
 
 ## The stack
 
@@ -27,9 +30,9 @@ analysis) and `media-worker` (ffmpeg verify/prepare) — next to:
   `MEDIA_HOST` (→ Garage) with automatic certificates.
 
 Start order: postgres and garage healthy → `preflight` (`pnpm ops:preflight`
-refuses unsafe production settings, e.g. `IDENTITY_MAIL_DRIVER=file`, http
-`APP_BASE_URL`, missing `SESSION_SECRET` / `STORAGE_SIGNING_SECRET` / SES
-credentials) → `storage-init` (`pnpm ops:storage init`: bucket, CORS,
+refuses unsafe production settings, e.g. a mail driver other than the on-prem
+file mailbox, http `APP_BASE_URL`, missing `SESSION_SECRET` /
+`STORAGE_SIGNING_SECRET`) → `storage-init` (`pnpm ops:storage init`: bucket, CORS,
 write/read/delete probe) → `migrate` (`pnpm db:migrate`) → web, worker,
 media-worker. Every long-running service has a healthcheck and
 `restart: unless-stopped`. Web and Garage bind to 127.0.0.1; only Caddy
@@ -65,7 +68,7 @@ in the domain and provider config schemas is wired.
 | `STORAGE_SIGNING_SECRET` | yes | `openssl rand -hex 32`, different from `SESSION_SECRET`. |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | yes | The Garage app key. `STORAGE_DRIVER=s3`, `S3_FORCE_PATH_STYLE=true`, `S3_BUCKET` (default `culture-atlas-media`) and `S3_REGION` (default `us-east-1`, equal to `garage.toml`) are set by Compose. |
 | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN` | yes | Garage node secrets (`openssl rand -hex 32`, `openssl rand -base64 32`). |
-| `IDENTITY_MAIL_FROM`, `IDENTITY_MAIL_SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | yes | Amazon SES. `IDENTITY_MAIL_DRIVER` defaults to `ses` in Compose; the preflight refuses `file` and `none`. Optional `IDENTITY_MAIL_SES_CONFIGURATION_SET`. Web only. |
+| Identity mail | nothing to set | Compose fixes `IDENTITY_MAIL_DRIVER=file`, `IDENTITY_MAIL_FILE_ALLOW_PRODUCTION=true` and `IDENTITY_MAIL_FILE_DIR=/var/lib/culture-atlas/mail` on the `mailbox` volume (web only). The preflight refuses `ses` (a cloud service) and `none`. Read a link: `docker compose exec web sh -c 'ls -t /var/lib/culture-atlas/mail \| head'` then `cat` the newest file. |
 | `LLM_PROVIDER` + `CONCENTRATE_API_KEY` + `CONCENTRATE_PROFILE_FILE` / `CONCENTRATE_PROFILES_JSON` + `CONCENTRATE_QUALIFICATION_DIR` + `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` | for analysis | Concentrate is the v2 model gateway. Compose mounts `CONCENTRATE_CONFIG_DIR` (default `./fixtures/concentrate`) read-only at `/etc/culture-atlas/concentrate` and points the profile/qualification settings there. Missing pieces keep that role `unavailable` while capture, library and uploads keep working ([concentrate.md](concentrate.md)). Explicit rollback only: `LLM_PROVIDER=featherless` + `FEATHERLESS_API_KEY` or `anthropic` + `ANTHROPIC_API_KEY`. |
 | `QLOO_API_KEY` + `QLOO_API_URL` | for Qloo discoveries | Hackathon key; default URL `https://hackathon.api.qloo.com`. Without the key every Qloo capability is `unavailable`, never invented. `QLOO_REPLAY_FIXTURES` is forced `false`. |
 | `ELEVENLABS_API_KEY` | for Music Mode | Scribe transcription; absent key keeps it unavailable. |
@@ -109,7 +112,8 @@ copies every Garage object into the same snapshot directory. Restore drill:
   later chooses to pay; workers are not free.
 - **AWS** — [deploy-aws.md](deploy-aws.md), reference only.
 - **Local development** — `pnpm dev` with `.env` (filesystem storage and
-  `IDENTITY_MAIL_DRIVER=file` are fine there; production refuses both).
+  `IDENTITY_MAIL_DRIVER=file` are fine there; production refuses filesystem
+  storage and allows the file mailbox only with the on-prem opt-in).
 
 ## Sensor bridge on the operator's machine
 
