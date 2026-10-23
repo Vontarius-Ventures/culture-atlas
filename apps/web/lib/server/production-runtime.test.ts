@@ -297,6 +297,11 @@ describe('production identity runtime (G1, G2, G8)', () => {
       session_id,
     ]);
     expect(arm.rows[0]!.remote_arm_expires_at).toBeNull();
+    // Heartbeats merge capability keys: {photo} alone keeps video from sequence 1.
+    const caps = await db.query(`SELECT capabilities FROM mobile_installations WHERE account_id=$1`, [
+      accountId,
+    ]);
+    expect(caps.rows[0]!.capabilities).toMatchObject({ photo: true, video: true });
 
     const wearable = await capture(
       '/v2/device/wearables',
