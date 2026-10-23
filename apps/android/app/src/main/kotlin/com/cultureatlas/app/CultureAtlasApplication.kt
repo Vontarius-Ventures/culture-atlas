@@ -1,6 +1,8 @@
 package com.cultureatlas.app
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import com.cultureatlas.app.capture.AudioCaptureController
 import com.cultureatlas.app.capture.GlassesAdapter
 import com.cultureatlas.app.capture.GlassesFactory
@@ -16,14 +18,17 @@ import com.cultureatlas.capture.core.identity.AccountClient
 import com.cultureatlas.capture.core.identity.SessionManager
 import com.cultureatlas.capture.core.net.AtlasApi
 import com.cultureatlas.capture.core.net.AtlasHttp
+import com.cultureatlas.capture.core.net.PrivateMediaPolicy
 import com.cultureatlas.capture.core.upload.UploadEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 
-class CultureAtlasApplication : Application() {
+class CultureAtlasApplication : Application(), ImageLoaderFactory {
     lateinit var graph: AppGraph
         private set
 
@@ -33,6 +38,9 @@ class CultureAtlasApplication : Application() {
         // Ready-notice push (screen 17) when the build carries Firebase settings.
         AtlasMessagingService.initialize(this)
     }
+
+    /** Every AsyncImage uses the graph's loader (bearer for the owner's own media only). */
+    override fun newImageLoader(): ImageLoader = graph.imageLoader
 }
 
 /**
@@ -68,6 +76,29 @@ class AppGraph(val app: Application) {
     )
 
     val controller: AppController by lazy { AppController(this) }
+
+    /**
+     * Crossfading image loader. The owner's own renditions (`/v2/media/…` on
+     * this build's API host) get the installation bearer; nothing else does.
+     */
+    val imageLoader: ImageLoader by lazy {
+        ImageLoader.Builder(app)
+            .okHttpClient {
+                OkHttpClient.Builder()
+                    .addInterceptor { chain ->
+                        val request = chain.request()
+                        val url = request.url
+                        val private = PrivateMediaPolicy.needsBearer(url.scheme, url.host, url.port, url.encodedPath, BuildConfig.ATLAS_API_HOST)
+                        val token = if (private) runCatching { runBlocking { sessions.accessToken() } }.getOrNull() else null
+                        chain.proceed(
+                            if (token != null) request.newBuilder().header("Authorization", "Bearer $token").build() else request,
+                        )
+                    }
+                    .build()
+            }
+            .crossfade(true)
+            .build()
+    }
     val onboarding: OnboardingController by lazy { OnboardingController(api, scope) }
     val notices: ReadyNoticeCenter by lazy {
         ReadyNoticeCenter(app, api, sessions, scope, java.io.File(app.filesDir, "ready"))

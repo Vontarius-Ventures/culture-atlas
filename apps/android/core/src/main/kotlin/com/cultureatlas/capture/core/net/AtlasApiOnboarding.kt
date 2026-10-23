@@ -93,9 +93,15 @@ suspend fun AtlasApi.clearPushToken(): PushTokenResponse =
 
 suspend fun AtlasApi.media(id: String): MediaDetail = get("/v2/media/${id.lowercase()}", MediaDetail.serializer())
 
-suspend fun AtlasApi.startAnalysis(mediaId: String, generation: Int, key: UUID = UUID.randomUUID()): AnalysisStatus =
+/** [mode] is "photo" for a photo and "sampled_video" for a video (the server refuses a mismatch). */
+suspend fun AtlasApi.startAnalysis(
+    mediaId: String,
+    generation: Int,
+    key: UUID = UUID.randomUUID(),
+    mode: String = "photo",
+): AnalysisStatus =
     call(
-        "POST", "/v2/media/${mediaId.lowercase()}/analysis", AnalyzeMediaRequest(expectedGeneration = generation),
+        "POST", "/v2/media/${mediaId.lowercase()}/analysis", AnalyzeMediaRequest(mode = mode, expectedGeneration = generation),
         AnalyzeMediaRequest.serializer(), AnalysisStatus.serializer(), idempotencyKey = key,
     )
 
