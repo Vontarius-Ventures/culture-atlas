@@ -155,7 +155,20 @@ export async function runDemo(caller: ToolCaller, options: DemoOptions = {}): Pr
     { item_id: origin.id, collection_id: chosen.id },
     (d) => `started related discovery job ${d.job_id}${d.reused ? ' (reused)' : ''}`,
   );
-  if (related.ok) relatedJob = await waitForJob(related.data.job_id);
+  if (related.ok) {
+    relatedJob = await waitForJob(related.data.job_id);
+    // Read what the job found (related[] on the item), not just "job complete".
+    await call<{ related?: { title: string; category?: string | null }[]; related_state?: string }>(
+      'get_item',
+      { item_id: origin.id, collection_id: chosen.id },
+      (d) => {
+        const found = d.related ?? [];
+        return found.length
+          ? `related to “${origin.title}”: ${found.slice(0, 6).map((r) => `${r.title}${r.category ? ` [${r.category}]` : ''}`).join(', ')}`
+          : `no related items yet (${d.related_state ?? 'unknown'})`;
+      },
+    );
+  }
 
   // 4. Movie night from 2-5 mixed items.
   const ranked = [...items].sort((a, b) => PLAN_KIND_PRIORITY.indexOf(a.kind) - PLAN_KIND_PRIORITY.indexOf(b.kind));

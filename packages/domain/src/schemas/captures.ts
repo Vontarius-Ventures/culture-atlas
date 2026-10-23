@@ -131,3 +131,29 @@ export const CorrectionResponse = z.object({
   pending_analysis_version: z.number().int().positive(),
 });
 export type CorrectionResponse = z.infer<typeof CorrectionResponse>;
+
+/** GET /v1/captures — newest-first compiled capture summaries (no photos, no private reasoning). */
+export const CapturesQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+export type CapturesQuery = z.infer<typeof CapturesQuery>;
+
+export const CaptureListEntry = z.object({
+  id: Uuid,
+  source: CaptureSource,
+  status: CaptureStatus,
+  received_at: Timestamp,
+  /** Compiled analysis title, when an analysis is active. */
+  title: z.string().nullable(),
+  interpretation: z.string().nullable(),
+  /** Detected references (names only; open with explore_reference). */
+  references: z.array(z.object({ id: Uuid, name: z.string(), type: ReferenceType })),
+  /** The capture's own library item, when one exists. */
+  discovery_item_id: Uuid.nullable(),
+  /** Recommended discovery items, best first (open with get_item). */
+  recommendation_item_ids: z.array(Uuid),
+});
+export type CaptureListEntry = z.infer<typeof CaptureListEntry>;
+
+export const CapturesListResponse = z.object({ items: z.array(CaptureListEntry) });
+export type CapturesListResponse = z.infer<typeof CapturesListResponse>;

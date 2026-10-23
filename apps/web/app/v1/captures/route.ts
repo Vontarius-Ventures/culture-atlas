@@ -2,6 +2,8 @@ import { AppError, captures, invalidInput } from '@culture-atlas/domain';
 import { CreateCaptureJsonRequest, CreateCaptureMultipartFields, ROUTES } from '@culture-atlas/domain/schemas';
 import { apiRoute, formFields, readImageField } from '@/lib/server/http';
 
+export const GET = apiRoute(ROUTES.listCaptures, ({ ctx, query }) => captures.listCaptures(ctx, query));
+
 export const POST = apiRoute(ROUTES.createCapture, async ({ ctx, body }) => {
   if (body.kind === 'multipart') {
     const fields = CreateCaptureMultipartFields.safeParse(formFields(body.form));

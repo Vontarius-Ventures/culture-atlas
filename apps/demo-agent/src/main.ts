@@ -49,6 +49,8 @@ function instructionPrompt(plan: { film: string; title: string | null }): string
   );
 }
 
+const featherlessModel = () => env('DEMO_AGENT_MODEL') ?? 'Qwen/Qwen2.5-72B-Instruct';
+
 /** Featherless serves an OpenAI-compatible Chat Completions API. */
 async function featherlessInstruction(plan: { film: string; title: string | null }): Promise<string> {
   const base = (env('FEATHERLESS_BASE_URL') ?? 'https://api.featherless.ai/v1').replace(/\/+$/, '');
@@ -56,12 +58,22 @@ async function featherlessInstruction(plan: { film: string; title: string | null
     method: 'POST',
     headers: { Authorization: `Bearer ${env('FEATHERLESS_API_KEY')}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: env('DEMO_AGENT_MODEL') ?? 'google/gemma-3-27b-it',
+      // Ungated on Featherless (google/gemma-3-27b-it is gated: 403 model_gated_no_access on 2026-10-23).
+      model: featherlessModel(),
       max_tokens: 120,
       messages: [{ role: 'user', content: instructionPrompt(plan) }],
     }),
   });
-  if (!res.ok) throw new Error(`featherless API error ${res.status}`);
+  if (!res.ok) {
+    let reason = '';
+    try {
+      const body = (await res.json()) as { error?: { code?: string; type?: string } };
+      reason = body.error?.code ?? body.error?.type ?? '';
+    } catch {
+      // Body is not JSON; the status alone is reported.
+    }
+    throw new Error(`featherless ${featherlessModel()} API error ${res.status}${reason ? ` (${reason})` : ''}`);
+  }
   const json = (await res.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
   const text = (json.choices?.[0]?.message?.content ?? '').trim();
   if (!text) throw new Error('empty model reply');

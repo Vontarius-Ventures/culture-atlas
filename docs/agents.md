@@ -29,6 +29,8 @@ The response contains `credential` (`cat_<prefix>_<secret>`), shown exactly once
   - Global unsave, hide/unhide and capture deletion are refused (`scope_denied`).
   - The agent can add or remove memberships in granted collections with `collections:write`.
 - Only `collections:write` together with whole-library access can create collections.
+- `discover_related` needs no extra scope (it reads items already in the grant), but it starts a bounded Qloo job that writes related discovery items to the account. It always counts as a mutation against the per-connection budget (10 mutations and 60 reads a minute, REST v1 and MCP alike), so a read-only grant cannot run unbounded paid discovery.
+- Every successful v1 or MCP mutation (collections, memberships, preferences, related discovery, plans, captures, uploads) is listed in the owner's agent activity (`GET /v2/agent-activity`) with the collection, plan or item name.
 - `PATCH /v1/agent-connections/{id}` with `{ "collection_ids": [...] }` changes the grant. Removing a collection takes effect on the agent's next call, including for plans that depend on it.
 - `DELETE /v1/agent-connections/{id}` revokes the connection immediately. The next REST or MCP call fails with `401 token_revoked`. Expired tokens fail with `401 token_expired`.
 
@@ -36,7 +38,10 @@ The response contains `credential` (`cat_<prefix>_<secret>`), shown exactly once
 
 - Endpoint: `POST https://<your deployment>/mcp` (Streamable HTTP, stateless, JSON responses; `GET` returns 405).
 - Header: `Authorization: Bearer cat_<prefix>_<secret>`.
-- Tools: `analyze_capture`, `get_job`, `get_capture`, `explore_reference`, `get_taste`, `record_preference`, `list_collections`, `get_collection`, `create_collection`, `add_collection_item`, `remove_collection_item`, `discover_related`, `create_plan`, `get_plan`, `replace_plan_section`. Inputs and outputs mirror the REST schemas.
+- Tools (v1): `analyze_capture`, `get_job`, `get_capture`, `list_captures`, `get_item`, `get_discoveries`, `list_saved`, `explore_reference`, `get_taste`, `record_preference`, `list_collections`, `get_collection`, `create_collection`, `add_collection_item`, `remove_collection_item`, `discover_related`, `create_plan`, `get_plan`, `list_plans`, `replace_plan_section`. Media and devices (v2): `list_media`, `get_media`, `begin_upload`, `complete_upload`, `analyze_media`, `get_operation`, `get_setup`, `request_capture`, `get_preferences`, `update_preferences`. Inputs and outputs mirror the REST schemas.
+- Reading results: `list_captures` (newest captures with analysis titles, references and recommended item ids), `get_item` (an item plus the `related[]` that `discover_related` found), `get_discoveries` (the interest feed), `list_saved`, `list_plans`.
+- `tools/list` shows only the tools this connection's scopes allow; each description ends with `Requires: <scopes>`. Error text names the missing scope or the invalid fields (e.g. `invalid_input: The request is not valid. (target_id: Required)`).
+- Phone capture: with `devices:command`, `get_setup` returns each permitted installation's `id` and, while the owner has armed it for this connection, `armed_session {session_id, generation, mode, source, remote_arm_expires_at}`; pass these to `request_capture`. If the owner revokes the agent after the phone claimed a command, the phone's executing acknowledgement returns the command `cancelled` with `error_code: agent_revoked` (never a 401 to the phone).
 - Job-starting tools return a `job_id` immediately. Poll `get_job` until the state is `complete`, `partial`, `failed` or `cancelled`.
 - Photos are uploaded with `POST /v1/uploads` (multipart, same bearer token, `captures:write`). Then pass the `upload_id` to `analyze_capture`. URLs and file paths are not accepted.
 - Errors: tool results with `isError: true` and `structuredContent.error = {code, message, retryable, request_id}`. These are the same codes as REST. Records outside the grant always look like `not_found`.

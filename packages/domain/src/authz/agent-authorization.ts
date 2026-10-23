@@ -53,6 +53,62 @@ export async function agentActivity(ctx: ServiceContext, action: string, targetI
   );
 }
 
+/** v1 mutations an owner should see in agent activity, by REST route path + method. */
+const V1_ACTIVITY: Record<string, string> = {
+  'POST /v1/uploads': 'captures.upload',
+  'POST /v1/captures': 'captures.create',
+  'POST /v1/captures/{id}/corrections': 'captures.correct',
+  'DELETE /v1/captures/{id}': 'captures.delete',
+  'POST /v1/preferences': 'preferences.record',
+  'POST /v1/items/{id}/discoveries': 'items.discover_related',
+  'POST /v1/collections': 'collections.create',
+  'PATCH /v1/collections/{id}': 'collections.update',
+  'DELETE /v1/collections/{id}': 'collections.delete',
+  'PUT /v1/collections/{id}/items/{item_id}': 'collections.add_item',
+  'DELETE /v1/collections/{id}/items/{item_id}': 'collections.remove_item',
+  'PUT /v1/collections/{id}/order': 'collections.reorder',
+  'POST /v1/plans': 'plans.create',
+  'POST /v1/plans/{id}/replacements': 'plans.replace_section',
+  'DELETE /v1/plans/{id}': 'plans.delete',
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function firstId(...candidates: unknown[]): string | undefined {
+  for (const c of candidates) if (typeof c === 'string' && UUID_RE.test(c)) return c;
+  return undefined;
+}
+
+/**
+ * Records a successful v1 (REST or MCP) agent mutation in agent_activity, so
+ * the owner sees what an agent changed in their library. v2 services record
+ * their own activity. Target: the collection when one is involved (so the
+ * owner sees its name), else the plan, item or created record.
+ */
+export async function recordAgentMutation(
+  ctx: ServiceContext,
+  route: { method: string; path: string },
+  input: { params?: unknown; body?: unknown; args?: unknown },
+  result: unknown,
+): Promise<void> {
+  if (ctx.principal.kind !== 'agent' || ctx.principal.purpose !== 'agent') return;
+  const action = V1_ACTIVITY[`${route.method} ${route.path}`];
+  if (!action) return;
+  const p = (input.params ?? {}) as Record<string, unknown>;
+  const b = (input.body ?? {}) as Record<string, unknown>;
+  const a = (input.args ?? {}) as Record<string, unknown>;
+  const r = (result ?? {}) as Record<string, unknown>;
+  const collectionScoped = route.path.startsWith('/v1/collections');
+  const target = collectionScoped
+    ? firstId(p.id, a.collection_id, r.id)
+    : firstId(a.plan_id, a.collection_id, b.collection_id, r.plan_id, r.capture_id, r.upload_id, p.id, a.item_id, a.target_id, b.target_id, r.id);
+  try {
+    await agentActivity(ctx, action, target);
+  } catch (err) {
+    // Activity is an audit aid; it never fails the mutation that already committed.
+    console.error('[agent-activity] could not record', action, err instanceof Error ? err.message : err);
+  }
+}
+
 /**
  * agent_api_enabled is enforced on every agent request (REST v1/v2, MCP,
  * media gateway, events), so an operator kill stops agent access during an

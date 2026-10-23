@@ -230,6 +230,19 @@ export const EnrolledCaptureDeviceResponse = z.object({
   }),
 });
 export const SafeCaptureDeviceSetup = z.object({
+  /** Installation id: only for connections holding devices:command on this installation (pass to request_capture). */
+  id: z.string().uuid().optional(),
+  /** A capture session the owner armed on the phone for THIS connection (request_capture needs session_id + generation). */
+  armed_session: z
+    .object({
+      session_id: z.string().uuid(),
+      generation: z.number().int().positive(),
+      mode: z.string(),
+      source: z.string(),
+      remote_arm_expires_at: DateTime,
+    })
+    .nullable()
+    .optional(),
   alias: z.string(),
   app_version: z.string(),
   last_seen_at: DateTime,

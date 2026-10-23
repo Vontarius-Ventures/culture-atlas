@@ -13,6 +13,9 @@ import type { JobRecord } from '../jobs/types';
 import { normalizeImage } from '../media/image';
 import { ownerOf, ownerPredicate, type Owner } from '../principal';
 import type {
+  CaptureListEntry,
+  CapturesListResponse,
+  CapturesQuery,
   CaptureResponse,
   CreateCaptureJsonRequest,
   CreateCaptureMultipartFields,
@@ -625,6 +628,71 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
     available_categories: available,
     job_id: jobRes.rows[0]?.id ?? null,
   };
+}
+
+/**
+ * GET /v1/captures — the principal's newest captures as compiled summaries:
+ * analysis title, detected references and recommended item ids (never the
+ * photo or private reasoning). Selected-collection agents see only captures
+ * in their live grant or created by this connection (same rule as getCapture).
+ */
+export async function listCaptures(ctx: ServiceContext, query: CapturesQuery): Promise<CapturesListResponse> {
+  requireScopes(ctx.principal, 'captures:read');
+  const p = ctx.principal;
+  const owner = ownerOf(p);
+  const own = ownerPredicate(owner, 'c', 1);
+  const params: unknown[] = [...own.params];
+  let grant = '';
+  if (p.kind === 'agent' && !hasWholeLibrary(p)) {
+    params.push(p.libraryAccess === 'selected_collections' ? [...p.allowedCollectionIds] : [], p.connectionId);
+    grant = ` AND ${agentCaptureGrantSql('c', params.length - 1, params.length)}`;
+  }
+  params.push(query.limit);
+  const { rows } = await ctx.db.query<{
+    id: string;
+    source: CaptureSource;
+    status: CaptureListEntry['status'];
+    received_at: Date;
+    active_analysis_id: string | null;
+    title: string | null;
+    interpretation: string | null;
+    discovery_item_id: string | null;
+  }>(
+    `SELECT c.id, c.source, c.status, c.received_at, c.active_analysis_id, a.title, a.interpretation,
+            (SELECT di.id FROM discovery_items di WHERE di.capture_id = c.id AND di.kind = 'capture' LIMIT 1) AS discovery_item_id
+       FROM captures c LEFT JOIN analyses a ON a.id = c.active_analysis_id
+      WHERE ${own.sql} AND c.deleted_at IS NULL${grant}
+      ORDER BY c.received_at DESC, c.id DESC LIMIT $${params.length}`,
+    params,
+  );
+  const ownerParam = owner.kind === 'account' ? owner.accountId : owner.sessionId;
+  const items: CaptureListEntry[] = [];
+  for (const row of rows) {
+    let references: CaptureListEntry['references'] = [];
+    let recommendationIds: string[] = [];
+    if (row.active_analysis_id) {
+      references = (await loadAnalysisReferences(ctx.db, row.active_analysis_id)).map((r) => ({ id: r.id, name: r.name, type: r.type }));
+      const recs = await ctx.db.query<{ discovery_item_id: string }>(
+        `SELECT r.discovery_item_id FROM recommendations r JOIN discovery_items di ON di.id = r.discovery_item_id
+          WHERE r.analysis_id = $1 AND ${exclusionFilterSql(owner, 'di', 2)}
+          GROUP BY r.discovery_item_id ORDER BY min(r.rank) LIMIT $3`,
+        [row.active_analysis_id, ownerParam, LIMITS.recommendationsPerAnalysis],
+      );
+      recommendationIds = recs.rows.map((r) => r.discovery_item_id);
+    }
+    items.push({
+      id: row.id,
+      source: row.source,
+      status: row.status,
+      received_at: iso(row.received_at),
+      title: row.title,
+      interpretation: row.interpretation,
+      references,
+      discovery_item_id: row.discovery_item_id,
+      recommendation_item_ids: recommendationIds,
+    });
+  }
+  return { items };
 }
 
 // ---------------------------------------------------------------------------
