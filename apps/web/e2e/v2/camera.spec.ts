@@ -51,7 +51,11 @@ test.describe('camera', () => {
       path: path.join(DIR, `03-camera-review-${testInfo.project.name}.png`),
     });
     await page.getByRole('button', { name: 'Keep' }).click();
-    await expect(page.getByText(/In your library|Uploaded|Uploading|Saved on this/)).toBeVisible();
+    // The visible status line only: the static note "Uploading does not start
+    // analysis." and the screen-reader copy also match, which made this flaky.
+    await expect(
+      page.locator('p.camera__status[role="status"]'),
+    ).toHaveText(/In your library|Uploaded|Uploading|Saved on this/);
     await expect(page.getByText('In your library')).toBeVisible({ timeout: 15_000 });
     const create = v2.log.find((r) => r.method === 'POST' && r.path === '/v2/uploads');
     expect(create?.body).toMatchObject({ kind: 'video', source: 'browser_camera' });
