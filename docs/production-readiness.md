@@ -3,9 +3,9 @@
 Production for culture atlas is **on-prem**: the Compose stack in
 `docker-compose.yml` on the owner's own hardware. Render (`render.yaml`) stays
 unapplied and AWS (`infra/aws`, [deploy-aws.md](deploy-aws.md)) is not the
-production target. Identity mail is the spec's **file mailbox** on the same
-host: no email is sent and no cloud mail service is used. Both are owner
-decisions; this checklist does not reopen them.
+production target. Production email is **Amazon SES**: the on-prem host sends
+through SES with an IAM user's keys. Both are owner decisions; this checklist
+does not reopen them.
 
 Status key: **done** (in the repository and checked), **needs-owner-action**
 (the exact step is below; only the owner can do it), **blocked** (waiting on
@@ -34,8 +34,8 @@ Start order is enforced: postgres and garage healthy → `preflight` →
 `storage-init` → `migrate` → web, worker, media-worker. If the preflight fails,
 nothing else starts and its log lists the setting names to fix (never values).
 
-Each service gets only the settings it reads (no blanket `env_file`): the mail
-settings and the native-link settings reach `web` only; model, Qloo, ElevenLabs and push
+Each service gets only the settings it reads (no blanket `env_file`): SES keys
+and the native-link settings reach `web` only; model, Qloo, ElevenLabs and push
 keys reach `web` and `worker`; the media worker gets database, storage and
 media settings. `scripts/compose-self-host.test.ts` checks that every setting in
 the domain and provider config schemas is wired.
@@ -59,7 +59,7 @@ https too.
 | Docker | needs-owner-action | Docker Engine with the Compose v2 plugin. Enable the Docker service at boot (`systemctl enable --now docker`) so `restart: unless-stopped` brings the stack back after a reboot. |
 | Checkout | needs-owner-action | Clone the repository to e.g. `/opt/culture-atlas` (owned by root, mode 0750). `.env` lives next to `docker-compose.yml`, mode 0600. |
 | Network | needs-owner-action | Static LAN address for the host; router forwards TCP 80, TCP 443 and UDP 443 to it. Nothing else is exposed: web (3000) and Garage (3900) bind to 127.0.0.1. |
-| Clock | needs-owner-action | NTP on (`timedatectl set-ntp true`): SigV4 presigned URLs, sessions and sign-in link expiry fail with clock skew. |
+| Clock | needs-owner-action | NTP on (`timedatectl set-ntp true`): SigV4 presigned URLs, sessions and SES requests fail with clock skew. |
 | Firewall | needs-owner-action | Allow 80/tcp, 443/tcp, 443/udp and SSH from your admin network only. Docker publishes only those ports plus the two loopback ones. |
 | ffmpeg in the image | done | `Dockerfile` runtime stage installs Debian bookworm `ffmpeg`; the media worker self-tests it at startup and its healthcheck runs `ffprobe -version`. |
 
@@ -74,7 +74,7 @@ refuses the second):
 | Group | Names |
 | --- | --- |
 | Compose-required | `APP_BASE_URL`, `APP_HOST`, `MEDIA_HOST`, `ACME_EMAIL`, `POSTGRES_PASSWORD`, `SESSION_SECRET`, `STORAGE_SIGNING_SECRET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN` |
-| Preflight-required | none beyond the Compose group: Compose fixes the file mailbox settings and the preflight checks them |
+| Preflight-required | `IDENTITY_MAIL_FROM`, `IDENTITY_MAIL_SES_REGION` (or `AWS_REGION`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (`IDENTITY_MAIL_DRIVER` defaults to `ses` in Compose) |
 | Live features (missing = that capability honestly `unavailable`) | `CONCENTRATE_API_KEY`, `QLOO_API_KEY`, `ELEVENLABS_API_KEY`, `WIKIMEDIA_USER_AGENT`, `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` (Compose defaults 5 / 1 / 1) |
 | Native app links | `APPLE_TEAM_ID`, `ANDROID_ASSETLINKS_SHA256` |
 | Push (when `PUSH_DRIVER=live`) | `PUSH_APNS_TEAM_ID`, `PUSH_APNS_KEY_ID`, `PUSH_APNS_PRIVATE_KEY`, `PUSH_APNS_TOPIC`, `PUSH_FCM_PROJECT_ID`, `PUSH_FCM_CLIENT_EMAIL`, `PUSH_FCM_PRIVATE_KEY`, `CREDENTIAL_ENCRYPTION_KEY` |
@@ -101,7 +101,8 @@ openssl rand -base64 32   # GARAGE_ADMIN_TOKEN, CREDENTIAL_ENCRYPTION_KEY
 | Item | Status | Action |
 | --- | --- | --- |
 | `SESSION_SECRET` required | done | Compose `:?` + preflight (≥ 32 chars, not the dev placeholder) + `loadDomainConfig` in the app. |
-| Mail driver pinned to the on-prem file mailbox | done | Preflight fails the whole stack unless `IDENTITY_MAIL_DRIVER=file` with the production opt-in and an absolute mailbox path. (Inside the app a misconfigured driver only logs `identity_mail_misconfigured` and answers sign-in with 503; the preflight turns that into a loud startup failure.) |
+| `IDENTITY_MAIL_DRIVER=file` refused | done | Preflight fails the whole stack with "refused in production; use ses". (Inside the app `createFileIdentityMail` also throws in production, but `runtime.ts` only logs `identity_mail_misconfigured` and answers sign-in with 503; the preflight turns that into a loud startup failure.) |
+| SES required | done | Preflight requires `ses`, a sender, a region and SES credentials. |
 | Storage signing secret | done | Compose `:?` + preflight (≥ 32 chars, different from `SESSION_SECRET`). |
 | Private S3 storage | done | `STORAGE_DRIVER=s3` fixed in Compose, path style on, https public endpoint checked by the preflight. |
 | Migrations before web | done | `migrate` one-shot; web/worker/media-worker wait for it to complete. |
@@ -134,18 +135,16 @@ between releases: check `garage --help` for v2.4.1 if a command is refused.
 Bucket versioning is off (Garage default), which matches [privacy.md](privacy.md):
 deleted media is gone, not kept as old versions.
 
-### 5. Identity mail (on-prem file mailbox)
-
-The interest-feed spec (`prp/2026-10-22-interest-feed`) decides the mail
-provider: a file mailbox, so no email is sent. The deployment is entirely
-on-prem, so no cloud mail service (Amazon SES) is used.
+### 5. Amazon SES (production email)
 
 | Item | Status | Action |
 | --- | --- | --- |
-| File mailbox in production | done | `createFileIdentityMail` runs with `NODE_ENV=production` only when `IDENTITY_MAIL_FILE_ALLOW_PRODUCTION=true`; Compose fixes that, `IDENTITY_MAIL_DRIVER=file` and `IDENTITY_MAIL_FILE_DIR=/var/lib/culture-atlas/mail` on the `mailbox` volume (owned by `node`, mode 700; each message 0600). |
-| Preflight | done | Refuses `ses` (cloud), `none`, a missing opt-in and a relative mailbox path. |
-| Deliver a sign-in link | needs-owner-action (each sign-in) | `docker compose exec web sh -c 'ls -t /var/lib/culture-atlas/mail \| head'`, `cat` the newest file and open its `callback` on the phone. Links are single-use and short-lived; never paste them into chat or tickets. |
-| Live sign-in | needs-owner-action | After `up`, sign in at `https://<APP_HOST>/identity`, open the link from the mailbox and confirm it works once. |
+| SES code path | done | `createSesIdentityMail` (SES v2 `SendEmail`); on-prem credentials come from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` through the SDK default chain. |
+| Verify the sending domain | needs-owner-action | AWS console → SES (region = `IDENTITY_MAIL_SES_REGION`) → Verified identities → Create identity → Domain (the domain of `IDENTITY_MAIL_FROM`). Publish the 3 Easy DKIM CNAME records at your DNS host. Add SPF (`v=spf1 include:amazonses.com ~all`, merged with any existing SPF) and a custom MAIL FROM subdomain (MX + SPF records SES shows). Add DMARC (`_dmarc` TXT, start with `p=none; rua=mailto:<you>`). Wait for "Verified". |
+| IAM user for the host | needs-owner-action | Create an IAM user with only `ses:SendEmail` and `ses:SendRawEmail` on `arn:aws:ses:<region>:<account>:identity/<domain>` (add a `ses:FromAddress` condition for the exact sender). Create an access key; put it in `.env` as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. Rotate it at least yearly. |
+| Leave the SES sandbox | needs-owner-action | SES → Account dashboard → Request production access (transactional, sign-in links only, expected volume, bounce/complaint handling). Until approved, mail only reaches verified addresses. |
+| Bounces and complaints | needs-owner-action (recommended) | Create a configuration set with an SNS destination for bounces/complaints; set `IDENTITY_MAIL_SES_CONFIGURATION_SET`. |
+| Live send | blocked on the three steps above | After `up`, sign in at `https://<APP_HOST>/identity` with a verified address and confirm the link arrives and works once. |
 
 ### 6. DNS and TLS
 
@@ -229,5 +228,5 @@ produces a capture and a job; a photo kept from the iPhone reaches `ready`.
   `scripts/compose-self-host.test.ts`, `scripts/production-env.test.ts`,
   `scripts/object-store.test.ts`, `pnpm build`, typecheck and lint.
 - Garage `v2.4.1` was not run; its CLI commands above follow Garage's
-  documented syntax. Caddy, the file mailbox, DNS, certificates and a real backup/restore
+  documented syntax. Caddy, SES, DNS, certificates and a real backup/restore
   on the host are untested until the owner performs the steps above.

@@ -102,7 +102,7 @@ All names are in [.env.example](.env.example) with defaults in comments. The one
 | `APP_BASE_URL` | production | Public URL; cookies are `Secure` when it is https |
 | `CONCENTRATE_API_KEY`, `CONCENTRATE_PROFILES_JSON`, `CONCENTRATE_QUALIFICATION_DIR`, `MODEL_*_SPEND_LIMIT_USD` | photo/video analysis, research, plans | Concentrate is the default gateway. All of these are required before any role is ready ([docs/concentrate.md](docs/concentrate.md)). |
 | `LLM_PROVIDER`, `FEATHERLESS_API_KEY` / `ANTHROPIC_API_KEY` | explicit rollback only | `featherless` or `anthropic`. Models: `VLM_MODEL`, `RESEARCH_MODEL`, `COMPOSER_MODEL` |
-| `IDENTITY_MAIL_DRIVER` (`ses` / `file` / `none`), `IDENTITY_MAIL_FILE_DIR`, `IDENTITY_MAIL_FILE_ALLOW_PRODUCTION` | v2 email sign-in | `file` writes links to a mailbox directory (no email sent); on-prem production uses it with `IDENTITY_MAIL_FILE_ALLOW_PRODUCTION=true` |
+| `IDENTITY_MAIL_DRIVER` (`ses` / `file` / `none`), `IDENTITY_MAIL_FROM` | v2 email sign-in | `file` is local only; production uses Amazon SES |
 | `FEATURE_KILL_SWITCHES`, `META_GLASSES_*` | v2 feature flags | Server-side flags; kill switches can only turn features off (`pnpm ops:kill`) |
 | `QLOO_API_KEY`, `QLOO_API_URL`, `QLOO_MAX_CONCURRENCY` | related discoveries, onboarding search, taste seed | Default URL `https://hackathon.api.qloo.com`; at most `QLOO_MAX_CONCURRENCY` (default 3) requests in flight per process, shared by every Qloo caller |
 | `ONBOARDING_REQUIRED`, `TASTE_SEED_ENABLED`, `WHILE_WE_LOOK_ENABLED` | amendment 2.2 | Default on; killable like other flags. `fast_analysis_two_stage` turns on only with a qualified `vision_photo_enrich` profile |
@@ -159,7 +159,7 @@ The spec requires at least one discovery per live demo path to trace back to a s
 
 One Docker image runs the web app, the worker and the media worker.
 
-- **Production (on-prem, the owner's hardware):** `docker-compose.yml` runs PostgreSQL 16, Garage (S3-compatible media storage), Caddy (TLS), a preflight that refuses unsafe settings, migrations, web, worker and media worker. Sign-in links go to an on-prem file mailbox (the spec's choice; no email is sent). See [docs/deploy.md](docs/deploy.md) and the go-live checklist [docs/production-readiness.md](docs/production-readiness.md). It has not been booted yet.
+- **Production (on-prem, the owner's hardware):** `docker-compose.yml` runs PostgreSQL 16, Garage (S3-compatible media storage), Caddy (TLS), a preflight that refuses unsafe settings, migrations, web, worker and media worker. Email goes through Amazon SES. See [docs/deploy.md](docs/deploy.md) and the go-live checklist [docs/production-readiness.md](docs/production-readiness.md). It has not been booted yet.
 - **Render (not used):** `render.yaml` is a paid blueprint and stays unapplied.
 - **AWS (reference only, not the production target):** see [docs/deploy-aws.md](docs/deploy-aws.md) and `infra/aws/`. The CloudFormation template creates:
   - one t3.micro with Caddy for HTTPS;
@@ -184,7 +184,7 @@ These are written and, where possible, unit- or contract-tested, but have not ru
 - **Onboarding images.** The 12 image picks are generated mock photos, not licensed photography ([fixtures/images/LICENSES.md](fixtures/images/LICENSES.md)).
 - **ONB-04 on a deployed demo.** "First category within 5 s p50" was measured only locally, against live Qloo on the hackathon key: 1.4 s on October 18, and a p50 of about 6.4 s over 4 runs on October 19. It was never measured on a deployed demo.
 - **Browser video playback.** MP4 playback in a real browser was not observed: Playwright's Chromium has no H.264. The stream was decoded with ffmpeg instead.
-- **External services.** S3 (multipart, CORS, ListMultipartUploads), APNs/FCM push and the AWS stack were tested against local fakes only.
+- **External services.** S3 (multipart, CORS, ListMultipartUploads), SES email, APNs/FCM push and the AWS stack were tested against local fakes only.
 - **Release qualification.** There is no store or SDK eligibility evidence, no independent two-user trial and no cloud restore drill.
 
 ## Documentation

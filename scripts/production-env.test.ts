@@ -12,9 +12,11 @@ function good(): Record<string, string> {
     SESSION_SECRET: SECRET,
     STORAGE_SIGNING_SECRET: SIGNING,
     DATABASE_URL: 'postgres://culture_atlas:not-the-dev-password@postgres:5432/culture_atlas',
-    IDENTITY_MAIL_DRIVER: 'file',
-    IDENTITY_MAIL_FILE_ALLOW_PRODUCTION: 'true',
-    IDENTITY_MAIL_FILE_DIR: '/var/lib/culture-atlas/mail',
+    IDENTITY_MAIL_DRIVER: 'ses',
+    IDENTITY_MAIL_FROM: 'culture atlas <no-reply@example.org>',
+    IDENTITY_MAIL_SES_REGION: 'us-east-1',
+    AWS_ACCESS_KEY_ID: 'fake-access-key-id',
+    AWS_SECRET_ACCESS_KEY: 'fake-secret',
     STORAGE_DRIVER: 's3',
     S3_ENDPOINT: 'https://media.example.org',
     S3_BUCKET: 'culture-atlas-media',
@@ -48,13 +50,15 @@ describe('production preflight (on-prem Compose)', () => {
     expect(errorsFor({ NODE_ENV: 'development' })).toMatch(/NODE_ENV must be "production"/);
   });
 
-  it('requires the on-prem file mailbox from the spec and refuses cloud mail', () => {
-    expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'ses' })).toMatch(/IDENTITY_MAIL_DRIVER must be file .*ses is a cloud service/);
-    expect(errorsFor({ IDENTITY_MAIL_DRIVER: '' })).toMatch(/IDENTITY_MAIL_DRIVER must be file/);
-    expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'none' })).toMatch(/IDENTITY_MAIL_DRIVER must be file/);
-    expect(errorsFor({ IDENTITY_MAIL_FILE_ALLOW_PRODUCTION: '' })).toMatch(/IDENTITY_MAIL_FILE_ALLOW_PRODUCTION must be true/);
-    expect(errorsFor({ IDENTITY_MAIL_FILE_DIR: '' })).toMatch(/IDENTITY_MAIL_FILE_DIR must be an absolute path/);
-    expect(errorsFor({ IDENTITY_MAIL_FILE_DIR: '.data/dev-mail' })).toMatch(/IDENTITY_MAIL_FILE_DIR must be an absolute path/);
+  it('refuses the file identity mailbox and requires SES', () => {
+    expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'file' })).toMatch(/IDENTITY_MAIL_DRIVER=file .* refused in production/);
+    expect(errorsFor({ IDENTITY_MAIL_DRIVER: '' })).toMatch(/IDENTITY_MAIL_DRIVER must be ses/);
+    expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'none' })).toMatch(/IDENTITY_MAIL_DRIVER must be ses/);
+    expect(errorsFor({ IDENTITY_MAIL_FROM: '' })).toMatch(/IDENTITY_MAIL_FROM is required/);
+    expect(errorsFor({ IDENTITY_MAIL_SES_REGION: '' })).toMatch(/IDENTITY_MAIL_SES_REGION/);
+    expect(errorsFor({ IDENTITY_MAIL_SES_REGION: '', AWS_REGION: 'eu-west-1' })).toBe('');
+    expect(errorsFor({ AWS_ACCESS_KEY_ID: '', AWS_SECRET_ACCESS_KEY: '' })).toMatch(/SES credentials are missing/);
+    expect(errorsFor({ AWS_SECRET_ACCESS_KEY: '' })).toMatch(/must be set together/);
   });
 
   it('requires real session and storage signing secrets', () => {
@@ -105,7 +109,7 @@ describe('production preflight (on-prem Compose)', () => {
       ...good(),
       SESSION_SECRET: 'short-secret-value',
       APP_BASE_URL: 'http://leaky.example.org',
-      IDENTITY_MAIL_DRIVER: 'ses',
+      IDENTITY_MAIL_DRIVER: 'file',
     });
     const text = [...report.errors, ...report.warnings].join('\n');
     expect(text).not.toContain('short-secret-value');

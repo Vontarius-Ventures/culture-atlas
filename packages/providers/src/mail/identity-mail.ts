@@ -109,22 +109,15 @@ export function createSesIdentityMail(options: SesIdentityMailOptions): Identity
 }
 
 /**
- * File mailbox: each message is written as a 0600 JSON file and nothing is
- * emailed. It is the spec's mail provider (prp/2026-10-22-interest-feed: "this
- * build uses a file mailbox; no email is sent"); the operator opens the link.
- * In production it runs only with the explicit on-prem opt-in
- * (IDENTITY_MAIL_FILE_ALLOW_PRODUCTION=true), so a stray development setting
- * still fails closed.
+ * Development-only mailbox: each message is written as a 0600 JSON file so a
+ * developer can open the link locally. Refuses to run in production.
  */
 export function createFileIdentityMail(
   directory: string,
   environment: string,
-  options: { allowProduction?: boolean } = {},
 ): IdentityMailAdapter {
-  if (environment === 'production' && !options.allowProduction)
-    throw new Error(
-      'The file identity mailbox needs IDENTITY_MAIL_FILE_ALLOW_PRODUCTION=true in production.',
-    );
+  if (environment === 'production')
+    throw new Error('The file identity mailbox is for local development only.');
   const root = resolve(directory);
   return {
     async send(message) {
@@ -175,7 +168,6 @@ export function createIdentityMailFromEnv(
     return createFileIdentityMail(
       env.IDENTITY_MAIL_FILE_DIR?.trim() || '.data/dev-mail',
       env.NODE_ENV ?? 'development',
-      { allowProduction: env.IDENTITY_MAIL_FILE_ALLOW_PRODUCTION?.trim() === 'true' },
     );
   throw new Error('IDENTITY_MAIL_DRIVER must be ses, file or none.');
 }
