@@ -173,8 +173,21 @@ interface Candidate {
 }
 
 function attributionFromExplainability(entity: QlooEntity, signalOwner: Map<string, string>): string[] {
-  const ex = entity.query?.explainability ?? [];
+  // Strongest contributing input first, so the reason names what drove this pick.
+  const ex = [...(entity.query?.explainability ?? [])].sort((a, b) => b.score - a.score);
   return [...new Set(ex.map((e) => signalOwner.get(e.entity_id)).filter((x): x is string => Boolean(x)))];
+}
+
+/**
+ * Reason for a Qloo pick, from the signal Qloo says produced it (its
+ * explainability): the strongest input first, so picks in one plan read
+ * differently instead of one boilerplate line.
+ */
+export function qlooReasonFor(snapshot: PlanSnapshot, inputIds: readonly string[], year: number | null = null): string {
+  const names = [...new Set(inputIds)].map((id) => titleOf(snapshot, id));
+  if (names.length === 0) return 'Close to the mood of the items you selected.';
+  const fans = names.length === 1 ? names[0] : `${names[0]} (and ${names.length === 2 ? names[1] : `${names.length - 1} more of your picks`})`;
+  return year ? `Loved by fans of ${fans}; from ${year}.` : `Loved by fans of ${fans}.`;
 }
 
 function titleOf(snapshot: PlanSnapshot, itemId: string): string {
@@ -266,7 +279,7 @@ async function qlooSection(
       provider_query_ids: [...m.queries],
       contributing_input_ids: inputs,
       contributing_reference_ids: referenceIdsFor(snapshot, inputs),
-      reason: reasonFor(snapshot, inputs),
+      reason: qlooReasonFor(snapshot, inputs, input.section === 'film' ? yearOf(c.item.entity) : null),
       is_fixed: false,
     };
   });
