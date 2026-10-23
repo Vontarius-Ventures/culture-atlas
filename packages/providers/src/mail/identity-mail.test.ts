@@ -119,7 +119,7 @@ describe('identity mail adapters', () => {
     ).toContain('cultureatlas://identity/callback#x=1');
   });
 
-  it('file mailbox writes private files and needs the on-prem opt-in in production', async () => {
+  it('file mailbox writes private files locally and refuses production', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ca-mail-'));
     try {
       await createFileIdentityMail(dir, 'development').send({
@@ -133,12 +133,7 @@ describe('identity mail adapters', () => {
         callback,
         purpose: 'sign_in',
       });
-      expect(() => createFileIdentityMail(dir, 'production')).toThrow(
-        /IDENTITY_MAIL_FILE_ALLOW_PRODUCTION/,
-      );
-      expect(() =>
-        createFileIdentityMail(dir, 'production', { allowProduction: true }),
-      ).not.toThrow();
+      expect(() => createFileIdentityMail(dir, 'production')).toThrow(/local development/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
