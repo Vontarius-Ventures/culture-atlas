@@ -406,6 +406,7 @@ describe('Explore authorizes analysis', () => {
     const providers = { ...ctx.providers, config: { ...ctx.providers.config, STORAGE_DRIVER: 'local' as const, STORAGE_LOCAL_DIR: dir } };
     let heardBytes = 0;
     await runAnalyzeAudio({ ...ctx, providers } as typeof ctx, {
+      originals: storage,
       recognition: new UnavailableMusicRecognition('not_configured'),
       transcription: {
         enabled: true,
@@ -515,14 +516,15 @@ describe('Explore authorizes analysis', () => {
       status: 'resolved',
       seeds: [{ entity_id: 'qloo-nina', name: 'Nina Simone' }],
     });
-    // Without the heard text, or with two exact-name artists, it stays ambiguous.
+    // Without the heard text it stays ambiguous.
     expect(artistSeedsFromQlooEntities(several).status).toBe('ambiguous');
+    // Same-named artists resolve to the most popular Qloo id (never an invented one).
     expect(
       artistSeedsFromQlooEntities(
-        [several[0]!, { ...several[0]!, entity_id: 'qloo-nina-2' }],
+        [{ ...several[0]!, popularity: 0.2 }, { ...several[0]!, entity_id: 'qloo-nina-2', popularity: 0.9 }],
         'Nina Simone',
-      ).status,
-    ).toBe('ambiguous');
+      ),
+    ).toMatchObject({ status: 'resolved', seeds: [{ entity_id: 'qloo-nina-2' }] });
   });
 
   it('does not publish after cancellation or deletion', async () => {
