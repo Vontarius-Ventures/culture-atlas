@@ -19,6 +19,16 @@ const fileOf = (name: string, mimeType: string) => ({
 });
 
 async function noSeriousAxe(page: Page) {
+  // Let finite entry animations (the toast's `rise` fade) finish: axe measures
+  // contrast on the computed colors, so a half-faded toast fails at random.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((a) => Number.isFinite(Number(a.effect?.getComputedTiming().endTime)))
+        .map((a) => a.finished.catch(() => undefined)),
+    ),
+  );
   const results = await new AxeBuilder({ page }).exclude('nextjs-portal').analyze();
   const serious = results.violations.filter(
     (v) => v.impact === 'serious' || v.impact === 'critical',
