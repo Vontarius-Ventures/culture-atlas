@@ -22,7 +22,7 @@ import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { loadItemAnchors } from '../library/anchors';
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
-import { destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, readDisplayMetadata, type DisplayImage } from '../services/display';
+import { clipText, destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, readDisplayMetadata, type DisplayImage } from '../services/display';
 import { interleaveFeed, rebuildFeedSnapshots } from '../services/discovery';
 
 /**
@@ -50,7 +50,7 @@ const SEARCH_TYPES: Partial<Record<ItemKind, QlooEntityType>> = {
 
 function textProp(properties: Record<string, unknown> | undefined, key: string): string | null {
   const v = properties?.[key];
-  return typeof v === 'string' && v.trim() ? v.trim().slice(0, 280) : null;
+  return typeof v === 'string' && v.trim() ? clipText(v) : null;
 }
 
 /** Interest-feed cards already sourced from Qloo for this owner — not a title search. */

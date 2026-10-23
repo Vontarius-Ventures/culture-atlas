@@ -11,7 +11,7 @@ import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { relatedDiscoveryDedupeKey } from '../jobs/dedupe';
 import { enqueueJob } from '../jobs/queue';
 import type { Queryable } from '../db/pool';
-import { destinationFromQlooProperties, imageFromQlooProperties } from '../services/display';
+import { clipText, destinationFromQlooProperties, imageFromQlooProperties } from '../services/display';
 import { getTasteRevision } from '../services/taste';
 import { artistSeedsFromQlooEntities, queriesFromTranscript, searchQueryForHit } from './qloo-seeds';
 import {
@@ -160,7 +160,7 @@ async function startArtistDiscovery(
     title: seed.name,
     display_metadata: {
       subtitle: 'Heard in Music Mode',
-      description: typeof description === 'string' ? description.slice(0, 280) : null,
+      description: typeof description === 'string' ? clipText(description) : null,
       image,
       destination_url: destinationFromQlooProperties(entity?.properties),
     },
