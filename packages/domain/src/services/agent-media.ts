@@ -1,4 +1,4 @@
-import { requireAccount } from '../authz';
+import { hasScope, requireAccount } from '../authz';
 import { agentActivity, authorizeAgent } from '../authz/agent-authorization';
 import { authorizeMedia, authorizeUploadDestination, mediaGrantPredicate } from '../authz/agent-resources';
 import { MediaAnalysis } from '../capture-v2/analysis';
@@ -8,6 +8,7 @@ import type { ServiceContext } from '../context';
 import { AppError } from '../errors';
 import { AgentMediaQuery, AgentUploadRequest } from '../schemas/agent-media';
 import { Uuid } from '../schemas/common';
+import { getCapture } from './captures';
 import { attachAgentUpload } from './collection-media';
 
 
@@ -27,13 +28,42 @@ function capture(ctx: ServiceContext): CaptureV2Context {
   return { ...ctx.captureV2, db: ctx.db, now: ctx.now, agent };
 }
 
+/** Compiled, privacy-safe result of the media's latest finished analysis (captures:read only). */
+async function analysisSummary(ctx: ServiceContext, mediaId: string) {
+  if (ctx.principal.kind === 'agent' && !hasScope(ctx.principal, 'captures:read')) return undefined;
+  const account = requireAccount(ctx.principal);
+  const { rows } = await ctx.db.query<{ capture_id: string }>(
+    `SELECT capture_id FROM media_analysis_requests
+      WHERE account_id=$1 AND asset_id=$2 AND state IN ('complete','partial') AND capture_id IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [account.accountId, mediaId],
+  );
+  const captureId = rows[0]?.capture_id;
+  if (!captureId) return null;
+  try {
+    const compiled = await getCapture(ctx, { id: captureId });
+    return {
+      capture_id: captureId,
+      title: compiled.analysis?.title ?? null,
+      references: compiled.references.map((r) => ({ id: r.id, name: r.name, type: r.type })),
+      discovery_item_ids: compiled.recommendations.map((r) => r.id),
+    };
+  } catch (err) {
+    // Outside this connection's capture grant: the summary is simply absent.
+    if (err instanceof AppError && err.code === 'not_found') return null;
+    throw err;
+  }
+}
+
 export async function getMedia(ctx: ServiceContext, id: string) {
   ({ ctx } = await authorizeMedia(ctx, 'media:read', id));
   const detail = await new MediaIntake(capture(ctx)).detail(id);
   const rewrite = (url: string | null) => url?.replace('/v2/media/', '/v2/agent-media/') ?? null;
-  // Owner analysis links can reveal capture reasoning. Media read alone cannot.
+  // Owner analysis links can reveal capture reasoning. Media read alone cannot;
+  // with captures:read the agent gets the compiled result (what get_capture shows).
   return { ...detail, links: { original: null, playback: rewrite(detail.links.playback), poster: rewrite(detail.links.poster), analysis: null },
-    frames: detail.frames.map((f) => ({ ...f, thumbnail_url: rewrite(f.thumbnail_url) })) };
+    frames: detail.frames.map((f) => ({ ...f, thumbnail_url: rewrite(f.thumbnail_url) })),
+    analysis_summary: await analysisSummary(ctx, id) };
 }
 
 export async function listMedia(ctx: ServiceContext, raw: unknown) {

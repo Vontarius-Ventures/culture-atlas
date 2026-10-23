@@ -123,6 +123,20 @@ export const MediaDetailResponse = z.object({
       thumbnail_url: z.string(),
     }),
   ),
+  /**
+   * Agents (get_media) holding captures:read: the compiled result of the
+   * latest finished analysis (title, detected references, recommended
+   * discovery item ids). Never the photo, frames' reasoning or model text.
+   */
+  analysis_summary: z
+    .object({
+      capture_id: CaptureV2Uuid,
+      title: z.string().nullable(),
+      references: z.array(z.object({ id: CaptureV2Uuid, name: z.string(), type: z.string() })),
+      discovery_item_ids: z.array(CaptureV2Uuid),
+    })
+    .nullable()
+    .optional(),
 });
 export const AnalyzeMediaRequest = z
   .object({
