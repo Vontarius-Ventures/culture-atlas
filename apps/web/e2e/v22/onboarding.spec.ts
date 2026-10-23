@@ -8,6 +8,10 @@ import { expect, test, type Page } from '@playwright/test';
 import { expectNoHorizontalScroll } from '../helpers';
 import { isDesktop, noSeriousAxe, openV22 } from './helpers';
 
+// Clicks cards in the feed; Reduce Motion keeps the floating feed still
+// (the conveyor itself is covered in feed-float.spec.ts).
+test.use({ contextOptions: { reducedMotion: 'reduce' } });
+
 const counter = (page: Page) => page.locator('.pick-counter');
 const build = (page: Page) => page.getByRole('button', { name: 'Build my feed' });
 

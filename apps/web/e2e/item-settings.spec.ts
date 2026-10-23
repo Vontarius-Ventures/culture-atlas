@@ -2,6 +2,10 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 import { expectNoHorizontalScroll, open } from './helpers';
 
+// These journeys click feed and related cards; Reduce Motion keeps them still
+// (the floating feed itself is covered in feed-float.spec.ts).
+test.use({ contextOptions: { reducedMotion: 'reduce' } });
+
 test.describe('Item detail and references', () => {
   test('disclosures are closed by default; related items continue exploration; Discover more is explicit', async ({
     page,

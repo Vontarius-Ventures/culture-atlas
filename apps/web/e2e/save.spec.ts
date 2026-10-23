@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { open } from './helpers';
 
+// Clicks cards in the feed; Reduce Motion keeps the floating feed still
+// (the conveyor itself is covered in feed-float.spec.ts).
+test.use({ contextOptions: { reducedMotion: 'reduce' } });
+
 test.describe('Saving', () => {
   test('anonymous save prompts account creation, claims the save, then files it into a new collection with Undo', async ({
     page,

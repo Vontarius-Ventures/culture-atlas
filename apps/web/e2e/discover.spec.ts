@@ -34,40 +34,48 @@ test.describe('Discover', () => {
     await expect(page.getByRole('link', { name: 'Vintage racing' })).toHaveCount(0);
   });
 
-  test('Load more appends the next page without starting any generation', async ({ page }) => {
-    const api = await open(page, '/');
-    const grid = page.getByRole('list', { name: 'Discoveries' });
-    await expect(grid.getByRole('listitem')).toHaveCount(12);
-    await page.getByRole('button', { name: 'Load more' }).click();
-    await expect(grid.getByRole('listitem')).toHaveCount(17);
-    await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0);
-    const mutations = api.log.filter((r) => r.method !== 'GET');
-    expect(mutations).toEqual([]);
-    expect(api.log.filter((r) => r.path === '/v1/discoveries').map((r) => r.search)).toEqual([
-      '?limit=12',
-      '?limit=12&cursor=12',
-    ]);
-  });
+  // Reduce Motion: the feed is the static grid of every loaded card (the floating
+  // conveyor is covered in feed-float.spec.ts).
+  test.describe('static grid (Reduce Motion)', () => {
+    test.use({ contextOptions: { reducedMotion: 'reduce' } });
 
-  test('opening a card and going back restores the feed and scroll position', async ({
-    page,
-  }, testInfo) => {
-    await open(page, '/');
-    await page.getByRole('button', { name: 'Load more' }).click();
-    const target = page.getByRole('link', { name: 'Spring light' });
-    await target.scrollIntoViewIfNeeded();
-    const before = await page.evaluate(() => window.scrollY);
-    expect(before).toBeGreaterThan(200);
-    await target.click();
-    await expect(page.getByRole('heading', { level: 1, name: 'Spring light' })).toBeVisible();
-    await page.getByRole('main').getByRole('link', { name: 'Discover' }).click();
-    await expect(page.getByRole('link', { name: 'Spring light' })).toBeVisible();
-    // The appended page is still there (no refetch) and we are back near where we were.
-    await expect(page.getByRole('list', { name: 'Discoveries' }).getByRole('listitem')).toHaveCount(
-      17,
-    );
-    const after = await page.evaluate(() => window.scrollY);
-    expect(Math.abs(after - before)).toBeLessThan(testInfo.project.name === 'desktop' ? 120 : 200);
+    test('Load more appends the next page without starting any generation', async ({ page }) => {
+      const api = await open(page, '/');
+      const grid = page.getByRole('list', { name: 'Discoveries' });
+      await expect(grid.getByRole('listitem')).toHaveCount(12);
+      await page.getByRole('button', { name: 'Load more' }).click();
+      await expect(grid.getByRole('listitem')).toHaveCount(17);
+      await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0);
+      const mutations = api.log.filter((r) => r.method !== 'GET');
+      expect(mutations).toEqual([]);
+      expect(api.log.filter((r) => r.path === '/v1/discoveries').map((r) => r.search)).toEqual([
+        '?limit=12',
+        '?limit=12&cursor=12',
+      ]);
+    });
+
+    test('opening a card and going back restores the feed and scroll position', async ({
+      page,
+    }, testInfo) => {
+      await open(page, '/');
+      await page.getByRole('button', { name: 'Load more' }).click();
+      const target = page.getByRole('link', { name: 'Spring light' });
+      await target.scrollIntoViewIfNeeded();
+      const before = await page.evaluate(() => window.scrollY);
+      expect(before).toBeGreaterThan(200);
+      await target.click();
+      await expect(page.getByRole('heading', { level: 1, name: 'Spring light' })).toBeVisible();
+      await page.getByRole('main').getByRole('link', { name: 'Discover' }).click();
+      await expect(page.getByRole('link', { name: 'Spring light' })).toBeVisible();
+      // The appended page is still there (no refetch) and we are back near where we were.
+      await expect(
+        page.getByRole('list', { name: 'Discoveries' }).getByRole('listitem'),
+      ).toHaveCount(17);
+      const after = await page.evaluate(() => window.scrollY);
+      expect(Math.abs(after - before)).toBeLessThan(
+        testInfo.project.name === 'desktop' ? 120 : 200,
+      );
+    });
   });
 
   test('keyboard: skip link, card link and Save are reachable in reading order', async ({
