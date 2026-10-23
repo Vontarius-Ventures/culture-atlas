@@ -2553,3 +2553,115 @@ body:has(.dialog-scrim) .toast {
 .card__menu {
   margin-bottom: -12px;
 }
+
+/* ---- Floating feed (Conveyor) ---------------------------------------------------
+   Lanes of fixed-pitch slots drift steadily (components/Conveyor.tsx); cards
+   are absolutely placed by transform, so two cards never share space. Sizes
+   below are read by the component (--conveyor-*). */
+
+.feed-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.feed-toolbar .filter-row {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.feed-toolbar__refresh {
+  flex: none;
+  margin-bottom: var(--space-3);
+  margin-left: auto;
+}
+
+.conveyor {
+  position: relative;
+}
+
+.conveyor__viewport {
+  --conveyor-meta: 84px;
+  --conveyor-gap-main: 20px;
+  --conveyor-gap-cross: 16px;
+  --conveyor-item: 180px;
+  position: relative;
+  overflow: hidden;
+  overflow: clip;
+}
+
+.conveyor--vertical .conveyor__viewport {
+  height: clamp(440px, calc(100svh - 220px), 1200px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 56px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 56px), transparent 100%);
+}
+
+.conveyor--horizontal .conveyor__viewport {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+}
+
+/* Keyboard focus shows the card crisp (the drift is paused while focused). */
+.conveyor__viewport:focus-within {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.conveyor__track {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  height: 100%;
+}
+
+.conveyor__item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+  /* The slot is the card's whole box: overflow never reaches the next slot. */
+  overflow: clip;
+  overflow-clip-margin: 6px;
+}
+
+.conveyor__controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+  font-size: 14px;
+}
+
+.conveyor__pause {
+  color: var(--muted);
+  min-height: 32px;
+}
+
+@media (max-width: 767px) {
+  /* Phones: icon-only Refresh (named by aria-label) so the filters keep their room. */
+  .feed-toolbar__refresh {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+  }
+  .feed-toolbar__refresh span {
+    display: none;
+  }
+  .conveyor__viewport {
+    --conveyor-meta: 76px;
+    --conveyor-gap-main: 16px;
+    --conveyor-gap-cross: 12px;
+    --conveyor-item: 150px;
+  }
+}
+
+/* Static grid (Reduce Motion / small pool): new cards from a refresh fade in by identity. */
+.feed-fade {
+  animation: feed-fade 320ms ease-out both;
+}
+
+@keyframes feed-fade {
+  from {
+    opacity: 0;
+  }
+}

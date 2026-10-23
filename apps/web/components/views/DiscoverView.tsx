@@ -9,6 +9,8 @@ import { CATEGORY_LABELS, CATEGORY_ORDER } from '@/lib/client/format';
 import { ONBOARDING_PATH } from '@/lib/client/onboarding';
 import { UI_LIMITS } from '@/lib/client/limits';
 import { cardToTarget, useSave } from '@/lib/client/save';
+import { useSession } from '@/lib/client/session';
+import { feedColumns, mergeRefreshed } from '@/lib/client/conveyor';
 import {
   applyOverrides,
   getFeedCache,
@@ -18,12 +20,17 @@ import {
   type FeedCacheEntry,
 } from '@/lib/client/store';
 import { CaptureStart } from '../CaptureStart';
+import { Conveyor } from '../Conveyor';
+import { Icon } from '../Icon';
 import { CardGrid, DiscoveryCard, SkeletonGrid } from '../DiscoveryCard';
 import { FilterRow } from '../FilterRow';
 import { useToast } from '../Toast';
 import { Notice } from '../ui';
 
 const inflight = new Map<string, Promise<DiscoveriesResponse>>();
+/** While an account's feed is still the example feed (seed building), look again this often. */
+const EXAMPLE_POLL_MS = 8_000;
+const EXAMPLE_POLL_MAX = 15;
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /**
@@ -32,6 +39,11 @@ const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayout
  * (consumes the existing feed snapshot; never starts generation) and scroll
  * restoration when returning from a detail page. New visitors also see
  * Take a photo / Upload a photo / Try an example and the AI notice.
+ *
+ * The grid floats: a conveyor of 2-4 columns drifting upward at staggered
+ * speeds, refilled from the loaded pool (components/Conveyor.tsx). Refresh asks
+ * for a new snapshot and merges it in front of the pool; an empty or failed
+ * refresh keeps every card already shown. Reduce Motion shows the static grid.
  */
 export function DiscoverView() {
   const [category, setCategory] = useState<Category | null>(null);
@@ -48,6 +60,8 @@ export function DiscoverView() {
   const { openSave } = useSave();
   const toast = useToast();
   const restored = useRef(false);
+  const { isAccount } = useSession();
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (cat: Category | null) => {
     const k = cat ?? 'all';
@@ -134,6 +148,84 @@ export function DiscoverView() {
     }
   };
 
+  /**
+   * Explicit refresh: GET ?refresh=true and merge the new snapshot in front of
+   * the pool. Never empties the grid: an empty response or an error keeps
+   * every card already loaded. When an account's example feed turns personal,
+   * the personal cards replace the examples.
+   */
+  const refreshFeed = useCallback(
+    async (opts: { quiet?: boolean } = {}) => {
+      const current = getFeedCache(key);
+      if (!current) return;
+      setRefreshing(true);
+      try {
+        const res = await api.request('getDiscoveries', {
+          query: {
+            limit: UI_LIMITS.feedPageDefault,
+            category: category ?? undefined,
+            refresh: 'true',
+          },
+        });
+        const latest = getFeedCache(key) ?? current;
+        if (res.items.length === 0) {
+          if (!opts.quiet) toast.announce('No new discoveries yet');
+          return;
+        }
+        const becamePersonal = latest.isExampleFeed && !res.is_example_feed;
+        const known = new Set(latest.items.map((i) => i.id));
+        const fresh = res.items.filter((i) => !known.has(i.id)).length;
+        const entry: FeedCacheEntry = {
+          ...latest,
+          items: becamePersonal ? [...res.items] : mergeRefreshed(res.items, latest.items),
+          nextCursor: res.next_cursor,
+          isExampleFeed: res.is_example_feed,
+          availableCategories: Array.from(
+            new Set([...latest.availableCategories, ...res.available_categories]),
+          ),
+        };
+        setFeedCache(key, entry);
+        if (!category) setAllCategories(entry.availableCategories);
+        setFeed(entry);
+        if (!opts.quiet || fresh > 0) {
+          toast.announce(fresh > 0 ? `${fresh} new discoveries` : 'No new discoveries yet');
+        }
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'onboarding_required') {
+          window.location.replace(ONBOARDING_PATH);
+          return;
+        }
+        // Keep the grid; say so only when the person asked.
+        if (!opts.quiet) {
+          toast.show({
+            message: err instanceof ApiError ? err.message : 'Discoveries could not be refreshed.',
+          });
+        }
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [key, category, toast],
+  );
+
+  // An account whose personal feed is still building sees the example feed:
+  // look again every few seconds (bounded) so seed cards float in when they land.
+  const pollingExample = isAccount && !category && (feed?.isExampleFeed ?? false);
+  useEffect(() => {
+    if (!pollingExample) return;
+    let polls = 0;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      polls += 1;
+      if (polls > EXAMPLE_POLL_MAX) {
+        window.clearInterval(timer);
+        return;
+      }
+      void refreshFeed({ quiet: true });
+    }, EXAMPLE_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [pollingExample, refreshFeed]);
+
   const categories = (
     allCategories.length ? allCategories : (feed?.availableCategories ?? [])
   ) as Category[];
@@ -148,14 +240,28 @@ export function DiscoverView() {
     <div className="page page--discover">
       <h1 className="display">Find more of what you love.</h1>
       {firstVisit && <CaptureStart />}
-      {filterOptions.length > 0 && (
-        <FilterRow
-          label="Filter discoveries"
-          options={filterOptions}
-          value={category}
-          onChange={(c) => setCategory(c)}
-        />
-      )}
+      <div className="feed-toolbar">
+        {filterOptions.length > 0 && (
+          <FilterRow
+            label="Filter discoveries"
+            options={filterOptions}
+            value={category}
+            onChange={(c) => setCategory(c)}
+          />
+        )}
+        {feed && (
+          <button
+            type="button"
+            className="button button--quiet feed-toolbar__refresh"
+            onClick={() => void refreshFeed()}
+            disabled={refreshing}
+            aria-label="Refresh discoveries"
+          >
+            <Icon name="refresh" size={16} />
+            <span>{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+          </button>
+        )}
+      </div>
       {error && (
         <Notice tone="error" onRetry={() => void load(category)}>
           {error}
@@ -165,18 +271,40 @@ export function DiscoverView() {
         <SkeletonGrid count={8} />
       ) : (
         <>
-          <CardGrid label="Discoveries">
-            {items.map((card, i) => (
-              <li key={card.id}>
+          {items.length > 0 && (
+            <Conveyor
+              key={key}
+              memoryKey={`discover:${key}`}
+              axis="vertical"
+              label="Discoveries"
+              className="feed-conveyor"
+              items={items}
+              columns={feedColumns}
+              renderItem={(card) => (
                 <DiscoveryCard
                   card={card}
+                  aspect="portrait"
                   href={`/items/${card.id}?from=discover`}
-                  priority={i < 4}
+                  priority
                   onSave={(c, el) => openSave(cardToTarget(c), el)}
                 />
-              </li>
-            ))}
-          </CardGrid>
+              )}
+              fallback={() => (
+                <CardGrid label="Discoveries">
+                  {items.map((card, i) => (
+                    <li key={card.id} className="feed-fade">
+                      <DiscoveryCard
+                        card={card}
+                        href={`/items/${card.id}?from=discover`}
+                        priority={i < 4}
+                        onSave={(c, el) => openSave(cardToTarget(c), el)}
+                      />
+                    </li>
+                  ))}
+                </CardGrid>
+              )}
+            />
+          )}
           {items.length === 0 && !loading && !error && (
             <p className="muted">
               Nothing here yet. Try another filter, or capture something you like.
