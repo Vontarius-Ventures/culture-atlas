@@ -154,7 +154,7 @@ export class ElevenLabsScribeTranscription implements AudioTranscription {
   async transcribe(input: TranscribeInput): Promise<TranscriptResult> {
     const upload = audioUploadFile({ bytes: input.bytes, mediaType: input.mediaType });
     const form = new FormData();
-    form.append('file', new Blob([input.bytes], { type: upload.type }), upload.filename);
+    form.append('file', new Blob([new Uint8Array(input.bytes)], { type: upload.type }), upload.filename);
     form.append('model_id', this.modelId);
     form.append('timestamps_granularity', 'word');
     form.append('diarize', 'false');

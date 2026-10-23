@@ -167,7 +167,7 @@ export async function runAnalyzeAudio(
           seeds = mapped.seeds;
           resolution = mapped.status;
           method = 'transcript';
-        } else if (resolution !== 'resolved') {
+        } else {
           resolution = mapped.status;
           method = 'transcript';
         }

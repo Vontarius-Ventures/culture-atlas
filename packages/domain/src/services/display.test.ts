@@ -89,7 +89,7 @@ describe('preferPicturedCards', () => {
   it('drops imageless cards when sourced pictures exist', () => {
     const photo = { id: 'a', image: { url: 'https://images.example/a.jpg' } };
     const poster = { id: 'b', image: null };
-    expect(preferPicturedCards([poster, photo, { id: 'c' }])).toEqual([photo]);
+    expect(preferPicturedCards<{ id: string; image?: unknown }>([poster, photo, { id: 'c' }])).toEqual([photo]);
   });
 
   it('keeps the original rail when nothing has a picture', () => {

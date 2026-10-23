@@ -265,7 +265,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           const candidates = await Promise.all(
             response.data
               .filter((e) => !signals.ids.includes(e.entity_id))
-              .map(async (e) => {
+              .map(async (e): Promise<Pick | null> => {
                 const image = await qlooImageIfRenderable(imageFromQlooProperties(e.properties, e.name));
                 if (!image) return null;
                 return {
@@ -281,7 +281,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
                   origin: response.is_replay ? ('replay' as const) : ('qloo' as const),
                   provider_query_ids: [queryId],
                   reason: `Connected to ${origin.title}.`,
-                } satisfies Pick;
+                };
               }),
           );
           const items: Pick[] = candidates
