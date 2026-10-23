@@ -103,6 +103,39 @@ describe('discovery feed', () => {
     await expect(getDiscoveries(ctx, { limit: 6, cursor: 'not-a-cursor', refresh: false })).rejects.toMatchObject({ code: 'invalid_input' });
   });
 
+  it('prefers the owner’s pictured Eat venues over their cuisine tags, never lets sample pictures evict real results, and still tops up', async () => {
+    const pictured = (id: string) =>
+      db.query(`UPDATE discovery_items SET display_metadata = display_metadata || $2::jsonb WHERE id = $1`, [
+        id,
+        JSON.stringify({ image: { url: 'https://images.example.test/fixture-venue.jpg', alt: 'Fixture venue' } }),
+      ]);
+    // Only cuisine tags (no pictures): kept, even though reviewed samples topping up the grid are pictured.
+    const tagsOnly = await accountCtx();
+    const tagOwner = { accountId: tagsOnly.principal.accountId };
+    const tag = await insertItem(tagOwner, { kind: 'food', title: 'Fixture Sichuanese' });
+    const film = await insertItem(tagOwner, { kind: 'film' });
+    const tagCap = await insertCaptureWithAnalysis(tagOwner, { recommendItemIds: [tag, film] });
+    await recordPreference(tagsOnly.ctx, { action: 'save', target_type: 'capture', target_id: tagCap.captureId });
+    const tagFeed = await getDiscoveries(tagsOnly.ctx, { limit: 24, refresh: true });
+    expect(tagFeed.items.map((c) => c.id)).toEqual(expect.arrayContaining([tag, film]));
+    expect(tagFeed.items).toHaveLength(FEED_TOP_UP_MIN);
+
+    // A pictured venue for this owner: their image-less cuisine tag gives way, samples still top up the grid.
+    const withVenue = await accountCtx();
+    const venueOwner = { accountId: withVenue.principal.accountId };
+    const venue = await insertItem(venueOwner, { kind: 'food', title: 'Fixture Dim Sum Hall' });
+    await pictured(venue);
+    const cuisine = await insertItem(venueOwner, { kind: 'food', title: 'Fixture Teahouse' });
+    const venueCap = await insertCaptureWithAnalysis(venueOwner, { recommendItemIds: [venue, cuisine] });
+    await recordPreference(withVenue.ctx, { action: 'save', target_type: 'capture', target_id: venueCap.captureId });
+    const venueFeed = await getDiscoveries(withVenue.ctx, { limit: 24, refresh: true });
+    const ids = venueFeed.items.map((c) => c.id);
+    expect(ids).toContain(venue);
+    expect(ids).not.toContain(cuisine);
+    expect(venueFeed.items.filter((c) => !c.is_example).map((c) => c.id)).toEqual([venue]);
+    expect(venueFeed.items).toHaveLength(FEED_TOP_UP_MIN);
+  });
+
   it('returning users get a bounded pool connected to their saves, owner-scoped', async () => {
     const { principal, ctx } = await accountCtx();
     const owner = { accountId: principal.accountId };

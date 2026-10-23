@@ -250,6 +250,16 @@ async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner,
   const hidden = await hiddenKeys(ctx.db, owner);
   let pool: FeedCandidate[] = (await hasSaves(ctx.db, owner)) ? await buildSavedPool(ctx.db, owner) : [];
   pool = pool.filter((c) => !hidden.has(c.canonical_key));
+  // Cuisine tags have no pictures. When Qloo returned restaurant photos for
+  // this owner, keep those and drop the owner's image-less Eat cards so the
+  // grid is not a brown poster. Only the personal pool decides this, and it
+  // happens before the top-up: reviewed samples' own pictures never evict a
+  // real Qloo result, samples are never dropped, and the grid still tops up
+  // to FEED_TOP_UP_MIN.
+  const pictured = await picturedItemIds(ctx.db, pool.filter((p) => p.kind === 'food').map((p) => p.id));
+  if (pictured.size > 0) {
+    pool = pool.filter((p) => p.kind !== 'food' || pictured.has(p.id));
+  }
   const isExample = pool.length === 0;
   if (isExample) pool = await sampleItemIds(ctx.db);
   else if (pool.length < FEED_TOP_UP_MIN) {
@@ -265,12 +275,6 @@ async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner,
   if (exclusions.length) {
     const drop = await excludedFoodItemIds(ctx.db, pool.filter((p) => p.kind === 'food').map((p) => p.id), exclusions);
     if (drop.size) pool = pool.filter((p) => !drop.has(p.id));
-  }
-  // Cuisine tags have no pictures. When Qloo returned restaurant photos, keep
-  // those and drop image-less Eat cards so the grid is not a brown poster.
-  const pictured = await picturedItemIds(ctx.db, pool.filter((p) => p.kind === 'food').map((p) => p.id));
-  if (pictured.size > 0) {
-    pool = pool.filter((p) => p.kind !== 'food' || pictured.has(p.id));
   }
   const available = CATEGORIES.filter((c) => pool.some((p) => p.category === c));
   const filtered = category ? pool.filter((p) => p.category === category) : pool;
