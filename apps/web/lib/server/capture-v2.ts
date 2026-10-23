@@ -346,10 +346,22 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         ),
         evaluation,
       );
+      const readiness = await (runtime.analysisReadiness ?? photoAnalysisReadiness)();
       result = {
         ...caps,
         availability: {
           ...caps.availability,
+          // Demo override (CONCENTRATE_DEMO_ALLOW_ROLES, never production): the
+          // reading runs on an unqualified profile and clients label it.
+          ...(readiness.experimental && caps.availability.analysis.available
+            ? {
+                analysis: {
+                  ...caps.availability.analysis,
+                  experimental: true,
+                  label: 'Experimental reading',
+                },
+              }
+            : {}),
           music_match: musicMatchAvailability({
             ELEVENLABS_API_KEY: getDomainConfig().ELEVENLABS_API_KEY,
             QLOO_API_KEY: process.env.QLOO_API_KEY,

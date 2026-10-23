@@ -60,6 +60,15 @@ const BaseProviderConfigSchema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   CONCENTRATE_GATEWAY_FALLBACKS_ENABLED: z.literal('false').default('false'),
+  /**
+   * Operator demo override (never production): comma-separated model roles
+   * (e.g. `vision_photo,vision_video_frame,vision_photo_enrich`) whose
+   * catalog-compatible profile may dispatch although no passing qualification
+   * artifact exists. Results are labelled "Experimental reading". Ignored when
+   * NODE_ENV=production.
+   */
+  CONCENTRATE_DEMO_ALLOW_ROLES: optional,
+  NODE_ENV: optional,
   MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_MAX_UNKNOWN_SPEND_USD: z.coerce.number().positive().optional(),

@@ -55,6 +55,8 @@ export interface ModelGatewayOptions {
 
 export interface RoleReadiness extends ReadinessDetail {
   role: ModelRole;
+  /** True when the role dispatches under the CONCENTRATE_DEMO_ALLOW_ROLES demo override (unqualified). */
+  experimental?: boolean;
   /** Pinned provider/model for operators; omitted from consumer projections. */
   model: string | null;
 }
@@ -86,6 +88,20 @@ function spendLimits(config: ProviderConfig): SpendLimits | undefined {
         accountDailyAnalyses: config.ACCOUNT_DAILY_MEDIA_ANALYSES,
       }
     : undefined;
+}
+
+/**
+ * Roles the operator explicitly allowed to dispatch while only
+ * catalog-compatible (CONCENTRATE_DEMO_ALLOW_ROLES). Refused in production.
+ */
+export function demoAllowedRoles(config: Pick<ProviderConfig, 'CONCENTRATE_DEMO_ALLOW_ROLES' | 'NODE_ENV'>): Set<ModelRole> {
+  if (!config.CONCENTRATE_DEMO_ALLOW_ROLES || config.NODE_ENV === 'production') return new Set();
+  const known = new Set<string>(MODEL_ROLES);
+  return new Set(
+    config.CONCENTRATE_DEMO_ALLOW_ROLES.split(',')
+      .map((r) => r.trim())
+      .filter((r): r is ModelRole => known.has(r)),
+  );
 }
 
 function configuredProfiles(config: ProviderConfig, options: ModelGatewayOptions): ModelProfiles {
@@ -142,6 +158,8 @@ export function createModelGateway(
     ((profile: ModelProfile) => qualificationState(profile, config.CONCENTRATE_QUALIFICATION_DIR));
   const runners: Partial<Record<ModelRole, StructuredResponseRunner>> = {};
   const states: Partial<Record<ModelRole, QualificationState>> = {};
+  const demoRoles = demoAllowedRoles(config);
+  const experimental = new Set<ModelRole>();
   const models = {
     vision_photo: config.VLM_MODEL,
     vision_video_frame: config.VLM_MODEL,
@@ -167,8 +185,11 @@ export function createModelGateway(
     if (!profile || profile.role !== role || (models[role] && models[role] !== profile.model))
       continue;
     states[role] = qualify(profile);
-    // Only a qualified profile may dispatch. Lower states are reported, not used.
-    if (states[role] !== 'qualified' || !canDispatch || !transport || !ledger) continue;
+    // Only a qualified profile may dispatch. Lower states are reported, not used,
+    // except a catalog-compatible role the operator named in the demo override.
+    const demo = states[role] === 'catalog-compatible' && demoRoles.has(role);
+    if ((states[role] !== 'qualified' && !demo) || !canDispatch || !transport || !ledger) continue;
+    if (demo) experimental.add(role);
     runners[role] = new StructuredResponseRunner(profile, transport, ledger, {
       identity: options.identity,
       allowTestStore: options.allowTestStore,
@@ -208,7 +229,12 @@ export function createModelGateway(
         const runner = runners[role];
         const profile = profiles[role];
         if (runner)
-          out[role] = { role, model: profile!.model, ...(await runner.readinessDetail()) };
+          out[role] = {
+            role,
+            model: profile!.model,
+            ...(await runner.readinessDetail()),
+            ...(experimental.has(role) ? { experimental: true } : {}),
+          };
         else if (states[role])
           out[role] = {
             role,

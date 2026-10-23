@@ -305,6 +305,8 @@ export interface AnalysisReadiness {
   enrichReady?: boolean;
   /** Verifier role (vision_verify) is qualified and ready (absent: not ready). */
   verifyReady?: boolean;
+  /** vision_photo dispatches under the non-production demo override (unqualified). */
+  experimental?: boolean;
 }
 
 /**
@@ -400,10 +402,10 @@ export async function resolveFeatureFlags(
         ((env.LLM_PROVIDER === undefined || env.LLM_PROVIDER === 'concentrate') &&
           !!env.CONCENTRATE_API_KEY) ||
         elorianFallback,
+      // VLM_MODEL is an optional assertion against the profile, never required:
+      // the profile file alone pins the route (gateway.ts).
       profileQualified:
-        !!env.CONCENTRATE_PROFILES_JSON ||
-        (!!env.VLM_MODEL && !!env.CONCENTRATE_PROFILE_FILE) ||
-        elorianFallback,
+        !!env.CONCENTRATE_PROFILES_JSON || !!env.CONCENTRATE_PROFILE_FILE || elorianFallback,
       qualityQualified: analysisReadiness.qualityQualified !== false,
       // Spec defaults are the safe values (require ZDR, no content logging).
       privacyVerified:

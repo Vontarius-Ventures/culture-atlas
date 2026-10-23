@@ -157,7 +157,7 @@ describe('AGT-01 agent REST media parity (G7)', () => {
       expect(refused.status).toBe(503);
       const body = await refused.json();
       expect(body.error.code).toBe('service_unavailable');
-      expect(body.error.message).toBe('Exploration is temporarily unavailable.');
+      expect(body.error.message).toBe('Exploration is not available on this server yet.');
       const work = await db.query(
         `SELECT count(*)::int AS n FROM capture_work WHERE created_by_agent_connection_id = $1`,
         [f.connectionId],

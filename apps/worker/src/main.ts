@@ -54,17 +54,26 @@ console.log(
 if (providers.modelGateway)
   void providers.modelGateway
     .readiness()
-    .then((r) =>
+    .then((r) => {
       console.log(
         '[worker] model roles:',
         Object.fromEntries(
           Object.entries(r).map(([role, d]) => [
             role,
-            d.reason ? `${d.state} (${d.reason})` : d.state,
+            `${d.reason ? `${d.state} (${d.reason})` : d.state}${d.experimental ? ' [experimental demo override]' : ''}`,
           ]),
         ),
-      ),
-    )
+      );
+      const unqualified = Object.values(r)
+        .filter((d) => d.reason === 'not_qualified')
+        .map((d) => d.role);
+      if (unqualified.length)
+        console.error(
+          `\x1b[31m[worker] UNQUALIFIED model roles (analysis for them fails closed): ${unqualified.join(', ')}. ` +
+            'Commit passing qualification artifacts, set MODEL_FALLBACK=elorian, or (non-production demo only) ' +
+            `CONCENTRATE_DEMO_ALLOW_ROLES=${unqualified.join(',')}.\x1b[0m`,
+        );
+    })
     .catch(() => console.error('[worker] model readiness unavailable'));
 worker.start();
 analysis?.start();
