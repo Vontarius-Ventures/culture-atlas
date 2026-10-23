@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { QlooEntity } from '@culture-atlas/providers';
+import { createMultipartStorage, type QlooEntity } from '@culture-atlas/providers';
 import { AppError } from '../errors';
 import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import type { Queryable } from '../db/pool';
+import { audioMatchDisplay, type AudioMatchDisplay } from './match-display';
 import { artistSeedsFromQlooEntities, queriesFromTranscript, searchQueryForHit } from './qloo-seeds';
 import {
   musicRecognitionFromConfig,
@@ -70,6 +71,7 @@ function evidenceStatus(result: MusicRecognitionResult): 'matched' | 'ambiguous'
 async function searchArtists(
   ctx: Parameters<JobHandler<'analyze_audio'>>[0],
   query: string,
+  seenEntities?: Map<string, QlooEntity>,
 ): Promise<QlooEntity[]> {
   if (!query || ctx.budget.qlooRequests <= 0) return [];
   const found = await ctx.runStage('resolve-qloo', async () => {
@@ -83,7 +85,47 @@ async function searchArtists(
       return null;
     }
   });
-  return found?.data ?? [];
+  const entities = found?.data ?? [];
+  for (const entity of entities) seenEntities?.set(entity.entity_id, entity);
+  return entities;
+}
+
+/**
+ * Kept recordings are v2 media: their bytes live in the capture-v2 object
+ * namespace (the same one the web API wrote through createMultipartStorage).
+ * With S3 that is the same bucket as providers.storage; with the local driver
+ * it is `<STORAGE_LOCAL_DIR>/capture-v2`, so reading through providers.storage
+ * alone found nothing and Explore ran recognition and transcription on zero
+ * bytes. Read the v2 namespace first, then fall back to the legacy store.
+ */
+async function readOriginal(
+  ctx: Parameters<JobHandler<'analyze_audio'>>[0],
+  key: string,
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; contentType: string | null } | null> {
+  try {
+    const media = createMultipartStorage(ctx.providers.config, {
+      production: process.env.NODE_ENV === 'production',
+      fallbackSigningSecret: ctx.config.SESSION_SECRET,
+    });
+    const object = await media.read(key);
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of object.body) {
+      chunks.push(chunk);
+      size += chunk.byteLength;
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    if (bytes.byteLength > 0) return { bytes, contentType: object.contentType || null };
+  } catch {
+    // Not in the v2 namespace (or no v2 storage configured): try the legacy store.
+  }
+  const stored = await ctx.providers.storage.get(key).catch(() => null);
+  return stored ? { bytes: Uint8Array.from(stored.body), contentType: stored.contentType || null } : null;
 }
 
 export async function runAnalyzeAudio(
@@ -116,9 +158,9 @@ export async function runAnalyzeAudio(
   let bytes = new Uint8Array();
   let mediaType = work.contentType ?? undefined;
   if (work.originalKey) {
-    const stored = await ctx.providers.storage.get(work.originalKey).catch(() => null);
+    const stored = await readOriginal(ctx, work.originalKey);
     if (stored) {
-      bytes = Uint8Array.from(stored.body);
+      bytes = stored.bytes;
       mediaType = stored.contentType || mediaType;
     }
   }
@@ -136,6 +178,7 @@ export async function runAnalyzeAudio(
   if (live.deletedAt) throw new JobCancelledError('deleted');
 
   const hit = identified.hits[0] ?? null;
+  const qlooEntities = new Map<string, QlooEntity>();
   let seeds: { entity_id: string; entity_type: 'urn:entity:artist'; name: string; insights_eligible: true }[] = [];
   let resolution: 'resolved' | 'ambiguous' | 'unresolved' | null = null;
   let method: 'fingerprint' | 'transcript' = 'fingerprint';
@@ -144,7 +187,7 @@ export async function runAnalyzeAudio(
   if (identified.status === 'matched' && hit) {
     const query = searchQueryForHit(hit);
     if (query) {
-      const mapped = artistSeedsFromQlooEntities(await searchArtists(ctx, query));
+      const mapped = artistSeedsFromQlooEntities(await searchArtists(ctx, query, qlooEntities), query);
       seeds = mapped.seeds;
       resolution = mapped.status;
     } else {
@@ -162,7 +205,7 @@ export async function runAnalyzeAudio(
       if (!queries.length) transcriptReason = 'no_extractable_query';
       for (const query of queries) {
         if (resolution === 'resolved') break;
-        const mapped = artistSeedsFromQlooEntities(await searchArtists(ctx, query));
+        const mapped = artistSeedsFromQlooEntities(await searchArtists(ctx, query, qlooEntities), query);
         if (mapped.status === 'resolved' && mapped.seeds.length) {
           seeds = mapped.seeds;
           resolution = mapped.status;
@@ -313,6 +356,14 @@ export async function runAnalyzeAudio(
             method === 'transcript'
           ? 'complete'
           : 'partial';
+  // What the result screen shows for a match: Qloo artist (name + Qloo image)
+  // and related artists from Qloo Insights. Absent unless resolved.
+  let match: AudioMatchDisplay | null = null;
+  const matchedEntity = resolved && qlooId ? qlooEntities.get(qlooId) : undefined;
+  if (matchedEntity) {
+    match = await audioMatchDisplay(ctx, matchedEntity, method === 'fingerprint' ? hit : null).catch(() => null);
+    await ctx.ensureActive();
+  }
   const music = resolved
     ? 'identified'
     : publicMusicState(
@@ -330,6 +381,7 @@ export async function runAnalyzeAudio(
     evidence_id: evidenceId,
     recognition_id: recognitionId,
     qloo_seeds: seeds,
+    match,
     /** Affinity is not recognition confidence and is not returned from this job. */
     affinity: undefined,
   };

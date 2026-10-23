@@ -101,8 +101,11 @@ describe('AGT-01 agent REST media parity (G7)', () => {
     const links = (await detail.json()).links;
     expect(links.original).toBeNull();
     expect(links.analysis).toBeNull();
-    expect(links.playback).toMatch(new RegExp(`^/v2/agent-media/${f.visible.id}/content/`));
-    const preview = await agentContent.GET(bearer(links.playback, f.credential));
+    // Absolute (APP_BASE_URL) so an agent can fetch it without knowing the origin.
+    const origin = new URL(links.playback).origin;
+    expect(links.playback).toMatch(new RegExp(`^https?://[^/]+/v2/agent-media/${f.visible.id}/content/`));
+    const preview = await agentContent.GET(bearer(new URL(links.playback).pathname, f.credential));
+    expect(origin).toMatch(/^https?:\/\//);
     expect(preview.status).toBe(200);
     expect(Buffer.from(await preview.arrayBuffer()).equals(f.visible.bytes)).toBe(true);
     const original = await captureV2Route(bearer(`/v2/media/${f.visible.id}/content/original`, f.credential));
@@ -120,7 +123,7 @@ describe('AGT-01 agent REST media parity (G7)', () => {
     expect((await captureV2Route(bearer('/v2/library', f.credential))).status).toBe(200);
     expect((await (await captureV2Route(bearer('/v2/library', f.credential))).json()).items).toEqual([]);
     expect((await captureV2Route(bearer(`/v2/media/${f.visible.id}`, f.credential))).status).toBe(404);
-    expect((await agentContent.GET(bearer(detail.links.playback, f.credential))).status).toBe(404);
+    expect((await agentContent.GET(bearer(new URL(detail.links.playback).pathname, f.credential))).status).toBe(404);
   });
 
   it('analyze_media needs media:analyze, is explicit, and is visible through get_operation', async () => {
