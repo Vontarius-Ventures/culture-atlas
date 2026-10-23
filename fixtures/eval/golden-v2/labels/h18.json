@@ -1,0 +1,74 @@
+{
+  "id": "h18",
+  "split": "holdout",
+  "file": "h18-interior-kitchen.jpg",
+  "subject_domains": [
+    "interior"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [],
+  "acceptable": [
+    {
+      "pattern": "kitchen|galley kitchen|u-shaped kitchen",
+      "generic": true
+    },
+    {
+      "pattern": "(gas )?(range|stove|cooker|oven)|range hood|extractor hood",
+      "generic": true
+    },
+    {
+      "pattern": "(ceramic |terracotta |saltillo |quarry )?tiles?|tiled (countertop|counter|floor)|tile (countertop|counter|floor|backsplash)",
+      "generic": true
+    },
+    {
+      "pattern": "(oak|wood(en)?) (cabinets|cabinetry)|cabinets|cabinetry|(double |stainless (steel )?)?sink|window blinds?|ceiling light",
+      "generic": true
+    },
+    {
+      "pattern": "1970s|1980s|seventies|eighties|retro kitchen|ranch[- ]style|suburban (american )?(home|house)|american (home|house)"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "whirlpool|frigidaire|kenmore|maytag|\\bge\\b|general electric|hotpoint|roper|wolf|viking|bosch|smeg",
+      "why": "no appliance badge is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "mid-century modern|scandinavian|japandi|minimalis|industrial|art deco|shaker|victorian|french country|tuscan|mediterranean",
+      "why": "a plain builder-grade kitchen; no period or regional style is evidenced"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "an empty kitchen, no food",
+      "class": "cuisine_without_food"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Empty kitchen: oak cabinets, tiled counters, a white gas range, a terracotta-tiled floor. No text, no people. A restraint case: no style, brand or cuisine claim is evidenced, so there is no expected reference."
+}

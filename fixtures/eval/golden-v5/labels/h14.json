@@ -1,0 +1,78 @@
+{
+  "id": "h14",
+  "split": "tune",
+  "file": "h14-food-burger.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Hamburger",
+      "pattern": "hamburger|cheeseburger|\\bburgers?\\b",
+      "aliases": [
+        "Burger",
+        "Cheeseburger"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "onion rings?"
+    },
+    {
+      "pattern": "american (cuisine|food|fast food|diner)|fast food"
+    },
+    {
+      "pattern": "barbe?cue|\\bbbq\\b"
+    },
+    {
+      "pattern": "sesame (seed )?bun|lettuce|tomato|pickles?|onions?|beef patty|patty",
+      "generic": true
+    },
+    {
+      "pattern": "french fries|\\bfries\\b",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "burger king|whopper|mcdonald|big mac|wendy|five guys|shake shack|in-n-out|carl'?s jr|hardee|jack in the box|rodeo burger",
+      "why": "only the fragment 'URGE' of a word on the paper is legible; no restaurant or product name can be read",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "(italian|mexican|japanese|chinese|thai|indian|french|korean) (cuisine|food)",
+      "why": "no other national cuisine is evidenced"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Studio food photo of a burger with onion rings; the paper underneath shows only part of a word ('URGE'). Native size 480 px."
+}

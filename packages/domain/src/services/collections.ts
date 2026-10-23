@@ -6,10 +6,12 @@ import {
   requireScopes,
   requireWholeLibrary,
 } from '../authz';
+import { agentActivity } from '../authz/agent-authorization';
 import type { ServiceContext } from '../context';
 import type { Db, Queryable } from '../db/pool';
 import { COLLECTION_FILTER_KINDS, COLLECTION_FILTERS, type CollectionFilter, type ItemKind } from '../enums';
 import { AppError } from '../errors';
+import { assertAgentCannotExposeMedia } from '../sharing/agent-guard';
 import { loadAccessibleCollection, requireVisibleItem, type CollectionRow } from '../library/access';
 import type { Image } from '../schemas/common';
 import type {
@@ -152,6 +154,8 @@ export async function getCollection(
 ): Promise<CollectionDetailResponse> {
   requireScopes(ctx.principal, 'collections:read');
   const col = await loadAccessibleCollection(ctx, input.id);
+  // Owner-visible agent activity ("Viewed Quiet weekends"); a no-op for people.
+  if (!input.query.cursor) await agentActivity(ctx, 'collection.read', col.id);
   const limit = input.query.limit ?? 24;
   const params: unknown[] = [col.id];
   const where = ['ci.collection_id = $1'];
@@ -280,6 +284,8 @@ export async function addCollectionItem(
       throw revisionConflict(col.revision);
     }
     const item = await resolveAddTarget(ctx, db, owner, input.item_id);
+    // A capture item carries its photo or video into a share that includes media.
+    if (item.capture_id) await assertAgentCannotExposeMedia(db, ctx.principal, owner, col.id, ctx.now());
     const existing = await db.query<{ id: string }>(
       'SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
       [owner, item.id],
@@ -397,4 +403,62 @@ export async function reorderCollection(
     );
     return { collection_id: col.id, collection_revision: r.rows[0]!.revision };
   });
+}
+
+export const INTERESTS_BOARD_NAME = 'Interests';
+
+/**
+ * File Qloo (or other non-sample) discovery items onto the owner's Interests
+ * board. Does not bump taste revision — this is filing recommendations, not a
+ * new endorsement that would re-run taste_seed.
+ */
+export async function fillInterestsBoard(
+  db: Queryable,
+  accountId: string,
+  itemIds: readonly string[],
+): Promise<string | null> {
+  const unique = [...new Set(itemIds)].filter(Boolean);
+  if (unique.length === 0) return null;
+  const existing = await db.query<{ id: string }>(
+    `SELECT id FROM collections WHERE owner_account_id = $1 AND name = $2 ORDER BY created_at LIMIT 1`,
+    [accountId, INTERESTS_BOARD_NAME],
+  );
+  let collectionId = existing.rows[0]?.id;
+  if (!collectionId) {
+    const created = await db.query<{ id: string }>(
+      `INSERT INTO collections (owner_account_id, name, description) VALUES ($1, $2, $3) RETURNING id`,
+      [accountId, INTERESTS_BOARD_NAME, 'Built from your picks. Add more from Feed.'],
+    );
+    collectionId = created.rows[0]!.id;
+  }
+  for (const itemId of unique) {
+    const owned = await db.query<{ id: string; is_sample: boolean }>(
+      `SELECT id, is_sample FROM discovery_items WHERE id = $1 AND owner_account_id = $2`,
+      [itemId, accountId],
+    );
+    const row = owned.rows[0];
+    if (!row || row.is_sample) continue;
+    const saved = await db.query<{ id: string }>(
+      `INSERT INTO saved_items (owner_account_id, discovery_item_id)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id`,
+      [accountId, itemId],
+    );
+    let savedId = saved.rows[0]?.id;
+    if (!savedId) {
+      const got = await db.query<{ id: string }>(
+        `SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2`,
+        [accountId, itemId],
+      );
+      savedId = got.rows[0]?.id;
+    }
+    if (!savedId) continue;
+    await db.query(
+      `INSERT INTO collection_items (collection_id, saved_item_id, owner_account_id, position)
+       VALUES ($1, $2, $3, COALESCE((SELECT max(position) + 1 FROM collection_items WHERE collection_id = $1), 0))
+       ON CONFLICT (collection_id, saved_item_id) DO NOTHING`,
+      [collectionId, savedId, accountId],
+    );
+  }
+  await db.query(`UPDATE collections SET updated_at = now() WHERE id = $1`, [collectionId]);
+  return collectionId;
 }

@@ -1,0 +1,65 @@
+{
+  "id": "p13",
+  "split": "tune",
+  "file": "13-sport-basketball-hoop.jpg",
+  "subject_domains": [
+    "sport"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Streetball",
+      "aliases": [
+        "Street basketball"
+      ],
+      "type": "tradition"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "NBA",
+      "pattern": "^nba$|national basketball association",
+      "type": "brand",
+      "requires_text": "NBA"
+    },
+    {
+      "pattern": "basketball",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "spalding|wilson|molten",
+      "why": "the maker patch is not legible",
+      "class": "brand_without_text"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "NBA"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [
+      "urn:entity:album",
+      "urn:entity:place"
+    ],
+    "forbidden_tag_families": [
+      "occupation"
+    ]
+  }
+}

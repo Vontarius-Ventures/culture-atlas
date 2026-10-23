@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildReason, type ResolvedRef } from './analyze';
 import { JobBudget } from './budget';
 import { interleaveCategories, reciprocalRankFusion, RRF_K, selectDiverse, type RankedCandidate } from './fusion';
-import { nameSimilarity, normalizeName, slugify } from './text';
+import { canonicalTokens, nameSimilarity, nameTokens, normalizeName, sameTokens, slugify, stemmedKey, stemToken, strictSubset } from './text';
 
 const c = (key: string, originRefs: string[] = []): RankedCandidate<string> => ({ key, originRefs, payload: key });
 
@@ -70,6 +70,39 @@ describe('name matching', () => {
   });
 });
 
+describe('canonical tokens (exact identity for Qloo grounding)', () => {
+  const set = (...t: string[]) => new Set(t);
+  it('folds case, accents and apostrophes like normalizeName, and drops naming filler', () => {
+    expect(canonicalTokens('Musée du Louvre')).toEqual(set('musee', 'louvre'));
+    expect(canonicalTokens('Mughal Architecture')).toEqual(set('mughal'));
+    expect(canonicalTokens('Spanish cuisine')).toEqual(set('spanish'));
+    expect(canonicalTokens('Art Deco')).toEqual(set('deco'));
+    expect(canonicalTokens('Levi’s & Co')).toEqual(set('levis', 'co'));
+    expect(canonicalTokens('Mid-Century Modern')).toEqual(canonicalTokens('mid century modern'));
+  });
+  it('keeps letters of every script', () => {
+    expect(nameTokens('港区 MINATO CITY')).toEqual(['港区', 'minato', 'city']);
+    expect(canonicalTokens('愚园路')).toEqual(set('愚园路'));
+    expect(normalizeName('愚园路')).toBe(''); // why canonicalTokens does not reuse it verbatim
+  });
+  it('compares sets exactly; containment is a separate, rejecting signal', () => {
+    expect(sameTokens(canonicalTokens('Neoclassical'), canonicalTokens('neoclassical style'))).toBe(true);
+    expect(sameTokens(canonicalTokens('Honda'), canonicalTokens('Honda Civic'))).toBe(false);
+    expect(strictSubset(canonicalTokens('Honda'), canonicalTokens('Honda Civic'))).toBe(true);
+    expect(strictSubset(canonicalTokens('Honda Civic'), canonicalTokens('Honda'))).toBe(false);
+    expect(sameTokens(new Set(), new Set())).toBe(false);
+  });
+  it('stems plurals for seed dedupe ("Dim Sums", "Dimsum", "Sichuan Noodles")', () => {
+    expect(stemToken('noodles')).toBe(stemToken('noodle'));
+    expect(stemToken('dishes')).toBe(stemToken('dish'));
+    expect(stemToken('glass')).toBe('glass');
+    expect(stemmedKey('Dim Sums')).toBe(stemmedKey('Dim Sum'));
+    expect(stemmedKey('Dimsum')).toBe(stemmedKey('Dim Sum'));
+    expect(stemmedKey('Sichuan Noodles')).toBe(stemmedKey('Sichuan Noodle'));
+    expect(stemmedKey('Sichuan Ramen')).not.toBe(stemmedKey('Sichuan Noodle'));
+  });
+});
+
 describe('reasons', () => {
   const ref = (name: string, relation: ResolvedRef['relation']): ResolvedRef => ({
     referenceId: name,
@@ -111,5 +144,18 @@ describe('JobBudget', () => {
     expect(vlm.take('vlm', 'retry')).toBe(true);
     expect(vlm.take('vlm', 'retry')).toBe(true);
     expect(vlm.take('vlm', 'retry')).toBe(false); // two retries per stage
+  });
+
+  it('reserves both photo-reading calls together and never more than the per-analysis limit', () => {
+    const two = new JobBudget({ qlooRequests: 12, researchRefs: 5, retriesPerStage: 2, visionCalls: 2 });
+    expect(two.reserveVisionCalls(3)).toBe(false);
+    expect(two.visionCallsReserved()).toBe(0);
+    expect(two.reserveVisionCalls(2)).toBe(true);
+    expect(two.reserveVisionCalls(1)).toBe(false);
+    expect(two.visionCallsReserved()).toBe(2);
+    const one = new JobBudget({ qlooRequests: 12, researchRefs: 5, retriesPerStage: 2, visionCalls: 1 });
+    expect(one.reserveVisionCalls(2)).toBe(false);
+    expect(one.reserveVisionCalls(1)).toBe(true);
+    expect(one.reserveVisionCalls(0)).toBe(false);
   });
 });

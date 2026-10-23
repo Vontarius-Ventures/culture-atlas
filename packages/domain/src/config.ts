@@ -43,6 +43,10 @@ export const DomainConfigSchema = z.object({
   ANON_DAILY_PLANS: int(5),
   ACCOUNT_DAILY_ANALYSES: int(100),
   ACCOUNT_DAILY_PLANS: int(50),
+  /** Live Qloo searches per account per day from the taste pickers (amendment 2.2; the hackathon key is shared). */
+  ACCOUNT_DAILY_ONBOARDING_SEARCHES: int(200),
+  /** Taste seed jobs per account per day (onboarding completion plus Settings -> Taste reseeds). */
+  ACCOUNT_DAILY_TASTE_SEEDS: int(12),
   IP_DAILY_REQUESTS: int(2000),
   /**
    * Reverse proxies in front of the web app that append to X-Forwarded-For.
@@ -63,10 +67,42 @@ export const DomainConfigSchema = z.object({
   SENSOR_POLL_INTERVAL_MS: int(10_000),
   SENSOR_MAX_ASSET_BYTES: int(LIMITS.uploadMaxBytes),
   /** Comma-separated account ids allowed to open the demo inspector for their own jobs. */
+  /**
+   * Feature flags evaluated inside services (feature-flags.ts
+   * requireServiceFeature). Raw strings so the evaluation rules stay identical
+   * to resolveFeatureFlags: "false"/"0" turns a default-on flag off, "true"/"1"
+   * opts in to a default-off flag. FEATURE_KILL_SWITCHES is a comma-separated
+   * list of killable flag names.
+   */
+  AGENT_API_ENABLED: z.string().optional(),
+  COLLECTION_SHARING_ENABLED: z.string().optional(),
+  AGENT_REMOTE_CAPTURE_ENABLED: z.string().optional(),
+  /** Spec amendment 2.2 switches (default on): onboarding gate, taste seed job, "While we look". */
+  ONBOARDING_REQUIRED: z.string().optional(),
+  TASTE_SEED_ENABLED: z.string().optional(),
+  WHILE_WE_LOOK_ENABLED: z.string().optional(),
+  /**
+   * Photo-role requalification: the verifier (vision_verify; round 3: another
+   * model family, binding before publication, docs/quality-plan.md §18) runs
+   * only when this is "true"/"1" (default off; the round-3 Tune kept it off,
+   * docs/quality-plan.md §18.7) and the role
+   * is qualified; the kill switch analysis_verifier_enabled turns it off.
+   */
+  ANALYSIS_VERIFIER_ENABLED: z.string().optional(),
+  FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()
     .default('')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  /**
+   * ElevenLabs Scribe for Music Mode Explore. Absent key keeps transcription
+   * disabled. Transcript text is searched in Qloo as urn:entity:artist only;
+   * catalog ids are never invented.
+   */
+  ELEVENLABS_API_KEY: z.string().optional(),
+  ELEVENLABS_TRANSCRIPTION_MODEL: z.string().default('scribe_v2'),
+  /** true sends enable_logging=false (enterprise). Default off: owner-approved Music Mode transcripts. */
+  ELEVENLABS_REQUIRE_ZERO_RETENTION: bool(false),
 });
 
 export type DomainConfig = z.infer<typeof DomainConfigSchema>;
@@ -107,4 +143,15 @@ export function getDomainConfig(): DomainConfig {
 
 export function setDomainConfigForTesting(config: DomainConfig | undefined): void {
   cached = config;
+}
+
+/**
+ * ANALYSIS_VERIFIER_ENABLED as the operator set it ("true" or "1"). The
+ * compiler still needs a usable vision_verify role, no kill and budget to run
+ * the verifier; the v2 media result leaves the verifier's targets out whenever
+ * the operator opted in (publishableCitations), since it is written before the
+ * compile job's check.
+ */
+export function verifierOptedIn(value: string | undefined | null): boolean {
+  return value === 'true' || value === '1';
 }

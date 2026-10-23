@@ -29,7 +29,36 @@ The build environment could not reach Wikimedia Commons (`commons.wikimedia.org`
 | `samples/feed/softer-silhouette.jpg` | Sample feed | Unstructured blazer on a cane chair |
 | `samples/feed/blossom-branch.jpg` | Sample feed | Blossom branch against a soft background |
 
+## Taste questionnaire mock photos (project-owned)
+
+The image picks of the taste questionnaire (spec amendment 2.2, screen 14) are twelve mock photos in `apps/web/public/samples/onboarding/` (`fixtures/onboarding/catalog.json`, `image.license: "project-owned mock"`). The owner asked for mock images because stock photo sites cannot be reached from the build environment. They were generated for this project on October 18, 2026 with the owner's Higgsfield account (prompts asked for no people, no text and no logos), then center-cropped to 4:5 and saved as 800x1000 progressive JPEGs. They show no real person, brand or place. Each stands for real Qloo tags resolved by `scripts/build-onboarding-catalog.ts`; the photo does not claim to depict a specific Qloo entity. Replace them with licensed photography before a public release if generated imagery is not acceptable there.
+
+| File | Catalog item | Subject |
+| --- | --- | --- |
+| `samples/onboarding/racing.jpg` | img-racing | Cream racing jacket with red and navy stripes over a bentwood chair |
+| `samples/onboarding/linen.jpg` | img-linen | Oatmeal linen shirt on a wooden hanger with leaf shadows |
+| `samples/onboarding/tailoring.jpg` | img-tailoring | Camel blazer draped over a cane chair |
+| `samples/onboarding/corners.jpg` | img-corners | Paned window, low oak table, branch in a vase |
+| `samples/onboarding/forms.jpg` | img-forms | Rounded cream boucle chair beside a teak side table |
+| `samples/onboarding/listening.jpg` | img-listening | Record player, a stack of records and a brass lamp |
+| `samples/onboarding/cinema.jpg` | img-cinema | Cinema marquee lights and two silhouettes on a wet street |
+| `samples/onboarding/night.jpg` | img-night | Empty lamplit city street after rain |
+| `samples/onboarding/lanterns.jpg` | img-lanterns | Alley of small bars lit by red paper lanterns |
+| `samples/onboarding/tea.jpg` | img-tea | Cast-iron teapot, ceramic cup and a blossom branch |
+| `samples/onboarding/noodles.jpg` | img-noodles | Sesame noodles with chili oil and chopsticks |
+| `samples/onboarding/table.jpg` | img-table | Shared small plates on a wooden table, from above |
+
 Use the photos above as `display_metadata.image.url` (for example `/samples/feed/tea-rituals.jpg`) with `license: "project-original"` when seeding sample discovery items. Artists and films have no image, so the UI renders its text treatment. Never substitute a picture of a real performer or a film still without a license.
+
+## Capture platform v2 illustrations (project-owned)
+
+Drawn by `fixtures/images/generate-capture-illustrations.ts` the same way (SVG rendered to JPEG with sharp, deterministic). Same author and license as above. They replace earlier crops of the generated design references, which must not ship in the UI.
+
+| File | Used for | Subject |
+| --- | --- | --- |
+| `apps/web/public/capture/source-hero.jpg` | 02 capture chooser hero | Stoneware bowls, speckled pitcher and plate on an oak table, olive sprigs |
+| `apps/web/public/capture/glasses-hero.jpg` | 04 glasses connect hero | Black glasses (no brand) on linen, bowl with an olive sprig, a book |
+| `fixtures/capture-v2/*.jpg` | Seed media for the real-stack fidelity run (`apps/web/e2e/real/v2-fidelity.spec.ts`); never shipped | Armchair corner, olive jacket, coast, brick street, hydrangea courtyard, café interior, pendant lamps, window table, whitewashed alley |
 
 ## Replacing them with public-domain / CC0 photographs
 

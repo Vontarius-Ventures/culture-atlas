@@ -1,0 +1,23 @@
+{
+  "fixture": "eat-dish-ideas-sichuan",
+  "schema": "eat_dish_ideas",
+  "source_urls": [],
+  "sources": [],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [],
+  "input_text": "Suggest dish ideas.\n<references format=\"json\">\n[{\"name\":\"Sichuan cuisine\",\"type\":\"cuisine\"},{\"name\":\"Chengdu\",\"type\":\"place\"}]\n</references>",
+  "exclusions": [],
+  "word_limits": {
+    "reason_words": 35
+  },
+  "forbidden_strings": [],
+  "input_ids": [],
+  "reference_names": [
+    "Sichuan cuisine",
+    "Chengdu"
+  ],
+  "avoid": [],
+  "min_items": 1,
+  "max_items": 3
+}

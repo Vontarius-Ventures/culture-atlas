@@ -15,14 +15,14 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-import { sectionFor } from './AppShell';
+import { chromeFor, sectionFor } from './AppShell';
 import { CoverMosaic } from './CollectionCover';
 import { Dialog } from './Dialog';
 import { DiscoveryCard } from './DiscoveryCard';
 import { FilterRow } from './FilterRow';
 import { initialDestination, recentFirst } from './SavePicker';
 import { ToastProvider, useToast } from './Toast';
-import { deriveCaptureState, referencePhrase } from './views/CaptureResultView';
+import { deriveCaptureState, readTextAttribution, referencePhrase } from './views/CaptureResultView';
 import { defaultSelection, moveMembership } from './views/CollectionDetailView';
 import { backTarget } from './views/ItemView';
 import { addExclusions } from './views/PlanFormView';
@@ -194,7 +194,7 @@ describe('Toast', () => {
 });
 
 describe('CoverMosaic', () => {
-  it('bounds tiles to four (three for mini)', () => {
+  it('uses the mockup 07 layout: three tiles from three images, otherwise one (mini: up to three)', () => {
     const imgs = Array.from({ length: 6 }, (_, i) => ({
       url: `/i${i}.jpg`,
       width: null,
@@ -202,8 +202,14 @@ describe('CoverMosaic', () => {
       alt: '',
     }));
     const { container, rerender } = render(<CoverMosaic images={imgs} />);
-    expect(container.querySelectorAll('img')).toHaveLength(4);
-    expect(container.querySelector('.mosaic--n4')).not.toBeNull();
+    expect(container.querySelectorAll('img')).toHaveLength(3);
+    expect(container.querySelector('.mosaic--n3')).not.toBeNull();
+    rerender(<CoverMosaic images={imgs.slice(0, 2)} />);
+    expect(container.querySelectorAll('img')).toHaveLength(1);
+    expect(container.querySelector('.mosaic--n1')).not.toBeNull();
+    rerender(<CoverMosaic images={[]} />);
+    expect(container.querySelectorAll('img')).toHaveLength(0);
+    expect(container.querySelector('.mosaic__empty')).not.toBeNull();
     rerender(<CoverMosaic images={imgs} size="mini" />);
     expect(container.querySelectorAll('img')).toHaveLength(3);
   });
@@ -216,6 +222,9 @@ describe('view logic', () => {
     expect(sectionFor('/collections/later')).toBe('collections');
     expect(sectionFor('/plans/1')).toBe('plans');
     expect(sectionFor('/settings')).toBeNull();
+    expect(chromeFor('/capture/camera')).toBe('immersive');
+    expect(chromeFor('/capture/music')).toBe('immersive');
+    expect(chromeFor('/capture')).toBe('flow');
   });
 
   it('picks the remembered save destination, else the most recent collection, else Save for later', () => {
@@ -302,6 +311,14 @@ describe('view logic', () => {
     expect(referencePhrase({ name: 'Eames chair', qualified: false, relation: 'depicted' })).toBe(
       'Eames chair',
     );
+  });
+
+  it('shows a text-only reference by name with the text it was read from, never as a resemblance', () => {
+    const nba = { name: 'NBA', qualified: true, relation: 'depicted' as const, read_text: 'NBA' };
+    expect(referencePhrase(nba)).toBe('NBA');
+    expect(readTextAttribution(nba)).toBe('Read in the photo: “NBA”');
+    expect(readTextAttribution({ read_text: null })).toBeNull();
+    expect(readTextAttribution({})).toBeNull();
   });
 
   it('builds Back targets from where the item was opened', () => {

@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { isProviderError, isUsable, type QlooEntityType } from '@culture-atlas/providers';
+import { isProviderError, isUsable, type QlooEntity, type QlooEntityType } from '@culture-atlas/providers';
 import { suggestDishes } from '../composer/creative';
-import { stripSafetyClaims } from '../composer/dietary';
+import { stripSafetyClaims, violatedExclusions } from '../composer/dietary';
+import { foodExclusionsFor } from '../services/onboarding';
 import { reciprocalRankFusion, type RankedList } from '../composer/fusion';
 import type { PlanSnapshot } from '../composer/plan-types';
 import { BudgetExhaustedError, QlooSession, withProviderRetries } from '../composer/provider-calls';
@@ -15,12 +16,13 @@ import {
   yearOf,
   type RecommendationInsert,
 } from '../composer/store';
-import { CATEGORIES, LIMITS, type Category, type ItemKind, type SectionStatus } from '../enums';
+import { CATEGORIES, LIMITS, type Category, type ItemKind, type RecommendationOrigin, type SectionStatus } from '../enums';
+import type { Queryable } from '../db/pool';
 import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { loadItemAnchors } from '../library/anchors';
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
-import { readDisplayMetadata } from '../services/display';
+import { destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, readDisplayMetadata, type DisplayImage } from '../services/display';
 import { interleaveFeed } from '../services/discovery';
 
 /**
@@ -29,8 +31,9 @@ import { interleaveFeed } from '../services/discovery';
  * /search); bounded Qloo insights across supported categories; at most 6
  * cached results tied to discovery_jobs (parent of provider_queries and
  * recommendations). Eat has no Qloo dish catalog: dish ideas come from the
- * composer model as creative suggestions (origin 'vlm_creative'). Unsupported
- * or unavailable categories are marked and the job ends 'partial'.
+ * composer model as creative suggestions (origin 'vlm_creative') when Qloo
+ * place search has nothing with a real picture. Unsupported or unavailable
+ * categories are marked and the job ends 'partial'.
  */
 
 const CATEGORY_FILTER: Partial<Record<Category, QlooEntityType>> = {
@@ -45,6 +48,71 @@ const SEARCH_TYPES: Partial<Record<ItemKind, QlooEntityType>> = {
   brand: 'urn:entity:brand',
 };
 
+function textProp(properties: Record<string, unknown> | undefined, key: string): string | null {
+  const v = properties?.[key];
+  return typeof v === 'string' && v.trim() ? v.trim().slice(0, 280) : null;
+}
+
+/** Interest-feed cards already sourced from Qloo for this owner — not a title search. */
+async function seedRelatedPicks(
+  db: Queryable,
+  owner: Owner,
+  category: Category,
+  originKey: string,
+  hidden: Set<string>,
+  take: number,
+): Promise<Pick[]> {
+  if (owner.kind !== 'account' || take <= 0) return [];
+  const { rows } = await db.query<{
+    title: string;
+    kind: ItemKind;
+    canonical_key: string;
+    external_ids: Record<string, unknown>;
+    display_metadata: unknown;
+    origin: RecommendationOrigin;
+    provider_query_ids: string[];
+  }>(
+    `SELECT di.title, di.kind, di.canonical_key, di.external_ids, di.display_metadata,
+            r.origin, r.provider_query_ids
+       FROM recommendations r
+       JOIN discovery_items di ON di.id = r.discovery_item_id
+       JOIN taste_seed_runs ts ON ts.id = r.taste_seed_run_id
+      WHERE ts.owner_account_id = $1
+        AND ts.state IN ('complete', 'partial')
+        AND r.category = $2
+        AND di.canonical_key <> $3
+      ORDER BY ts.updated_at DESC, r.rank
+      LIMIT $4`,
+    [owner.accountId, category, originKey, take * 6],
+  );
+  const out: Pick[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (hidden.has(row.canonical_key) || seen.has(row.canonical_key)) continue;
+    if (row.origin === 'qloo' && row.provider_query_ids.length < 1) continue;
+    if (row.origin !== 'qloo' && row.origin !== 'replay') continue;
+    const meta = readDisplayMetadata(row.display_metadata);
+    const qloo = typeof row.external_ids?.qloo === 'string' ? row.external_ids.qloo : null;
+    seen.add(row.canonical_key);
+    out.push({
+      key: row.canonical_key,
+      kind: row.kind,
+      category,
+      title: row.title,
+      year: meta.year ?? null,
+      qloo_id: qloo,
+      description: meta.description ?? null,
+      image: meta.image ?? null,
+      destination_url: meta.destination_url ?? null,
+      origin: row.origin === 'replay' ? 'replay' : 'qloo',
+      provider_query_ids: row.provider_query_ids,
+      reason: 'From your interests.',
+    });
+    if (out.length >= take) break;
+  }
+  return out;
+}
+
 interface Pick {
   key: string;
   kind: ItemKind;
@@ -53,6 +121,8 @@ interface Pick {
   year: number | null;
   qloo_id: string | null;
   description: string | null;
+  image: DisplayImage | null;
+  destination_url: string | null;
   origin: 'qloo' | 'replay' | 'vlm_creative';
   provider_query_ids: string[];
   reason: string;
@@ -124,53 +194,116 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
   for (const category of categories) {
     const filterType = CATEGORY_FILTER[category];
     if (!filterType) continue;
-    if (!session.insightsUsable() || signals.ids.length === 0) {
-      statuses[category] = 'unavailable';
-      continue;
-    }
     const out = await ctx.runStage(`insights:${category}`, async () => {
       const before = session.recorded.length;
-      try {
-        const { response, queryId } = await session.insights(
-          { filterType, signalEntities: signals.ids.slice(0, 10), explainability: true, take: 15 },
-          { purpose: 'related_discovery', category },
-        );
-        const map = QLOO_KIND[filterType]!;
-        const list: RankedList<Pick> = {
-          id: queryId,
-          items: response.data.entities
-            .filter((e) => !signals.ids.includes(e.entity_id))
-            .map((e) => ({
-              key: canonicalKeyFor({ kind: map.kind, title: e.name, qlooId: e.entity_id }),
-              kind: map.kind,
-              category,
-              title: e.name,
-              year: map.kind === 'film' ? yearOf(e) : null,
-              qloo_id: e.entity_id,
-              description: null,
-              origin: response.is_replay ? ('replay' as const) : ('qloo' as const),
-              provider_query_ids: [queryId],
-              reason: `Connected to ${origin.title}.`,
-            }))
-            .filter((p) => !hidden.has(p.key) && p.key !== origin.canonical_key),
-        };
-        const fused = reciprocalRankFusion([list]).slice(0, perCategory).map((f) => f.item);
-        return { picks: fused, status: (fused.length ? 'complete' : 'partial') as SectionStatus, queries: session.recorded.slice(before) };
-      } catch (err) {
-        if (!(err instanceof BudgetExhaustedError) && !isProviderError(err)) throw err;
-        return { picks: [] as Pick[], status: 'failed' as SectionStatus, queries: session.recorded.slice(before) };
+      const map = QLOO_KIND[filterType]!;
+      const toPicks = (entities: QlooEntity[], queryId: string, isReplay: boolean): Pick[] =>
+        entities
+          .filter((e) => !signals.ids.includes(e.entity_id))
+          .map((e) => ({
+            key: canonicalKeyFor({ kind: map.kind, title: e.name, qlooId: e.entity_id }),
+            kind: map.kind,
+            category,
+            title: e.name,
+            year: map.kind === 'film' ? yearOf(e) : null,
+            qloo_id: e.entity_id,
+            description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
+            image: imageFromQlooProperties(e.properties, e.name),
+            destination_url: destinationFromQlooProperties(e.properties),
+            origin: isReplay ? ('replay' as const) : ('qloo' as const),
+            provider_query_ids: [queryId],
+            reason: `Connected to ${origin.title}.`,
+          }))
+          .filter((p) => !hidden.has(p.key) && p.key !== origin.canonical_key);
+
+      if (session.insightsUsable() && signals.ids.length > 0) {
+        try {
+          const { response, queryId } = await session.insights(
+            { filterType, signalEntities: signals.ids.slice(0, 10), explainability: true, take: 15 },
+            { purpose: 'related_discovery', category },
+          );
+          const list: RankedList<Pick> = { id: queryId, items: toPicks(response.data.entities, queryId, response.is_replay) };
+          const fused = reciprocalRankFusion([list]).slice(0, perCategory).map((f) => f.item);
+          if (fused.length) {
+            return { picks: fused, status: 'complete' as SectionStatus, queries: session.recorded.slice(before) };
+          }
+        } catch (err) {
+          if (!(err instanceof BudgetExhaustedError) && !isProviderError(err)) throw err;
+        }
       }
+      // Insights often time out; fall back to this owner's Qloo interest cards, not a title search.
+      const seeded = await seedRelatedPicks(ctx.db, owner, category, origin.canonical_key, hidden, perCategory);
+      if (seeded.length) {
+        return {
+          picks: seeded,
+          status: 'complete' as SectionStatus,
+          queries: session.recorded.slice(before),
+        };
+      }
+      return { picks: [] as Pick[], status: 'failed' as SectionStatus, queries: session.recorded.slice(before) };
     });
     queries.push(...out.queries);
     picks.push(...out.picks);
     statuses[category] = out.status;
   }
 
-  // 3. Eat: creative dish ideas tied to the item's supported references.
+  // 3. Eat: real places with pictures from Qloo search; creative dishes only if search is empty.
   if (categories.includes('eat')) {
+    const seededEat = await seedRelatedPicks(ctx.db, owner, 'eat', origin.canonical_key, hidden, perCategory);
+    if (seededEat.length) {
+      picks.push(...seededEat);
+      statuses.eat = 'complete';
+    } else if (session.searchUsable()) {
+      const out = await ctx.runStage('eat:places', async () => {
+        const before = session.recorded.length;
+        try {
+          const { response, queryId } = await session.search(origin.title, ['urn:entity:place'], {
+            purpose: 'related_discovery',
+            category: 'eat',
+          });
+          const map = QLOO_KIND['urn:entity:place']!;
+          const candidates = await Promise.all(
+            response.data
+              .filter((e) => !signals.ids.includes(e.entity_id))
+              .map(async (e): Promise<Pick | null> => {
+                const image = await qlooImageIfRenderable(imageFromQlooProperties(e.properties, e.name));
+                if (!image) return null;
+                return {
+                  key: canonicalKeyFor({ kind: map.kind, title: e.name, qlooId: e.entity_id }),
+                  kind: map.kind,
+                  category: 'eat' as const,
+                  title: e.name,
+                  year: null,
+                  qloo_id: e.entity_id,
+                  description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
+                  image,
+                  destination_url: destinationFromQlooProperties(e.properties),
+                  origin: response.is_replay ? ('replay' as const) : ('qloo' as const),
+                  provider_query_ids: [queryId],
+                  reason: `Connected to ${origin.title}.`,
+                };
+              }),
+          );
+          const items: Pick[] = candidates
+            .filter((p): p is Pick => p !== null)
+            .filter((p) => !hidden.has(p.key) && p.key !== origin.canonical_key)
+            .slice(0, perCategory);
+          return { picks: items, queries: session.recorded.slice(before), failed: false };
+        } catch (err) {
+          if (!(err instanceof BudgetExhaustedError) && !isProviderError(err)) throw err;
+          return { picks: [] as Pick[], queries: session.recorded.slice(before), failed: true };
+        }
+      });
+      queries.push(...out.queries);
+      picks.push(...out.picks);
+      if (out.picks.length) statuses.eat = 'complete';
+      else if (out.failed) statuses.eat = 'failed';
+    }
     const model = ctx.providers.composer;
-    if (!isUsable(model.capability()) || (anchors.length === 0 && origin.kind === 'capture')) {
-      statuses.eat = 'unavailable';
+    if (statuses.eat === 'complete') {
+      // Real place pictures already filled this slot.
+    } else if (!isUsable(model.capability()) || (anchors.length === 0 && origin.kind === 'capture')) {
+      if (!statuses.eat) statuses.eat = 'unavailable';
     } else {
       const meta = readDisplayMetadata(origin.display_metadata);
       const out = await ctx.runStage('eat', async () => {
@@ -221,6 +354,8 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
                 year: null,
                 qloo_id: null,
                 description: stripSafetyClaims(d.description) || null,
+                image: null,
+                destination_url: null,
                 origin: 'vlm_creative',
                 provider_query_ids: [],
                 reason: stripSafetyClaims(d.reason) || `A creative idea inspired by ${origin.title}.`,
@@ -233,7 +368,12 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           return { picks: [] as Pick[], failed: true };
         }
       });
-      const fresh = out.picks.filter((p) => !hidden.has(p.key));
+      // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat ideas.
+      // They stay server-side (never sent to the model as identity data).
+      const foodExclusions = await foodExclusionsFor(ctx.db, owner);
+      const fresh = out.picks.filter(
+        (p) => !hidden.has(p.key) && !violatedExclusions({ title: p.title, description: p.description }, foodExclusions).length,
+      );
       picks.push(...fresh);
       statuses.eat = out.failed ? 'failed' : fresh.length ? 'complete' : 'partial';
     }
@@ -266,6 +406,8 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           subtitle: p.year ? String(p.year) : null,
           year: p.year,
           description: p.description,
+          image: p.image,
+          destination_url: p.destination_url,
           // Provider picks record whether they came from a replay; creative ideas leave it unchanged.
           ...(p.origin === 'vlm_creative' ? {} : { example: p.origin === 'replay' }),
         },
@@ -282,6 +424,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
         origin: p.origin,
         provider_query_ids: p.provider_query_ids,
         contributing_reference_ids: anchorIds,
+        destination_url: p.destination_url,
       });
     }
     await insertRecommendations(tx, parent, recs);

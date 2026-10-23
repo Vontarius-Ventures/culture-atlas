@@ -1,0 +1,648 @@
+{
+  "fixture_version": 1,
+  "note": "Native owner bridge for apps/ios and apps/android: taste onboarding (spec amendment 2.2, screens 14, 15 and 18) plus Discover, item detail, related discoveries, and boards. Wire bodies are in messages.json. The TS test checks routes against ROUTES and the native owner bridge, copy against design/copy.json, limits against the server schemas, and every decision table against its reference implementation.",
+  "auth": {
+    "bearer": "native access token (cna_), the same session the app uses for /v2",
+    "operations": [
+      "GET /v1/onboarding/catalog",
+      "GET /v1/onboarding/search",
+      "POST /v1/onboarding/picks",
+      "DELETE /v1/onboarding/picks/{id}",
+      "PUT /v1/onboarding/exclusions",
+      "POST /v1/onboarding/complete",
+      "GET /v1/onboarding/state",
+      "GET /v1/onboarding/seed",
+      "GET /v1/taste/picks",
+      "POST /v1/taste/picks",
+      "DELETE /v1/taste/picks/{id}",
+      "GET /v1/discoveries",
+      "GET /v1/items/{id}",
+      "POST /v1/items/{id}/discoveries",
+      "GET /v1/collections",
+      "POST /v1/collections",
+      "GET /v1/collections/{id}",
+      "PUT /v1/collections/{id}/items/{item_id}"
+    ],
+    "mutation_headers": [
+      "Idempotency-Key",
+      "X-Atlas-Expected-Account"
+    ],
+    "error_body": "flat",
+    "error_body_example": "v1_error_body",
+    "other_v1_routes_refuse_with": "scope_denied"
+  },
+  "routes": {
+    "catalog": {
+      "route": "GET /v1/onboarding/catalog",
+      "operation": "getOnboardingCatalog"
+    },
+    "search": {
+      "route": "GET /v1/onboarding/search",
+      "operation": "searchOnboarding"
+    },
+    "create_pick": {
+      "route": "POST /v1/onboarding/picks",
+      "operation": "createOnboardingPick"
+    },
+    "delete_pick": {
+      "route": "DELETE /v1/onboarding/picks/{id}",
+      "operation": "deleteOnboardingPick"
+    },
+    "exclusions": {
+      "route": "PUT /v1/onboarding/exclusions",
+      "operation": "putOnboardingExclusions"
+    },
+    "complete": {
+      "route": "POST /v1/onboarding/complete",
+      "operation": "completeOnboarding"
+    },
+    "state": {
+      "route": "GET /v1/onboarding/state",
+      "operation": "getOnboardingState"
+    },
+    "seed": {
+      "route": "GET /v1/onboarding/seed",
+      "operation": "getOnboardingSeed"
+    },
+    "taste_picks": {
+      "route": "GET /v1/taste/picks",
+      "operation": "listTastePicks"
+    },
+    "create_taste_pick": {
+      "route": "POST /v1/taste/picks",
+      "operation": "createTastePick"
+    },
+    "delete_taste_pick": {
+      "route": "DELETE /v1/taste/picks/{id}",
+      "operation": "deleteTastePick"
+    },
+    "discoveries": {
+      "route": "GET /v1/discoveries",
+      "operation": "getDiscoveries"
+    },
+    "item": {
+      "route": "GET /v1/items/{id}",
+      "operation": "getItem"
+    },
+    "discover_related": {
+      "route": "POST /v1/items/{id}/discoveries",
+      "operation": "discoverRelated"
+    },
+    "list_collections": {
+      "route": "GET /v1/collections",
+      "operation": "listCollections"
+    },
+    "create_collection": {
+      "route": "POST /v1/collections",
+      "operation": "createCollection"
+    },
+    "get_collection": {
+      "route": "GET /v1/collections/{id}",
+      "operation": "getCollection"
+    },
+    "add_collection_item": {
+      "route": "PUT /v1/collections/{id}/items/{item_id}",
+      "operation": "addCollectionItem"
+    }
+  },
+  "limits": {
+    "min_picks": 3,
+    "max_picks": 60,
+    "search_query_min_chars": 2,
+    "search_query_max_chars": 80,
+    "search_results_max": 10,
+    "exclusions_max": 12,
+    "exclusion_max_chars": 40
+  },
+  "categories": [
+    "wear",
+    "play",
+    "watch",
+    "eat"
+  ],
+  "category_copy_keys": {
+    "wear": "onboarding.group.wear",
+    "play": "onboarding.group.play",
+    "watch": "onboarding.group.watch",
+    "eat": "onboarding.group.eat"
+  },
+  "exclusion_suggestions": [
+    "peanuts",
+    "tree nuts",
+    "dairy",
+    "eggs",
+    "gluten",
+    "shellfish",
+    "fish",
+    "soy",
+    "sesame",
+    "pork",
+    "vegetarian",
+    "alcohol"
+  ],
+  "copy": {
+    "onboarding.images.title": "Pick what catches your eye.",
+    "onboarding.chips.title": "Choose a few favorites.",
+    "onboarding.group.wear": "Wear",
+    "onboarding.group.play": "Play",
+    "onboarding.group.watch": "Watch",
+    "onboarding.group.eat": "Eat",
+    "onboarding.search.placeholder": "Add an artist, film, brand or place",
+    "onboarding.search.unavailable": "Search is taking a break. Pick from the ideas above.",
+    "onboarding.exclusions.title": "Anything to leave out?",
+    "onboarding.counter.3": "3 picks to go",
+    "onboarding.counter.2": "2 picks to go",
+    "onboarding.counter.1": "1 pick to go",
+    "onboarding.counter.ready": "Ready",
+    "onboarding.primary": "Build my feed",
+    "onboarding.primary_disabled": "Pick at least 3 so your feed starts with you.",
+    "onboarding.back": "Back",
+    "building.title": "Building your feed…",
+    "building.unavailable": "We'll keep building in the background.",
+    "settings_taste.title": "Interests",
+    "onboarding.hint": "Pick at least 3. You can change them later under Interests.",
+    "onboarding.next": "Next",
+    "onboarding.step": "Step {n} of 3",
+    "onboarding.search.add": "Add",
+    "onboarding.search.added": "Added",
+    "onboarding.exclusions.optional": "Optional",
+    "onboarding.exclusions.note": "We leave these out of food ideas and plans. They don't count as picks.",
+    "onboarding.exclusions.other": "Something else",
+    "building.lede": "Starting with what you picked.",
+    "building.category_ready": "Ready",
+    "building.category_looking": "Looking",
+    "building.go": "See my feed",
+    "building.examples": "Until then, your feed shows example results.",
+    "settings_taste.lede": "Your interests shape the feed. Remove anything that no longer fits, or add more.",
+    "settings_taste.add_more": "Add more",
+    "settings_taste.done": "Done",
+    "settings_taste.remove": "Remove {label}",
+    "settings_taste.save": "Save"
+  },
+  "steps": [
+    {
+      "n": 1,
+      "id": "images",
+      "title_key": "onboarding.images.title",
+      "primary_key": "onboarding.next",
+      "back": false
+    },
+    {
+      "n": 2,
+      "id": "chips",
+      "title_key": "onboarding.chips.title",
+      "primary_key": "onboarding.next",
+      "back": true
+    },
+    {
+      "n": 3,
+      "id": "exclusions",
+      "title_key": "onboarding.exclusions.title",
+      "primary_key": "onboarding.primary",
+      "back": true,
+      "optional": true
+    }
+  ],
+  "step_label_example": {
+    "n": 2,
+    "text": "Step 2 of 3"
+  },
+  "counter": [
+    {
+      "picks": 0,
+      "text": "3 picks to go",
+      "progress": 0,
+      "can_complete": false
+    },
+    {
+      "picks": 1,
+      "text": "2 picks to go",
+      "progress": 1,
+      "can_complete": false
+    },
+    {
+      "picks": 2,
+      "text": "1 pick to go",
+      "progress": 2,
+      "can_complete": false
+    },
+    {
+      "picks": 3,
+      "text": "Ready",
+      "progress": 3,
+      "can_complete": true
+    },
+    {
+      "picks": 7,
+      "text": "Ready",
+      "progress": 3,
+      "can_complete": true
+    }
+  ],
+  "search": {
+    "debounce_ms": 300,
+    "cases": [
+      {
+        "name": "too_short",
+        "input": " n ",
+        "expect": null
+      },
+      {
+        "name": "trimmed",
+        "input": "  nina  ",
+        "expect": "nina"
+      },
+      {
+        "name": "inner_spaces_kept",
+        "input": "nina  simone",
+        "expect": "nina  simone"
+      },
+      {
+        "name": "too_long",
+        "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "expect": null
+      },
+      {
+        "name": "at_limit",
+        "input": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+        "expect": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      }
+    ]
+  },
+  "exclusions": {
+    "cases": [
+      {
+        "name": "adds_trimmed_collapsed",
+        "current": [],
+        "input": "  no   cilantro ",
+        "expect": {
+          "list": [
+            "no cilantro"
+          ],
+          "rejected": null
+        }
+      },
+      {
+        "name": "duplicate_ignores_case",
+        "current": [
+          "shellfish"
+        ],
+        "input": "Shellfish",
+        "expect": {
+          "list": [
+            "shellfish"
+          ],
+          "rejected": "duplicate"
+        }
+      },
+      {
+        "name": "empty",
+        "current": [
+          "shellfish"
+        ],
+        "input": "   ",
+        "expect": {
+          "list": [
+            "shellfish"
+          ],
+          "rejected": "empty"
+        }
+      },
+      {
+        "name": "too_long",
+        "current": [],
+        "input": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        "expect": {
+          "list": [],
+          "rejected": "too_long"
+        }
+      },
+      {
+        "name": "full",
+        "current": [
+          "peanuts",
+          "tree nuts",
+          "dairy",
+          "eggs",
+          "gluten",
+          "shellfish",
+          "fish",
+          "soy",
+          "sesame",
+          "pork",
+          "vegetarian",
+          "alcohol"
+        ],
+        "input": "celery",
+        "expect": {
+          "list": [
+            "peanuts",
+            "tree nuts",
+            "dairy",
+            "eggs",
+            "gluten",
+            "shellfish",
+            "fish",
+            "soy",
+            "sesame",
+            "pork",
+            "vegetarian",
+            "alcohol"
+          ],
+          "rejected": "full"
+        }
+      }
+    ],
+    "toggle_cases": [
+      {
+        "name": "toggle_on",
+        "current": [
+          "dairy"
+        ],
+        "term": "shellfish",
+        "expect": [
+          "dairy",
+          "shellfish"
+        ]
+      },
+      {
+        "name": "toggle_off_any_case",
+        "current": [
+          "dairy",
+          "Shellfish"
+        ],
+        "term": "shellfish",
+        "expect": [
+          "dairy"
+        ]
+      }
+    ],
+    "display_examples": [
+      {
+        "term": "tree nuts",
+        "label": "Tree nuts"
+      },
+      {
+        "term": "shellfish",
+        "label": "Shellfish"
+      }
+    ]
+  },
+  "entry": {
+    "note": "Where the app goes after sign-in. 'onboarding' shows screen 14 full-screen without tabs; 'retry' shows a retry screen (the questionnaire is required, so a transient failure never skips it); 'app' shows the tabs. A server that does not offer native onboarding (not_found / scope_denied) never blocks the app.",
+    "cases": [
+      {
+        "name": "flag_off",
+        "onboarding_flag": false,
+        "state": null,
+        "error": null,
+        "expect": "app"
+      },
+      {
+        "name": "new_account",
+        "onboarding_flag": true,
+        "state": {
+          "required": true,
+          "picks_count": 0
+        },
+        "error": null,
+        "expect": "onboarding"
+      },
+      {
+        "name": "resumes_mid_way",
+        "onboarding_flag": true,
+        "state": {
+          "required": true,
+          "picks_count": 2
+        },
+        "error": null,
+        "expect": "onboarding"
+      },
+      {
+        "name": "required_with_enough_picks_still_completes",
+        "onboarding_flag": true,
+        "state": {
+          "required": true,
+          "picks_count": 3
+        },
+        "error": null,
+        "expect": "onboarding"
+      },
+      {
+        "name": "completed",
+        "onboarding_flag": true,
+        "state": {
+          "required": false,
+          "picks_count": 4
+        },
+        "error": null,
+        "expect": "app"
+      },
+      {
+        "name": "server_without_native_onboarding",
+        "onboarding_flag": true,
+        "state": null,
+        "error": "scope_denied",
+        "expect": "app"
+      },
+      {
+        "name": "older_server",
+        "onboarding_flag": true,
+        "state": null,
+        "error": "not_found",
+        "expect": "app"
+      },
+      {
+        "name": "offline",
+        "onboarding_flag": true,
+        "state": null,
+        "error": "transport",
+        "expect": "retry"
+      },
+      {
+        "name": "server_busy",
+        "onboarding_flag": true,
+        "state": null,
+        "error": "service_unavailable",
+        "expect": "retry"
+      },
+      {
+        "name": "session_ended",
+        "onboarding_flag": true,
+        "state": null,
+        "error": "token_revoked",
+        "expect": "sign_in"
+      },
+      {
+        "name": "session_unknown",
+        "onboarding_flag": true,
+        "state": null,
+        "error": "unauthenticated",
+        "expect": "sign_in"
+      },
+      {
+        "name": "refresh_failed",
+        "onboarding_flag": true,
+        "state": null,
+        "error": "token_expired",
+        "expect": "sign_in"
+      }
+    ]
+  },
+  "complete": {
+    "note": "'Build my feed' first saves exclusions (only when changed), then completes. 409 conflict means the server counted fewer than 3 picks: reload state and show the disabled reason.",
+    "cases": [
+      {
+        "name": "below_minimum",
+        "picks": 2,
+        "error": null,
+        "expect": "disabled"
+      },
+      {
+        "name": "ok",
+        "picks": 3,
+        "error": null,
+        "expect": "building"
+      },
+      {
+        "name": "server_counted_fewer",
+        "picks": 3,
+        "error": "conflict",
+        "expect": "reload_state"
+      },
+      {
+        "name": "offline",
+        "picks": 4,
+        "error": "transport",
+        "expect": "retry"
+      }
+    ]
+  },
+  "seed": {
+    "note": "Screen 15. Poll GET /v1/onboarding/seed every poll_after_ms (default_poll_ms when null). 'advance' leaves for the app; 'background' shows building.unavailable with the Done button and stops polling; 'wait' keeps the collage and polls again.",
+    "default_poll_ms": 1500,
+    "max_wait_ms": 20000,
+    "cases": [
+      {
+        "name": "queued",
+        "state": "queued",
+        "categories": [
+          "pending",
+          "pending",
+          "pending",
+          "pending"
+        ],
+        "elapsed_ms": 0,
+        "expect": "wait"
+      },
+      {
+        "name": "running_one_empty",
+        "state": "running",
+        "categories": [
+          "pending",
+          "empty",
+          "pending",
+          "pending"
+        ],
+        "elapsed_ms": 2000,
+        "expect": "wait"
+      },
+      {
+        "name": "first_ready",
+        "state": "partial",
+        "categories": [
+          "ready",
+          "pending",
+          "pending",
+          "empty"
+        ],
+        "elapsed_ms": 3200,
+        "expect": "advance"
+      },
+      {
+        "name": "ready_while_retrying_others",
+        "state": "retrying",
+        "categories": [
+          "unavailable",
+          "ready",
+          "pending",
+          "pending"
+        ],
+        "elapsed_ms": 4000,
+        "expect": "advance"
+      },
+      {
+        "name": "qloo_unavailable",
+        "state": "retrying",
+        "categories": [
+          "unavailable",
+          "unavailable",
+          "unavailable",
+          "unavailable"
+        ],
+        "elapsed_ms": 1000,
+        "expect": "background"
+      },
+      {
+        "name": "one_unavailable_rest_pending",
+        "state": "running",
+        "categories": [
+          "unavailable",
+          "pending",
+          "pending",
+          "pending"
+        ],
+        "elapsed_ms": 1000,
+        "expect": "background"
+      },
+      {
+        "name": "failed",
+        "state": "failed",
+        "categories": [
+          "pending",
+          "pending",
+          "pending",
+          "pending"
+        ],
+        "elapsed_ms": 1000,
+        "expect": "background"
+      },
+      {
+        "name": "complete_nothing_found",
+        "state": "complete",
+        "categories": [
+          "empty",
+          "empty",
+          "empty",
+          "empty"
+        ],
+        "elapsed_ms": 4000,
+        "expect": "advance"
+      },
+      {
+        "name": "seed_disabled",
+        "state": "not_started",
+        "categories": [
+          "pending",
+          "pending",
+          "pending",
+          "pending"
+        ],
+        "elapsed_ms": 0,
+        "expect": "advance"
+      },
+      {
+        "name": "too_slow",
+        "state": "running",
+        "categories": [
+          "pending",
+          "pending",
+          "pending",
+          "pending"
+        ],
+        "elapsed_ms": 20000,
+        "expect": "background"
+      }
+    ]
+  }
+}

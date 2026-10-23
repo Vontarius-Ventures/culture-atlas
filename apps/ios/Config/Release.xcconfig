@@ -1,0 +1,6 @@
+#include "Base.xcconfig"
+
+ATLAS_API_SCHEME = https:
+ATLAS_API_HOST = app.cultureatlas.com
+APS_ENVIRONMENT = production
+ATLAS_PUSH_ENVIRONMENT = production

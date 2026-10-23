@@ -55,6 +55,18 @@ export interface CallBudgetOptions {
   sleep?: (ms: number) => Promise<void>;
   baseDelayMs?: number;
   newId: () => string;
+  /**
+   * Retries the provider adapter may make on its own inside one counted
+   * request. Unset keeps the adapter default; 0 makes every HTTP request a
+   * counted session request (strict request caps such as the taste seed's 6).
+   */
+  clientMaxRetries?: number;
+  /**
+   * Reserves one request from a budget that outlives this session (the taste
+   * seed's per-job cap across attempts). Called before every counted request;
+   * false ends the session's budget (BudgetExhaustedError), no request is sent.
+   */
+  reserveRequest?: () => Promise<boolean>;
 }
 
 const defaultSleep = (ms: number, signal?: AbortSignal) =>
@@ -117,6 +129,10 @@ export class QlooSession {
     let attempt = 0;
     for (;;) {
       if (this.used >= this.options.maxRequests) throw new BudgetExhaustedError();
+      if (this.options.reserveRequest && !(await this.options.reserveRequest())) {
+        this.used = this.options.maxRequests;
+        throw new BudgetExhaustedError();
+      }
       this.used++;
       const id = this.options.newId();
       const started = Date.now();
@@ -166,11 +182,16 @@ export class QlooSession {
     }
   }
 
-  async insights(req: QlooInsightsRequest, context: Record<string, unknown>) {
+  async insights(req: QlooInsightsRequest, context: Record<string, unknown>, call: { timeoutMs?: number } = {}) {
     return this.withRetries(
       'insights',
       { ...context, filter_type: req.filterType },
-      () => this.qloo.insights(req, { signal: this.options.signal }),
+      () =>
+        this.qloo.insights(req, {
+          signal: this.options.signal,
+          ...(this.options.clientMaxRetries === undefined ? {} : { maxRetries: this.options.clientMaxRetries }),
+          ...(call.timeoutMs === undefined ? {} : { timeoutMs: call.timeoutMs }),
+        }),
       (d) => ({ results: { entities: summarizeEntities(d.entities), tags: d.tags.slice(0, 20) }, empty: d.entities.length === 0 && d.tags.length === 0 }),
     );
   }

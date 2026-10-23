@@ -49,6 +49,8 @@ export interface QlooEntity {
   types: string[];
   subtype?: string;
   popularity?: number;
+  /** Human-readable place/locality context ("Madrid, Comunidad de Madrid, España"); used to tell same-named places apart. */
+  disambiguation?: string;
   /** Selected documented properties (image, release_year, description, external ids, ...). */
   properties: Record<string, unknown>;
   tags: QlooTagRef[];
@@ -65,6 +67,8 @@ export interface QlooTag {
   name: string;
   type: string;
   parents?: string[];
+  /** Qloo's 0..1 popularity percentile, when returned (used to drop obscure taste-seed tags). */
+  popularity?: number;
 }
 
 /** What was sent (no API key), for provider_queries.sanitized_request. */
@@ -112,6 +116,11 @@ export interface QlooInsightsRequest {
   /** filter.results.entities: restrict scored candidates. */
   filterResultsEntities?: string[];
   filterTags?: string[];
+  /**
+   * filter.tag.types: with filterType 'urn:tag', restrict returned tags to
+   * these tag-type URNs (e.g. 'urn:tag:cuisine:qloo').
+   */
+  filterTagTypes?: string[];
   biasTrends?: 'off' | 'low' | 'medium' | 'high';
   explainability?: boolean;
   /** Typical max 50. */

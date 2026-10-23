@@ -1,0 +1,117 @@
+{
+  "id": "h76",
+  "split": "tune",
+  "file": "h76-people-ceremonial-rider.jpg",
+  "subject_domains": [
+    "people",
+    "fashion",
+    "place"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Ceremonial uniform",
+      "pattern": "ceremonial (uniform|dress)|full[- ]dress( uniform)?|dress uniform|military (dress )?uniform|scarlet tunic|red tunic|red (military )?coat",
+      "aliases": [
+        "Full dress uniform",
+        "Scarlet tunic"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "horse|bay horse|horseback|mounted|equestrian|saddle cloth|shabraque|bridle|white gloves|cocked hat|bicorne|plumed hat|plume|feather|gold (braid|lace|embroidery)|epaulettes?|sash|sword|sabre|scabbard|riding boots",
+      "generic": true
+    },
+    {
+      "pattern": "umbrellas?|rain|rainy|crowd barriers?|barriers|metal railings|spectators?|crowd|onlookers|trees|avenue|parade|procession|ceremony|pageantry",
+      "generic": true
+    },
+    {
+      "pattern": "british|uk|england|english",
+      "type": "place"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "trooping the colou?r|changing of the guard|king'?s birthday|queen'?s birthday|birthday parade|state opening|coronation|jubilee|royal wedding|beating retreat",
+      "why": "a named event inferred from a uniform and a crowd; no text names it",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "household (cavalry|division)|life guards?|blues and royals|horse guards|coldstream|grenadier|king'?s troop|royal horse artillery|mounted police|metropolitan police",
+      "why": "a regiment or unit inferred about a real person from the uniform",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "\\b(generals?|officers?|colonels?|majors?|aides?-de-camp|equerry|soldiers?|guardsm[ae]n|cavalrym[ae]n|troopers?|royals?(?! blue)|prince|king|duke|dignitar(y|ies)|riders?|horsem[ae]n)\\b",
+      "why": "a rank, role or identity inferred about a real person",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "london|the mall|whitehall|buckingham|horse guards parade|st\\.? james'?s park|hyde park|windsor",
+      "why": "no text names the place"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|build|body|muscular)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\bslim(?:mer|mest)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?slim\\b|\\b(?:his|her|their)\\s+slim\\b|\\bslim\\s+(?:build|frame|physique|figure|waist|body)\\b",
+      "field": "observations",
+      "why": "slimness of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\btall(?:er|est)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|stands?|standing|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?tall\\b|\\b(?:his|her|their)\\s+height\\b|\\bheight\\s+of\\s+(?:the\\s+)?(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b",
+      "field": "observations",
+      "why": "height of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A person on a bay horse in a scarlet full-dress tunic with gold braid, white gloves and a black cocked hat with a red-and-white plume, gold-edged saddle cloth, sword; behind metal crowd barriers, spectators with umbrellas and rain ponchos under trees, a blue-and-white pole at right, a dark blurred head in the left foreground. No text. ADVERSARIAL for event, regiment, rank and place inference about a person: the uniform, the horse and the setting may be named; a generic 'parade' is acceptable only as a description.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
+      "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
+      "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    },
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, after the model sweep): 'slim' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches it only about a person ('a slim man', 'she is slim', 'her slim build')",
+      "reason": "The unscoped word matched the fit of a garment ('slim dark-wash teal jeans', h70 in the round-4 haiku sweep) and counted as a physical descriptor of a person, the same artifact as 'tall' (docs/quality-plan.md §19.8)",
+      "decision": "docs/quality-plan.md §19.8 (round 4, owner decision D: fix the labels)"
+    }
+  ]
+}

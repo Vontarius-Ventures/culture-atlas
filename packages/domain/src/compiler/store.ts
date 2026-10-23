@@ -3,7 +3,7 @@ import type { Category, ItemKind, ReferenceType, SectionStatus } from '../enums'
 import { JobCancelledError } from '../jobs/handler';
 import { setSectionStatus } from '../jobs/stages';
 import type { Owner } from '../principal';
-import type { DisplayMetadata } from '../services/display';
+import { forDisplayUpsert, type DisplayMetadata } from '../services/display';
 
 /** Capture row fields the compiler needs. */
 export interface CaptureForCompile {
@@ -124,7 +124,7 @@ export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: Dis
       item.canonicalKey,
       item.referenceId ?? null,
       item.title.slice(0, 200),
-      JSON.stringify(item.displayMetadata),
+      JSON.stringify(forDisplayUpsert(item.displayMetadata)),
       JSON.stringify(item.externalIds),
       [...item.resolvedAnchorIds],
     ],

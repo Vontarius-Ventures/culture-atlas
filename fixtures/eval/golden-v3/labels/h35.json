@@ -1,0 +1,72 @@
+{
+  "id": "h35",
+  "split": "holdout",
+  "file": "h35-interior-loft-bedroom.jpg",
+  "subject_domains": [
+    "interior",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Industrial loft",
+      "pattern": "industrial|\\blofts?\\b|warehouse conversion|converted warehouse",
+      "aliases": [
+        "Industrial style",
+        "Loft apartment"
+      ],
+      "type": "style"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "minimalis(t|m)|contemporary|modern (bedroom|interior|design|style)"
+    },
+    {
+      "pattern": "exposed brick|brick walls?|platform bed|low bed|roller blinds|floating shelves|polished (wood|wooden|concrete) floor|dark floor|nightstand|bedside (table|cabinet)|coral|vases?|bedroom",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "victorian|baroque|art deco|rococo|farmhouse|cottage|bohemian|boho|shabby chic",
+      "why": "nothing in the room supports these styles"
+    },
+    {
+      "pattern": "new york|brooklyn|soho|tribeca|manhattan|chicago|london|berlin",
+      "why": "no text names a city; a loft is not a place"
+    },
+    {
+      "pattern": "ikea|restoration hardware|west elm|crate (and|&) barrel|muji|design within reach",
+      "why": "no label or brand is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Loft bedroom: exposed red-brick walls, tall windows with white roller blinds, low wooden platform bed with white bedding, wall shelves with vases and coral, glossy dark floor. No text."
+}

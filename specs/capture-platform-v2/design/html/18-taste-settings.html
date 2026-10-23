@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Taste settings · culture atlas mockup 18</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 18 · /settings/taste. Picks grouped by category with Remove, Add more (the same
+     pickers as onboarding), and the exclusions editor. Removing below 3 is allowed here. */
+  .crumb { font-size: 14px; color: var(--muted); margin: var(--space-2) 0 var(--space-4); }
+  .crumb a { color: inherit; text-decoration: none; }
+  .settings-head { margin-bottom: var(--space-8); }
+  .settings-head .lede { margin-top: var(--space-2); max-width: 36em; }
+  .taste-layout { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 4fr); gap: var(--space-12); align-items: start; }
+  .taste-group { padding: var(--space-6) 0; border-top: 1px solid var(--line); }
+  .taste-group:first-child { border-top: 0; padding-top: 0; }
+  .taste-group__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-3); }
+  .taste-group__title { font-size: 26px; line-height: 1.2; }
+  .taste-group__count { font-family: var(--font-ui); font-size: 15px; color: var(--muted); margin-left: var(--space-1); }
+  .add-more { text-decoration: none; color: var(--accent); font-weight: 600; }
+  .add-more .icon { width: 18px; height: 18px; }
+  .add-more[aria-expanded='true'] { display: none; }
+  .pick-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .pick-chip { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 52px; padding: 0 4px 0 18px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+  .pick-chip--image { padding-left: 5px; }
+  .pick-chip img { width: 40px; height: 40px; border-radius: 999px; object-fit: cover; }
+  .pick-chip__label { font-size: 16px; }
+  .pick-chip__kind { font-size: 14px; color: var(--muted); }
+  .pick-chip__remove { width: 44px; height: 44px; display: grid; place-items: center; border: 0; border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
+  .pick-chip__remove:hover { background: var(--quiet); color: var(--ink); }
+  .pick-chip__remove .icon { width: 18px; height: 18px; }
+  .add-panel { margin-top: var(--space-4); padding: var(--space-6); border: 1px solid var(--line); border-radius: var(--radius-image); background: var(--surface); }
+  .add-panel__title { font-family: var(--font-display); font-size: 20px; margin-bottom: var(--space-2); }
+  .add-panel__search-label { margin-top: var(--space-4); }
+  .add-panel__done { display: flex; justify-content: flex-end; margin-top: var(--space-4); }
+  .search-off { display: none; margin-top: var(--space-3); }
+  .search-unavailable .search-off { display: flex; }
+  .exclusions h2 { font-size: 24px; line-height: 1.2; }
+  .exclusions .note { color: var(--muted); font-size: 15px; margin: var(--space-2) 0 var(--space-4); }
+  .exclusion-other { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+  .exclusion-other .input { min-height: 44px; }
+  .exclusions__save { margin-top: var(--space-6); width: 100%; }
+  @media (max-width: 1023px) {
+    .taste-layout { grid-template-columns: 1fr; gap: var(--space-8); }
+  }
+  @media (max-width: 767px) {
+    .settings-head { margin-bottom: var(--space-6); }
+    .taste-group__title { font-size: 22px; }
+    .add-panel { padding: var(--space-4); }
+    .pick-chip { min-height: 48px; padding-left: 14px; }
+    .pick-chip--image { padding-left: 4px; }
+    .pick-chip img { width: 36px; height: 36px; }
+    .pill { padding: 0 14px; }
+  }
+</style>
+</head>
+<body class="has-bottom-nav">
+<header class="header">
+  <div class="header__inner">
+    <a class="wordmark" href="#">culture atlas</a>
+    <nav class="header__nav" aria-label="Main"><ul>
+      <li><a class="header__link" href="#">Discover</a></li>
+      <li><a class="header__link" href="#">Library</a></li>
+      <li><a class="header__link" href="#">Collections</a></li>
+      <li><a class="header__link" href="#">Plans</a></li>
+    </ul></nav>
+    <div class="header__actions">
+      <a class="button button--primary" href="#"><svg class="icon"><use href="#i-plus"/></svg>Capture</a>
+      <a class="header__settings" href="#" aria-current="page"><span class="header__settings-label">Settings</span><span class="header__settings-icon"><svg class="icon"><use href="#i-settings"/></svg><span class="visually-hidden">Settings</span></span></a>
+    </div>
+  </div>
+</header>
+
+<main class="main page page--contained">
+  <p class="crumb"><a href="#">culture atlas</a> / <a href="#">Settings</a></p>
+  <div class="settings-head">
+    <h1 class="display display--medium">Taste</h1>
+    <p class="lede">What you pick shapes your feed. Remove anything that no longer fits, or add more.</p>
+  </div>
+  <div class="taste-layout">
+    <div class="taste-picks">
+      <section class="taste-group" aria-labelledby="g-wear">
+        <div class="taste-group__head">
+          <h2 class="taste-group__title" id="g-wear">Wear <span class="taste-group__count">3</span></h2>
+          <button type="button" class="button button--text add-more" aria-expanded="false" aria-controls="add-wear"><svg class="icon"><use href="#i-plus"/></svg>Add more</button>
+        </div>
+        <ul class="pick-list"><li class="pick-chip"><span class="pick-chip__label">Japandi</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Japandi"><svg class="icon"><use href="#i-close"/></svg></button></li><li class="pick-chip pick-chip--image"><img src="../../../../apps/web/public/samples/onboarding/tailoring.jpg" alt=""><span class="pick-chip__label">Soft tailoring</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Soft tailoring"><svg class="icon"><use href="#i-close"/></svg></button></li><li class="pick-chip pick-chip--image"><img src="../../../../apps/web/public/samples/onboarding/linen.jpg" alt=""><span class="pick-chip__label">Linen days</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Linen days"><svg class="icon"><use href="#i-close"/></svg></button></li></ul><div class="add-panel" id="add-wear" hidden></div>
+      </section>
+      <section class="taste-group" aria-labelledby="g-play">
+        <div class="taste-group__head">
+          <h2 class="taste-group__title" id="g-play">Play <span class="taste-group__count">3</span></h2>
+          <button type="button" class="button button--text add-more" aria-expanded="false" aria-controls="add-play"><svg class="icon"><use href="#i-plus"/></svg>Add more</button>
+        </div>
+        <ul class="pick-list"><li class="pick-chip pick-chip--image"><img src="../../../../apps/web/public/samples/onboarding/listening.jpg" alt=""><span class="pick-chip__label">Sunday listening</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Sunday listening"><svg class="icon"><use href="#i-close"/></svg></button></li><li class="pick-chip"><span class="pick-chip__label">Nina Simone</span><span class="pick-chip__kind">Artist</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Nina Simone"><svg class="icon"><use href="#i-close"/></svg></button></li><li class="pick-chip"><span class="pick-chip__label">Bossa nova</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Bossa nova"><svg class="icon"><use href="#i-close"/></svg></button></li></ul><div class="add-panel" id="add-play" hidden></div>
+      </section>
+      <section class="taste-group" aria-labelledby="g-watch">
+        <div class="taste-group__head">
+          <h2 class="taste-group__title" id="g-watch">Watch <span class="taste-group__count">1</span></h2>
+          <button type="button" class="button button--text add-more" aria-expanded="true" aria-controls="add-watch"><svg class="icon"><use href="#i-plus"/></svg>Add more</button>
+        </div>
+        <ul class="pick-list"><li class="pick-chip"><span class="pick-chip__label">Film noir</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Film noir"><svg class="icon"><use href="#i-close"/></svg></button></li></ul>
+        <div class="add-panel" id="add-watch">
+          <p class="add-panel__title">Choose a few favorites.</p>
+          <div class="pill-row" role="group" aria-label="Watch ideas"><button type="button" class="pill" data-toggle aria-pressed="true"><svg class="icon pill__check"><use href="#i-check"/></svg>Film noir</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Slow cinema</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>French New Wave</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Coming of age</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Documentary</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Heist</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Romantic comedy</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Animation</button></div>
+          <label class="field-label add-panel__search-label" for="taste-search">Add an artist, film, brand or place</label>
+          <div class="search"><svg class="icon"><use href="#i-search"/></svg><input class="input" id="taste-search" type="search" placeholder="Search" autocomplete="off"></div>
+          <p class="notice search-off" role="status"><svg class="icon"><use href="#i-info"/></svg><span>Search is taking a break. Pick from the ideas above.</span></p>
+          <div class="add-panel__done"><button type="button" class="button button--outline" aria-expanded="true" aria-controls="add-watch">Done</button></div>
+        </div>
+      </section>
+      <section class="taste-group" aria-labelledby="g-eat">
+        <div class="taste-group__head">
+          <h2 class="taste-group__title" id="g-eat">Eat <span class="taste-group__count">2</span></h2>
+          <button type="button" class="button button--text add-more" aria-expanded="false" aria-controls="add-eat"><svg class="icon"><use href="#i-plus"/></svg>Add more</button>
+        </div>
+        <ul class="pick-list"><li class="pick-chip pick-chip--image"><img src="../../../../apps/web/public/samples/onboarding/tea.jpg" alt=""><span class="pick-chip__label">Tea rituals</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Tea rituals"><svg class="icon"><use href="#i-close"/></svg></button></li><li class="pick-chip"><span class="pick-chip__label">Sichuan cuisine</span><button type="button" class="pick-chip__remove" data-remove aria-label="Remove Sichuan cuisine"><svg class="icon"><use href="#i-close"/></svg></button></li></ul><div class="add-panel" id="add-eat" hidden></div>
+      </section>
+    </div>
+    <aside class="panel exclusions" aria-labelledby="excl-title">
+      <h2 id="excl-title">Anything to leave out?</h2>
+      <p class="note">We leave these out of food ideas and plans. They don't count as picks.</p>
+      <div class="pill-row" role="group" aria-label="Foods to leave out"><button type="button" class="pill" data-toggle aria-pressed="true"><svg class="icon pill__check"><use href="#i-check"/></svg>Peanuts</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Tree nuts</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Dairy</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Eggs</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Gluten</button><button type="button" class="pill" data-toggle aria-pressed="true"><svg class="icon pill__check"><use href="#i-check"/></svg>Shellfish</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Fish</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Soy</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Sesame</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Pork</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Vegetarian</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Alcohol</button></div>
+      <form class="exclusion-other" onsubmit="return false">
+        <label class="visually-hidden" for="exclusion-other">Something else to leave out</label>
+        <input class="input" id="exclusion-other" placeholder="Something else" autocomplete="off">
+        <button type="submit" class="button button--outline">Add</button>
+      </form>
+      <button type="button" class="button button--primary exclusions__save">Save</button>
+    </aside>
+  </div>
+</main>
+
+<nav class="bottom-nav" aria-label="Main"><ul>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-home"/></svg>Discover</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-image"/></svg>Library</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-bookmark"/></svg>Collections</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-calendar"/></svg>Plans</a></li>
+</ul></nav>
+<script src="mockup.js"></script>
+</body>
+</html>

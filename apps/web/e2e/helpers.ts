@@ -21,7 +21,8 @@ export async function expectNoHorizontalScroll(page: Page) {
 
 /** Wait until images in the viewport have decoded pixels (stable screenshots). */
 export async function settleImages(page: Page, fullPage = false) {
-  await page.waitForLoadState('networkidle').catch(() => undefined);
+  // Pages that poll (e.g. live event streams) never go idle: cap the wait.
+  await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => undefined);
   await page
     .waitForFunction(
       (all) =>

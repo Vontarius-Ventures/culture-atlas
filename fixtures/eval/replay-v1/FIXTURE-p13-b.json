@@ -1,0 +1,33 @@
+{
+  "quick": {
+    "title": "Basketball hoop in autumn",
+    "interpretation": "An outdoor hoop that resembles a streetball court.",
+    "candidates": [
+      {
+        "name": "Streetball",
+        "type": "tradition",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "categories": [
+          "play"
+        ],
+        "tag_query": "streetball"
+      },
+      {
+        "name": "Outdoor basketball hoop",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.8,
+        "categories": [
+          "play"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "quick_ms": 1900
+}

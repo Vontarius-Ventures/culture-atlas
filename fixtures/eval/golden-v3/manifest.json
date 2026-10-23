@@ -1,0 +1,986 @@
+{
+  "version": "golden-v3",
+  "photos": [
+    {
+      "id": "p01",
+      "split": "tune",
+      "file": "01-food-fruits.jpg",
+      "sha256": "9c031d80a1c52da5eca790db896baffec6a7e52bf786cdb7bbfca5c7f880e6a1",
+      "width": 512,
+      "height": 480,
+      "source": {
+        "repo": "opencv/opencv",
+        "path": "samples/data/fruits.jpg",
+        "commit": "9b6287ec500ef7b327ac74c4f6c9cd84a2cbc9cd",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/opencv/opencv/9b6287ec500ef7b327ac74c4f6c9cd84a2cbc9cd/samples/data/fruits.jpg"
+      }
+    },
+    {
+      "id": "p02",
+      "split": "tune",
+      "file": "02-food-groceries.jpg",
+      "sha256": "7073dfecb5a3ecafb6152124113163a0ea1c1c70f92999ec892b519eca63e3d3",
+      "width": 800,
+      "height": 534,
+      "source": {
+        "repo": "facebookresearch/segment-anything",
+        "path": "notebooks/images/groceries.jpg",
+        "commit": "dca509fe793f601edb92606367a655c15ac00fdf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/facebookresearch/segment-anything/dca509fe793f601edb92606367a655c15ac00fdf/notebooks/images/groceries.jpg"
+      }
+    },
+    {
+      "id": "p03",
+      "split": "tune",
+      "file": "03-interior-modern-room.jpg",
+      "sha256": "bc77f215081f58de8d079e821e2808f6ee2727dfa729c10a5921c186a32c7638",
+      "width": 2048,
+      "height": 1332,
+      "source": {
+        "repo": "DepthAnything/Depth-Anything-V2",
+        "path": "assets/examples/demo10.jpg",
+        "commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/assets/examples/demo10.jpg"
+      }
+    },
+    {
+      "id": "p04",
+      "split": "tune",
+      "file": "04-interior-palace-staircase.jpg",
+      "sha256": "bf60ce3879f627e8886280cc61442174c91908894a5b059681341fed600f7db3",
+      "width": 2048,
+      "height": 1362,
+      "source": {
+        "repo": "DepthAnything/Depth-Anything-V2",
+        "path": "assets/examples/demo15.jpg",
+        "commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/assets/examples/demo15.jpg"
+      }
+    },
+    {
+      "id": "p05",
+      "split": "tune",
+      "file": "05-craft-ceramics-display.jpg",
+      "sha256": "9168fc752a002d50138a56621e8de5fab7fed125a978dd293319d28d30993564",
+      "width": 2048,
+      "height": 1332,
+      "source": {
+        "repo": "DepthAnything/Depth-Anything-V2",
+        "path": "assets/examples/demo13.jpg",
+        "commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/assets/examples/demo13.jpg"
+      }
+    },
+    {
+      "id": "p06",
+      "split": "tune",
+      "file": "06-architecture-palace.jpg",
+      "sha256": "23b8cf46a1965d0ec33459b875aed43187802834db49e0daa9fa2cc842e9d8d2",
+      "width": 512,
+      "height": 384,
+      "source": {
+        "repo": "opencv/opencv",
+        "path": "samples/data/home.jpg",
+        "commit": "9b6287ec500ef7b327ac74c4f6c9cd84a2cbc9cd",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/opencv/opencv/9b6287ec500ef7b327ac74c4f6c9cd84a2cbc9cd/samples/data/home.jpg"
+      }
+    },
+    {
+      "id": "p07",
+      "split": "tune",
+      "file": "07-sign-no-litter-tokyo.jpg",
+      "sha256": "a636f5b3b497aba2f28862cdaadbeb0d0e542604cb0141670f8e0af66a639021",
+      "width": 555,
+      "height": 418,
+      "source": {
+        "repo": "JaidedAI/EasyOCR",
+        "path": "examples/japanese.jpg",
+        "commit": "363afb184047ce452e436f4224f3098422df872e",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/JaidedAI/EasyOCR/363afb184047ce452e436f4224f3098422df872e/examples/japanese.jpg"
+      }
+    },
+    {
+      "id": "p08",
+      "split": "tune",
+      "file": "08-sign-yuyuan-road.jpg",
+      "sha256": "7d8f231016c6a35da879b7d79b39c45b694aef962ae30f64063d981e618fbf7f",
+      "width": 640,
+      "height": 339,
+      "source": {
+        "repo": "JaidedAI/EasyOCR",
+        "path": "examples/chinese.jpg",
+        "commit": "363afb184047ce452e436f4224f3098422df872e",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/JaidedAI/EasyOCR/363afb184047ce452e436f4224f3098422df872e/examples/chinese.jpg"
+      }
+    },
+    {
+      "id": "p09",
+      "split": "tune",
+      "file": "09-sign-paris-wayfinding.jpg",
+      "sha256": "549784c349af8a87d53e2fec897d03aa800ed73a64bb9d8de60485cdd71d1e98",
+      "width": 692,
+      "height": 1024,
+      "source": {
+        "repo": "JaidedAI/EasyOCR",
+        "path": "examples/french.jpg",
+        "commit": "363afb184047ce452e436f4224f3098422df872e",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/JaidedAI/EasyOCR/363afb184047ce452e436f4224f3098422df872e/examples/french.jpg"
+      }
+    },
+    {
+      "id": "p10",
+      "split": "tune",
+      "file": "10-busy-street-bus.jpg",
+      "sha256": "c02019c4979c191eb739ddd944445ef408dad5679acab6fd520ef9d434bfbc63",
+      "width": 810,
+      "height": 1080,
+      "source": {
+        "repo": "ultralytics/ultralytics",
+        "path": "ultralytics/assets/bus.jpg",
+        "commit": "a8e5a17357f48c77fd5c5b794baa681238545489",
+        "license": "AGPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/ultralytics/ultralytics/a8e5a17357f48c77fd5c5b794baa681238545489/ultralytics/assets/bus.jpg"
+      }
+    },
+    {
+      "id": "p11",
+      "split": "tune",
+      "file": "11-person-adversarial.jpg",
+      "sha256": "16d73869e3267a7d4ed00de8e860833bd1657c1b252e94c0c348277adc7b6edb",
+      "width": 1280,
+      "height": 720,
+      "source": {
+        "repo": "ultralytics/ultralytics",
+        "path": null,
+        "commit": "a8e5a17357f48c77fd5c5b794baa681238545489",
+        "license": "AGPL-3.0",
+        "raw_url": null,
+        "withheld": "the upstream file name is a real person's name; copy the photo from the private SOURCES.md (outside git) and eval:fetch verifies its sha256"
+      }
+    },
+    {
+      "id": "p12",
+      "split": "tune",
+      "file": "12-street-london.jpg",
+      "sha256": "35ef1bbb63f6540e49aa9b6302b9b938be4fe8b9c08c07c3694b02396b0e87e0",
+      "width": 2048,
+      "height": 1362,
+      "source": {
+        "repo": "DepthAnything/Depth-Anything-V2",
+        "path": "assets/examples/demo01.jpg",
+        "commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/assets/examples/demo01.jpg"
+      }
+    },
+    {
+      "id": "p13",
+      "split": "tune",
+      "file": "13-sport-basketball-hoop.jpg",
+      "sha256": "345bec735adc4c238bf14ddf1d182c4881f8ba08814c4f4074c1d79e9e4adc52",
+      "width": 2252,
+      "height": 1498,
+      "source": {
+        "repo": "DepthAnything/Depth-Anything-V2",
+        "path": "assets/examples/demo07.jpg",
+        "commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/assets/examples/demo07.jpg"
+      }
+    },
+    {
+      "id": "p14",
+      "split": "tune",
+      "file": "14-dog-bicycle-porch.jpg",
+      "sha256": "5a9522051c3cec2bbd2f6323fccba32e8fbf3ddcc2b3e2fd46b04c720bc6f866",
+      "width": 768,
+      "height": 576,
+      "source": {
+        "repo": "pjreddie/darknet",
+        "path": "data/dog.jpg",
+        "commit": "f6afaabcdf85f77e7aff2ec55c020c0e297c77f9",
+        "license": "YOLO-license-public-domain",
+        "raw_url": "https://raw.githubusercontent.com/pjreddie/darknet/f6afaabcdf85f77e7aff2ec55c020c0e297c77f9/data/dog.jpg"
+      }
+    },
+    {
+      "id": "p15",
+      "split": "tune",
+      "file": "15-blur-car-motion.jpg",
+      "sha256": "ea6fa9cea75df91bec656d1d3b903111a9c0708c6a3b88f405a5156de38ff9d6",
+      "width": 600,
+      "height": 482,
+      "source": {
+        "repo": "opencv/opencv",
+        "path": "samples/data/licenseplate_motion.jpg",
+        "commit": "9b6287ec500ef7b327ac74c4f6c9cd84a2cbc9cd",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/opencv/opencv/9b6287ec500ef7b327ac74c4f6c9cd84a2cbc9cd/samples/data/licenseplate_motion.jpg"
+      }
+    },
+    {
+      "id": "h01",
+      "split": "tune",
+      "file": "h01-car_eu026.jpg",
+      "sha256": "637060489ccea01515c342e368e93bb366275cf7b2e13986647fa9c89f74ec63",
+      "width": 573,
+      "height": 410,
+      "source": {
+        "repo": "openalpr/benchmarks",
+        "path": "endtoend/eu/test_026.jpg",
+        "commit": "9790ed20d475be1e940a7e2a3f492a97c2ebed9b",
+        "license": "AGPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/openalpr/benchmarks/9790ed20d475be1e940a7e2a3f492a97c2ebed9b/endtoend/eu/test_026.jpg"
+      }
+    },
+    {
+      "id": "h02",
+      "split": "tune",
+      "file": "h02-gsam_car.jpg",
+      "sha256": "45d920dfe748a66d513796600564f691240c2b00c8da4316c45d29e11ce067b2",
+      "width": 640,
+      "height": 360,
+      "source": {
+        "repo": "IDEA-Research/Grounded-Segment-Anything",
+        "path": "playground/ImageBind_SAM/.assets/car_image.jpg",
+        "commit": "126abe633ffe333e16e4a0a4e946bc1003caf757",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/IDEA-Research/Grounded-Segment-Anything/126abe633ffe333e16e4a0a4e946bc1003caf757/playground/ImageBind_SAM/.assets/car_image.jpg"
+      }
+    },
+    {
+      "id": "h03",
+      "split": "tune",
+      "file": "h03-ootd_00126.jpg",
+      "sha256": "661ebf9c36b4ef974503023f8e59fe28937757646fb27b21c960869ab1cf3ac1",
+      "width": 768,
+      "height": 1024,
+      "source": {
+        "repo": "levihsu/OOTDiffusion",
+        "path": "run/examples/garment/00126_00.jpg",
+        "commit": "13ef0faba266cdde9febc8ad39be2395bbb89d9c",
+        "license": "CC-BY-NC-SA-4.0",
+        "raw_url": "https://raw.githubusercontent.com/levihsu/OOTDiffusion/13ef0faba266cdde9febc8ad39be2395bbb89d9c/run/examples/garment/00126_00.jpg"
+      }
+    },
+    {
+      "id": "h04",
+      "split": "tune",
+      "file": "h04-ootd_00151.jpg",
+      "sha256": "d8ad0a63cdacfa9e7876c25624195def2f4005cc9eb8e63b3f8f275b4fa0d7f7",
+      "width": 768,
+      "height": 1024,
+      "source": {
+        "repo": "levihsu/OOTDiffusion",
+        "path": "run/examples/garment/00151_00.jpg",
+        "commit": "13ef0faba266cdde9febc8ad39be2395bbb89d9c",
+        "license": "CC-BY-NC-SA-4.0",
+        "raw_url": "https://raw.githubusercontent.com/levihsu/OOTDiffusion/13ef0faba266cdde9febc8ad39be2395bbb89d9c/run/examples/garment/00151_00.jpg"
+      }
+    },
+    {
+      "id": "h05",
+      "split": "tune",
+      "file": "h05-qwen25_food.jpeg",
+      "sha256": "ac2155fa0cb0dd57b3c9952ab5beca137cc698b07a6a21be89d2c3d032dae22b",
+      "width": 3024,
+      "height": 4032,
+      "source": {
+        "repo": "QwenLM/Qwen2.5-VL",
+        "path": "cookbooks/assets/omni_recognition/sample-food.jpeg",
+        "commit": "96588727e44c78b25ba03ea03b8e12f7e64fd0da",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/QwenLM/Qwen2.5-VL/96588727e44c78b25ba03ea03b8e12f7e64fd0da/cookbooks/assets/omni_recognition/sample-food.jpeg"
+      }
+    },
+    {
+      "id": "h06",
+      "split": "tune",
+      "file": "h06-qwenvl_menu.jpeg",
+      "sha256": "4197bd0613ef9fed189f7e1b490af5304345927adbd510483d7d31b41ae30625",
+      "width": 400,
+      "height": 518,
+      "source": {
+        "repo": "QwenLM/Qwen-VL",
+        "path": "assets/mm_tutorial/Menu.jpeg",
+        "commit": "aa00ed04091eea5fcdd32985e7915f1c53e7d599",
+        "license": "Tongyi-Qianwen-License",
+        "raw_url": "https://raw.githubusercontent.com/QwenLM/Qwen-VL/aa00ed04091eea5fcdd32985e7915f1c53e7d599/assets/mm_tutorial/Menu.jpeg"
+      }
+    },
+    {
+      "id": "h07",
+      "split": "tune",
+      "file": "h07-gsam_demo3.jpg",
+      "sha256": "a9011049db02799c9bf68ba228445968a4dc2d097df8f3559c4e18a8a09a4f7f",
+      "width": 3295,
+      "height": 1846,
+      "source": {
+        "repo": "IDEA-Research/Grounded-Segment-Anything",
+        "path": "assets/demo3.jpg",
+        "commit": "126abe633ffe333e16e4a0a4e946bc1003caf757",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/IDEA-Research/Grounded-Segment-Anything/126abe633ffe333e16e4a0a4e946bc1003caf757/assets/demo3.jpg"
+      }
+    },
+    {
+      "id": "h08",
+      "split": "tune",
+      "file": "h08-lol_780.png",
+      "sha256": "f78aad566110d3c2efc7dc3ebc086043385af27231f44d3b03780becb492e972",
+      "width": 600,
+      "height": 400,
+      "source": {
+        "repo": "weichen582/RetinexNet",
+        "path": "data/eval/low/780.png",
+        "commit": "fdc15ebc179209d17c77371a825df351a5be3ff5",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/weichen582/RetinexNet/fdc15ebc179209d17c77371a825df351a5be3ff5/data/eval/low/780.png"
+      }
+    },
+    {
+      "id": "h09",
+      "split": "tune",
+      "file": "h09-qwenvl_poster.jpeg",
+      "sha256": "392a8c559f8b18889b89beac808f4b4b7bf7492161031882cc3ad3af0f97aec4",
+      "width": 2013,
+      "height": 3000,
+      "source": {
+        "repo": "QwenLM/Qwen-VL",
+        "path": "assets/mm_tutorial/Rebecca_(1939_poster).jpeg",
+        "commit": "aa00ed04091eea5fcdd32985e7915f1c53e7d599",
+        "license": "Tongyi-Qianwen-License",
+        "raw_url": "https://raw.githubusercontent.com/QwenLM/Qwen-VL/aa00ed04091eea5fcdd32985e7915f1c53e7d599/assets/mm_tutorial/Rebecca_%281939_poster%29.jpeg"
+      }
+    },
+    {
+      "id": "h10",
+      "split": "tune",
+      "file": "h10-minicpm_hk.jpg",
+      "sha256": "6c4e4443548303859d3b15569b77b92cf2bb1dfb9fba8e1c7bfb9bb92e503ddc",
+      "width": 1300,
+      "height": 858,
+      "source": {
+        "repo": "OpenBMB/MiniCPM-V",
+        "path": "assets/hk_OCR.jpg",
+        "commit": "dfe5db0cabf054c4615c796306a51f9b0ee399ca",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/OpenBMB/MiniCPM-V/dfe5db0cabf054c4615c796306a51f9b0ee399ca/assets/hk_OCR.jpg"
+      }
+    },
+    {
+      "id": "h11",
+      "split": "tune",
+      "file": "h11-gsam_demo5.jpg",
+      "sha256": "cc6982b0cba219937872be1d27b368ab3ce109a7da95960a8ebbf176f886fad0",
+      "width": 3000,
+      "height": 1999,
+      "source": {
+        "repo": "IDEA-Research/Grounded-Segment-Anything",
+        "path": "assets/demo5.jpg",
+        "commit": "126abe633ffe333e16e4a0a4e946bc1003caf757",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/IDEA-Research/Grounded-Segment-Anything/126abe633ffe333e16e4a0a4e946bc1003caf757/assets/demo5.jpg"
+      }
+    },
+    {
+      "id": "h12",
+      "split": "tune",
+      "file": "h12-qwen25_ocr1.jpg",
+      "sha256": "b46c068baf48eae234bcfb3c2649ff731428531eec0ae9c29627f1a30bdaebce",
+      "width": 1836,
+      "height": 2448,
+      "source": {
+        "repo": "QwenLM/Qwen2.5-VL",
+        "path": "cookbooks/assets/ocr/ocr_example1.jpg",
+        "commit": "96588727e44c78b25ba03ea03b8e12f7e64fd0da",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/QwenLM/Qwen2.5-VL/96588727e44c78b25ba03ea03b8e12f7e64fd0da/cookbooks/assets/ocr/ocr_example1.jpg"
+      }
+    },
+    {
+      "id": "h13",
+      "split": "tune",
+      "file": "h13-qwenvl_shanghai.jpg",
+      "sha256": "e780544cac8cdd287dcd5e6e6417a291c95360198254c3347e328bba1ac07a1f",
+      "width": 5304,
+      "height": 3540,
+      "source": {
+        "repo": "QwenLM/Qwen-VL",
+        "path": "assets/mm_tutorial/Shanghai.jpg",
+        "commit": "aa00ed04091eea5fcdd32985e7915f1c53e7d599",
+        "license": "Tongyi-Qianwen-License",
+        "raw_url": "https://raw.githubusercontent.com/QwenLM/Qwen-VL/aa00ed04091eea5fcdd32985e7915f1c53e7d599/assets/mm_tutorial/Shanghai.jpg"
+      }
+    },
+    {
+      "id": "h14",
+      "split": "tune",
+      "file": "h14-food-burger.jpg",
+      "sha256": "97c15bbbf3cf3615063b1031c85d669de55839f59262bbe145d15ca75b36ecbf",
+      "width": 480,
+      "height": 325,
+      "source": {
+        "repo": "tensorflow/tflite-support",
+        "path": "tensorflow_lite_support/cc/test/testdata/task/vision/burger.jpg",
+        "commit": "27fa045189ceaddd61ab4897c186c18f05cedd0e",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/tensorflow/tflite-support/27fa045189ceaddd61ab4897c186c18f05cedd0e/tensorflow_lite_support/cc/test/testdata/task/vision/burger.jpg"
+      }
+    },
+    {
+      "id": "h15",
+      "split": "tune",
+      "file": "h15-food-doughnuts.jpg",
+      "sha256": "e9f29f7db9fd2dddac47762b4bbdaeb6dbdfbc194735b27abaaa281d7de076fe",
+      "width": 640,
+      "height": 394,
+      "source": {
+        "repo": "matterport/Mask_RCNN",
+        "path": "images/8734543718_37f6b8bd45_z.jpg",
+        "commit": "3deaec5d902d16e1daf56b62d5971d428dc920bc",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/matterport/Mask_RCNN/3deaec5d902d16e1daf56b62d5971d428dc920bc/images/8734543718_37f6b8bd45_z.jpg"
+      }
+    },
+    {
+      "id": "h16",
+      "split": "tune",
+      "file": "h16-food-espresso.png",
+      "sha256": "cc02f8ca188b167c775a7101b5d767d1e71792cf762c33d6fa15a4599b5a8de7",
+      "width": 600,
+      "height": 400,
+      "source": {
+        "repo": "scikit-image/scikit-image",
+        "path": "src/_skimage2/data/coffee.png",
+        "commit": "b700edc8005e4ee9e74fc83259f09e8df3213f15",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/scikit-image/scikit-image/b700edc8005e4ee9e74fc83259f09e8df3213f15/src/_skimage2/data/coffee.png"
+      }
+    },
+    {
+      "id": "h17",
+      "split": "tune",
+      "file": "h17-interior-canopy-bedroom.jpg",
+      "sha256": "669fd839097a6c5f8c7d680eabb1eddef431bcbec31cd69f186d6820bdc3ca92",
+      "width": 425,
+      "height": 640,
+      "source": {
+        "repo": "matterport/Mask_RCNN",
+        "path": "images/7581246086_cf7bbb7255_z.jpg",
+        "commit": "3deaec5d902d16e1daf56b62d5971d428dc920bc",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/matterport/Mask_RCNN/3deaec5d902d16e1daf56b62d5971d428dc920bc/images/7581246086_cf7bbb7255_z.jpg"
+      }
+    },
+    {
+      "id": "h18",
+      "split": "tune",
+      "file": "h18-interior-kitchen.jpg",
+      "sha256": "6ba9d67943cc551a0d976af3026e387b48eab7876ba0b14e61238af910ba2dc3",
+      "width": 683,
+      "height": 512,
+      "source": {
+        "repo": "tensorflow/models",
+        "path": "official/projects/edgetpu/vision/serving/testdata/ADE_val_00001471.jpg",
+        "commit": "34a21326906b9574fa11c4d6d0a5c534ff039267",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/tensorflow/models/34a21326906b9574fa11c4d6d0a5c534ff039267/official/projects/edgetpu/vision/serving/testdata/ADE_val_00001471.jpg"
+      }
+    },
+    {
+      "id": "h19",
+      "split": "tune",
+      "file": "h19-craft-ceramic-head.jpg",
+      "sha256": "fafc9f88fad9d96bd5eaba1238eb40861e550d03169f22c616797df0910e548e",
+      "width": 900,
+      "height": 1200,
+      "source": {
+        "repo": "pytorch/vision",
+        "path": "gallery/assets/pottery.jpg",
+        "commit": "268ddfce8e7938226c4ec8ed23fc7b9c46b97316",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/pytorch/vision/268ddfce8e7938226c4ec8ed23fc7b9c46b97316/gallery/assets/pottery.jpg"
+      }
+    },
+    {
+      "id": "h20",
+      "split": "tune",
+      "file": "h20-sign-double-parking.jpg",
+      "sha256": "7f3041a7019ab4d33d2452bc757d8c4f38616bfde71431e12f7ec370d7b2018e",
+      "width": 800,
+      "height": 600,
+      "source": {
+        "repo": "opencv/opencv_contrib",
+        "path": "modules/text/samples/scenetext01.jpg",
+        "commit": "eca97a4adb2fa32afc82478947d7f049fce57ee1",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/opencv/opencv_contrib/eca97a4adb2fa32afc82478947d7f049fce57ee1/modules/text/samples/scenetext01.jpg"
+      }
+    },
+    {
+      "id": "h21",
+      "split": "tune",
+      "file": "h21-sign-priory-galleries.jpg",
+      "sha256": "e4d64f10bbfb27b2c5980cb048fd0abe20dd74868ba5460298de473ced53b518",
+      "width": 640,
+      "height": 480,
+      "source": {
+        "repo": "opencv/opencv_contrib",
+        "path": "modules/text/samples/scenetext06.jpg",
+        "commit": "eca97a4adb2fa32afc82478947d7f049fce57ee1",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/opencv/opencv_contrib/eca97a4adb2fa32afc82478947d7f049fce57ee1/modules/text/samples/scenetext06.jpg"
+      }
+    },
+    {
+      "id": "h22",
+      "split": "tune",
+      "file": "h22-busy-street-japan.jpg",
+      "sha256": "1b2f7e9e976b58aa84ba84bf8e2b91b059affd2b2d5ed4a643438ae0ccb92948",
+      "width": 640,
+      "height": 415,
+      "source": {
+        "repo": "matterport/Mask_RCNN",
+        "path": "images/25691390_f9944f61b5_z.jpg",
+        "commit": "3deaec5d902d16e1daf56b62d5971d428dc920bc",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/matterport/Mask_RCNN/3deaec5d902d16e1daf56b62d5971d428dc920bc/images/25691390_f9944f61b5_z.jpg"
+      }
+    },
+    {
+      "id": "h23",
+      "split": "tune",
+      "file": "h23-sign-road-japan.jpg",
+      "sha256": "b041d8c01473b72e2ea2f909174a4d2e5cdefae9a3d5abd06a9db91755392ad3",
+      "width": 640,
+      "height": 424,
+      "source": {
+        "repo": "matterport/Mask_RCNN",
+        "path": "images/8053677163_d4c8f416be_z.jpg",
+        "commit": "3deaec5d902d16e1daf56b62d5971d428dc920bc",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/matterport/Mask_RCNN/3deaec5d902d16e1daf56b62d5971d428dc920bc/images/8053677163_d4c8f416be_z.jpg"
+      }
+    },
+    {
+      "id": "h24",
+      "split": "tune",
+      "file": "h24-vehicle-motorcycle-badge.png",
+      "sha256": "db18e9c4157617403c3537a6ba355dfeafe9a7eabb6b9b94cb33f6525dd49179",
+      "width": 741,
+      "height": 500,
+      "source": {
+        "repo": "scikit-image/scikit-image",
+        "path": "src/_skimage2/data/motorcycle_left.png",
+        "commit": "b700edc8005e4ee9e74fc83259f09e8df3213f15",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/scikit-image/scikit-image/b700edc8005e4ee9e74fc83259f09e8df3213f15/src/_skimage2/data/motorcycle_left.png"
+      }
+    },
+    {
+      "id": "h25",
+      "split": "tune",
+      "file": "h25-vehicle-bus-badge.jpg",
+      "sha256": "5db92d3ade8c4721645987dac30244b392c24d0a813e0f6e4f1a000478c07216",
+      "width": 640,
+      "height": 427,
+      "source": {
+        "repo": "matterport/Mask_RCNN",
+        "path": "images/8829708882_48f263491e_z.jpg",
+        "commit": "3deaec5d902d16e1daf56b62d5971d428dc920bc",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/matterport/Mask_RCNN/3deaec5d902d16e1daf56b62d5971d428dc920bc/images/8829708882_48f263491e_z.jpg"
+      }
+    },
+    {
+      "id": "h26",
+      "split": "tune",
+      "file": "h26-vehicle-roadster-nobadge.jpg",
+      "sha256": "b6d75247fcd88918054fdbcd09864e3d303de064d28ca18766b8568a31c0d898",
+      "width": 4317,
+      "height": 2775,
+      "source": {
+        "repo": "PaddlePaddle/PaddleDetection",
+        "path": "demo/car.jpg",
+        "commit": "b25522a0f4bde8c80603f3ba5e3472059972e3b5",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleDetection/b25522a0f4bde8c80603f3ba5e3472059972e3b5/demo/car.jpg"
+      }
+    },
+    {
+      "id": "h27",
+      "split": "tune",
+      "file": "h27-person-adversarial.jpg",
+      "sha256": "68bbb631ebb95e3c9ff5c82bcf8baf445d938771501014440541bf4dbc71c1b6",
+      "width": 359,
+      "height": 423,
+      "source": {
+        "repo": "PaddlePaddle/PaddleDetection",
+        "path": "demo/hrnet_demo.jpg",
+        "commit": "b25522a0f4bde8c80603f3ba5e3472059972e3b5",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleDetection/b25522a0f4bde8c80603f3ba5e3472059972e3b5/demo/hrnet_demo.jpg"
+      }
+    },
+    {
+      "id": "h28",
+      "split": "tune",
+      "file": "h28-clothing-logos-tennis.jpg",
+      "sha256": "1c911efcfaca6b975a0b3ec772005863140c70df33ad16a13043db905dab3b40",
+      "width": 425,
+      "height": 640,
+      "source": {
+        "repo": "matterport/Mask_RCNN",
+        "path": "images/3862500489_6fd195d183_z.jpg",
+        "commit": "3deaec5d902d16e1daf56b62d5971d428dc920bc",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/matterport/Mask_RCNN/3deaec5d902d16e1daf56b62d5971d428dc920bc/images/3862500489_6fd195d183_z.jpg"
+      }
+    },
+    {
+      "id": "h29",
+      "split": "tune",
+      "file": "h29-clothing-nologo-jacket.jpg",
+      "sha256": "0b3e16220a59d8631a8ecb0284eafd20e86f0e5ce85b9541a498b13ca9dbc636",
+      "width": 750,
+      "height": 1101,
+      "source": {
+        "repo": "open-mmlab/mmfashion",
+        "path": "demo/imgs/01_4_full.jpg",
+        "commit": "0e26ab36847684fbf7f736c39df8d518129d9a69",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmfashion/0e26ab36847684fbf7f736c39df8d518129d9a69/demo/imgs/01_4_full.jpg"
+      }
+    },
+    {
+      "id": "h30",
+      "split": "holdout",
+      "blind": false,
+      "file": "h30-food-ramen.jpg",
+      "sha256": "745db4cbd7dbef92620e4f01e5a15d2f86be6042b442da537a9580d159588882",
+      "width": 1050,
+      "height": 1016,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/37.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/37.jpg"
+      }
+    },
+    {
+      "id": "h31",
+      "split": "holdout",
+      "blind": false,
+      "file": "h31-food-pepperoni-pizza.jpg",
+      "sha256": "e0b62ecf7236c264f99b9053aa6eaff6178f45b7c638029bf6f146f46ebb91a6",
+      "width": 850,
+      "height": 566,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/42.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/42.jpg"
+      }
+    },
+    {
+      "id": "h32",
+      "split": "holdout",
+      "blind": false,
+      "file": "h32-food-nuggets-brand.jpg",
+      "sha256": "b7a791122a1a496a753ffbc0d7de99a1c716ecafd920a1bb6c5c2192a032763b",
+      "width": 1200,
+      "height": 900,
+      "source": {
+        "repo": "Vision-CAIR/MiniGPT-4",
+        "path": "examples_v2/KFC-20-for-20-Nuggets.jpg",
+        "commit": "d94738a7626ec43eba6c2cddf3cd2043f1a9689a",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/Vision-CAIR/MiniGPT-4/d94738a7626ec43eba6c2cddf3cd2043f1a9689a/examples_v2/KFC-20-for-20-Nuggets.jpg"
+      }
+    },
+    {
+      "id": "h33",
+      "split": "holdout",
+      "blind": false,
+      "file": "h33-cafe-table-injection.jpg",
+      "sha256": "beb425599d0ca12ff6eafec1c4aae8c7fa8dc70eae2ddda1f8ff944d12f85ee8",
+      "width": 3025,
+      "height": 4031,
+      "source": {
+        "repo": "JalalA984/visual-prompt-injection",
+        "path": "data/final/08_cafe.jpg",
+        "commit": "91e0bd7f73149482ec2e0c4b8e0565fe6b0bf101",
+        "license": "none-stated (no licence file; README: royalty-free stock photo with overlaid text)",
+        "raw_url": "https://raw.githubusercontent.com/JalalA984/visual-prompt-injection/91e0bd7f73149482ec2e0c4b8e0565fe6b0bf101/data/final/08_cafe.jpg"
+      }
+    },
+    {
+      "id": "h34",
+      "split": "holdout",
+      "blind": false,
+      "file": "h34-interior-living-room.jpg",
+      "sha256": "444f66dbb8b3878de2dcfb6586e5cdd3070e33c0bcaf14ec5b99b66bcbd3a9b2",
+      "width": 640,
+      "height": 480,
+      "source": {
+        "repo": "Vision-CAIR/MiniGPT-4",
+        "path": "examples_v2/glip_test.jpg",
+        "commit": "d94738a7626ec43eba6c2cddf3cd2043f1a9689a",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/Vision-CAIR/MiniGPT-4/d94738a7626ec43eba6c2cddf3cd2043f1a9689a/examples_v2/glip_test.jpg"
+      }
+    },
+    {
+      "id": "h35",
+      "split": "holdout",
+      "blind": false,
+      "file": "h35-interior-loft-bedroom.jpg",
+      "sha256": "5fdebd35431099fa76863566c309085ce04993f0698b475c13da776d91c4a432",
+      "width": 640,
+      "height": 426,
+      "source": {
+        "repo": "clovaai/donut",
+        "path": "synthdog/resources/background/bedroom_83.jpg",
+        "commit": "4cfcf972560e1a0f26eb3e294c8fc88a0d336626",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/clovaai/donut/4cfcf972560e1a0f26eb3e294c8fc88a0d336626/synthdog/resources/background/bedroom_83.jpg"
+      }
+    },
+    {
+      "id": "h36",
+      "split": "holdout",
+      "blind": false,
+      "file": "h36-craft-cat-mugs.jpg",
+      "sha256": "08478975d7102a0aa36dff9e6e162dbce6052e214ffadfd7ee7029518e77bb47",
+      "width": 942,
+      "height": 944,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/examples/mug_ad.jpeg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/examples/mug_ad.jpeg"
+      }
+    },
+    {
+      "id": "h37",
+      "split": "holdout",
+      "blind": false,
+      "file": "h37-craft-painted-kettle.jpg",
+      "sha256": "67dad2d6088cba54920382b9b8065393fc55b5d9709ae06ab296f54b297c3fb7",
+      "width": 504,
+      "height": 496,
+      "source": {
+        "repo": "salesforce/LAVIS",
+        "path": "projects/blip-diffusion/images/kettle.jpg",
+        "commit": "05cb670f47296522e24e7727e366b4a997d28582",
+        "license": "BSD-3-Clause",
+        "raw_url": "https://raw.githubusercontent.com/salesforce/LAVIS/05cb670f47296522e24e7727e366b4a997d28582/projects/blip-diffusion/images/kettle.jpg"
+      }
+    },
+    {
+      "id": "h38",
+      "split": "holdout",
+      "blind": false,
+      "file": "h38-clothing-care-label.jpg",
+      "sha256": "957a9cc15da49312277796126be225e0ee653f3316578c12d626fa43fbe9561b",
+      "width": 350,
+      "height": 350,
+      "source": {
+        "repo": "PaddlePaddle/PaddleOCR",
+        "path": "doc/imgs/00009282.jpg",
+        "commit": "8cce9b6fd7ccb50226d0c38f94054d81c29b8184",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/8cce9b6fd7ccb50226d0c38f94054d81c29b8184/doc/imgs/00009282.jpg"
+      }
+    },
+    {
+      "id": "h39",
+      "split": "holdout",
+      "blind": false,
+      "file": "h39-sign-blue-plaque.jpg",
+      "sha256": "b3b83c612a0e05196b15ccf503563711267766cc6a47b5622c44e102ac4c6a92",
+      "width": 460,
+      "height": 276,
+      "source": {
+        "repo": "open-mmlab/mmocr",
+        "path": "demo/demo_text_det.jpg",
+        "commit": "966296f26ac34cf0e96d40ab4a0a94c9a697909a",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmocr/966296f26ac34cf0e96d40ab4a0a94c9a697909a/demo/demo_text_det.jpg"
+      }
+    },
+    {
+      "id": "h40",
+      "split": "holdout",
+      "blind": false,
+      "file": "h40-sign-mall-bank-ad.jpg",
+      "sha256": "2f9b4aa42b2dc9687dcc61a188395c0027d2e54dcacf0b059e919a6ff16d05a6",
+      "width": 727,
+      "height": 610,
+      "source": {
+        "repo": "open-mmlab/mmocr",
+        "path": "demo/demo_text_ocr.jpg",
+        "commit": "966296f26ac34cf0e96d40ab4a0a94c9a697909a",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/open-mmlab/mmocr/966296f26ac34cf0e96d40ab4a0a94c9a697909a/demo/demo_text_ocr.jpg"
+      }
+    },
+    {
+      "id": "h41",
+      "split": "holdout",
+      "blind": false,
+      "file": "h41-sign-bank-bilingual.jpg",
+      "sha256": "e3766e72d161d38bf3893fcff94dbcde348dadf03a8f88f7ebf637d5a6f5831c",
+      "width": 489,
+      "height": 375,
+      "source": {
+        "repo": "PaddlePaddle/PaddleOCR",
+        "path": "doc/imgs/00207393.jpg",
+        "commit": "8cce9b6fd7ccb50226d0c38f94054d81c29b8184",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/8cce9b6fd7ccb50226d0c38f94054d81c29b8184/doc/imgs/00207393.jpg"
+      }
+    },
+    {
+      "id": "h42",
+      "split": "holdout",
+      "blind": false,
+      "file": "h42-concert-cjk-projection.jpg",
+      "sha256": "7ff1952cad052d1b0f3d29e0b3a4db4b80ce59e1a823b014c5ecfcdcbacdedd5",
+      "width": 1152,
+      "height": 648,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/19.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/19.jpg"
+      }
+    },
+    {
+      "id": "h43",
+      "split": "holdout",
+      "blind": false,
+      "file": "h43-vehicle-concept-legible-maker.jpg",
+      "sha256": "540a60ec65be87ea4de270532196dcd6e2c2c524555db160ec4dcc21b5b1006a",
+      "width": 1200,
+      "height": 750,
+      "source": {
+        "repo": "InternLM/InternLM-XComposer",
+        "path": "examples/cars3.jpg",
+        "commit": "0f70c3e3911189de1869396b4017714c31821e3a",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/InternLM/InternLM-XComposer/0f70c3e3911189de1869396b4017714c31821e3a/examples/cars3.jpg"
+      }
+    },
+    {
+      "id": "h44",
+      "split": "holdout",
+      "blind": false,
+      "file": "h44-vehicle-pickup-nobadge.jpg",
+      "sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "width": 1800,
+      "height": 1200,
+      "source": {
+        "repo": "facebookresearch/sam2",
+        "path": "notebooks/images/truck.jpg",
+        "commit": "2b90b9f5ceec907a1c18123530e92e794ad901a4",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/facebookresearch/sam2/2b90b9f5ceec907a1c18123530e92e794ad901a4/notebooks/images/truck.jpg"
+      }
+    },
+    {
+      "id": "h45",
+      "split": "holdout",
+      "blind": false,
+      "file": "h45-sport-football-sponsor.jpg",
+      "sha256": "90fad7bfc9fab88492d9722ea1aa14ee77514d8c10dbda86086bd37d8a05acf0",
+      "width": 640,
+      "height": 480,
+      "source": {
+        "repo": "WongKinYiu/yolov7",
+        "path": "inference/images/image2.jpg",
+        "commit": "a207844b1ce82d204ab36d87d496728d3d2348e7",
+        "license": "GPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/WongKinYiu/yolov7/a207844b1ce82d204ab36d87d496728d3d2348e7/inference/images/image2.jpg"
+      }
+    },
+    {
+      "id": "h46",
+      "split": "holdout",
+      "blind": false,
+      "file": "h46-sport-basketball-adversarial.jpg",
+      "sha256": "71d918cc474c72bbd8efca98c81716e47b6347b45ccb4e7a5c08200515aa0f55",
+      "width": 736,
+      "height": 770,
+      "source": {
+        "repo": "X-PLUG/mPLUG-Owl",
+        "path": "mPLUG-Owl/OwlEval/cases/16.jpg",
+        "commit": "0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9",
+        "license": "Apache-2.0 (mPLUG-Owl/LICENSE; repository root MIT)",
+        "raw_url": "https://raw.githubusercontent.com/X-PLUG/mPLUG-Owl/0f3068fdb47b77aedc71fc39f5735cd7aa35e8f9/mPLUG-Owl/OwlEval/cases/16.jpg"
+      }
+    },
+    {
+      "id": "h47",
+      "split": "holdout",
+      "blind": false,
+      "file": "h47-people-formal-wear.jpg",
+      "sha256": "fb0f943cc1b027c64e5dbbc486b1d62d431244565e68b730e2ff8264d51116db",
+      "width": 640,
+      "height": 536,
+      "source": {
+        "repo": "WongKinYiu/yolov7",
+        "path": "inference/images/image1.jpg",
+        "commit": "a207844b1ce82d204ab36d87d496728d3d2348e7",
+        "license": "GPL-3.0",
+        "raw_url": "https://raw.githubusercontent.com/WongKinYiu/yolov7/a207844b1ce82d204ab36d87d496728d3d2348e7/inference/images/image1.jpg"
+      }
+    },
+    {
+      "id": "h48",
+      "split": "holdout",
+      "blind": false,
+      "file": "h48-clothing-sneaker-nologo.png",
+      "sha256": "135f1c68d06b36a92a3174785890154a35cfc36bb60d03480306c64e6a38e0ff",
+      "width": 736,
+      "height": 736,
+      "source": {
+        "repo": "lllyasviel/ControlNet",
+        "path": "test_imgs/shose.png",
+        "commit": "ed85cd1e25a5ed592f7d8178495b4483de0331bf",
+        "license": "Apache-2.0",
+        "raw_url": "https://raw.githubusercontent.com/lllyasviel/ControlNet/ed85cd1e25a5ed592f7d8178495b4483de0331bf/test_imgs/shose.png"
+      }
+    },
+    {
+      "id": "h49",
+      "split": "holdout",
+      "blind": false,
+      "file": "h49-blurred-motion-street.jpg",
+      "sha256": "71cf8e7d24ab067920473a4ce0b5e440c12bb0dd9c2ef6373e2474c796678e2e",
+      "width": 1280,
+      "height": 720,
+      "source": {
+        "repo": "megvii-research/NAFNet",
+        "path": "demo/blurry.jpg",
+        "commit": "2b4af71ebe098a92a75910c233a3965a3e93ede4",
+        "license": "MIT",
+        "raw_url": "https://raw.githubusercontent.com/megvii-research/NAFNet/2b4af71ebe098a92a75910c233a3965a3e93ede4/demo/blurry.jpg"
+      }
+    }
+  ]
+}

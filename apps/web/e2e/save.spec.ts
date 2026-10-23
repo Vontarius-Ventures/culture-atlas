@@ -5,7 +5,9 @@ test.describe('Saving', () => {
   test('anonymous save prompts account creation, claims the save, then files it into a new collection with Undo', async ({
     page,
   }) => {
-    const api = await open(page, '/');
+    // The taste questionnaire that follows sign-up (amendment 2.2) is covered in
+    // e2e/v22/onboarding.spec.ts; here it is switched off (ONBOARDING_REQUIRED=false).
+    const api = await open(page, '/', { onboardingOnSignUp: false });
     const trigger = page.getByRole('button', { name: 'Save Vintage racing' });
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: 'Save to a collection' });
@@ -15,8 +17,8 @@ test.describe('Saving', () => {
     await dialog.getByLabel(/Your name/).fill('Ada');
     await dialog.getByRole('button', { name: 'Create account' }).click();
     // Account created; the intended save was claimed; picker now offers collections.
-    const accountCall = api.log.find((r) => r.path === '/v1/accounts');
-    expect(accountCall).toBeTruthy();
+    // The click only starts the request: wait for it instead of reading the log at once.
+    await expect.poll(() => api.log.some((r) => r.path === '/v1/accounts')).toBe(true);
     await expect(dialog.getByRole('radio', { name: 'New collection' })).toBeVisible();
     await dialog.getByRole('radio', { name: 'New collection' }).check({ force: true });
     await dialog.getByLabel('Collection name').fill('Slow Sunday');

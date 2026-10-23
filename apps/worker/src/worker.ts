@@ -24,10 +24,10 @@ import {
   type JobRecord,
   type JobType,
 } from '@culture-atlas/domain';
-import { isProviderError, type ProviderRegistry } from '@culture-atlas/providers';
+import { bindModelIdentity, identitySequence, isProviderError, type ProviderRegistry } from '@culture-atlas/providers';
 
 /**
- * DB-backed job worker: claims leased jobs (SKIP LOCKED), runs the handler for
+ * DB-backed job worker: claims leased jobs (NO KEY UPDATE SKIP LOCKED), runs the handler for
  * the job type with a heartbeat and a per-attempt deadline, then completes,
  * re-queues (retryable, with backoff) or fails the job. Cancellation and lease
  * loss abort the handler's signal; the handler must not publish afterwards.
@@ -73,8 +73,10 @@ export function toFailure(err: unknown): { failure: JobFailure; retryAfterMs?: n
         : err.provider === 'vlm'
           ? 'We can’t look at photos right now. Try again in a little while.'
           : 'Part of this is taking longer than usual. Try again in a little while.';
+    // An open circuit (kind unavailable, with the time until its next trial) is transient too.
+    const circuitOpen = err.kind === 'unavailable' && (err.retryAfterMs ?? 0) > 0;
     return {
-      failure: { code, message, retryable: err.retryable },
+      failure: { code, message, retryable: err.retryable || circuitOpen },
       retryAfterMs: err.retryAfterMs,
     };
   }
@@ -193,7 +195,15 @@ export class Worker {
       attempt: job.attempt,
       workerId: this.workerId,
       db,
-      providers,
+      // Budgeted model gateways (Concentrate) need verified server-owned identity per call.
+      // Session-owned (anonymous) jobs get none, so the gateway refuses them rather than
+      // charging spend to no account.
+      providers: job.owner_account_id
+        ? bindModelIdentity(
+            providers,
+            identitySequence({ accountId: job.owner_account_id, jobId: job.id, prefix: `v1:${job.type}:a${job.attempt}` }),
+          )
+        : providers,
       config,
       signal: controller.signal,
       budget: {

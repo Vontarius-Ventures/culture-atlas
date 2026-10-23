@@ -18,10 +18,22 @@
     "db:setup": "bash scripts/dev-db.sh",
     "db:migrate": "tsx scripts/migrate.ts",
     "worker": "pnpm --filter @culture-atlas/worker start",
+    "media-worker": "pnpm --filter @culture-atlas/media-worker start",
     "sensor-bridge": "pnpm --filter @culture-atlas/sensor-bridge exec tsx src/main.ts",
     "demo-agent": "pnpm --filter @culture-atlas/demo-agent start",
     "qloo:probe": "tsx scripts/qloo-probe.ts",
-    "mock-relay": "pnpm --filter @culture-atlas/sensor-bridge mock-relay"
+    "onboarding:catalog": "tsx scripts/build-onboarding-catalog.ts",
+    "qualify:concentrate": "tsx scripts/qualify-concentrate.ts",
+    "eval:fetch": "tsx scripts/eval-fetch.ts",
+    "eval:replay": "tsx scripts/eval-replay.ts",
+    "eval:live": "tsx scripts/eval-live.ts",
+    "eval:binding": "tsx scripts/eval-binding.ts",
+    "eval:lint-labels": "tsx scripts/eval-lint-labels.ts",
+    "mock-relay": "pnpm --filter @culture-atlas/sensor-bridge mock-relay",
+    "ops:kill": "tsx scripts/feature-kill.ts",
+    "ops:metrics": "tsx scripts/ops-metrics.ts",
+    "ops:restore-drill": "tsx scripts/restore-drill.ts",
+    "ops:backup": "tsx scripts/capture-backup.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -35,6 +47,8 @@
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
-    "vitest": "5.0.2"
+    "vitest": "5.0.2",
+    "yaml": "2.8.1",
+    "zod": "4.6.5"
   }
 }

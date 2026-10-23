@@ -15,6 +15,15 @@ export interface AccountPrincipal {
   isDemoOwner: boolean;
 }
 
+/** First-party native client, restricted to installation-specific v2 APIs. */
+export interface InstallationPrincipal {
+  kind: 'installation';
+  accountId: string;
+  installationId: string;
+  sessionId: string;
+  expiresAt: Date;
+}
+
 /**
  * Agent connection (bearer token). Acts for `accountId` limited by scopes and
  * library grant. `purpose: 'sensor_bridge'` is the restricted capture-write
@@ -32,6 +41,9 @@ export interface AgentPrincipal {
   allowedCollectionIds: readonly string[];
   sensorConnectionId: string | null;
   expiresAt: Date;
+  /** Absent on v1 in-process callers; never implies any device grant. */
+  allowedInstallationIds?: readonly string[];
+  authorizationVersion?: number;
 }
 
 /** Worker / maintenance code acting outside a request. Never exposed over HTTP. */
@@ -40,7 +52,7 @@ export interface SystemPrincipal {
   reason: string;
 }
 
-export type Principal = AnonymousPrincipal | AccountPrincipal | AgentPrincipal | SystemPrincipal;
+export type Principal = AnonymousPrincipal | AccountPrincipal | InstallationPrincipal | AgentPrincipal | SystemPrincipal;
 
 /** Owner of a private record: one account or one anonymous session. */
 export type Owner = { kind: 'account'; accountId: string } | { kind: 'session'; sessionId: string };
@@ -52,6 +64,7 @@ export function ownerOf(principal: Principal): Owner {
       return { kind: 'session', sessionId: principal.sessionId };
     case 'account':
     case 'agent':
+    case 'installation':
       return { kind: 'account', accountId: principal.accountId };
     case 'system':
       throw new Error('system principal has no owner');
@@ -89,6 +102,8 @@ export function principalKey(principal: Principal): string {
       return `account:${principal.accountId}`;
     case 'agent':
       return `agent:${principal.connectionId}`;
+    case 'installation':
+      return `installation:${principal.accountId}:${principal.installationId}:${principal.sessionId}`;
     case 'system':
       return `system:${principal.reason}`;
   }

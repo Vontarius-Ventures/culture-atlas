@@ -1,0 +1,74 @@
+{
+  "version": "thr-v2",
+  "two_stage_only": ["M5", "M9"],
+  "replay": {
+    "M1": { "op": "==", "value": 0 },
+    "M2": { "op": "<=", "value": 0.03 },
+    "M3": { "op": ">=", "value": 0.85 },
+    "M4": { "op": "<=", "value": 0.15 },
+    "M5": { "op": ">=", "value": 0.8 },
+    "M6": { "op": ">=", "value": 0.95 },
+    "M7": { "op": "==", "value": 1 },
+    "M8": { "op": "==", "value": 0 },
+    "M9": { "op": ">=", "value": 0.9 },
+    "M10": { "op": "==", "value": 0 },
+    "M11": { "op": "==", "value": 0 },
+    "M12": { "op": "<=", "value": 0.2 },
+    "M15": { "op": ">=", "value": 0.6 }
+  },
+  "live": {
+    "M1": { "op": "==", "value": 0 },
+    "M2": { "op": "<=", "value": 0.05 },
+    "M3": { "op": ">=", "value": 0.8 },
+    "M4": { "op": "<=", "value": 0.2 },
+    "M5": { "op": ">=", "value": 0.7 },
+    "M6": { "op": ">=", "value": 0.9 },
+    "M7": { "op": "==", "value": 1 },
+    "M8": { "op": "==", "value": 0 },
+    "M9": { "op": ">=", "value": 0.9 },
+    "M10": { "op": "==", "value": 0 },
+    "M11": { "op": "==", "value": 0 },
+    "M12": { "op": "<=", "value": 0.2 },
+    "M13": { "op": "==", "value": 1 },
+    "M14_stage1_p50": { "op": "<=", "value": 3000 },
+    "M14_stage1_p95": { "op": "<=", "value": 6000 },
+    "M14_enrich_p95": { "op": "<=", "value": 12000 },
+    "M14_incomplete": { "op": "==", "value": 0 },
+    "M15": { "op": ">=", "value": 0.6 }
+  },
+  "live_tune": {
+    "M3": { "op": ">=", "value": 0.85 },
+    "M5": { "op": ">=", "value": 0.8 }
+  },
+  "grounding": {
+    "grounding_precision_min": 1,
+    "end_to_end_precision_min": 0.9,
+    "recall_min": 0.5,
+    "forbidden_accepts_max": 0,
+    "doubtful_name_published_max": 0,
+    "labelled_candidates_min": 40,
+    "holdout_candidates_min": 10
+  },
+  "seed": {
+    "eat_food_share_min": 0.85,
+    "eat_useful_share_min": 0.6,
+    "eat_echo_cards_max": 0,
+    "eat_calls_without_food_picks_max": 0,
+    "wear_fashion_brand_share_min": 0.8,
+    "play_watch_type_correct_min": 0.8,
+    "requests_max": 6,
+    "in_flight_max": 3
+  },
+  "text": {
+    "t1_valid_share_min": 1,
+    "t2_foreign_urls_max": 0,
+    "t3_unsourced_share_max": 0.2,
+    "t4_kept_claims_min": 2,
+    "t5_overview_words_max": 150,
+    "t6_word_limits_share_min": 1,
+    "t7_foreign_names_max": 0,
+    "t8_exclusion_violations_max": 0,
+    "t9_timeouts_max": 0,
+    "t10_fixtures_min": 5
+  }
+}

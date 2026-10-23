@@ -1,0 +1,102 @@
+{
+  "id": "h43",
+  "split": "tune",
+  "file": "h43-vehicle-concept-legible-maker.jpg",
+  "subject_domains": [
+    "vehicle",
+    "signage"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "BMW",
+      "pattern": "^bmw$|^bmw (concept|show|sports)( car)?$|^bmw car$",
+      "type": "brand",
+      "requires_text": "BMW"
+    },
+    {
+      "name": "Concept car",
+      "pattern": "concept (car|vehicle|sports car)|show car|prototype",
+      "aliases": [
+        "Show car"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "BMW Vision",
+      "pattern": "^(?:bmw )?vision(?: concept)?(?: car)?$",
+      "type": "brand",
+      "requires_text": "Vision"
+    },
+    {
+      "name": "BMW Vision EfficientDynamics",
+      "pattern": "efficient ?dynamics",
+      "type": "brand",
+      "requires_text": "EfficientDynamics"
+    },
+    {
+      "name": "Freude am Fahren",
+      "pattern": "freude",
+      "requires_text": "FREUDE"
+    },
+    {
+      "pattern": "sports car|hybrid|plug-in hybrid|scissor doors|butterfly doors|gull-?wing|motor show|auto show|car show|kidney grille|exhibition stand",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\bi8\\b",
+      "why": "no i8 badge or text; a production model name read off the shape",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "mercedes|audi|porsche|tesla|mclaren|lamborghini|ferrari",
+      "why": "only BMW is written",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "frankfurt|\\biaa\\b|geneva|paris motor show|detroit|tokyo motor show|shanghai auto",
+      "why": "no text names the show or city"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "BMW",
+    "JOY DEFINES"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A white-and-blue concept sports car on a show stand; the board behind reads 'BMW VIS...', 'FREUDE...', 'JOY DEFINES T...' and technical data, and the front plate carries a 'Vision' script. Vehicle with a legible maker name. The small 'BMW EfficientDynamics' line is borderline at 768 px: the concept's full name needs 'Vision' read, and the scorer's brand check still needs every word of it read.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "acceptable \"BMW Vision EfficientDynamics\" (aliases \"BMW Vision\", pattern \"\\bvision\\b\", requires_text \"Vision\") became two entries: \"BMW Vision\" (pattern \"^(?:bmw )?vision(?: concept)?(?: car)?$\", requires_text \"Vision\") and \"BMW Vision EfficientDynamics\" (pattern \"efficient ?dynamics\", requires_text \"EfficientDynamics\")",
+      "reason": "The notes say the concept's full name needs every word read, and the scorer's brand check (M7) requires it too, but \"\\bvision\\b\" with requires_text \"Vision\" made \"BMW Vision EfficientDynamics\" label-good when only \"Vision\" was read; its correct drop (EfficientDynamics not transcribed) counted as two clean drops (M4) in the round-2 blind run. The full name is now good only when \"EfficientDynamics\" is read.",
+      "decision": "docs/requalification-plan.md, round 3 item 3 (scorer and label corrections declared before the next blind set, h30-h49 moved to tune after the failed round-2 blind run, docs/quality-plan.md section 17.8)"
+    }
+  ]
+}

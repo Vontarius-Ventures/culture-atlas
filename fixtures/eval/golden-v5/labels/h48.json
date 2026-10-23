@@ -1,0 +1,74 @@
+{
+  "id": "h48",
+  "split": "tune",
+  "file": "h48-clothing-sneaker-nologo.png",
+  "subject_domains": [
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Sneakers",
+      "pattern": "sneakers?|trainers?|athletic shoes?|casual shoes?|slip-?ons?|running shoes?|\\bshoes?\\b",
+      "aliases": [
+        "Black sneakers"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "elevator shoes?|height[- ]increasing|hidden heel|athleisure|mesh|faux leather|patent leather|elastic laces|lace-?less|sock (fit|sneaker)|streetwear"
+    },
+    {
+      "pattern": "(?:monochrome|all[- ]black)(?: black)?(?: casual| athletic)? (?:footwear|sneakers?|shoes?)|casual footwear"
+    },
+    {
+      "pattern": "wing(ed)? (logo|emblem)|stripes",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "nike|adidas|puma|reebok|asics|new balance|skechers|\\becco\\b|clarks|geox|hogan|under armour|fila|li[- ]?ning|\\banta\\b|onitsuka|\\bvans\\b|converse",
+      "why": "the tongue shows a wing logo and the side two stripes; no brand word is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Product photo of a black slip-on sneaker (mesh and glossy panels, elastic laces with a toggle, two raised stripes, a wing emblem on the tongue). No brand word anywhere: clothing without a legible logo.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, after iteration 6, tune split only): an acceptable entry for the monochrome or all-black casual footwear the photo shows ('Monochrome black casual footwear', 'casual footwear'); nothing forbidden is widened",
+      "reason": "Iteration 6 published 'Monochrome black casual footwear' and grounded it to the aesthetic style tag 'Monochrome'; the shoe is entirely black, so the claim is correct and as specific as the existing alias 'Black sneakers', but no entry matched it (end-to-end grounding counted it as not good)",
+      "decision": "docs/quality-plan.md §19.25 (round 4, owner decision: extend tune labels only for correct, specific claims they omitted)"
+    }
+  ]
+}

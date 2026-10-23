@@ -1,0 +1,71 @@
+{
+  "id": "h38",
+  "split": "tune",
+  "file": "h38-clothing-care-label.jpg",
+  "subject_domains": [
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Meters/bonwe",
+      "aliases": [
+        "Metersbonwe",
+        "Meters Bonwe"
+      ],
+      "pattern": "meters ?/? ?bonwe|metersbonwe",
+      "type": "brand",
+      "requires_text": "bonwe"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "care label|washing instructions|laundry (symbols|label|care)|garment label|wash care|clothing label",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "uniqlo|zara|h&m|semir|森马|li[- ]?ning|\\banta\\b|bosideng|波司登",
+      "why": "only Meters/bonwe is written",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "美特斯",
+      "why": "the Chinese brand name is not printed on the label; only the Latin wordmark is",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [
+    "bonwe",
+    "洗涤说明"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A sewn-in garment care label on a camel fabric: wordmark 'Meters/bonwe', then 洗涤说明 and Chinese care instructions (30°C wash, no bleach, line dry, iron at 110°C, dry clean) with laundry symbols. Clothing with a legible brand; non-Latin text."
+}

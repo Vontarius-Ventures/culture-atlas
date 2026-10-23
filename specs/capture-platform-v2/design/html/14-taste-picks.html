@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Taste picks · culture atlas mockup 14</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 14 · /welcome/taste. Desktop: one page, sections stacked. Mobile: three steps. */
+  .onb { padding-bottom: var(--space-8); flex: 1 0 auto; width: 100%; }
+  body { display: flex; flex-direction: column; }
+  .header--plain .header__inner { max-width: calc(var(--page-max) + 2 * var(--gutter)); }
+  .onb-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: 44px; }
+  .steps { display: none; }
+  .back-step { display: none; }
+  .onb-section { padding: var(--space-8) 0 var(--space-12); }
+  .onb-section + .onb-section { border-top: 1px solid var(--line); }
+  .onb-section:first-of-type { padding-top: var(--space-4); }
+  .onb-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2) var(--space-6); margin-bottom: var(--space-6); }
+  .onb-head p { color: var(--muted); }
+  .onb-hint { color: var(--muted); margin-top: var(--space-2); font-size: 17px; }
+  .chip-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6) var(--space-12); }
+  .chip-group__title { font-size: 22px; line-height: 1.2; margin-bottom: var(--space-2); }
+  .search-block { margin-top: var(--space-8); max-width: 640px; }
+  .search-block .field-label { font-family: var(--font-display); font-weight: 400; font-size: 22px; margin-bottom: var(--space-3); }
+  .search-results { list-style: none; margin: var(--space-2) 0 0; padding: var(--space-1); border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); }
+  .result { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: 52px; padding: 0 var(--space-3); border: 0; border-radius: 10px; background: transparent; text-align: left; cursor: pointer; }
+  .result:hover { background: var(--quiet); }
+  .result__name { font-weight: 500; }
+  .result__type { color: var(--muted); font-size: 15px; }
+  .result__mark { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
+  .result__mark .icon { width: 18px; height: 18px; }
+  .result__add { display: inline-flex; align-items: center; gap: 4px; }
+  .result__added { display: none; }
+  .result[aria-pressed='true'] .result__add { display: none !important; }
+  .result[aria-pressed='true'] .result__added { display: inline-flex; color: var(--accent); font-weight: 600; }
+  .result[aria-pressed='true'] { box-shadow: inset 0 0 0 2px var(--accent); }
+  .search-off { display: none; margin-top: var(--space-3); }
+  .search-unavailable .search-results { display: none; }
+  .search-unavailable .search-off { display: flex; }
+  .exclusions-note { color: var(--muted); max-width: 640px; }
+  .exclusion-other { display: flex; gap: var(--space-2); margin-top: var(--space-4); max-width: 420px; }
+  .exclusion-other .input { min-height: 44px; }
+
+  .pick-bar { position: sticky; bottom: 0; z-index: 60; background: var(--canvas); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  .pick-bar__inner { max-width: calc(var(--page-max) + 2 * var(--gutter)); margin: 0 auto; padding: var(--space-4) var(--gutter); display: flex; align-items: center; gap: var(--space-6); }
+  .progress { display: flex; gap: 6px; }
+  .progress span { width: 28px; height: 6px; border-radius: 999px; background: var(--line); }
+  .progress span.is-done { background: var(--accent); }
+  .counter { font-family: var(--font-display); font-size: 22px; line-height: 1.2; min-width: 7.5em; }
+  .is-ready .counter { color: var(--accent); }
+  .pick-bar__status { display: flex; align-items: center; gap: var(--space-4); }
+  .pick-bar__end { margin-left: auto; display: flex; align-items: center; gap: var(--space-4); }
+  .reason { color: var(--muted); font-size: 15px; text-align: right; max-width: 24em; }
+  .next { display: none; }
+
+  @media (max-width: 1023px) {
+    .chip-groups { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 767px) {
+    .onb { padding-bottom: var(--space-4); }
+    .steps { display: flex; align-items: center; gap: var(--space-3); color: var(--muted); font-size: 14px; white-space: nowrap; }
+    .steps__bar { display: flex; gap: 4px; }
+    .steps__bar span { width: 22px; height: 4px; border-radius: 999px; background: var(--line); }
+    .steps__bar span.is-current { background: var(--ink); }
+    .onb-section { display: none; padding: var(--space-3) 0 var(--space-6); border-top: 0 !important; }
+    body[data-step='1'] [data-step-section='1'],
+    body[data-step='2'] [data-step-section='2'],
+    body[data-step='3'] [data-step-section='3'] { display: block; }
+    body:not([data-step='1']) .back-start { display: none; }
+    body:not([data-step='1']) .back-step { display: inline-flex; }
+    .onb-head { margin-bottom: var(--space-4); }
+    .onb-hint { font-size: 15px; }
+    .chip-groups { gap: var(--space-4); }
+    .chip-group__title { font-size: 19px; margin-bottom: 0; }
+    .pill { padding: 0 14px; font-size: 15px; }
+    .search-block { margin-top: var(--space-6); }
+    .search-block .field-label { font-size: 19px; }
+    .pick-bar__inner { flex-wrap: wrap; gap: var(--space-2) var(--space-3); padding: var(--space-3) var(--gutter); }
+    .pick-bar__status { gap: var(--space-3); }
+    .counter { font-size: 19px; min-width: 0; }
+    .progress span { width: 18px; }
+    .pick-bar__end { gap: var(--space-2); }
+    .pick-bar__end { display: contents; }
+    .pick-bar__end .button { margin-left: auto; }
+    .reason { order: 3; flex-basis: 100%; text-align: left; font-size: 14px; max-width: none; }
+    .onb-section .display--medium, .onb-section .section-title { font-size: 28px; line-height: 1.15; }
+    .optional-badge { margin-left: var(--space-2); }
+    body:not([data-step='3']) [data-primary] { display: none; }
+    body:not([data-step='3']) .reason { display: none; }
+    body:not([data-step='3']) .next { display: inline-flex; }
+    .pick-bar .button { min-height: 48px; padding: 0 var(--space-4); font-size: 16px; }
+  }
+
+  @media (max-width: 359px) {
+    .progress { display: none; }
+    .steps__bar { display: none !important; }
+  }
+</style>
+</head>
+<body data-picks="img-tea,chip-wear-japandi">
+<header class="header header--plain">
+  <div class="header__inner">
+    <a class="wordmark" href="#">culture atlas</a>
+    <div class="steps" aria-hidden="false"><span data-step-label>Step 1 of 3</span><span class="steps__bar" data-steps><span></span><span></span><span></span></span></div>
+  </div>
+</header>
+
+<main class="main page page--contained onb">
+  <div class="onb-top">
+    <a class="back-link back-start" href="#"><svg class="icon"><use href="#i-arrowLeft"/></svg>Back</a>
+    <button type="button" class="back-link back-step" data-go-step="0" onclick="this.dataset.goStep = Number(document.body.dataset.step) - 1"><svg class="icon"><use href="#i-arrowLeft"/></svg>Back</button>
+  </div>
+
+  <section class="onb-section" data-step-section="1" aria-labelledby="s1">
+    <div class="onb-head">
+      <div>
+        <h1 class="display display--medium" id="s1">Pick what catches your eye.</h1>
+        <p class="onb-hint">Pick at least 3. You can change them later in Settings.</p>
+      </div>
+    </div>
+    <ul class="pick-grid">
+          <li><button type="button" class="pick-tile" data-pick data-id="img-racing" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/racing.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Vintage racing</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-linen" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/linen.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Linen days</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-tailoring" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/tailoring.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Soft tailoring</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-corners" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/corners.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Quiet corners</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-forms" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/forms.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Sculptural forms</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-listening" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/listening.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Sunday listening</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-cinema" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/cinema.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Late-night cinema</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-night" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/night.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Night wanderings</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-lanterns" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/lanterns.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Lantern-lit alleys</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-tea" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/tea.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Tea rituals</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-noodles" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/noodles.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Sesame noodles</span></button></li>
+          <li><button type="button" class="pick-tile" data-pick data-id="img-table" aria-pressed="false"><span class="pick-tile__media"><img src="../../../../apps/web/public/samples/onboarding/table.jpg" alt="" width="1000" height="1250"><span class="pick-tile__mark"><svg class="icon"><use href="#i-check"/></svg></span></span><span class="pick-tile__label">Around the table</span></button></li>
+    </ul>
+  </section>
+
+  <section class="onb-section" data-step-section="2" aria-labelledby="s2">
+    <div class="onb-head"><h2 class="section-title" id="s2">Choose a few favorites.</h2></div>
+    <div class="chip-groups">
+          <div class="chip-group" role="group" aria-labelledby="g-wear">
+            <h3 class="chip-group__title" id="g-wear">Wear</h3>
+            <div class="pill-row"><button type="button" class="pill" data-pick data-id="chip-wear-japandi" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Japandi</button><button type="button" class="pill" data-pick data-id="chip-wear-mod-revival" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Mod revival</button><button type="button" class="pill" data-pick data-id="chip-wear-workwear" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Workwear</button><button type="button" class="pill" data-pick data-id="chip-wear-wabi-sabi" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Wabi-sabi</button><button type="button" class="pill" data-pick data-id="chip-wear-minimalist" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Minimalist</button><button type="button" class="pill" data-pick data-id="chip-wear-vintage" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Vintage</button><button type="button" class="pill" data-pick data-id="chip-wear-streetwear" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Streetwear</button><button type="button" class="pill" data-pick data-id="chip-wear-quiet-luxury" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Quiet luxury</button></div>
+          </div>
+          <div class="chip-group" role="group" aria-labelledby="g-play">
+            <h3 class="chip-group__title" id="g-play">Play</h3>
+            <div class="pill-row"><button type="button" class="pill" data-pick data-id="chip-play-jazz" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Jazz</button><button type="button" class="pill" data-pick data-id="chip-play-bossa-nova" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Bossa nova</button><button type="button" class="pill" data-pick data-id="chip-play-ambient" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Ambient</button><button type="button" class="pill" data-pick data-id="chip-play-indie-folk" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Indie folk</button><button type="button" class="pill" data-pick data-id="chip-play-soul" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Soul</button><button type="button" class="pill" data-pick data-id="chip-play-city-pop" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>City pop</button><button type="button" class="pill" data-pick data-id="chip-play-classical" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Classical</button><button type="button" class="pill" data-pick data-id="chip-play-lo-fi" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Lo-fi</button></div>
+          </div>
+          <div class="chip-group" role="group" aria-labelledby="g-watch">
+            <h3 class="chip-group__title" id="g-watch">Watch</h3>
+            <div class="pill-row"><button type="button" class="pill" data-pick data-id="chip-watch-film-noir" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Film noir</button><button type="button" class="pill" data-pick data-id="chip-watch-slow-cinema" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Slow cinema</button><button type="button" class="pill" data-pick data-id="chip-watch-french-new-wave" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>French New Wave</button><button type="button" class="pill" data-pick data-id="chip-watch-coming-of-age" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Coming of age</button><button type="button" class="pill" data-pick data-id="chip-watch-documentary" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Documentary</button><button type="button" class="pill" data-pick data-id="chip-watch-heist" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Heist</button><button type="button" class="pill" data-pick data-id="chip-watch-romantic-comedy" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Romantic comedy</button><button type="button" class="pill" data-pick data-id="chip-watch-animation" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Animation</button></div>
+          </div>
+          <div class="chip-group" role="group" aria-labelledby="g-eat">
+            <h3 class="chip-group__title" id="g-eat">Eat</h3>
+            <div class="pill-row"><button type="button" class="pill" data-pick data-id="chip-eat-sichuan-cuisine" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Sichuan cuisine</button><button type="button" class="pill" data-pick data-id="chip-eat-natural-wine" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Natural wine</button><button type="button" class="pill" data-pick data-id="chip-eat-dim-sum" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Dim sum</button><button type="button" class="pill" data-pick data-id="chip-eat-mezze" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Mezze</button><button type="button" class="pill" data-pick data-id="chip-eat-ramen" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Ramen</button><button type="button" class="pill" data-pick data-id="chip-eat-bakeries" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Bakeries</button><button type="button" class="pill" data-pick data-id="chip-eat-neapolitan-pizza" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Neapolitan pizza</button><button type="button" class="pill" data-pick data-id="chip-eat-tapas" aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Tapas</button></div>
+          </div>
+    </div>
+    <div class="search-block">
+      <label class="field-label" for="taste-search">Add an artist, film, brand or place</label>
+      <div class="search"><svg class="icon"><use href="#i-search"/></svg><input class="input" id="taste-search" type="search" value="nina" placeholder="Add an artist, film, brand or place" autocomplete="off" aria-controls="search-results"></div>
+      <ul class="search-results" id="search-results" aria-label="Search results">
+        <li><button type="button" class="result" data-pick data-id="search-nina-simone" aria-pressed="false"><span class="result__name">Nina Simone</span><span class="result__type">Artist</span><span class="result__mark"><span class="result__add"><svg class="icon"><use href="#i-plus"/></svg>Add</span><span class="result__added"><svg class="icon"><use href="#i-check"/></svg>Added</span></span></button></li>
+        <li><button type="button" class="result" data-pick data-id="search-nina-hagen" aria-pressed="false"><span class="result__name">Nina Hagen</span><span class="result__type">Artist</span><span class="result__mark"><span class="result__add"><svg class="icon"><use href="#i-plus"/></svg>Add</span><span class="result__added"><svg class="icon"><use href="#i-check"/></svg>Added</span></span></button></li>
+        <li><button type="button" class="result" data-pick data-id="search-nina-wu" aria-pressed="false"><span class="result__name">Nina Wu</span><span class="result__type">Film</span><span class="result__mark"><span class="result__add"><svg class="icon"><use href="#i-plus"/></svg>Add</span><span class="result__added"><svg class="icon"><use href="#i-check"/></svg>Added</span></span></button></li>
+      </ul>
+      <p class="notice search-off" role="status"><svg class="icon"><use href="#i-info"/></svg><span>Search is taking a break. Pick from the ideas above.</span></p>
+    </div>
+  </section>
+
+  <section class="onb-section" data-step-section="3" aria-labelledby="s3">
+    <div class="onb-head">
+      <div>
+        <h2 class="section-title" id="s3">Anything to leave out?<span class="optional-badge">Optional</span></h2>
+        <p class="exclusions-note" style="margin-top: var(--space-2)">We leave these out of food ideas and plans. They don't count as picks.</p>
+      </div>
+    </div>
+    <div class="pill-row" role="group" aria-label="Foods to leave out"><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Peanuts</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Tree nuts</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Dairy</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Eggs</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Gluten</button><button type="button" class="pill" data-toggle aria-pressed="true"><svg class="icon pill__check"><use href="#i-check"/></svg>Shellfish</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Fish</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Soy</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Sesame</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Pork</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Vegetarian</button><button type="button" class="pill" data-toggle aria-pressed="false"><svg class="icon pill__check"><use href="#i-check"/></svg>Alcohol</button></div>
+    <form class="exclusion-other" onsubmit="return false">
+      <label class="visually-hidden" for="exclusion-other">Something else to leave out</label>
+      <input class="input" id="exclusion-other" placeholder="Something else" autocomplete="off">
+      <button type="submit" class="button button--outline">Add</button>
+    </form>
+  </section>
+</main>
+
+<div class="pick-bar">
+  <div class="pick-bar__inner">
+    <div class="pick-bar__status">
+      <span class="progress" data-progress aria-hidden="true"><span></span><span></span><span></span></span>
+      <p class="counter" role="status" aria-live="polite" data-counter>3 picks to go</p>
+    </div>
+    <div class="pick-bar__end">
+      <p class="reason" id="build-reason" data-reason>Pick at least 3 so your feed starts with you.</p>
+      <button type="button" class="button button--outline next" onclick="this.dataset.goStep = Number(document.body.dataset.step) + 1" data-go-step="2">Next<svg class="icon"><use href="#i-arrowRight"/></svg></button>
+      <button type="button" class="button button--primary button--large" data-primary aria-disabled="true" aria-describedby="build-reason">Build my feed</button>
+    </div>
+  </div>
+</div>
+<script src="mockup.js"></script>
+</body>
+</html>

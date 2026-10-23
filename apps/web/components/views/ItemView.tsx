@@ -156,15 +156,16 @@ export function ItemView({ itemId }: { itemId: string }) {
         <div className="item-detail__body">
           <h1 className="display">{item.title}</h1>
           {item.subtitle && <p className="item-detail__subtitle">{item.subtitle}</p>}
-          {data.reason && <p className="lede">{data.reason}</p>}
-          {item.is_example && <p className="example-label">Example result</p>}
+          {data.detail && <p className="item-detail__subtitle">{data.detail}</p>}
+          {data.description && <p className="lede">{data.description}</p>}
+          {data.reason && <p className="item-detail__subtitle">{data.reason}</p>}
           <div className="item-detail__actions">
+            {/* Mockup 06: a plain "Save" button; the label itself says "Saved" afterwards. */}
             <button
               type="button"
               className={`button button--primary${item.saved ? ' is-saved' : ''}`}
               onClick={(e) => openSave(cardToTarget(item), e.currentTarget)}
             >
-              <Icon name={item.saved ? 'bookmarkFilled' : 'bookmark'} />
               <span>{item.saved ? 'Saved' : 'Save'}</span>
             </button>
             {data.destination_url && (
@@ -179,6 +180,7 @@ export function ItemView({ itemId }: { itemId: string }) {
               </a>
             )}
             <MoreMenu label={`More options for ${item.title}`} items={menuItems} />
+            {item.is_example && <p className="example-label">Example result</p>}
           </div>
           {data.capture_id && (
             <p>

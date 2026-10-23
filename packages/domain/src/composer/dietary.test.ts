@@ -27,3 +27,13 @@ describe('dietary exclusions', () => {
     expect(stripSafetyClaims('A warm, smoky dish.')).toBe('A warm, smoky dish.');
   });
 });
+
+describe('stripExcludedMentions (plan prose never names an excluded ingredient)', () => {
+  it('drops each sentence that names an exclusion, keeps the others', async () => {
+    const { stripExcludedMentions } = await import('./dietary');
+    const text = 'Grilled lemongrass chicken sets the mood. A green papaya salad, here without peanuts. Finish with mango.';
+    expect(stripExcludedMentions(text, ['peanuts'])).toBe('Grilled lemongrass chicken sets the mood. Finish with mango.');
+    expect(stripExcludedMentions('A creamy butter sauce.', ['dairy'])).toBe('');
+    expect(stripExcludedMentions(text, [])).toBe(text);
+  });
+});

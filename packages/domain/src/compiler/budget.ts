@@ -14,10 +14,36 @@ export class JobBudget {
   private exhausted = new Set<string>();
 
   constructor(
-    readonly limits: { qlooRequests: number; researchRefs: number; retriesPerStage: number },
+    readonly limits: {
+      qlooRequests: number;
+      researchRefs: number;
+      retriesPerStage: number;
+      /** Photo-reading model calls per job (quick read + enrichment); default 2. */
+      visionCalls?: number;
+    },
     initialUsed: { qloo?: number } = {},
   ) {
     this.used.set('qloo', initialUsed.qloo ?? 0);
+  }
+
+  private visionReserved = 0;
+
+  /**
+   * Reserves logical photo-reading model calls for this job up front
+   * (amendment 2.2: the stage-1 quick read and the stage-2 enrichment are
+   * reserved together, at most LIMITS.visionCallsPerAnalysis). Returns false
+   * without reserving anything when the request would exceed the limit.
+   * HTTP retries of a reserved call are still limited per stage by forStage.
+   */
+  reserveVisionCalls(calls: number): boolean {
+    const limit = this.limits.visionCalls ?? 2;
+    if (!Number.isSafeInteger(calls) || calls <= 0 || this.visionReserved + calls > limit) return false;
+    this.visionReserved += calls;
+    return true;
+  }
+
+  visionCallsReserved(): number {
+    return this.visionReserved;
   }
 
   usedBy(provider: string): number {

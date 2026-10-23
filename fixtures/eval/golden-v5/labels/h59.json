@@ -1,0 +1,94 @@
+{
+  "id": "h59",
+  "split": "tune",
+  "file": "h59-craft-calligraphy-scroll.jpg",
+  "subject_domains": [
+    "craft",
+    "art",
+    "signage"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Hanging scroll",
+      "pattern": "hanging scroll|wall scroll|scroll painting|kakejiku|scroll",
+      "aliases": [
+        "Wall scroll"
+      ]
+    },
+    {
+      "name": "Chinese calligraphy",
+      "pattern": "chinese calligraphy|calligraphy|书法|書法",
+      "aliases": [
+        "Calligraphy"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "奋斗",
+      "pattern": "奋斗|奮鬥|striv\\w*|struggle",
+      "requires_text": "奋斗"
+    },
+    {
+      "name": "宝剑锋从磨砺出，梅花香自苦寒来",
+      "pattern": "宝剑锋从磨砺出|梅花香自苦寒来|寶劍鋒從磨礪出|梅花香自苦寒來|sword'?s edge|plum blossoms?'? fragrance",
+      "requires_text": "梅花香自苦寒来"
+    },
+    {
+      "name": "Plum blossom",
+      "pattern": "plum blossoms?|梅花|prunus|winter plum|flowering branch",
+      "generic": false
+    },
+    {
+      "name": "Chinese proverb",
+      "pattern": "chinese (proverb|idiom|saying|couplet|poem|poetry)|proverb|couplet|警世贤文"
+    },
+    {
+      "pattern": "ink (painting|wash)|brush painting|bird-and-flower|guohua|shuimo|orchids?|wall decor|wallpaper|embossed (wall|wallpaper)",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "japanese|japan|kanji|shodo|sumi-?e|korean|hanja",
+      "why": "the text is simplified Chinese; no Japanese or Korean script or style is shown"
+    },
+    {
+      "pattern": "wang xizhi|yan zhenqing|su shi|mao zedong|qi baishi|zheng banqiao|wu changshuo",
+      "why": "no artist, seal or signature is legible; a named calligrapher or painter is invented"
+    },
+    {
+      "pattern": "chinese new year|spring festival|lunar new year",
+      "why": "no festival is named or decorated"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "person_identity",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "奋斗",
+    "宝剑锋从磨砺出",
+    "梅花香自苦寒来"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A product image of a hanging scroll on an embossed gold wallpaper: red title '奋斗', two vertical lines '宝剑锋从磨砺出，' and '梅花香自苦寒来。' (a well-known Chinese saying), a plum-blossom branch and a small orchid printed on the scroll. No seal or signature is legible. The scroll is a printed decoration, so painting and print words are not medium errors here ('medium' is not a forbidden class on this label). The three text lines are each one vertical column."
+}

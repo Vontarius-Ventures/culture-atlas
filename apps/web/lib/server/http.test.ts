@@ -73,6 +73,23 @@ async function anonymous() {
 }
 
 describe('apiRoute middleware', () => {
+  it('rejects switched v2 browser accounts before CSRF, input, idempotency or handler effects', async () => {
+    const anon = await anonymous();
+    const created = await createAccountRoute(req('/v1/accounts', { method: 'POST', cookie: anon.cookie, csrf: anon.csrf,
+      body: { email: `v2-${randomUUID()}@example.com`, password: 'a fine password' } }), noParams);
+    const cookie = cookieFrom(created)!;
+    const contract = { ...ROUTES.createCollection, path: '/v2/test-collection' } as const;
+    const handler = vi.fn<Parameters<typeof apiRoute<typeof contract>>[1]>(async ({ ctx, body }) => collections.createCollection(ctx, body));
+    const route = apiRoute(contract, handler);
+    const headerCases: Record<string, string>[] = [{}, { 'X-Atlas-Expected-Account': randomUUID() }];
+    for (const headers of headerCases) {
+      const response = await route(req('/v2/test-collection', { method: 'POST', cookie,
+        body: { invalid: true }, headers }), noParams);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: 'account_mismatch' });
+    }
+    expect(handler).not.toHaveBeenCalled();
+  });
   it('creates an HttpOnly anonymous session cookie on first GET', async () => {
     const { res, cookie, body } = await anonymous();
     expect(res.status).toBe(200);

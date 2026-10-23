@@ -6,6 +6,7 @@ import type { DiscoveriesResponse, DiscoveryCard as Card } from '@culture-atlas/
 import { api, ApiError } from '@/lib/client/api';
 import { useAsyncEffect } from '@/lib/client/hooks';
 import { CATEGORY_LABELS, CATEGORY_ORDER } from '@/lib/client/format';
+import { ONBOARDING_PATH } from '@/lib/client/onboarding';
 import { UI_LIMITS } from '@/lib/client/limits';
 import { cardToTarget, useSave } from '@/lib/client/save';
 import {
@@ -80,6 +81,11 @@ export function DiscoverView() {
       if (!cat) setAllCategories(res.available_categories);
       setFeed(entry);
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'onboarding_required') {
+        // The server gate (ONB-01) agrees with the shell's: finish the questionnaire first.
+        window.location.replace(ONBOARDING_PATH);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : 'Discoveries could not be loaded.');
     } finally {
       setLoading(false);

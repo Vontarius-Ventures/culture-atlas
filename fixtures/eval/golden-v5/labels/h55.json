@@ -1,0 +1,46 @@
+{
+  "id": "h55",
+  "split": "tune",
+  "file": "h55-cafe-interior-defocused.jpg",
+  "subject_domains": [
+    "interior"
+  ],
+  "quality": {
+    "usable": false,
+    "issue": "blurred"
+  },
+  "expected": [],
+  "acceptable": [],
+  "forbidden": [
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    },
+    {
+      "pattern": "illegible|blur|out of focus",
+      "field": "visible_text",
+      "why": "a description is not a transcription"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food",
+    "unusable_with_candidates"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "UNUSABLE: the repository's own 'blurred' example for image-clarity assessment (PaddleClas PULC clarity_assessment/blured_demo.jpg). Strong defocus over the whole frame: a table, dark chairs and a window with a planter ledge can be guessed (a café), but nothing is sharp and the blue window sticker is unreadable. The reading should report a blurred photo and publish no candidate, as for p15 and h49."
+}

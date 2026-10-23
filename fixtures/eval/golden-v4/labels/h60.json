@@ -1,0 +1,70 @@
+{
+  "id": "h60",
+  "split": "holdout",
+  "file": "h60-art-marble-statue.jpg",
+  "subject_domains": [
+    "art"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "David",
+      "pattern": "\\bdavid\\b",
+      "type": "work",
+      "aliases": [
+        "David (Michelangelo)",
+        "Michelangelo's David"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Michelangelo",
+      "pattern": "michelangelo|buonarroti",
+      "type": "creator"
+    },
+    {
+      "name": "Renaissance sculpture",
+      "pattern": "renaissance|high renaissance|italian renaissance|cinquecento",
+      "type": "style"
+    },
+    {
+      "pattern": "marble (statue|sculpture)|marble|sculpture|statue|contrapposto|classical (sculpture|nude)|nude male figure|gallery|museum|tribune",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "florence|firenze|galleria dell'?accademia|accademia|piazza della signoria|palazzo vecchio|italy|tuscany",
+      "why": "no text names the gallery or city; the statue also exists as copies and casts"
+    },
+    {
+      "pattern": "donatello|bernini|rodin|canova|verrocchio|praxiteles|polykleitos|apollo|hercules|goliath",
+      "why": "a wrong artist or subject"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A photo (512x512) of a white marble statue of a standing nude young man, seen from the chest up, head turned left, a sling over the left shoulder, in a grey gallery with panelled walls. A famous work, not a living person: naming the work and its sculptor is expected and acceptable (so person_identity is not a forbidden class here). The gallery and the city are not named by anything in the photo."
+}

@@ -15,7 +15,7 @@ const baseURL = process.env.E2E_BASE_URL ?? `http://localhost:${port}`;
 export default defineConfig({
   testDir: './e2e',
   // e2e/real drives a running app + worker; see playwright.real.config.ts.
-  testIgnore: ['real/**'],
+  testIgnore: ['real/**', 'fidelity/**'],
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
@@ -33,6 +33,12 @@ export default defineConfig({
     {
       name: 'minimum',
       use: { ...devices['Desktop Chrome'], viewport: { width: 360, height: 740 } },
+    },
+    // Capture platform v2 and amendment 2.2 (screens 14-18): no horizontal scroll at 320 px.
+    {
+      name: 'narrow',
+      testMatch: ['v2/**/*.spec.ts', 'v22/**/*.spec.ts'],
+      use: { ...devices['Pixel 7'], viewport: { width: 320, height: 700 } },
     },
   ],
   webServer: process.env.E2E_BASE_URL

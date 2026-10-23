@@ -1,0 +1,81 @@
+{
+  "id": "h10",
+  "split": "tune",
+  "file": "h10-minicpm_hk.jpg",
+  "subject_domains": [
+    "place",
+    "signage",
+    "vehicle"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Hong Kong",
+      "pattern": "hong ?kong"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "neon"
+    },
+    {
+      "pattern": "\\btrams?\\b|ding ?ding"
+    },
+    {
+      "pattern": "minibus|double-?decker",
+      "generic": true
+    },
+    {
+      "name": "Lukfook Jewellery",
+      "aliases": [
+        "Lukfook"
+      ],
+      "type": "brand",
+      "requires_text": "LUKFOOK"
+    },
+    {
+      "pattern": "emperor",
+      "type": "brand",
+      "requires_text": "EMPEROR"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "nathan road|mong kok|causeway bay|tsim sha tsui|wan chai|central district",
+      "why": "no legible text names the street or district"
+    },
+    {
+      "pattern": "tokyo|shanghai|taipei|macau|singapore|bangkok",
+      "why": "the trams, minibuses and taxis are Hong Kong's"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "restaurant signs are not dishes",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "LUKFOOK",
+    "EMPEROR"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

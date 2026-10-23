@@ -6,8 +6,10 @@ import { AppError } from '../errors';
 import { createAccountImpl } from './accounts';
 import type { Principal } from '../principal';
 import type { CreateAccountRequest, CreateAccountResponse, SessionResponse } from '../schemas/auth';
+import { isOnboardingRequired } from './onboarding';
 import type { ServiceContext } from '../context';
 import { addHours, iso } from '../util/time';
+import { resolveNativePrincipal } from './native-sessions';
 
 /**
  * Sessions, principals and credentials.
@@ -83,6 +85,8 @@ interface AgentRow {
   expires_at: Date;
   revoked_at: Date | null;
   collection_ids: string[] | null;
+  installation_ids: string[];
+  authorization_version: number;
 }
 
 /**
@@ -100,13 +104,18 @@ export async function resolvePrincipal(
   if (auth) {
     const match = /^Bearer\s+(\S+)$/i.exec(auth);
     if (!match) throw new AppError('unauthenticated');
+    if (match[1]!.startsWith('cna_')) return resolveNativePrincipal(db, match[1]!, now);
     const { rows } = await db.query<AgentRow>(
       `SELECT ac.id, ac.owner_account_id, ac.client_name, ac.purpose, ac.scopes, ac.library_access,
-              ac.sensor_connection_id, ac.expires_at, ac.revoked_at,
+              ac.sensor_connection_id, ac.expires_at, ac.revoked_at, ac.installation_ids, ac.authorization_version,
               ARRAY(SELECT collection_id FROM agent_connection_collections acc
                      WHERE acc.agent_connection_id = ac.id) AS collection_ids
-         FROM agent_connections ac WHERE ac.credential_hash = $1`,
-      [hashToken(match[1]!)],
+         FROM agent_connections ac WHERE ac.credential_hash = $1 OR ac.id IN (
+           SELECT f.connection_id FROM agent_oauth_access_tokens t JOIN agent_oauth_families f ON f.id=t.family_id
+           WHERE t.token_hash=$1 AND t.expires_at>$2 AND f.revoked_at IS NULL
+             AND f.idle_expires_at>$2 AND f.absolute_expires_at>$2 AND f.authorization_version=ac.authorization_version
+         )`,
+      [hashToken(match[1]!), now],
     );
     const row = rows[0];
     if (!row) throw new AppError('unauthenticated');
@@ -124,6 +133,8 @@ export async function resolvePrincipal(
       allowedCollectionIds: row.collection_ids ?? [],
       sensorConnectionId: row.sensor_connection_id,
       expiresAt: row.expires_at,
+      allowedInstallationIds: row.installation_ids,
+      authorizationVersion: row.authorization_version,
     };
   }
 
@@ -157,6 +168,7 @@ export async function getSessionInfo(ctx: ServiceContext): Promise<SessionRespon
     return {
       principal: { kind: 'account', account_id: p.accountId, session_id: p.sessionId, expires_at: iso(rows[0]?.expires_at ?? null), is_demo_owner: p.isDemoOwner },
       csrf_token: csrfTokenFor(p.sessionId, ctx.config.SESSION_SECRET),
+      onboarding_required: await isOnboardingRequired(ctx, p.accountId),
     };
   }
   throw new AppError('scope_denied', { message: 'Session info is only available to browser sessions.' });

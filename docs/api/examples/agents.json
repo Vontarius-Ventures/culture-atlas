@@ -1,0 +1,33 @@
+{
+  "_note": "Illustrative values only. No real credential appears in any example.",
+  "create_connection_request": {
+    "client_name": "My research assistant",
+    "scopes": ["setup:read", "preferences:read"],
+    "library_access": "none",
+    "expires_in_days": 30
+  },
+  "preferences_response": {
+    "schema_version": "2.1",
+    "request_id": "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b",
+    "version": 3,
+    "user_set": { "theme": "dark" },
+    "effective": {
+      "theme": "dark",
+      "language": "en",
+      "default_capture_mode": "photo",
+      "video_muted": true,
+      "exploration": "balanced",
+      "food": { "exclusions": [] }
+    },
+    "analysis_consent": { "automatic_analysis": false, "requires_explicit_request": true }
+  },
+  "analysis_operation_response": {
+    "schema_version": "2.1",
+    "request_id": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "id": "8c9d0e1f-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+    "kind": "analysis",
+    "state": "queued",
+    "result_id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+    "error_code": null
+  }
+}

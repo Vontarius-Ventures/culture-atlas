@@ -14,7 +14,17 @@ import type {
 } from '../qloo/types';
 import type { ResearchExtraction, ResearchProvider, ResearchSourceDoc } from '../research/types';
 import type { StructuredRequest, StructuredResult, TextModelProvider } from '../text/types';
-import { VlmAnalysis, type VlmAnalyzeInput, type VlmProvider, type VlmResult } from '../vlm/types';
+import {
+  VlmAnalysis,
+  VlmEnrichment,
+  type VlmAnalyzeInput,
+  type VlmEnricher,
+  type VlmEnrichInput,
+  type VlmEnrichResult,
+  type VlmProvider,
+  type VlmResult,
+} from '../vlm/types';
+import { VlmVerification, type VlmVerifier, type VlmVerifyInput, type VlmVerifyResult } from '../vlm/verify';
 
 /**
  * Deterministic fakes for unit/integration tests. They never pretend to be live:
@@ -36,6 +46,38 @@ export class FakeVlm implements VlmProvider {
     const out = this.respond(input);
     if (out instanceof Error) throw out;
     return { analysis: VlmAnalysis.parse(out), model: 'fake-vlm', durationMs: 1 };
+  }
+}
+
+/** Deterministic stage-2 enrichment fake (schema-validated like the real adapter). */
+export class FakeVlmEnricher implements VlmEnricher {
+  readonly id = 'vlm-enrich:fake';
+  readonly calls: VlmEnrichInput[] = [];
+  constructor(private readonly respond: (input: VlmEnrichInput) => VlmEnrichment | Error) {}
+  capability(): CapabilityEntry {
+    return AVAILABLE;
+  }
+  async enrichImage(input: VlmEnrichInput): Promise<VlmEnrichResult> {
+    this.calls.push(input);
+    const out = this.respond(input);
+    if (out instanceof Error) throw out;
+    return { enrichment: VlmEnrichment.parse(out), model: 'fake-vlm-enrich', durationMs: 1 };
+  }
+}
+
+/** Deterministic verifier fake (schema-validated like the real adapter). */
+export class FakeVlmVerifier implements VlmVerifier {
+  readonly id = 'vlm-verify:fake';
+  readonly calls: VlmVerifyInput[] = [];
+  constructor(private readonly respond: (input: VlmVerifyInput) => VlmVerification | Error) {}
+  capability(): CapabilityEntry {
+    return AVAILABLE;
+  }
+  async verifyImage(input: VlmVerifyInput): Promise<VlmVerifyResult> {
+    this.calls.push(input);
+    const out = this.respond(input);
+    if (out instanceof Error) throw out;
+    return { verification: VlmVerification.parse(out), model: 'fake-vlm-verify', durationMs: 1 };
   }
 }
 
@@ -73,7 +115,7 @@ export class FakeResearch implements ResearchProvider {
 
 export interface FakeQlooHandlers {
   search?: (query: string, types?: string[]) => QlooEntity[] | Error;
-  tags?: (query: string) => QlooTag[] | Error;
+  tags?: (query: string, tagTypes?: string[]) => QlooTag[] | Error;
   insights?: (req: Parameters<QlooProvider['insights']>[0]) => QlooInsightsResult | Error;
   trending?: () => QlooTrendingResult | Error;
   entityTrends?: (entityId: string) => QlooEntityTrendsResult | Error;
@@ -114,7 +156,7 @@ export class FakeQloo implements QlooProvider {
     return this.wrap('search', '/search', req, this.handlers.search?.(req.query, req.types));
   }
   async lookupTags(req: Parameters<QlooProvider['lookupTags']>[0]) {
-    return this.wrap('tags', '/v2/tags', req, this.handlers.tags?.(req.query));
+    return this.wrap('tags', '/v2/tags', req, this.handlers.tags?.(req.query, req.tagTypes));
   }
   async insights(req: Parameters<QlooProvider['insights']>[0]) {
     return this.wrap('insights', '/v2/insights', req, this.handlers.insights?.(req));

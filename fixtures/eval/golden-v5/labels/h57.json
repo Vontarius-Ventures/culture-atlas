@@ -1,0 +1,74 @@
+{
+  "id": "h57",
+  "split": "tune",
+  "file": "h57-interior-church-dome.png",
+  "subject_domains": [
+    "architecture",
+    "interior",
+    "art"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Stained glass",
+      "pattern": "stained[- ]glass",
+      "aliases": [
+        "Stained-glass windows"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Church interior",
+      "pattern": "church|chapel|basilica|cathedral|sanctuary|nave|chancel|apse|altar",
+      "generic": true
+    },
+    {
+      "pattern": "dome|oculus|skylight|mosaics?|murals?|frescoe?s?|arch(es|ed)?|arcade|columns?|coffered|rotunda|steps|chancel rail|dim|dark|low light|underexposed"
+    },
+    {
+      "pattern": "romanesque( revival)?|byzantine|richardsonian|neo-?byzantine|renaissance revival"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "stanford|palo alto|california|memorial church|hagia sophia|st\\.? peter|pantheon|sacr[eé][- ]c(o|œ)eur|westminster|florence|venice|san marco|istanbul|\\brome\\b",
+      "why": "no text names the building or the city"
+    },
+    {
+      "pattern": "gothic|baroque|art deco|modernist",
+      "why": "round arches, a dome and mosaic murals: not these styles"
+    },
+    {
+      "pattern": "wedding|mass|service|funeral|christmas|easter",
+      "why": "no people or event are shown"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A dim, wide-angle church interior (one bracket of an HDR exposure series): a dome with a glazed oculus ringed by small round motifs, a large arch over a chancel with mural or mosaic bands and three stained-glass windows, steps and a rail in the foreground. No text, no people. ADVERSARIAL: the building is recognisable to some, but nothing in the photo names it or its city; Romanesque or Byzantine revival is acceptable, not expected."
+}

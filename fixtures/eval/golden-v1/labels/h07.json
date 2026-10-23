@@ -1,0 +1,56 @@
+{
+  "id": "h07",
+  "split": "holdout",
+  "file": "h07-gsam_demo3.jpg",
+  "subject_domains": [
+    "craft",
+    "design",
+    "interior"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Hand-painted furniture",
+      "pattern": "(hand|folk)[- ]?painted|painted (wooden )?(stools?|furniture)",
+      "aliases": [
+        "Painted furniture"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "(bar|wooden) stools?|\\bstools?\\b",
+      "generic": true
+    },
+    {
+      "pattern": "folk art|antiques?( (shop|store))?"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "still[- ]?life|photograph|illustration|render",
+      "why": "medium word on a real photo"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "'medium' is not a listed class: 'hand-painted' describes the craft, not the photo."
+}

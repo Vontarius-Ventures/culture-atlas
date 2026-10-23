@@ -26,6 +26,8 @@ export function effectiveScopes(principal: Principal): readonly Scope[] {
       return ANONYMOUS_SCOPES;
     case 'agent':
       return principal.scopes;
+    case 'installation':
+      return [];
   }
 }
 
@@ -58,7 +60,7 @@ export function requireAccount(principal: Principal): AccountPrincipal | AgentPr
 export function requireAccountOwner(principal: Principal): AccountPrincipal {
   if (principal.kind === 'account') return principal;
   if (principal.kind === 'anonymous') throw new AppError('account_required');
-  if (principal.kind === 'agent') throw new AppError('scope_denied');
+  if (principal.kind === 'agent' || principal.kind === 'installation') throw new AppError('scope_denied');
   throw new AppError('unauthenticated');
 }
 
@@ -71,6 +73,8 @@ export function hasWholeLibrary(principal: Principal): boolean {
       return true;
     case 'agent':
       return principal.libraryAccess === 'all';
+    case 'installation':
+      return false;
   }
 }
 
@@ -91,6 +95,7 @@ export function requireWholeLibrary(principal: Principal): void {
  * (services must still constrain SQL by owner).
  */
 export function collectionGranted(principal: Principal, collectionId: string): boolean {
+  if (principal.kind === 'installation') return false;
   if (principal.kind !== 'agent') return true;
   if (principal.libraryAccess === 'all') return true;
   if (principal.libraryAccess === 'selected_collections') {
@@ -109,6 +114,7 @@ export function requireCollectionGrant(principal: Principal, collectionId: strin
  * Services filter list/read queries with this.
  */
 export function grantedCollectionFilter(principal: Principal): readonly string[] | null {
+  if (principal.kind === 'installation') return [];
   if (principal.kind !== 'agent' || principal.libraryAccess === 'all') return null;
   if (principal.libraryAccess === 'selected_collections') return principal.allowedCollectionIds;
   return [];
@@ -147,6 +153,7 @@ export function resolveTasteScope(principal: Principal, collectionId?: string): 
  */
 export * from './operations';
 export * from './connection-access';
+export * from './native-owner';
 
 /** The sensor-bridge token may only create captures for its own sensor connection. */
 export function requireNotSensorBridge(principal: Principal): void {

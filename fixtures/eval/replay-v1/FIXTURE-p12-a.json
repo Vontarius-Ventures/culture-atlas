@@ -1,0 +1,90 @@
+{
+  "quick": {
+    "title": "Red bus on a London street",
+    "interpretation": "A red double-decker passes brick terraces.",
+    "candidates": [
+      {
+        "name": "London",
+        "type": "place",
+        "relation": "resembles",
+        "certainty": 0.7,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "London red double-decker bus",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.9,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Georgian terraced houses",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.3,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": "georgian architecture"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Yellow stock brick terraces",
+        "kind": "setting"
+      }
+    ],
+    "visible_text": [
+      "Stockwell",
+      "88"
+    ],
+    "confirmed": [
+      {
+        "name": "London",
+        "rationale": "Red route signs",
+        "keep": true
+      },
+      {
+        "name": "London red double-decker bus",
+        "rationale": "Route 88",
+        "keep": true
+      },
+      {
+        "name": "Georgian terraced houses",
+        "rationale": "The terraces are Victorian",
+        "keep": false
+      }
+    ],
+    "additional_candidates": [
+      {
+        "name": "Victorian terraced houses",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.6,
+        "categories": [],
+        "tag_query": "victorian architecture",
+        "rationale": "Bay windows and stock brick"
+      }
+    ],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2300,
+  "enrich_ms": 5100
+}

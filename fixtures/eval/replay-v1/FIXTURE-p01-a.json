@@ -1,0 +1,43 @@
+{
+  "quick": {
+    "title": "Citrus and kiwi still life",
+    "interpretation": "The photo resembles a still life of cut citrus and kiwi.",
+    "candidates": [
+      {
+        "name": "Still life painting",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.6,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": "still life"
+      },
+      {
+        "name": "Citrus fruit",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.9,
+        "categories": [
+          "eat"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Kiwi fruit",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.9,
+        "categories": [
+          "eat"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "quick_ms": 2200
+}

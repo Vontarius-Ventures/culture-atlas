@@ -1,0 +1,60 @@
+{
+  "fixture_version": 1,
+  "note": "Installation enrollment proof. The client signs payload_utf8 with its non-exportable P-256 installation key (ECDSA, SHA-256) and sends the IEEE P1363 r||s signature as base64url (86 characters). payload = 'culture-atlas-enroll-v1' LF nonce LF installation_public_id LF platform LF lowercase-hex SHA-256 of the UTF-8 enrollment grant (or of the empty string when enrolling from a signed-in session without a grant). Android Keystore returns DER; der_conversion lists the exact DER -> P1363 mapping. Signatures were produced once with a throwaway key whose private half was discarded; only the public key is kept.",
+  "algorithm": { "curve": "P-256", "hash": "SHA-256", "signature_encoding": "ieee-p1363", "signature_base64url_length": 86 },
+  "payload_prefix": "culture-atlas-enroll-v1",
+  "public_key": {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "y78prLi1mVpPfuR581hgwLWtz8ZUgFKChSFJs78sf0I",
+    "y": "DbbRMPo2Ni4DSHGN3ouYPbUkEMZOcHzsFKl_S5IN8Lo"
+  },
+  "public_key_x963_base64url": "BMu_Kay4tZlaT37kefNYYMC1rc_GVIBSgoUhSbO_LH9CDbbRMPo2Ni4DSHGN3ouYPbUkEMZOcHzsFKl_S5IN8Lo",
+  "vectors": [
+    {
+      "name": "ios_with_enrollment_grant",
+      "nonce": "n0nce-For-Test-Vectors_0123456789abcdefghijk",
+      "installation_public_id": "7d4f2c1e-3b5a-4c8d-9e0f-1a2b3c4d5e6f",
+      "platform": "ios",
+      "enrollment_grant": "cne_TestVectorGrantNotARealCredential_000000001",
+      "grant_sha256_hex": "1c9b2fcb15851d79ffe4db8cbff1e1101578c3c0c35884986c20255ee27227cd",
+      "payload_utf8": "culture-atlas-enroll-v1\nn0nce-For-Test-Vectors_0123456789abcdefghijk\n7d4f2c1e-3b5a-4c8d-9e0f-1a2b3c4d5e6f\nios\n1c9b2fcb15851d79ffe4db8cbff1e1101578c3c0c35884986c20255ee27227cd",
+      "signature_der_hex": "3045022100b47c19817040502c04d9d00a891fe89b7828d432dc8ca9cfccb5ae7c938608fa02202f7aa14ba3c5d890c0eba485f0662a09407866d1c86609f6898ce1e260f57c40",
+      "signature_p1363_base64url": "tHwZgXBAUCwE2dAKiR_om3go1DLcjKnPzLWufJOGCPoveqFLo8XYkMDrpIXwZioJQHhm0chmCfaJjOHiYPV8QA"
+    },
+    {
+      "name": "android_with_enrollment_grant",
+      "nonce": "An0therNonceForAndroidVectors_abcdefghijklmnop",
+      "installation_public_id": "0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e",
+      "platform": "android",
+      "enrollment_grant": "cne_TestVectorGrantNotARealCredential_000000002",
+      "grant_sha256_hex": "40a9fc927c9b085a0f1d6757cb84852163ec11d1d7b1adcd74a5993e5c1d6eed",
+      "payload_utf8": "culture-atlas-enroll-v1\nAn0therNonceForAndroidVectors_abcdefghijklmnop\n0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e\nandroid\n40a9fc927c9b085a0f1d6757cb84852163ec11d1d7b1adcd74a5993e5c1d6eed",
+      "signature_der_hex": "3045022100ffbcc5b37724984add1e50586b4f94f4bd8fbfcdb7c33f60ca5b5f38e6f068c502205060649571a99fbd2f4cbe510441c52d895dcae43d744d296457a86b30699012",
+      "signature_p1363_base64url": "_7zFs3ckmErdHlBYa0-U9L2Pv823wz9gyltfOObwaMVQYGSVcamfvS9MvlEEQcUtiV3K5D10TSlkV6hrMGmQEg"
+    },
+    {
+      "name": "ios_browser_session_without_grant",
+      "nonce": "ThirdNonceWithoutGrant_0123456789abcdefghijklmn",
+      "installation_public_id": "11111111-2222-4333-8444-555555555555",
+      "platform": "ios",
+      "enrollment_grant": null,
+      "grant_sha256_hex": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "payload_utf8": "culture-atlas-enroll-v1\nThirdNonceWithoutGrant_0123456789abcdefghijklmn\n11111111-2222-4333-8444-555555555555\nios\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signature_der_hex": "3046022100d4b187f85c0a2f14d7559a7528654a6e01feee092d56e873bd042384a540ba2e022100e89f2babac56aa95b255369327fcecca19c35ec7b1fc3c4a147f131b256243a6",
+      "signature_p1363_base64url": "1LGH-FwKLxTXVZp1KGVKbgH-7gktVuhzvQQjhKVAui7onyurrFaqlbJVNpMn_OzKGcNex7H8PEoUfxMbJWJDpg"
+    }
+  ],
+  "der_conversion": [
+    {
+      "name": "short_r_is_left_padded",
+      "der_hex": "3043021f0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02200102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "p1363_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+    },
+    {
+      "name": "high_bit_s_drops_sign_byte",
+      "der_hex": "304502200102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20022100ff02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+      "p1363_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20ff02030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+    }
+  ]
+}

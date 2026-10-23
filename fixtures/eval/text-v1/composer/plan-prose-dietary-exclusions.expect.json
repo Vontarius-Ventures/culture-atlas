@@ -1,0 +1,29 @@
+{
+  "fixture": "plan-prose-dietary-exclusions",
+  "schema": "plan_prose",
+  "source_urls": [],
+  "sources": [],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [],
+  "input_text": "<data>{\"items\":[{\"id\":\"i1\",\"kind\":\"capture\",\"title\":\"Night market stall with grills\",\"detail\":\"A busy street-food stall that resembles a Bangkok night market.\",\"year\":null,\"references\":[\"Thai cuisine\",\"Bangkok\"]},{\"id\":\"i2\",\"kind\":\"film\",\"title\":\"In the Mood for Love\",\"detail\":null,\"year\":2000,\"references\":[]}],\"collection\":null,\"instruction\":null,\"dietary_exclusions\":[\"peanuts\",\"dairy\"],\"exploration\":\"familiar\",\"film\":\"In the Mood for Love\",\"dishes\":[\"Green papaya salad\",\"Grilled lemongrass chicken\"],\"artists\":[\"Khruangbin\"],\"weak_inputs\":[]}</data>",
+  "exclusions": [
+    "peanuts",
+    "dairy"
+  ],
+  "word_limits": {
+    "title_words": 6,
+    "summary_words": 45,
+    "summary_sentences": 1,
+    "rationale_words": 70,
+    "rationale_sentences": 2
+  },
+  "forbidden_strings": [],
+  "input_ids": [
+    "i1",
+    "i2"
+  ],
+  "reference_names": [],
+  "avoid": [],
+  "min_items": 1
+}

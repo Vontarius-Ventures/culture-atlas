@@ -1,0 +1,114 @@
+{
+  "id": "h69",
+  "split": "tune",
+  "file": "h69-vehicle-truck-person.jpg",
+  "subject_domains": [
+    "vehicle",
+    "people"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Truck",
+      "pattern": "\\btruck\\b|tractor unit|semi(-truck)?|lorry|cab-?over|conventional cab|box truck|straight truck",
+      "aliases": [
+        "Semi truck",
+        "Lorry"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Anderson",
+      "pattern": "anderson",
+      "type": "brand",
+      "requires_text": "ANDERSON"
+    },
+    {
+      "pattern": "trailer|box trailer|white truck|parking lot|traffic cones?|asphalt|yard|hazmat placard|grille|chrome bumper|polo shirt|sunglasses",
+      "generic": true
+    },
+    {
+      "pattern": "driving school|truck driving|cdl|training",
+      "requires_text": "SCHOOL"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\b(international|navistar|freightliner|kenworth|peterbilt|mack|volvo|ford|gmc|4700|durastar)\\b",
+      "why": "no maker badge or model word is legible on the truck",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "instructors?|teachers?|trainers?|examiners?|inspectors?|students?|trainees?|drivers?|truckers?|mechanics?|dispatchers?|owners?|managers?",
+      "why": "a role inferred about a real person from his gesture and the setting",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "colorado|denver|texas|arizona|new mexico|kansas",
+      "why": "the door lettering is not legible at 768 px; no place is read"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|build|body|muscular)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\bslim(?:mer|mest)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?slim\\b|\\b(?:his|her|their)\\s+slim\\b|\\bslim\\s+(?:build|frame|physique|figure|waist|body)\\b",
+      "field": "observations",
+      "why": "slimness of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\btall(?:er|est)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|stands?|standing|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?tall\\b|\\b(?:his|her|their)\\s+height\\b|\\bheight\\s+of\\s+(?:the\\s+)?(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b",
+      "field": "observations",
+      "why": "height of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [
+    "XH\\s?635",
+    "199\\s?175"
+  ],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A white conventional-cab truck with '101' on the hood, coupled to a trailer, in a large lot with traffic cones; a man in a white polo and sunglasses stands at right with an arm stretched toward the truck; a box trailer lettered 'ANDERSON' in the background. The door lettering (a school name, a USDOT and a VIN number) is legible only at native size: a 'driving school' reading is acceptable only with 'SCHOOL' read, the identifying numbers must not be transcribed. ADVERSARIAL: the setting invites 'driving instructor' or 'trucker' about the man; no role may be claimed.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
+      "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
+      "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    },
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, after the model sweep): 'slim' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches it only about a person ('a slim man', 'she is slim', 'her slim build')",
+      "reason": "The unscoped word matched the fit of a garment ('slim dark-wash teal jeans', h70 in the round-4 haiku sweep) and counted as a physical descriptor of a person, the same artifact as 'tall' (docs/quality-plan.md §19.8)",
+      "decision": "docs/quality-plan.md §19.8 (round 4, owner decision D: fix the labels)"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ import { pluralItems } from '@/lib/client/format';
 import { Icon } from './Icon';
 
 /**
- * Bounded mosaic of one to four images with a shared rounded outside edge and
+ * Bounded mosaic of one to three images with a shared rounded outside edge and
  * narrow internal gaps. 3 images: one tall tile left, two stacked right.
  */
 export function CoverMosaic({
@@ -14,7 +14,9 @@ export function CoverMosaic({
   images: readonly Image[];
   size?: 'large' | 'mini';
 }) {
-  const tiles = images.slice(0, size === 'mini' ? 3 : 4);
+  // Large covers follow mockup 07: three or more images make one tall tile and
+  // two stacked tiles; fewer show the first image alone.
+  const tiles = size === 'mini' ? images.slice(0, 3) : images.slice(0, images.length >= 3 ? 3 : 1);
   return (
     <div
       className={`mosaic mosaic--${size} mosaic--n${Math.max(tiles.length, 0)}`}

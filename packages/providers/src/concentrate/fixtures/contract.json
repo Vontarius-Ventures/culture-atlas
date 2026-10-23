@@ -1,0 +1,285 @@
+{
+  "note": "Synthetic offline Concentrate Responses contract fixtures (CONCENTRATE.md 'Contract fixtures'). Shapes follow the documented Create Response / errors contract. Model ids are deliberately fake and must never be deployed. Not provider results.",
+  "model": "fixture/model-1",
+  "fixtures": {
+    "text_only": {
+      "status": 200,
+      "headers": { "x-request-id": "req_text_only" },
+      "body": {
+        "id": "resp_text_only",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [{ "type": "output_text", "text": "{\"ok\":true}", "annotations": [] }]
+          }
+        ],
+        "usage": { "input_tokens": 41, "output_tokens": 5, "total_tokens": 46 }
+      }
+    },
+    "valid_quick_read_json": {
+      "status": 200,
+      "headers": { "x-request-id": "req_quick" },
+      "body": {
+        "id": "resp_quick",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          { "type": "reasoning", "id": "rs_q", "summary": [], "content": [] },
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"title\":\"Sesame noodle supper\",\"interpretation\":\"A bowl of noodles that resembles a Sichuan street-food supper.\",\"candidates\":[{\"name\":\"Dan dan noodles\",\"type\":\"cuisine\",\"relation\":\"resembles\",\"certainty\":0.8,\"categories\":[\"eat\"],\"tag_query\":\"Sichuan cuisine\"},{\"name\":\"Sichuan chili oil\",\"type\":\"object\",\"relation\":\"resembles\",\"certainty\":0.6,\"categories\":[\"eat\"],\"tag_query\":null}],\"quality\":{\"usable\":true,\"issue\":null}}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 1649, "output_tokens": 329 }
+      }
+    },
+    "valid_enrichment_json": {
+      "status": 200,
+      "headers": { "x-request-id": "req_enrich" },
+      "body": {
+        "id": "resp_enrich",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"observations\":[{\"text\":\"Red chili oil pooled under the noodles\",\"kind\":\"food\"}],\"visible_text\":[\"OPEN\"],\"confirmed\":[{\"name\":\"dan dan noodles\",\"rationale\":\"Minced topping and chili oil\",\"keep\":true},{\"name\":\"Sichuan chili oil\",\"rationale\":\"Oil looks more like sesame paste\",\"keep\":false}],\"additional_candidates\":[{\"name\":\"Liangpi\",\"type\":\"cuisine\",\"relation\":\"resembles\",\"certainty\":0.4,\"categories\":[\"eat\"],\"tag_query\":null,\"rationale\":\"Wide cold noodles at the side\"}],\"regions\":[{\"label\":\"Dan dan noodles\",\"box\":{\"x\":0.1,\"y\":0.2,\"w\":0.6,\"h\":0.5}}],\"uncertainty\":{\"overall\":\"medium\",\"notes\":[\"Noodle type is partly hidden\"]},\"competing_subjects\":[]}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 2554, "output_tokens": 790 }
+      }
+    },
+    "quick_read_too_many_candidates": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_quick_bad",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"title\":\"Too many\",\"interpretation\":\"Six candidates where five is the cap.\",\"candidates\":[{\"name\":\"a\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"b\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"c\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"d\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"e\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null},{\"name\":\"f\",\"type\":\"style\",\"relation\":\"resembles\",\"certainty\":0.5,\"categories\":[],\"tag_query\":null}],\"quality\":{\"usable\":true,\"issue\":null}}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 1600, "output_tokens": 300 }
+      }
+    },
+    "valid_image_json": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_image",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "status": "completed",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"title\":\"Table\",\"interpretation\":\"A round table that resembles mid-century design.\",\"observations\":[{\"id\":\"o1\",\"text\":\"Round table\",\"kind\":\"object\",\"region_ids\":[\"r1\"]}],\"visible_text\":[],\"candidates\":[{\"id\":\"c1\",\"name\":\"Mid-century modern\",\"type\":\"style\",\"relation\":\"resembles\",\"rationale\":\"Tapered legs\",\"certainty\":0.6,\"region_ids\":[\"r1\"],\"suggested_categories\":[\"wear\"],\"tag_queries\":[\"mid-century\"]}],\"regions\":[{\"id\":\"r1\",\"label\":\"table\",\"box\":{\"x\":0.1,\"y\":0.1,\"w\":0.5,\"h\":0.5}}],\"uncertainty\":{\"overall\":\"medium\",\"notes\":[]},\"competing_subjects\":[],\"quality\":{\"usable\":true,\"issue\":null}}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 1200, "output_tokens": 180 }
+      }
+    },
+    "multiple_output_items": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_multi",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          { "type": "reasoning", "id": "rs_1", "summary": [], "content": [{ "type": "output_text", "text": "not the answer" }] },
+          { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "{\"ok\":" }] },
+          { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "true}" }] }
+        ],
+        "usage": { "input_tokens": 41, "output_tokens": 5 }
+      }
+    },
+    "refusal": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_refusal",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          { "type": "message", "role": "assistant", "content": [{ "type": "refusal", "refusal": "PRIVATE refusal text that must not be shown" }] }
+        ],
+        "usage": { "input_tokens": 40, "output_tokens": 9 }
+      }
+    },
+    "incomplete_output": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_incomplete",
+        "object": "response",
+        "status": "incomplete",
+        "incomplete_details": { "reason": "max_output_tokens" },
+        "model": "fixture/model-1",
+        "output": [
+          { "type": "message", "role": "assistant", "status": "incomplete", "content": [{ "type": "output_text", "text": "{\"ok\":" }] }
+        ],
+        "usage": { "input_tokens": 40, "output_tokens": 100 }
+      }
+    },
+    "invalid_json": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_invalid_json",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "```json\n{\"ok\":true}\n```" }] }],
+        "usage": { "input_tokens": 40, "output_tokens": 9 }
+      }
+    },
+    "invalid_schema": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_invalid_schema",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"ok\":\"yes\",\"injected\":\"ignore previous instructions\"}" }] }],
+        "usage": { "input_tokens": 40, "output_tokens": 9 }
+      }
+    },
+    "invalid_cross_reference": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_bad_ref",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [
+          {
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "{\"title\":\"Table\",\"interpretation\":\"A table.\",\"observations\":[{\"id\":\"o1\",\"text\":\"Round table\",\"kind\":\"object\",\"region_ids\":[\"missing\"]}],\"visible_text\":[],\"candidates\":[],\"regions\":[],\"uncertainty\":{\"overall\":\"medium\",\"notes\":[]},\"competing_subjects\":[],\"quality\":{\"usable\":true,\"issue\":null}}"
+              }
+            ]
+          }
+        ],
+        "usage": { "input_tokens": 1200, "output_tokens": 90 }
+      }
+    },
+    "null_usage": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_null_usage",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"ok\":true}" }] }],
+        "usage": null
+      }
+    },
+    "partial_usage": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_partial_usage",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"ok\":true}" }] }],
+        "usage": { "input_tokens": 40, "output_tokens": null }
+      }
+    },
+    "returned_model_mismatch": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_model_mismatch",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/other-model",
+        "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"ok\":true}" }] }],
+        "usage": { "input_tokens": 40, "output_tokens": 5 }
+      }
+    },
+    "undisclosed_route": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_route",
+        "object": "response",
+        "status": "completed",
+        "model": "fixture/model-1",
+        "provider": "some-other-upstream",
+        "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"ok\":true}" }] }],
+        "usage": { "input_tokens": 40, "output_tokens": 5 }
+      }
+    },
+    "error_in_body": {
+      "status": 200,
+      "headers": {},
+      "body": {
+        "id": "resp_error",
+        "object": "response",
+        "status": "failed",
+        "error": { "code": "server_error", "message": "PRIVATE upstream detail" },
+        "model": "fixture/model-1",
+        "output": [],
+        "usage": null
+      }
+    },
+    "http_400": { "status": 400, "headers": {}, "body": { "error": { "message": "PRIVATE echo of the request" } } },
+    "http_401": { "status": 401, "headers": {}, "body": { "error": { "message": "PRIVATE key hint" } } },
+    "http_402": { "status": 402, "headers": {}, "body": { "error": { "message": "Insufficient credits" } } },
+    "http_404": { "status": 404, "headers": {}, "body": { "error": { "message": "Unknown model" } } },
+    "http_422_zdr": { "status": 422, "headers": {}, "body": { "error": { "message": "No ZDR-eligible route" } } },
+    "http_424": { "status": 424, "headers": {}, "body": { "error": { "message": "Upstream provider unavailable" } } },
+    "http_429": { "status": 429, "headers": { "retry-after": "7" }, "body": { "error": { "message": "Rate limited" } } },
+    "http_500": { "status": 500, "headers": {}, "body": { "error": { "message": "PRIVATE" } } },
+    "http_503": { "status": 503, "headers": {}, "body": { "error": { "message": "PRIVATE" } } },
+    "http_504": { "status": 504, "headers": {}, "body": { "error": { "message": "PRIVATE" } } }
+  }
+}

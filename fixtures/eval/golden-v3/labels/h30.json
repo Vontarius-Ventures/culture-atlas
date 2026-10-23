@@ -1,0 +1,77 @@
+{
+  "id": "h30",
+  "split": "holdout",
+  "file": "h30-food-ramen.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Ramen",
+      "pattern": "ramen|ラーメン"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "^japanese (cuisine|food)$|japanese noodle soup|noodle soup"
+    },
+    {
+      "pattern": "chashu|char ?siu|braised pork( belly)?|pork belly"
+    },
+    {
+      "pattern": "ajitama|ajitsuke tamago|ramen eggs?|marinated eggs?|soy[- ]marinated eggs?|soft[- ]boiled eggs?"
+    },
+    {
+      "pattern": "tonkotsu|pork[- ]bone broth|paitan|creamy broth"
+    },
+    {
+      "pattern": "enoki|scallions?|green onions?|spring onions?|noodles|broth|black bowl|ceramic bowl|soup spoon|wooden table",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\bph[oở]\\b|udon|soba|laksa|ramyeon|ramyun|lamian|lo mein|bak kut teh|wonton",
+      "why": "wheat noodles in broth with chashu and a marinated egg: no other noodle dish is evidenced"
+    },
+    {
+      "pattern": "(chinese|korean|vietnamese|thai|malaysian) (cuisine|food)",
+      "why": "no other national cuisine is evidenced"
+    },
+    {
+      "pattern": "ichiran|ippudo|nissin|cup noodles?|maruchan|samyang|nongshim",
+      "why": "no shop or brand name is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A bowl of ramen on a wooden table: wheat noodles, a slab of chashu, two halves of a marinated soft-boiled egg, enoki and scallions in a cloudy broth. No text. The broth type is not stated, so tonkotsu is acceptable, not expected. Native size 1050 px."
+}

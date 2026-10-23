@@ -1,0 +1,27 @@
+{
+  "fixture": "research-yorkshire-pudding",
+  "schema": "reference_notes",
+  "source_urls": [
+    "https://github.com/GITenberg/The-Book-of-Household-Management_10136/blob/390da3230f06ac1360cfb62a9167845d81d527af/10136.txt#L43332-L43354"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/GITenberg/The-Book-of-Household-Management_10136/blob/390da3230f06ac1360cfb62a9167845d81d527af/10136.txt#L43332-L43354",
+      "title": "The Book of Household Management, by Isabella Beeton, recipe 1384: Yorkshire pudding",
+      "text": "YORKSHIRE PUDDING, to serve with hot Roast Beef. 1384. INGREDIENTS.--1-1/2 pint of milk, 6 _large_ tablespoonfuls of flour, 3 eggs, 1 saltspoonful of salt. [Illustration: YORKSHIRE PUDDING.] _Mode_.--Put the flour into a basin with the salt, and stir gradually to this enough milk to make it into a stiff batter. When this is perfectly smooth, and all the lumps are well rubbed down, add the remainder of the milk and the eggs, which should be well beaten. Beat the mixture for a few minutes, and pour it into a shallow tin, which has been previously well rubbed with beef dripping. Put the pudding into the oven, and bake it for an hour; then, for another 1/2 hour, place it under the meat, to catch a little of the gravy that flows from it. Cut the pudding into small square pieces, put them on a hot dish, and serve. If the meat is baked, the pudding may at once be placed under it, resting the former on a small three-cornered stand. _Time_.--1-1/2 hour. _Average cost_, 7d. _Sufficient_ for 5 or 6 persons. _Seasonable_ at any time."
+    }
+  ],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [
+    "Yorkshire pudding"
+  ],
+  "input_text": "",
+  "exclusions": [],
+  "word_limits": {},
+  "forbidden_strings": [],
+  "input_ids": [],
+  "reference_names": [],
+  "avoid": [],
+  "min_items": 1
+}

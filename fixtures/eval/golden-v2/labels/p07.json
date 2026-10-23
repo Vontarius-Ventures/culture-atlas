@@ -1,0 +1,60 @@
+{
+  "id": "p07",
+  "split": "tune",
+  "file": "07-sign-no-litter-tokyo.jpg",
+  "subject_domains": [
+    "signage",
+    "place"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Minato City",
+      "pattern": "minato"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "tokyo"
+    },
+    {
+      "pattern": "japanese (public |municipal )?signage|japanese graphic design|anti-?litter"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "wayfinding",
+      "why": "it is a prohibition notice, not wayfinding"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "NO LITTER",
+    "MINATO",
+    "港区"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  }
+}

@@ -12,7 +12,23 @@ export const MIGRATIONS_DIR = path.resolve(
 export interface MigrationResult {
   applied: string[];
   skipped: string[];
+  /** Applied files whose recorded checksum was a known pre-reconciliation version. */
+  reconciled: string[];
 }
+
+/**
+ * Checksums of migration files as they shipped on parallel lines before those
+ * lines were merged and the files were rewritten to be order-independent
+ * (idempotent guards only, no change to the resulting schema). A database that
+ * applied one of these versions is valid; its record is updated to the current
+ * checksum. Any other mismatch is still an error.
+ */
+export const RECONCILED_CHECKSUMS: Readonly<Record<string, readonly string[]>> = {
+  // capture-v2/p1-domain-infra: unguarded media_assets/upload/work agent fences.
+  '055_agent_media_fences.sql': ['0758d7a9c56853fb14da56347e11431606ae2ecc5d94d72c1de71deceeec200b'],
+  // capture-v2/p5-agents: unguarded media_assets.created_by_agent_connection_id.
+  '071_agent_resources_commands.sql': ['1bdc43ac9b9e7e6a769e4a252308f3ee5261eff4bac71d3e4b6db984c5156b2a'],
+};
 
 /**
  * Applies db/migrations/*.sql in lexical order. Each file runs in its own
@@ -22,13 +38,18 @@ export interface MigrationResult {
  */
 export async function runMigrations(
   connectionString: string,
-  options: { dir?: string; log?: (msg: string) => void } = {},
+  options: {
+    dir?: string;
+    log?: (msg: string) => void;
+    reconciledChecksums?: Readonly<Record<string, readonly string[]>>;
+  } = {},
 ): Promise<MigrationResult> {
   const dir = options.dir ?? MIGRATIONS_DIR;
   const log = options.log ?? (() => undefined);
+  const reconciledChecksums = options.reconciledChecksums ?? RECONCILED_CHECKSUMS;
   const client = new pg.Client({ connectionString, options: '-c timezone=UTC' });
   await client.connect();
-  const result: MigrationResult = { applied: [], skipped: [] };
+  const result: MigrationResult = { applied: [], skipped: [], reconciled: [] };
   try {
     await client.query('SELECT pg_advisory_lock(727274)');
     await client.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -46,7 +67,11 @@ export async function runMigrations(
       const checksum = createHash('sha256').update(sql).digest('hex');
       const prior = done.get(file);
       if (prior) {
-        if (prior !== checksum) {
+        if (prior !== checksum && reconciledChecksums[file]?.includes(prior)) {
+          log(`reconciling ${file} (applied from a pre-merge line)`);
+          await client.query('UPDATE schema_migrations SET checksum=$2 WHERE version=$1', [file, checksum]);
+          result.reconciled.push(file);
+        } else if (prior !== checksum) {
           throw new Error(`Migration ${file} changed after it was applied; add a new migration instead`);
         }
         result.skipped.push(file);

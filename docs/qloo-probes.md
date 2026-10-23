@@ -50,6 +50,37 @@ Re-running replaces both, so the file always shows the latest run. Review the di
 
 Record the answers in the access table of `docs/capability-matrix.md` and in [privacy.md](privacy.md).
 
+## Grounding rules
+
+Qloo's free-text `/search` and `/v2/tags` return look-alikes: an album for "Racing jacket", a sushi bar for "Smacked cucumber salad", "Honda" for "Honda Civic", a B&B hotel for "Musée du Louvre", a music genre ahead of the decor tag for "neoclassical". The compiler therefore never trusts a name similarity. `packages/domain/src/compiler/grounding.ts` (`GROUNDING_VERSION = 'ground-v2'`, rules in [quality plan §5](quality-plan.md#5-qloo-acceptance-rules-p3-exact)) is pure and decides two things:
+
+**Whether to ask** (`planLookup`, rules Q-TYPE, Q-TAGTYPES, Q-EVIDENCE):
+
+| Candidate | Lookup |
+| --- | --- |
+| object | none (`object_not_searched`). A brand-like object whose brand was read in the photo is searched as a brand by its maker word (ground-v3: never a colour or material; "Blue Bottle Coffee cup" is not searched as "blue"). |
+| brand | `/search` with `urn:entity:brand`, only when corroborated: the guardrails' G-BRAND-CORROBORATE, or (until they run) every brand word of the name as a whole word of the reading's `visible_text` (ground-v3: a make read on a badge never vouches for a model guessed from the shape). Otherwise none (`brand_not_corroborated`). |
+| creator / work | `/search` with artist, director, person, author / movie, album, book, tv_show |
+| place | `/search` with destination, locality, place, only with read text, `depicted`, or certainty ≥ 0.5 |
+| cuisine | `/v2/tags` with `urn:tag:cuisine:qloo`, "cuisine"/"food" removed from the query, only when `depicted` or certainty ≥ 0.5 |
+| style / tradition | `/v2/tags` with `urn:tag:decor:qloo`, `urn:tag:style:qloo`, `urn:tag:setting:qloo`; `urn:tag:genre:music` first only for music, `urn:tag:genre:media` + `urn:tag:subgenre:qloo` first only for film |
+| medium words (still life, painting, …) | none, unless a labelled work or creator was read |
+
+A reference the user named in a correction is the evidence itself: it is searched with its type, or across every type when it has none.
+
+**Whether a result is the candidate** (`acceptMatch`, rules Q-NAME, Q-SUBSET, Q-PLACE, Q-DOUBT): the result must have an allowed type and the same canonical token set (`canonicalTokens`: case, accents, punctuation and filler such as "style", "architecture", "cuisine", "the", "du" ignored; non-Latin names compared verbatim). A brand may add only a corporate suffix ("Cannondale Bicycles"). A shorter name is rejected (`Q-SUBSET`). Places may match an aka; among exact places the destination is preferred, then the locality, then the venue; same-named places in different localities, or a place without popularity, are rejected (`Q-PLACE`). Two different exact entities are a doubt (`Q-DOUBT`), except (ground-v2) that a film or music work or creator takes the one exact match of its medium's type (movie/album, director/artist); two such matches stay a doubt. Tag families never accepted: occupation, place category/genre, specialty dish, menu highlight, ambience, offerings, amenity, nearby attraction, neighborhood characteristics, keyword, good-for. A rejected or doubtful candidate is kept under its own name with no Qloo id and never anchors. Every resolve query stores `query_context.accept = { matched, rule, reason, grounding_version }`; a skipped lookup writes no query, and its reason is in the `resolve` trace stage (`grounding`).
+
+Recommendations: Wear insights (compiler and taste seed) send `filter.tags=urn:tag:genre:brand:fashion`. Taste-seed Eat is asked with food picks only and post-filtered ([quality plan §6](quality-plan.md#6-taste-seed-fixes-p3-exact)).
+
+**Measured (2026-10-19).** Offline, on the diagnose phase's 46 recorded live responses to real-photo candidates: 12 accepted, every one the right Qloo entity or tag (the one claim-level error, "Art Deco" read off a sign, is the guardrails' to hold); 11 of 14 correct groundings found (missed on purpose: Shanghai at 0.4 certainty, "Les Arts Décoratifs" vs "Musée des Arts Décoratifs", "Islamic" for "Islamic ceramics"). The previous similarity matcher accepted look-alikes on the same data (23 false accepts of 34 in the diagnose count). Live, 21 requests through the real adapter:
+
+- 13 typed tag lookups (style, tradition, cuisine, music, film): 11 accepted, each the expected tag in the expected family (Mid Century Modern, Neoclassical, Empire Style, Mughal Architecture, Indo-Saracenic, Haussmannian and Victorian Architecture as decor; Bossa Nova as a music genre and Film-noir as a media genre for those domains; Shanghainese and Dan Dan Noodles as cuisines). The other two stay unmatched on purpose: "Islamic ceramics" (only the shorter "Islamic" exists) and "Streetwear" (no style tag). No `aesthetic` tag family appeared in any response, so none is requested.
+- Seed insights with mixed onboarding picks: Play 15/15 artists, Watch 15/15 films (type-correct share 1.00, so no rule change); Wear with the fashion filter 15/15 fashion brands, and 10/10 on the compiler path from two decor anchors; Eat with food-only signals and the post-filter 5/5 cuisine cards.
+
+**Evaluate phase (2026-10-19, live, 107 lookups on the guarded candidates of 28 golden photos).** 26 accepted, every one hand-checked as the candidate (grounding precision 1.00); 0 forbidden accepts; 0 references under a doubtful name. Recall on candidates whose correct item was in Qloo's top 5 was 14/26 (0.54, gate 0.60): reject-on-doubt costs the film poster's credited names (several same-named "person" entities), EMT Madrid (no popularity), Stockwell (several localities), NBA (acronym) and two one-word-shorter decor tags. Details in [quality plan §13.4](quality-plan.md#134-qloo-grounding-live-iterations-1-and-2).
+
+The raw responses stay in the team scratchpad until Qloo's storage terms are confirmed.
+
 ## Related
 
 - The adapter-level probe from the providers stream, `pnpm tsx scripts/probe-qloo.ts [--record]`, exercises `packages/providers/src/qloo/client.ts`. With `--record` it saves sanitized real responses for labeled "Example result" replay. Only use `--record` after storage rights are confirmed.

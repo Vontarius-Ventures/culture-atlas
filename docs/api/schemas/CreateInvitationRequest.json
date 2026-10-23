@@ -1,0 +1,18 @@
+{
+  "$id": "https://culture-atlas.invalid/schemas/v2/CreateInvitationRequest.json",
+  "title": "CreateInvitationRequest",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "maxLength": 254,
+      "format": "email",
+      "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+    }
+  },
+  "required": [
+    "email"
+  ],
+  "additionalProperties": false
+}

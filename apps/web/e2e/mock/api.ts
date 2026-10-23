@@ -22,6 +22,7 @@ import type {
   SensorConnectionDto,
 } from '@culture-atlas/domain/schemas';
 import { CAPTURE_RECS, FEED_SEED, resetIds, SAMPLE_CAPTURES, uid, type SeedItem } from './data';
+import { OnboardingMock, type OnboardingMockOptions } from './onboarding';
 
 export interface MockOptions {
   /** Start signed in (account) instead of as an anonymous visitor. */
@@ -44,6 +45,12 @@ export interface MockOptions {
   sensorOffline?: boolean;
   /** Seed an existing plan. */
   seedPlan?: boolean;
+  /** Amendment 2.2 taste onboarding (questionnaire, seed job, Settings → Taste). */
+  onboarding?: OnboardingMockOptions;
+  /** A new account created in this session owes the questionnaire (default true). */
+  onboardingOnSignUp?: boolean;
+  /** The feed is the account's personal snapshot (not the labeled example feed). */
+  personalFeed?: boolean;
 }
 
 interface JobRecord {
@@ -115,13 +122,15 @@ export class MockApi {
   sensors: SensorConnectionDto[] = [];
   referenceId = uid();
   failures = new Map<string, { status: number; code: string; message: string }>();
+  onboarding: OnboardingMock;
 
   constructor(opts: MockOptions = {}) {
     resetIds();
     this.opts = opts;
+    this.onboarding = new OnboardingMock(opts.onboarding);
     this.referenceId = uid();
     for (const seed of FEED_SEED) {
-      const card = this.addCard(seed, true);
+      const card = this.addCard(seed, !opts.personalFeed);
       this.feedIds.push(card.id);
     }
     // Related: next three feed items.
@@ -766,9 +775,13 @@ export class MockApi {
               is_demo_owner: false,
             },
             csrf_token: this.session.csrf,
+            ...(this.session.kind === 'account'
+              ? { onboarding_required: this.onboarding.required }
+              : {}),
           },
         };
       case 'createAccount': {
+        if (this.opts.onboardingOnSignUp !== false) this.onboarding.required = true;
         this.session = {
           ...this.session,
           kind: 'account',
@@ -780,13 +793,19 @@ export class MockApi {
             body.pending_save.target_type === 'capture'
               ? this.captures.get(body.pending_save.target_id)?.itemId
               : body.pending_save.target_id;
-          if (target) this.save(target);
+          if (target) {
+            this.save(target);
+            const card = this.cards.get(target);
+            if (card && this.onboarding.required && card.kind !== 'capture')
+              this.onboarding.addPendingSavePick(card.title, card.category, card.kind);
+          }
         }
         return {
           json: {
             account_id: this.session.account_id,
             session_id: this.session.session_id,
             claimed: { captures: this.captures.size, saved_items: this.saved.size },
+            onboarding_required: this.onboarding.required,
           },
         };
       }
@@ -805,7 +824,7 @@ export class MockApi {
             next_cursor: next,
             feed_id: '00000000-0000-4000-8000-00000000feed',
             feed_revision: 1,
-            is_example_feed: true,
+            is_example_feed: !this.opts.personalFeed,
             available_categories: (['wear', 'play', 'watch', 'eat'] as const).filter((c) =>
               this.feedIds.some((id) => this.cards.get(id)!.category === c),
             ),
@@ -1319,8 +1338,13 @@ export class MockApi {
       case 'deleteSensorConnection':
         this.sensors = this.sensors.filter((s) => s.id !== params.id);
         return { status: 204 };
-      default:
+      default: {
+        if (this.session.kind !== 'account' && /Onboarding|TastePick/.test(name))
+          return { error: 'account_required', status: 403, message: 'Create an account to continue.' };
+        const handled = this.onboarding.dispatch(name, params, q, body);
+        if (handled) return handled;
         return { error: 'not_implemented', status: 501, message: 'Not mocked.' };
+      }
     }
   }
 }

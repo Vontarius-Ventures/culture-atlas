@@ -1,0 +1,48 @@
+{
+  "id": "h49",
+  "split": "holdout",
+  "file": "h49-blurred-motion-street.jpg",
+  "subject_domains": [
+    "place",
+    "people"
+  ],
+  "quality": {
+    "usable": false,
+    "issue": "blurred"
+  },
+  "expected": [],
+  "acceptable": [],
+  "forbidden": [
+    {
+      "pattern": "\\b(hair|young|age|face|facial|expression|skin)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food",
+    "unusable_with_candidates"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "UNUSABLE: a deblurring-benchmark input with heavy camera-motion blur. An outdoor amusement-park street (ride structure, stalls, pedestrians) can be guessed, but nothing is sharp and no text is legible. The reading should report a blurred photo and publish no candidate, as for p15."
+}

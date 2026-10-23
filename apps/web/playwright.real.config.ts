@@ -10,11 +10,16 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Without provider keys the journey still passes: example photos replay their
  * reviewed reading ("Example result"), uploads show the honest "can't look at
- * this photo yet" state, and plans show their unavailable sections. Chromium
+ * this photo yet" state, and plans show their unavailable sections.
+ *
+ * e2e/real/v2-journey.spec.ts (capture platform v2) also needs the media worker
+ * and V2_MAIL_DIR; it is skipped without it. See docs/v2-real-stack.md. Chromium
  * comes from PLAYWRIGHT_BROWSERS_PATH; never run `playwright install` here.
  */
 export default defineConfig({
   testDir: './e2e/real',
+  // Amendment 2.2 journeys need the fake providers: playwright.real-v22.config.ts.
+  testIgnore: /v22-.*\.spec\.ts/,
   timeout: 240_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,

@@ -1,0 +1,79 @@
+{
+  "id": "h31",
+  "split": "tune",
+  "file": "h31-food-pepperoni-pizza.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Pepperoni pizza",
+      "pattern": "^(?:(?:a|whole|sliced|homemade|cheese|charred|thick[- ]crust|wood[- ]fired)[ -])*pizza$|pepperoni",
+      "aliases": []
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "italian[- ]american (cuisine|food)|american (cuisine|food)|^italian (cuisine|food)$|homemade pizza"
+    },
+    {
+      "pattern": "mozzarella|cheese|thyme|herbs|crust|cutting board|wooden board",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "domino|pizza hut|papa john|little caesar|sbarro|california pizza kitchen",
+      "why": "no brand is visible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "margherita|hawaiian|quattro formaggi|marinara pizza|calzone",
+      "why": "the topping is pepperoni on cheese; no other pizza is shown"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph|render",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A whole pepperoni pizza with a thick, charred crust and thyme leaves, cut into slices on a wooden board. No text. Regional styles (Neapolitan, New York) are left unlabelled: the photo does not settle them.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "expected \"Pepperoni pizza\" pattern \"pepperoni|\\bpizza\\b\" became \"^(?:(?:a|whole|sliced|homemade|cheese|charred|thick[- ]crust|wood[- ]fired)[ -])*pizza$|pepperoni\": pepperoni, or a pizza with only describing words before it",
+      "reason": "The label notes leave regional styles (Neapolitan, New York) unlabelled because the photo does not settle them, but the unanchored \"\\bpizza\\b\" alternative made any \"X pizza\" expected, so the correct drop of \"Neapolitan-style pizza\" (context only, not confirmed by stage 2) counted as a clean drop (M4) in the round-2 blind run. A regional style is now unlabelled, as the notes say.",
+      "decision": "docs/requalification-plan.md, round 3 item 3 (scorer and label corrections declared before the next blind set, h30-h49 moved to tune after the failed round-2 blind run, docs/quality-plan.md section 17.8)"
+    },
+    {
+      "date": "2026-10-20",
+      "change": "expected \"Pepperoni pizza\" alias \"Pizza\" removed (the pattern already matches \"Pizza\" exactly)",
+      "reason": "The first round-3 fix did not take effect in scoring: when no entry matches exactly, the scorer matches by name similarity, and the alias \"Pizza\" is contained in \"Neapolitan-style pizza\" (similarity 0.85 >= 0.75), so the regional style was still expected and its correct drop still counted as a clean drop (M4) on the round-3 tune run. Without the alias the regional style is unlabelled, as the notes and the first fix intended; \"Pizza\" alone stays expected through the pattern.",
+      "decision": "docs/requalification-plan.md, round 3 item 3 (the declared h31 correction, completed during round-3 Tune; tune label, not frozen; docs/quality-plan.md section 18.7)"
+    }
+  ]
+}

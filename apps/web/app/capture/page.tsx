@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { CaptureView } from '@/components/views/CaptureView';
+import { SourceView } from '@/components/v2/SourceView';
 
 export const metadata: Metadata = { title: 'Capture' };
 
 export default function CapturePage() {
-  return <CaptureView />;
+  return <SourceView />;
 }

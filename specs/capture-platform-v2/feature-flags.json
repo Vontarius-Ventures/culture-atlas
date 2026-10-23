@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "media_library": true,
+    "camera_photo": true,
+    "camera_video": true,
+    "file_photo_upload": true,
+    "file_video_upload": true,
+    "meta_glasses_entry_visible": true,
+    "meta_glasses_label": "Experimental",
+    "meta_glasses_capture_enabled": false,
+    "meta_glasses_audio_enabled": false,
+    "remote_glasses_capture_enabled": false,
+    "concentrate_analysis_enabled": true,
+    "automatic_analysis": false,
+    "native_video_model_input": false,
+    "agent_api_enabled": true,
+    "collection_sharing_enabled": true,
+    "agent_remote_capture_enabled": false,
+    "onboarding_required": true,
+    "taste_seed_enabled": true,
+    "fast_analysis_two_stage": false,
+    "while_we_look_enabled": true,
+    "analysis_verifier_enabled": false
+  },
+  "activation_rules": {
+    "meta_glasses_capture_enabled": "Build includes real SDK AND platform/release-channel entitlement verified AND rollout eligible AND supported device/OS AND permission granted AND not killed",
+    "remote_glasses_capture_enabled": "Glasses capture eligible AND active session explicitly armed locally AND same-account request AND fresh device state",
+    "meta_glasses_audio_enabled": "Glasses capture eligible AND qualified audio capability AND explicit microphone permission and selected source",
+    "concentrate_analysis_enabled": "Configured key AND qualified role profile AND verified privacy settings AND account/global budget AND provider readiness",
+    "onboarding_required": "Amendment 2.2. Account session AND ONBOARDING_REQUIRED not false AND not killed. When on, a new account (or an existing account with fewer than 3 explicit saves, once) completes the taste questionnaire with at least 3 picks before its personal feed. When off, the questionnaire is offered but never blocks; anonymous visitors never see it either way",
+    "taste_seed_enabled": "Amendment 2.2. TASTE_SEED_ENABLED not false AND not killed. Completing onboarding queues one taste_seed job (at most 6 Qloo requests, at most 3 concurrent). When off or when Qloo is unavailable, the feed shows labeled example cards; nothing is fabricated",
+    "fast_analysis_two_stage": "Amendment 2.2. concentrate_analysis_enabled AND a qualified, ready vision_photo_enrich profile (Concentrate only, never Elorian) AND not killed. When off, photo analysis uses the single-call reading",
+    "while_we_look_enabled": "Amendment 2.2. WHILE_WE_LOOK_ENABLED not false AND not killed. The strip only reads the existing FeedSnapshot and never starts generation",
+    "analysis_verifier_enabled": "Photo-role requalification (docs/requalification-plan.md). ANALYSIS_VERIFIER_ENABLED=true (set only after the tune-split evaluation enables it) AND fast_analysis_two_stage AND a qualified, ready vision_verify profile (Concentrate only, never Elorian) AND not killed. The verifier runs in the background after stage 2 and can only lower a reference's certainty or mark it qualified; it never removes a card or a reference"
+  },
+  "note": "False activation defaults prevent unqualified rollout, not omission from implementation. CI experimental artifacts must contain and exercise the real feature. Server evaluation is authoritative. Disabling capture never deletes existing media. Amendment 2.2 flags (onboarding_*, taste_seed_enabled, fast_analysis_two_stage, while_we_look_enabled) follow specs/onboarding-and-fast-analysis.md."
+}

@@ -1,0 +1,15 @@
+// Hosted API for this build. xcconfig treats "//" as a comment, so the
+// scheme is stored as "https:" and Info.plist assembles
+// $(ATLAS_API_SCHEME)//$(ATLAS_API_HOST). Staging/production builds override
+// the host in CI; never a LAN relay address. Debug.xcconfig points at
+// localhost:3000 over HTTP.
+ATLAS_API_SCHEME = https:
+ATLAS_API_HOST = app.cultureatlas.com
+
+// Ready notices (screen 17): silent APNs wake-ups. Development builds set
+// APS_ENVIRONMENT = development and ATLAS_PUSH_ENVIRONMENT = sandbox together.
+APS_ENVIRONMENT = production
+ATLAS_PUSH_ENVIRONMENT = production
+
+// Optional, untracked signing settings (DEVELOPMENT_TEAM etc.).
+#include? "Signing.xcconfig"

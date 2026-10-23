@@ -1,0 +1,78 @@
+{
+  "id": "h61",
+  "split": "holdout",
+  "file": "h61-art-painting-pearl-earring.jpg",
+  "subject_domains": [
+    "art"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Girl with a Pearl Earring",
+      "pattern": "girl with a pearl earring|meisje met de parel",
+      "type": "work",
+      "aliases": [
+        "Girl with the Pearl Earring"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Johannes Vermeer",
+      "pattern": "vermeer",
+      "type": "creator"
+    },
+    {
+      "name": "Dutch Golden Age painting",
+      "pattern": "dutch golden age|golden age|baroque|dutch (painting|art|master)|tronie|old masters?",
+      "type": "style"
+    },
+    {
+      "name": "Mauritshuis",
+      "pattern": "mauritshuis|the hague|den haag",
+      "type": "place"
+    },
+    {
+      "pattern": "oil painting|painting|portrait|turban|headscarf|blue and yellow|pearl earring|pearl|dark background|chiaroscuro|craquelure|ultramarine",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "rembrandt|frans hals|leonardo|da vinci|mona lisa|the milkmaid|girl with a red hat|vel[aá]zquez|rubens",
+      "why": "a wrong artist or work"
+    },
+    {
+      "pattern": "scarlett|chevalier|griet|novel|film adaptation|movie",
+      "why": "an actor, a fictional character or an adaptation; the photo shows the painting only"
+    },
+    {
+      "pattern": "photograph|photo of a (woman|girl)|real (woman|girl|person)|selfie",
+      "field": "text",
+      "why": "the image is a painting reproduction, not a photograph of a person"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A square digital reproduction (512x512) of a famous 17th-century Dutch painting: a girl turning toward the viewer, blue and yellow turban, a large pearl earring, dark background, fine craquelure. No frame, label or text. A painting, not a photo of a person: the work and its painter are expected and acceptable, painting words are correct ('medium' and 'person_identity' are not forbidden classes here), and the painted sitter is not a real person present in a photo. No museum label is visible; the collection holding the original is acceptable as a reference, not required."
+}

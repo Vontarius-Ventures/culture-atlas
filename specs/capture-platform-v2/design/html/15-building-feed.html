@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Building your feed · culture atlas mockup 15</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 15 · /welcome/building. Auto-advances to Discover when the first category is ready. */
+  .header--plain .header__inner { max-width: calc(var(--page-max) + 2 * var(--gutter)); }
+  .building { max-width: 680px; margin: 0 auto; padding: var(--space-12) var(--gutter) var(--space-16); text-align: center; }
+  .collage {
+    width: min(100%, 380px);
+    margin: 0 auto var(--space-8);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    border-radius: var(--radius-image);
+    overflow: hidden;
+    list-style: none;
+    padding: 0;
+  }
+  .collage li { aspect-ratio: 1 / 1; position: relative; overflow: hidden; background: var(--quiet); animation: settle 600ms ease both; }
+  .collage li:nth-child(2) { animation-delay: 120ms; }
+  .collage li:nth-child(3) { animation-delay: 240ms; }
+  .collage li:nth-child(4) { animation-delay: 360ms; }
+  .collage img { width: 100%; height: 100%; object-fit: cover; }
+  .collage__text { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; height: 100%; padding: var(--space-4); }
+  .collage__text strong { font-family: var(--font-display); font-weight: 400; font-size: 26px; line-height: 1.15; }
+  .collage__text span { font-size: 13px; color: var(--muted); }
+  .collage__text--dark { background: #2f3329; color: var(--canvas); }
+  .collage__text--dark span { color: rgb(248 246 241 / 0.75); }
+  @keyframes settle { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: none; } }
+  .building .lede { margin-top: var(--space-3); }
+  .seed { list-style: none; margin: var(--space-8) auto 0; padding: 0; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); }
+  .seed li { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px 0 12px; border-radius: 999px; background: var(--quiet); font-size: 15px; }
+  .seed li .icon { width: 16px; height: 16px; color: var(--muted); }
+  .seed li.is-ready { background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); font-weight: 600; }
+  .seed li.is-ready .icon { color: var(--accent); stroke-width: 2.25; }
+  .seed__state { color: var(--muted); font-weight: 400; }
+  .is-ready .seed__state { color: var(--accent); font-weight: 600; }
+  .unavailable { display: none; }
+  body[data-state='unavailable'] .unavailable { display: block; }
+  body[data-state='unavailable'] .seed { display: none; }
+  .unavailable .button { margin-top: var(--space-6); }
+  .unavailable .muted { margin-top: var(--space-3); font-size: 15px; }
+  @media (max-width: 767px) {
+    .building { padding-top: var(--space-8); }
+    .collage { width: min(100%, 300px); margin-bottom: var(--space-6); }
+    .collage__text strong { font-size: 21px; }
+    .unavailable .button { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<header class="header header--plain">
+  <div class="header__inner"><a class="wordmark" href="#">culture atlas</a></div>
+</header>
+<main class="main building" aria-busy="true">
+  <ul class="collage" aria-label="Your picks">
+    <li><img src="../../../../apps/web/public/samples/onboarding/tea.jpg" alt="Tea rituals"></li>
+    <li><div class="collage__text"><strong>Japandi</strong><span>Wear</span></div></li>
+    <li><div class="collage__text collage__text--dark"><strong>Nina Simone</strong><span>Artist</span></div></li>
+    <li><img src="../../../../apps/web/public/samples/onboarding/listening.jpg" alt="Sunday listening"></li>
+  </ul>
+  <h1 class="display display--medium">Building your feed…</h1>
+  <p class="lede">Starting with what you picked.</p>
+  <ul class="seed" role="status" aria-live="polite" aria-label="Feed progress">
+    <li class="is-ready"><svg class="icon"><use href="#i-check"/></svg>Wear <span class="seed__state">Ready</span></li>
+    <li><svg class="icon"><use href="#i-clock"/></svg>Play <span class="seed__state">Looking</span></li>
+    <li><svg class="icon"><use href="#i-clock"/></svg>Watch <span class="seed__state">Looking</span></li>
+    <li><svg class="icon"><use href="#i-clock"/></svg>Eat <span class="seed__state">Looking</span></li>
+  </ul>
+  <div class="unavailable" role="status" aria-live="polite">
+    <p class="lede" style="color: var(--ink)">We'll keep building in the background.</p>
+    <a class="button button--primary button--large" href="#">Go to Discover</a>
+    <p class="muted">Until then, Discover shows example results.</p>
+  </div>
+</main>
+<script src="mockup.js"></script>
+</body>
+</html>

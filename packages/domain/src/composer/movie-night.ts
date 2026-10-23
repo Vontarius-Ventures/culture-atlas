@@ -8,7 +8,7 @@ import {
 import type { PlanSection, SectionStatus } from '../enums';
 import { LIMITS } from '../enums';
 import { suggestArtists, suggestDishes, suggestFilms, writeProse, inputLabels } from './creative';
-import { stripSafetyClaims, violatedExclusions } from './dietary';
+import { stripExcludedMentions, stripSafetyClaims, violatedExclusions } from './dietary';
 import { reciprocalRankFusion, selectForExploration, type FusedCandidate, type RankedList } from './fusion';
 import type { ComposedPick, InputContribution, PlanSnapshot, SnapshotItem } from './plan-types';
 import { BudgetExhaustedError, withProviderRetries, type QlooSession, type RecordedQuery } from './provider-calls';
@@ -659,10 +659,13 @@ export async function composeProse(
           }),
         { maxRetries: env.maxRetries, sleep: env.sleep },
       );
-      const rationale = [base.rationale, r.data.rationale ? stripSafetyClaims(r.data.rationale) : null].filter(Boolean).join(' ');
+      // Shown as written, minus safety promises and any sentence naming an excluded ingredient.
+      const exclusions = snapshot.constraints.dietary_exclusions;
+      const shown = (text: string) => stripExcludedMentions(stripSafetyClaims(text), exclusions);
+      const rationale = [base.rationale, r.data.rationale ? shown(r.data.rationale) : null].filter(Boolean).join(' ');
       return {
-        title: r.data.title,
-        summary: stripSafetyClaims(r.data.summary) || base.summary,
+        title: violatedExclusions({ title: r.data.title }, exclusions).length ? base.title : r.data.title,
+        summary: shown(r.data.summary) || base.summary,
         rationale: rationale || null,
       };
     } catch (err) {

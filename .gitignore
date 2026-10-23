@@ -16,3 +16,4 @@ next-env.d.ts
 .claude/
 apps/web/AGENTS.md
 apps/web/CLAUDE.md
+fixtures/onboarding/catalog.partial.json

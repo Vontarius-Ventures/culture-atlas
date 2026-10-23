@@ -18,6 +18,19 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: root,
   poweredByHeader: false,
   reactStrictMode: true,
+  async headers() {
+    const privateHeaders = [
+      { key: 'Referrer-Policy', value: 'no-referrer' },
+      { key: 'Cache-Control', value: 'no-store' },
+      { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+    ];
+    return [
+      { source: '/identity/:path*', headers: privateHeaders },
+      // Share redemption and viewer pages (AGENTS-AND-SHARING "Sharing storage and transport").
+      { source: '/shared', headers: privateHeaders },
+      { source: '/shared/:path*', headers: privateHeaders },
+    ];
+  },
 };
 
 export default nextConfig;

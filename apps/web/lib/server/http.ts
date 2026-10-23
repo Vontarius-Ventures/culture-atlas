@@ -6,11 +6,14 @@ import {
   AppError,
   auth,
   createServiceContext,
+  enforceAgentAccess,
   enforceIpLimit,
   getDb,
   getDomainConfig,
   authorizeOperation,
+  assertExpectedCaptureAccount,
   invalidInput,
+  nativeOwnerPrincipal,
   toErrorBody,
   withIdempotency,
   type DomainConfig,
@@ -157,6 +160,15 @@ export function apiRoute<C extends RouteContract>(
       const authorization = request.headers.get('authorization');
       let principal = await auth.resolvePrincipal(db, { sessionToken, authorization });
       const isMutation = contract.method !== 'GET';
+      // Native phones act as their account owner on the allowlisted /v1
+      // routes (authz/native-owner.ts: onboarding, taste, Discover, boards);
+      // every other /v1 route still refuses an installation token.
+      if (principal?.kind === 'installation') {
+        principal = await nativeOwnerPrincipal(db, principal, contract, request.headers.get('x-atlas-expected-account'));
+      }
+      if (contract.path.startsWith('/v2/') && principal?.kind === 'account') {
+        assertExpectedCaptureAccount(principal, request.headers.get('x-atlas-expected-account'), isMutation);
+      }
       const ip = abuseLimitIp(request, config);
 
       // Per-IP abuse limit on anything that creates state (never merges users' data).
@@ -193,6 +205,8 @@ export function apiRoute<C extends RouteContract>(
       }
 
       const ctx = createServiceContext(principal, { requestId, db, config, surface: 'rest' });
+      // agent_api_enabled (and its kill switch) applies to v1 and v2 agent calls alike.
+      await enforceAgentAccess(ctx);
       const setSession = (token: string, expiresAt: Date) => {
         newSession = { token, expiresAt };
       };

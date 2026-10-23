@@ -94,6 +94,21 @@ export function violatedExclusions(dish: DishText, exclusions: readonly string[]
   return exclusions.filter((ex) => exclusionTerms(ex).some((t) => mentions(text, t)));
 }
 
+/**
+ * Remove sentences that name an excluded ingredient ("A green papaya salad,
+ * here without peanuts." for a peanut exclusion). Plan prose is model text
+ * shown as written; an account's exclusions must never appear in it, as
+ * mention, promise or substitute. Deterministic, like the dish filter.
+ */
+export function stripExcludedMentions(text: string, exclusions: readonly string[]): string {
+  if (!exclusions.length) return text.trim();
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  return sentences
+    .filter((s) => violatedExclusions({ title: s }, exclusions).length === 0)
+    .join(' ')
+    .trim();
+}
+
 /** Remove sentences that assert safety ("allergen-free", "nut-free", "safe for allergies"...). */
 export function stripSafetyClaims(text: string): string {
   const sentences = text.split(/(?<=[.!?])\s+/);

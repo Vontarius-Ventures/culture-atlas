@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ready notice · culture atlas mockup 17</title>
+<link rel="stylesheet" href="mockup.css">
+<style>
+  /* Screen 17 · global ready notice. Shown only for an analysis the user started, after they
+     left its result; announced politely and never takes focus. While the tab is hidden the
+     document title carries a badge: "(1) Your photo is ready · culture atlas". */
+  .page--discover { padding-top: var(--space-3); }
+  .page--discover > .display { margin-bottom: var(--space-4); }
+  .filter-row { display: flex; gap: var(--space-2); margin: 0 0 var(--space-3); overflow-x: auto; scrollbar-width: none; }
+  .grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px var(--space-4); }
+  @media (max-width: 1023px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 767px) {
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4) var(--space-3); }
+    .filter-row { margin-right: calc(-1 * var(--gutter)); padding-right: var(--gutter); }
+    .filter-row .pill { flex: 1 0 auto; padding: 0 var(--space-4); }
+  }
+</style>
+</head>
+<body class="has-bottom-nav">
+<header class="header">
+  <div class="header__inner">
+    <a class="wordmark" href="#">culture atlas</a>
+    <nav class="header__nav" aria-label="Main"><ul>
+      <li><a class="header__link" href="#" aria-current="page">Discover</a></li>
+      <li><a class="header__link" href="#">Library</a></li>
+      <li><a class="header__link" href="#">Collections</a></li>
+      <li><a class="header__link" href="#">Plans</a></li>
+    </ul></nav>
+    <div class="header__actions">
+      <a class="button button--primary" href="#"><svg class="icon"><use href="#i-plus"/></svg>Capture</a>
+      <a class="header__settings" href="#"><span class="header__settings-label">Settings</span><span class="header__settings-icon"><svg class="icon"><use href="#i-settings"/></svg><span class="visually-hidden">Settings</span></span></a>
+    </div>
+  </div>
+</header>
+
+<main class="main page page--discover">
+  <h1 class="display">Find more of what you love.</h1>
+  <div class="filter-row" role="group" aria-label="Filter discoveries">
+    <button class="pill" aria-pressed="true">All</button><button class="pill" aria-pressed="false">Wear</button><button class="pill" aria-pressed="false">Play</button><button class="pill" aria-pressed="false">Watch</button><button class="pill" aria-pressed="false">Eat</button>
+  </div>
+  <ul class="grid" aria-label="Discoveries">
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/sunday-listening.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Sunday listening</a></p><p class="card__sub">Play</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/linen-days.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Linen days</a></p><p class="card__sub">Wear</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/late-night-cinema.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Late-night cinema</a></p><p class="card__sub">Watch</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/sesame-noodles.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Sesame noodles</a></p><p class="card__sub">Eat</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/sculptural-forms.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Sculptural forms</a></p><p class="card__sub">Wear</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/night-wanderings.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Night wanderings</a></p><p class="card__sub">Play</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/feed/something-to-share.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Something to share</a></p><p class="card__sub">Eat</p></figure></li>
+      <li><figure class="card"><div class="card__media"><img src="../../../../apps/web/public/samples/outfit.jpg" alt=""><button class="card__save" type="button"><svg class="icon"><use href="#i-bookmark"/></svg>Save</button></div><p class="card__title"><a href="#">Vintage racing</a></p><p class="card__sub">Wear</p></figure></li>
+  </ul>
+</main>
+
+<div class="toast" role="status" aria-live="polite">
+  <img class="toast__thumb" src="../../../../apps/web/public/samples/room.jpg" alt="">
+  <span class="toast__message">Your photo is ready</span>
+  <button type="button" class="toast__action">Open</button>
+  <button type="button" class="toast__dismiss" aria-label="Dismiss"><svg class="icon"><use href="#i-close"/></svg></button>
+</div>
+
+<nav class="bottom-nav" aria-label="Main"><ul>
+  <li><a class="bottom-nav__link" href="#" aria-current="page"><svg class="icon"><use href="#i-home"/></svg>Discover</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-image"/></svg>Library</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-bookmark"/></svg>Collections</a></li>
+  <li><a class="bottom-nav__link" href="#"><svg class="icon"><use href="#i-calendar"/></svg>Plans</a></li>
+</ul></nav>
+<script src="mockup.js"></script>
+</body>
+</html>

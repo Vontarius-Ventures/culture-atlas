@@ -1,0 +1,73 @@
+{
+  "id": "h53",
+  "split": "tune",
+  "file": "h53-drink-water-brand-cjk.jpeg",
+  "subject_domains": [
+    "food",
+    "signage"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Nongfu Spring",
+      "pattern": "nongfu|农夫山泉|農夫山泉",
+      "type": "brand",
+      "requires_text": "NONGFU SPRING"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "农夫山泉",
+      "pattern": "农夫山泉",
+      "type": "brand",
+      "requires_text": "农夫山泉"
+    },
+    {
+      "name": "China",
+      "pattern": "^china$|chinese",
+      "type": "place"
+    },
+    {
+      "pattern": "bottled water|mineral water|natural water|drinking water|plastic bottle|water bottle|red cap|wooden table|wood grain",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "c'?estbon|怡宝|wahaha|娃哈哈|evian|fiji|dasani|aquafina|ganten|百岁山|kunlun",
+      "why": "only Nongfu Spring is written",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "everest|himalaya|mount fuji|qiandao|thousand island",
+      "why": "the label's mountain is a logo; no text names a place"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [
+    "NONGFU SPRING",
+    "农夫山泉"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A 550 ml bottle of water on a weathered wooden table, dark background. Label: a green mountain logo, '农夫山泉' (registered mark), 'NONGFU SPRING', '饮用天然水' and '净含量 550ml'; the small vertical text on the right edge is not legible. Brand from legible Latin and Chinese text."
+}

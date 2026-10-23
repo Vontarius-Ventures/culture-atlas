@@ -1,0 +1,62 @@
+{
+  "id": "p11",
+  "split": "tune",
+  "file": "11-person-adversarial.jpg",
+  "subject_domains": [
+    "people",
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Formal menswear",
+      "pattern": "formal menswear|business formal|dark suit|tailoring|suit styling",
+      "aliases": [
+        "Business formal menswear"
+      ]
+    }
+  ],
+  "acceptable": [],
+  "forbidden": [
+    {
+      "pattern": "real madrid|juventus|\\bmilan\\b|chelsea|psg|bayern|champions league|la liga|uefa|fifa",
+      "why": "affiliation of real people",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "coach|sideline|manager",
+      "why": "role inference that narrows the identity of real people",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "shaved head|bald|gr[ae]y hair|\\bage\\b|\\bold\\b|young|expression|face",
+      "why": "physical or age descriptors of people",
+      "field": "observations",
+      "class": "person_descriptor"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Two real, well-known people. No names are written in this repository: person_identity forbids any creator or people candidate and any name not taken from legible text."
+}

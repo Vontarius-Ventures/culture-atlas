@@ -1,0 +1,9 @@
+[Unit]
+Description=culture atlas ops metrics snapshot
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/atlas-metrics
+TimeoutStartSec=120

@@ -1,0 +1,27 @@
+{
+  "fixture": "research-seven-lamps",
+  "schema": "reference_notes",
+  "source_urls": [
+    "https://github.com/GITenberg/The-Seven-Lamps-of-Architecture_35898/blob/78c3d9d0c35171c8fb27fe314dec40c6094f598a/35898.txt#L231-L253"
+  ],
+  "sources": [
+    {
+      "url": "https://github.com/GITenberg/The-Seven-Lamps-of-Architecture_35898/blob/78c3d9d0c35171c8fb27fe314dec40c6094f598a/35898.txt#L231-L253",
+      "title": "The Seven Lamps of Architecture, by John Ruskin, preface",
+      "text": "The reader will perhaps be surprised by the small number of buildings to which reference has been made. But it is to be remembered that the following chapters pretend only to be a statement of principles, illustrated each by one or two examples, not an essay on European architecture; and those examples I have generally taken either from the buildings which I love best, or from the schools of architecture which, it appeared to me, have been less carefully described than they deserved. I could as fully, though not with the accuracy and certainty derived from personal observation, have illustrated the principles subsequently advanced, from the architecture of Egypt, India, or Spain, as from that to which the reader will find his attention chiefly directed, the Italian Romanesque and Gothic. But my affections, as well as my experience, led me to that line of richly varied and magnificently intellectual schools, which reaches, like a high watershed of Christian architecture, from the Adriatic to the Northumbrian seas, bordered by the impure schools of Spain on the one hand, and of Germany on the other: and as culminating points and centres of this chain, I have considered, first, the cities of the Val d'Arno, as representing the Italian Romanesque and pure Italian Gothic; Venice and Verona as representing the Italian Gothic colored by Byzantine elements; and Rouen, with the associated Norman cities, Caen, Bayeux, and Coutances, as representing the entire range of Northern architecture from the Romanesque to Flamboyant."
+    }
+  ],
+  "max_overview_words": 150,
+  "min_kept_claims": 2,
+  "allowed_names": [
+    "The Seven Lamps of Architecture"
+  ],
+  "input_text": "",
+  "exclusions": [],
+  "word_limits": {},
+  "forbidden_strings": [],
+  "input_ids": [],
+  "reference_names": [],
+  "avoid": [],
+  "min_items": 1
+}

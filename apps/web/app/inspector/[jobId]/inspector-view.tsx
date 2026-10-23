@@ -54,6 +54,77 @@ function Empty({ children }: { children: ReactNode }) {
   return <p className={styles.empty}>{children}</p>;
 }
 
+/**
+ * Plain reasons for the guard and verifier decision notes (the reason codes
+ * recorded in the analysis trace, docs/quality-plan.md §2). Unknown codes are
+ * shown verbatim.
+ */
+export const DECISION_NOTE_LABEL: Record<string, string> = {
+  single_read_text_only: 'Text-only reference: the name was read only in the second reading, so it is listed with that text and never looked up',
+  not_read_at_stage_2: 'Dropped: the name was not transcribed in the photo',
+  held_at_stage_2: 'Dropped: still unconfirmed after the second reading',
+  no_confirmation: 'Dropped: the second reading did not confirm it',
+  unsupported: 'Dropped: the second reading did not support it',
+  weak: 'Weak support from the second reading',
+  'weak: resembles, non-anchor': 'Weak support: shown as a resemblance, never a signal',
+  no_stage_2: 'Dropped: no second reading to confirm it',
+  duplicate: 'Dropped: same name as another reference',
+  replaced_by_tag_query: 'Replaced by the style it names',
+  style_of_attribution: 'Dropped: attributes a style to a named person',
+  // guard-v8 / vlm-verify-v3 (requalification round 3): withheld claims stay here only, as private observations.
+  context_only: 'Kept private: rests only on context, with nothing to confirm it',
+  people_claim: 'Kept private: a claim about the people in the photo that no text in it backs',
+  read_maker_text_only: 'Text-only reference: the maker is read in the photo, the full model name is not',
+  // guard-v11 (round 4): hold until confirmed, read model, a work named by its form.
+  held_people_present: 'Held for the second reading: a style or tradition on a photo with people',
+  held_context_only: 'Held for the second reading: rests only on context',
+  read_model_text_only: 'Text-only reference: the model name is read in the photo, the maker is not',
+  work_title_by_form: 'Shown after the second reading supported it: a well-known work named by its form',
+  // guard-v12 (round 4, after the model sweep).
+  held_painting_subject: 'Held for the second reading: names the painting shown in the photo',
+  read_text_common_words: 'Kept as visible text only: the words read are common words, not a name',
+  work_mention: 'Kept private: a second work named in the text (a credit), not the work shown',
+  uncertain_second_reading: 'Dropped: the second reading was highly uncertain, so it confirms nothing',
+  verifier_no: 'Verifier: not supported by the photo; not shown',
+  verifier_unsure: 'Verifier: unsure; not shown',
+  verifier_unanswered: 'Verifier: no answer for this claim; not shown',
+  verifier_yes: 'Verifier: supported; shown',
+};
+
+export interface ReadingDecisionRow {
+  stage: string;
+  name: string;
+  action: string;
+  rules: string[];
+  note: string | null;
+  reason: string | null;
+}
+
+/** Guard (stage 1, stage 2) and verifier decisions from the pipeline events, in order. */
+export function readingDecisions(events: TraceResponse['events']): ReadingDecisionRow[] {
+  const rows: ReadingDecisionRow[] = [];
+  for (const e of events) {
+    const data = (e.data ?? {}) as Record<string, unknown>;
+    const list = e.name === 'guard' ? data.decisions : e.name === 'verify' ? data.checks : null;
+    if (!Array.isArray(list)) continue;
+    const stage = e.name === 'verify' ? 'verifier' : `stage ${String(data.stage ?? '?')}`;
+    for (const raw of list) {
+      if (!raw || typeof raw !== 'object') continue;
+      const d = raw as Record<string, unknown>;
+      const note = typeof d.note === 'string' ? d.note : typeof d.answer === 'string' ? `verifier_${d.answer}` : null;
+      rows.push({
+        stage,
+        name: typeof d.name === 'string' ? d.name : '—',
+        action: typeof d.action === 'string' ? d.action : '—',
+        rules: Array.isArray(d.rules) ? d.rules.filter((r): r is string => typeof r === 'string') : e.name === 'verify' ? ['V-CHECK'] : [],
+        note,
+        reason: note ? (DECISION_NOTE_LABEL[note] ?? note) : null,
+      });
+    }
+  }
+  return rows;
+}
+
 function observationText(o: unknown): { label: string; detail: string | null } {
   if (o && typeof o === 'object') {
     const r = o as Record<string, unknown>;
@@ -66,6 +137,7 @@ function observationText(o: unknown): { label: string; detail: string | null } {
 }
 
 export function InspectorView({ trace }: { trace: TraceResponse }) {
+  const decisions = readingDecisions(trace.events);
   const qlooQueries = trace.provider_queries.filter((q) => q.provider === 'qloo');
   const liveQloo = qlooQueries.filter((q) => q.status === 'ok' && !q.is_replay).length;
   return (
@@ -154,6 +226,35 @@ export function InspectorView({ trace }: { trace: TraceResponse }) {
               </ul>
             )}
           </Section>
+
+          {decisions.length > 0 ? (
+            <Section id="decisions" title="Reading decisions" count={decisions.length}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th scope="col">Claim</th>
+                    <th scope="col">Decision</th>
+                    <th scope="col">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {decisions.map((d, i) => (
+                    <tr key={i}>
+                      <td>
+                        {d.name}
+                        <span className={styles.small}> · {d.stage}</span>
+                      </td>
+                      <td>
+                        {d.action}
+                        {d.rules.length ? <span className={`${styles.small} ${styles.mono}`}> · {d.rules.join(', ')}</span> : null}
+                      </td>
+                      <td>{d.reason ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Section>
+          ) : null}
 
           <Section id="entities" title="Resolved IDs" count={trace.resolved_entities.length}>
             {trace.resolved_entities.length === 0 ? (

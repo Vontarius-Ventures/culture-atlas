@@ -1,0 +1,70 @@
+{
+  "id": "p04",
+  "split": "tune",
+  "file": "04-interior-palace-staircase.jpg",
+  "subject_domains": [
+    "interior",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Neoclassicism",
+      "pattern": "neo-?classic"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Empire style",
+      "pattern": "empire style"
+    },
+    {
+      "pattern": "palace interior|grand staircase|balustrade|ironwork|wrought iron"
+    },
+    {
+      "pattern": "marble staircase",
+      "generic": true
+    },
+    {
+      "pattern": "chandelier",
+      "generic": true
+    },
+    {
+      "pattern": "bust|sculpture",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "winter palace|hermitage|versailles|louvre|kremlin|st\\.? petersburg|moscow|vienna",
+      "why": "no text identifies the building"
+    },
+    {
+      "pattern": "placard|illegible|small white",
+      "why": "a description is not a transcription",
+      "field": "visible_text"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A few visitors in the background: no description or identification of them."
+}

@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { analyses, captures, getJobById, references, type ServiceContext } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
 import { ProviderError, UnavailableVlm, type VlmProvider } from '@culture-atlas/providers';
+import { FakeTextModel } from '@culture-atlas/providers/testing';
 import { anonCtx, accountCtx, runJobs, testJpeg, vlmFixture, world } from './test-world';
 
 const db = getTestDb();
@@ -21,9 +22,13 @@ async function recRows(captureId: string) {
   return rows;
 }
 
+/** The outfit reading with food in it (an aperitivo spritz on the table), so its food reference is supported. */
+const WITH_FOOD = 'A few vintage racing references stood out beside an aperitivo spritz.';
+const withFood = () => ({ ...vlmFixture('clear-outfit.json'), interpretation: WITH_FOOD });
+
 describe('cultural compilation pipeline (worker + fakes)', () => {
   it('compiles a capture end to end with Qloo-grounded, sourced, progressive results', async () => {
-    const { providers, vlm } = world();
+    const { providers, vlm } = world({ vlm: withFood() });
     const ctx = await anonCtx(providers);
     const { capture_id, job_id, reused } = await submit(ctx);
     expect(reused).toBe(false);
@@ -36,21 +41,31 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
 
     const view = await captures.getCapture(ctx, { id: capture_id });
     expect(view.status).toBe('ready');
-    expect(view.analysis).toMatchObject({ version: 1, title: 'Vintage racing references', interpretation: 'A few vintage racing references stood out.', warnings: [] });
+    expect(view.analysis).toMatchObject({ version: 1, title: 'Vintage racing references', interpretation: WITH_FOOD, warnings: [] });
     expect(view.analysis!.sections).toMatchObject({ observations: 'complete', references: 'complete', research: 'complete', wear: 'complete', play: 'complete', watch: 'complete', eat: 'complete' });
     expect(view.job_id).toBeNull();
 
-    // References: depicted brand is not qualified; resemblances are.
-    const denim = view.references.find((r) => r.name === 'Fixture Denim Co')!;
-    expect(denim).toMatchObject({ relation: 'depicted', qualified: false, type: 'brand', has_page: true });
-    expect(view.references.find((r) => r.name === 'Vintage Racing')).toMatchObject({ relation: 'resembles', qualified: true });
+    // Guardrails (quality plan §4): this single full reading has no stage 2, so the brand it read
+    // (a held claim in a two-stage reading) is dropped before resolution, never published.
+    expect(view.references.find((r) => r.name === 'Fixture Denim Co')).toBeUndefined();
+    const { rows: guardTrace } = await db.query<{ data: { version: string; decisions: { name: string; action: string; rules: string[]; note?: string }[] } }>(
+      `SELECT data FROM trace_events WHERE job_id = $1 AND name = 'guard'`,
+      [job_id],
+    );
+    expect(guardTrace).toHaveLength(1);
+    expect(guardTrace[0]!.data.version).toBe('guard-v16');
+    expect(guardTrace[0]!.data.decisions.find((d) => d.name === 'Fixture Denim Co')).toMatchObject({ action: 'drop', rules: ['G-BRAND'], note: 'no_stage_2' });
+    // References: resemblances are qualified.
+    const racing = view.references.find((r) => r.name === 'Vintage Racing')!;
+    expect(racing).toMatchObject({ relation: 'resembles', qualified: true, has_page: true });
 
-    // Recommendations: <= 3 per category, <= 12 total, interleaved, never the anchor itself.
+    // Recommendations: <= 3 per category, <= 12 total, interleaved, never an anchor itself.
     const recs = view.recommendations;
     expect(recs.length).toBeGreaterThan(0);
     expect(recs.length).toBeLessThanOrEqual(12);
     for (const c of ['wear', 'play', 'watch', 'eat']) expect(recs.filter((r) => r.category === c).length).toBeLessThanOrEqual(3);
-    expect(recs.map((r) => r.title)).not.toContain('Fixture Denim Co');
+    // A card named like a reference can only be that reference's own style direction (Wear).
+    for (const r of recs.filter((x) => view.references.some((ref) => ref.name === x.title))) expect(r.subtitle).toBe('Style direction');
     expect(recs.map((r) => r.title)).not.toContain('Ungrounded Dish');
     expect(recs.every((r) => r.is_example === false)).toBe(true);
     for (let i = 2; i < recs.length; i++) expect(recs[i]!.category === recs[i - 1]!.category && recs[i]!.category === recs[i - 2]!.category).toBe(false);
@@ -75,9 +90,9 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(q[0]!.n).toBeLessThanOrEqual(12);
 
     // Reference page: sourced claims only, public facts.
-    const page = await references.getReference(ctx, { id: denim.id, capture_id });
+    const page = await references.getReference(ctx, { id: racing.id, capture_id });
     expect(page.research_status).toBe('complete');
-    expect(page.overview).toBe('Fixture Denim Co is a test reference.');
+    expect(page.overview).toBe('Vintage Racing is a test reference.');
     expect(page.claims.filter((c) => c.claim_type === 'factual').every((c) => c.source_ids.length > 0)).toBe(true);
     expect(page.sources[0]!.url).toMatch(/^https:\/\/en\.wikipedia\.org\/wiki\//);
     expect(page.related.length).toBeGreaterThan(0);
@@ -85,6 +100,43 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     // Uploading never changes taste.
     const { rows: prefs } = await db.query('SELECT 1 FROM preference_events WHERE owner_session_id = $1', [(ctx.principal as { sessionId: string }).sessionId]);
     expect(prefs).toHaveLength(0);
+  });
+
+  it('never shows a dietary safety promise in an Eat reason (the composer text is filtered as in plans)', async () => {
+    const composer = new FakeTextModel((req) => {
+      const refs = JSON.parse(req.prompt.split('\n')[2]!) as { name: string }[];
+      return {
+        dishes: [
+          { name: 'Fixture Safe Bites', cuisine: 'Italian', reason: 'Completely nut-free and safe for allergies. A nod to the aperitivo mood.', reference_names: [refs[0]!.name] },
+          { name: 'Fixture Free Plate', cuisine: 'Italian', reason: 'Allergen-free.', reference_names: [refs[0]!.name] },
+        ],
+      };
+    });
+    // The same reading with food in it (an aperitivo spritz on the table), so the food reference stays.
+    const { providers } = world({ vlm: withFood(), overrides: { composer } });
+    const ctx = await anonCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    const { rows } = await db.query<{ title: string; display_reason: string }>(
+      `SELECT r.title, r.display_reason FROM recommendations r JOIN analyses a ON a.id = r.analysis_id
+        WHERE a.capture_id = $1 AND r.category = 'eat' ORDER BY r.rank`,
+      [capture_id],
+    );
+    expect(rows.map((r) => r.title)).toEqual(['Fixture Safe Bites', 'Fixture Free Plate']);
+    expect(rows[0]!.display_reason).toBe('A nod to the aperitivo mood.');
+    expect(rows[1]!.display_reason).toBe('A dish idea inspired by a reference in your photo.');
+    for (const r of rows) expect(r.display_reason).not.toMatch(/free|safe for/i);
+  });
+
+  it('a food resemblance on a photo with no food is dropped, and Eat has nothing to compose from (guard-v3)', async () => {
+    const { providers } = world();
+    const ctx = await anonCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    expect(view.references.map((r) => r.name)).not.toContain('Italian aperitivo culture');
+    expect(view.analysis!.sections.eat).toBe('skipped');
+    expect((await recRows(capture_id)).filter((r) => r.category === 'eat')).toEqual([]);
   });
 
   it('keeps reference results and marks discoveries unavailable when Qloo is not configured (no fabrication)', async () => {
@@ -98,7 +150,9 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(view.status).toBe('partial');
     expect(view.analysis!.sections).toMatchObject({ wear: 'unavailable', play: 'unavailable', watch: 'unavailable' });
     expect(view.analysis!.warnings).toContainEqual({ code: 'discoveries_delayed', message: 'Related discoveries are taking longer.' });
-    expect(view.references.map((r) => r.name)).toEqual(expect.arrayContaining(['Fixture Denim Co', '1960s motor racing style']));
+    // The brand of this single reading is dropped by G-BRAND (no stage 2), the food resemblance by
+    // G-CUISINE-FOOD (no food in the photo); the rest stays unmatched.
+    expect(view.references.map((r) => r.name)).toEqual(['Vintage motor racing style']);
     expect(view.references.every((r) => r.qualified)).toBe(true); // unmatched -> qualified
     const rows = await recRows(capture_id);
     expect(rows.filter((r) => r.origin === 'qloo' || r.origin === 'replay')).toHaveLength(0);
@@ -309,6 +363,19 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     );
     expect(pq.filter((q) => q.provider === 'vlm')).toEqual([{ provider: 'vlm', is_replay: true }]);
     expect(pq.some((q) => q.provider === 'qloo')).toBe(false);
+  });
+
+  it('an anonymous example replays its reviewed reading when the only model is the account-budgeted gateway', async () => {
+    const { providers, vlm } = world({ qloo: null, composer: false });
+    // A usable model behind the Concentrate gateway, which never serves a job without an account.
+    const gated = { ...providers, modelGateway: {} as NonNullable<typeof providers.modelGateway> };
+    const ctx = await anonCtx(gated);
+    const { capture_id, job_id } = await captures.createCapture(ctx, { kind: 'json', body: { sample_id: 'outfit' } as never });
+    await runJobs(ctx, [job_id]);
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    expect(view).toMatchObject({ is_example: true });
+    expect(view.analysis).toMatchObject({ title: 'Vintage racing references' });
+    expect(vlm.calls).toHaveLength(0);
   });
 
   it('never replays an example reading for an uploaded photo', async () => {

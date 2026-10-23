@@ -1,24 +1,77 @@
 import path from 'node:path';
-import { JOB_HANDLERS, getDb, getDomainConfig, loadRootEnv } from '@culture-atlas/domain';
-import { getProviders } from '@culture-atlas/providers';
+import { JOB_HANDLERS, devicePush, getDb, getDomainConfig, loadRootEnv, setAnalysisReadyListener } from '@culture-atlas/domain';
+import { configureProviderRuntime, createPushDriverFromEnv, getProviders } from '@culture-atlas/providers';
+import { createCaptureStorage } from './capture-storage';
+import { MediaAnalysisWorker } from './media-analysis';
 import { Worker } from './worker';
 
 loadRootEnv(path.resolve(import.meta.dirname, '../../..'));
 
 const config = getDomainConfig();
+// Operator alerts from the model gateway: safe codes only (no payloads, keys or bodies).
+configureProviderRuntime({
+  gateway: {
+    db: () => getDb(),
+    onAlert: (alert) => console.error('[alert] model_gateway', JSON.stringify(alert)),
+  },
+});
 const providers = getProviders();
+
+// Screen 17 on native: wake the phone that started an analysis once it is published.
+try {
+  devicePush.setPushDriver(createPushDriverFromEnv(process.env));
+} catch {
+  console.error('[worker] push misconfigured; ready notices fall back to in-app polling');
+}
+setAnalysisReadyListener(async (event) => {
+  const outcome = await devicePush.wakeInstallation(getDb(), event, { encryptionKey: config.CREDENTIAL_ENCRYPTION_KEY });
+  // IDs and an outcome code only; never the device token.
+  console.log('[worker] ready_notice', JSON.stringify({ analysis_id: event.analysisId, state: event.state, outcome }));
+});
 const worker = new Worker({ db: getDb(), providers, config, handlers: JOB_HANDLERS });
+
+// v2 media analysis (Concentrate). Disable only for a dedicated non-analysis worker.
+const analysis =
+  process.env.MEDIA_ANALYSIS_WORKER_ENABLED === 'false'
+    ? undefined
+    : new MediaAnalysisWorker({
+        db: getDb(),
+        storage: createCaptureStorage(providers.config, config.SESSION_SECRET),
+        displayStorage: providers.storage,
+        gateway: providers.modelGateway,
+        // MODEL_FALLBACK=elorian + ELORIAN_API_KEY: Elorian backs up the gateway's vision roles.
+        fallbackVlm: providers.fallbackVlm,
+        config,
+        photoConcurrency: Number(process.env.MEDIA_ANALYSIS_PHOTO_CONCURRENCY ?? 2),
+        videoConcurrency: Number(process.env.MEDIA_ANALYSIS_VIDEO_CONCURRENCY ?? 1),
+      });
 
 const caps = providers.capabilities();
 console.log(
-  `[worker] starting ${worker.workerId} concurrency=${config.WORKER_CONCURRENCY}; capabilities:`,
+  `[worker] starting ${worker.workerId} concurrency=${config.WORKER_CONCURRENCY}; llm=${providers.config.LLM_PROVIDER}; capabilities:`,
   Object.fromEntries(Object.entries(caps).map(([k, v]) => [k, v.status])),
 );
+if (providers.modelGateway)
+  void providers.modelGateway
+    .readiness()
+    .then((r) =>
+      console.log(
+        '[worker] model roles:',
+        Object.fromEntries(
+          Object.entries(r).map(([role, d]) => [
+            role,
+            d.reason ? `${d.state} (${d.reason})` : d.state,
+          ]),
+        ),
+      ),
+    )
+    .catch(() => console.error('[worker] model readiness unavailable'));
 worker.start();
+analysis?.start();
 
 const shutdown = async (signal: string) => {
   console.log(`[worker] ${signal}: draining`);
-  await worker.stop();
+  await Promise.all([worker.stop(), analysis?.stop()]);
   await getDb().end();
   process.exit(0);
 };

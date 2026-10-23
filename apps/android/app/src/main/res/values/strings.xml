@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">culture atlas</string>
+    <string name="perm_record_audio_rationale">culture atlas records sound you choose in Music Mode. The camera stays off. Microphone access is used only while you record.</string>
+</resources>

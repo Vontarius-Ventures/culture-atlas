@@ -1,0 +1,66 @@
+{
+  "id": "h66",
+  "split": "tune",
+  "file": "h66-object-lens-cap-brand.jpg",
+  "subject_domains": [
+    "design",
+    "signage"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Canon",
+      "pattern": "^canon$|canon (lens cap|camera|lens)",
+      "type": "brand",
+      "requires_text": "Canon"
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "lens cap|camera (accessory|equipment)|snap-?on cap|cable|cord|glass table|reflection|flash|bokeh",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\beos\\b|rebel|\\bef[- ]?s?\\b|\\b\\d{2}mm\\b|\\b58 ?mm\\b|\\b52 ?mm\\b|nikon|sony|fujifilm|pentax|olympus|tamron|sigma",
+      "why": "only 'Canon' is written; no model, size or other maker is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "photograph(er|y)",
+      "field": "text",
+      "why": "an object photo; photography as a medium or a profession is not shown",
+      "class": "medium"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "Canon"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A black snap-on lens cap printed 'Canon' in white, on a glass table over a coiled dark cord, a bright flash reflection at the bottom. Brand from legible text; the cap size and lens model are not written."
+}

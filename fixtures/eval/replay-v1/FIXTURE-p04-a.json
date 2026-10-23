@@ -1,0 +1,78 @@
+{
+  "quick": {
+    "title": "Grand marble staircase",
+    "interpretation": "A palace hall that resembles neoclassical interiors.",
+    "candidates": [
+      {
+        "name": "Neoclassicism",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.7,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": "neoclassical"
+      },
+      {
+        "name": "Crystal chandelier",
+        "type": "object",
+        "relation": "depicted",
+        "certainty": 0.8,
+        "categories": [
+          "wear"
+        ],
+        "tag_query": null
+      },
+      {
+        "name": "Winter Palace",
+        "type": "place",
+        "relation": "resembles",
+        "certainty": 0.3,
+        "categories": [
+          "watch"
+        ],
+        "tag_query": null
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Gilt chandeliers with globe shades",
+        "kind": "object"
+      },
+      {
+        "text": "Red carpet runner",
+        "kind": "setting"
+      }
+    ],
+    "visible_text": [
+      "Small white placards are illegible"
+    ],
+    "confirmed": [
+      {
+        "name": "Neoclassicism",
+        "rationale": "Corinthian columns",
+        "keep": true
+      },
+      {
+        "name": "Winter Palace",
+        "rationale": "Nothing names the building",
+        "keep": false
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2100,
+  "enrich_ms": 5200
+}

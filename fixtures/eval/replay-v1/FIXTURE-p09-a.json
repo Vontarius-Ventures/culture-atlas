@@ -1,0 +1,84 @@
+{
+  "quick": {
+    "title": "Paris finger-post signs",
+    "interpretation": "Pedestrian signs point to the Louvre and nearby sights.",
+    "candidates": [
+      {
+        "name": "Musée du Louvre",
+        "type": "place",
+        "relation": "depicted",
+        "certainty": 0.9,
+        "domain": "place",
+        "evidence": "read_text",
+        "evidence_text": "Musée du LOUVRE",
+        "tag_query": null
+      },
+      {
+        "name": "Palais-Royal",
+        "type": "place",
+        "relation": "depicted",
+        "certainty": 0.8,
+        "domain": "place",
+        "evidence": "read_text",
+        "evidence_text": "Théâtre du PALAIS-ROYAL",
+        "tag_query": null
+      },
+      {
+        "name": "Art Deco",
+        "type": "style",
+        "relation": "resembles",
+        "certainty": 0.5,
+        "domain": "design",
+        "evidence": "read_text",
+        "evidence_text": "LES ARTS DÉCORATIFS",
+        "tag_query": "art deco"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Stone facade with an arched window",
+        "kind": "setting"
+      }
+    ],
+    "visible_text": [
+      "Musée du LOUVRE",
+      "Palais du LOUVRE",
+      "LES ARTS DÉCORATIFS",
+      "Théâtre du PALAIS-ROYAL",
+      "Mairie du 1er"
+    ],
+    "illegible_text_present": false,
+    "confirmed": [
+      {
+        "name": "Musée du Louvre",
+        "rationale": "Named on a sign",
+        "verdict": "supported"
+      },
+      {
+        "name": "Palais-Royal",
+        "rationale": "Named on a sign",
+        "verdict": "supported"
+      },
+      {
+        "name": "Art Deco",
+        "rationale": "Arts Décoratifs is a museum name, not a style",
+        "verdict": "unsupported"
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2200,
+  "enrich_ms": 4700
+}

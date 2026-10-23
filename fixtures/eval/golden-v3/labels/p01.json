@@ -1,0 +1,78 @@
+{
+  "id": "p01",
+  "split": "tune",
+  "file": "01-food-fruits.jpg",
+  "subject_domains": [
+    "food"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [],
+  "acceptable": [
+    {
+      "pattern": "citrus",
+      "generic": true
+    },
+    {
+      "pattern": "kiwi",
+      "generic": true
+    },
+    {
+      "pattern": "\\b(lime|lemon|orange)s?\\b",
+      "generic": true
+    },
+    {
+      "pattern": "cabbage",
+      "generic": true
+    },
+    {
+      "pattern": "fresh produce|\\bfruits?\\b",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "still[- ]?life|painting|illustration|photograph",
+      "why": "medium word on a real photo",
+      "class": "medium"
+    },
+    {
+      "pattern": "still[- ]?life|painting|illustration",
+      "why": "medium word in the title or interpretation",
+      "field": "text",
+      "class": "medium"
+    },
+    {
+      "pattern": "fruit salad",
+      "why": "nothing is mixed or served; pieces lie whole or cut on a cloth"
+    },
+    {
+      "pattern": "(italian|spanish|mediterranean|thai|mexican|\\w+ese) cuisine",
+      "why": "no national cuisine is evidenced"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "eat"
+  ],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": [
+      "occupation"
+    ]
+  }
+}

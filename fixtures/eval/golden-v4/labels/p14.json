@@ -1,0 +1,73 @@
+{
+  "id": "p14",
+  "split": "tune",
+  "file": "14-dog-bicycle-porch.jpg",
+  "subject_domains": [
+    "vehicle",
+    "sport"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "CAAD8",
+      "pattern": "caad ?8",
+      "type": "brand",
+      "requires_text": "CAAD",
+      "note": "the frame model decal on the top tube, legible at 768 px"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Cannondale",
+      "type": "brand",
+      "requires_text": "cannondale",
+      "note": "the dog hides the maker's name except \"…ndale\"; good only if the full name was actually transcribed"
+    },
+    {
+      "pattern": "road cycling"
+    },
+    {
+      "pattern": "road (bicycle|bike)",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "ford|chevrolet|toyota|nissan|dodge",
+      "why": "the truck make is not legible",
+      "class": "brand_without_text"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "ndale",
+    "CAAD8"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "history": [
+    {
+      "date": "2026-10-19",
+      "change": "must_read_text \"cannondale\" became \"ndale\"; the expected \"Cannondale\" (requires_text \"cannondale\") moved to acceptable; the CAAD8 entry (pattern \"caad\", acceptable) became the expected reference, pattern \"caad ?8\"",
+      "reason": "At 768 px (the stage-2 image size) the dog hides the maker's name on the down tube except \"…ndale\", so the label demanded an unreadable word; \"CAAD8\" on the top tube is legible and stays must-read. A golden label describes the photo; it does not require a word nobody can read.",
+      "decision": "docs/requalification-plan.md decision 1 (docs/quality-plan.md §13.6 item 1)"
+    }
+  ]
+}

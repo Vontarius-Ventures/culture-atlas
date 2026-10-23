@@ -1,6 +1,8 @@
 # culture atlas App and Agent Service Build Spec
 
-Version 1.3 • October 12, 2026 • Product name: culture atlas
+> Planned capture platform extension: [v2.1 design specification](capture-platform-v2/README.md). Covers independent multi-user camera/glasses capture, video/uploads, Concentrate, agent access and collection sharing. This is a design handoff; current implementation behavior is unchanged.
+
+Version 1.3 • October 12, 2026 • Product name: culture atlas • Amended by [2.2: taste onboarding and fast analysis](onboarding-and-fast-analysis.md)
 
 Use “culture atlas” exactly, in lowercase, for the consumer wordmark, app title and product references.
 
@@ -70,7 +72,7 @@ Use a warm neutral background, dark readable type, one restrained accent, large 
 
 ### First visit
 
-Home copy: “Find more of what you love.” Show a small curated visual grid alongside “Take a photo,” “Upload a photo,” and “Try an example.” Sample-backed discovery cards give users a starting point before uploading. A single short notice explains that submitted images are analyzed by AI services. Do not present a preferences questionnaire before the first discovery.
+Home copy: “Find more of what you love.” Show a small curated visual grid alongside “Take a photo,” “Upload a photo,” and “Try an example.” Sample-backed discovery cards give users a starting point before uploading. A single short notice explains that submitted images are analyzed by AI services. Anonymous visitors never see a preferences questionnaire; creating an account leads into the required taste questionnaire defined in [amendment 2.2](onboarding-and-fast-analysis.md).
 
 Examples cover an outfit, a room, and a café or table setting. They use owned or appropriately licensed images and independently reviewed references. An example immediately produces a real analysis when services are available. Any replayed result is visibly labeled “Example result.”
 
@@ -320,7 +322,7 @@ Track completion rate, time to first useful result, save rate, collection creati
 | Visual discovery | Mixed grid, category filters, stable pagination, back/scroll restoration and related items work; Load more alone incurs no new provider generation |
 | Design fidelity | Compare rendered screenshots for all seven reference surfaces against the design package; check hierarchy, copy, typography, palette, image framing, controls and spacing; follow documented corrections and record intentional deviations |
 | Collections | Mixed items, multiple memberships, rename/reorder, duplicate-save prevention, Undo, unfiled saves, membership removal and unsave-everywhere match the specified behavior |
-| Minimal interface | Main cards have no raw scores/provider terminology; sources are optional; no questionnaire blocks first discovery |
+| Minimal interface | Main cards have no raw scores/provider terminology; sources are optional; no questionnaire blocks anonymous browsing, examples or a first upload (sign-up questionnaire per [amendment 2.2](onboarding-and-fast-analysis.md)) |
 | VLM boundaries | Tested on clear, blurred, ambiguous, multicultural, logo-free, and adversarial-text images; no image instruction triggers tools |
 | Reference quality | Review 20 licensed test images; every displayed historical claim has a supporting source; uncertain identifications stay qualified |
 | Qloo grounding | Every item labeled internally as Qloo-derived links to a real returned candidate/query; unsupported categories remain partial |

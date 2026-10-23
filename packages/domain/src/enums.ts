@@ -48,6 +48,12 @@ export const JOB_TYPES = [
   'replace_plan_section',
   'sensor_poll',
   'purge_deleted',
+  /** Seeds a new account's feed from its onboarding picks (spec amendment 2.2). */
+  'taste_seed',
+  /** Walks the interest graph: more Qloo cards from cards already in the pool. */
+  'interest_expand',
+  /** Amendment 2.3 Music Mode: explicit Explore of a private audio asset. */
+  'analyze_audio',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;
@@ -61,6 +67,14 @@ export const SCOPES = [
   'taste:write',
   'plans:read',
   'plans:write',
+  'setup:read',
+  'preferences:read',
+  'preferences:write',
+  'media:read',
+  'media:download',
+  'media:write',
+  'media:analyze',
+  'devices:command',
 ] as const;
 export const Scope = z.enum(SCOPES);
 export type Scope = z.infer<typeof Scope>;
@@ -153,7 +167,17 @@ export const LIMITS = {
   recommendationsPerAnalysis: 12,
   initialRenderedRecommendations: 6,
   relatedCachedMax: 6,
-  vlmCandidatesToResolve: 8,
+  /** Amendment 2.2: Qloo resolution is capped at 5 candidates per analysis (stage 1 reads 3-5). */
+  vlmCandidatesToResolve: 5,
+  /** Concurrent Qloo resolve requests per analysis (the hackathon key throttles bursts). */
+  qlooResolveConcurrency: 3,
+  /**
+   * Model calls one photo reading may take: stage-1 quick read + stage-2
+   * enrichment + two verifier checks (vision_verify, off by default; round 3:
+   * one before the first section publishes, one before stage 2 publishes).
+   * The verifier's calls are reserved separately and only when it is enabled.
+   */
+  visionCallsPerAnalysis: 4,
   anchorsMax: 5,
   researchedReferencesMax: 5,
   qlooRequestsPerJob: 12,

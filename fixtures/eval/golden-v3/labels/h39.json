@@ -1,0 +1,94 @@
+{
+  "id": "h39",
+  "split": "holdout",
+  "file": "h39-sign-blue-plaque.jpg",
+  "subject_domains": [
+    "signage",
+    "place",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Blue plaque",
+      "pattern": "blue plaque|commemorative plaque|heritage plaque|memorial plaque|plaque",
+      "aliases": [
+        "Commemorative plaque"
+      ]
+    },
+    {
+      "name": "Octavia Hill",
+      "pattern": "octavia hill",
+      "type": "creator",
+      "requires_text": "Octavia Hill"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "London Borough of Southwark",
+      "pattern": "southwark",
+      "type": "place",
+      "requires_text": "Southwark"
+    },
+    {
+      "name": "London",
+      "pattern": "^london$",
+      "type": "place",
+      "requires_text": "London"
+    },
+    {
+      "name": "Army Cadets",
+      "pattern": "army cadet",
+      "requires_text": "Army Cadets"
+    },
+    {
+      "pattern": "social reform\\w*|housing reform|victorian (era|philanthropy|social reform)"
+    },
+    {
+      "pattern": "red brick|brickwork|brick wall",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "english heritage",
+      "why": "the plaque is the London Borough of Southwark's ('Voted by the People'), not an English Heritage plaque"
+    },
+    {
+      "pattern": "westminster|camden|islington|kensington|lambeth|hackney|greenwich|marylebone",
+      "why": "the plaque names Southwark"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "Octavia Hill",
+    "Social Reformer",
+    "Southwark",
+    "1887"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "MUSEUM-LABEL ANALOGUE (no openly licensed painting with a legible gallery label was found). A round blue plaque on red brick: 'London Borough of Southwark / Octavia Hill / Social Reformer / Established this garden, hall and cottages, and pioneered Army Cadets / 1887-90 / Voted by the People'. The person named is a historical figure read from the text (no person is shown), so her name is a text-only reference, never an identity claim. Places not written on the plaque are unlabelled."
+}

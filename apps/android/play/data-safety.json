@@ -1,0 +1,73 @@
+{
+  "package_name": "com.cultureatlas.app",
+  "note": "Play Console Data safety answers for the store flavor. Public builds never contain the Meta SDK. Do not copy experimental-flavor Bluetooth/glasses rows into this form.",
+  "data_collected": [
+    {
+      "category": "Personal info",
+      "type": "Email address",
+      "collected": true,
+      "shared": false,
+      "optional": false,
+      "purposes": ["App functionality"],
+      "ephemeral": false
+    },
+    {
+      "category": "Personal info",
+      "type": "User IDs",
+      "collected": true,
+      "shared": false,
+      "optional": false,
+      "purposes": ["App functionality"],
+      "ephemeral": false
+    },
+    {
+      "category": "Photos and videos",
+      "type": "Photos",
+      "collected": true,
+      "shared": false,
+      "optional": true,
+      "purposes": ["App functionality"],
+      "ephemeral": false
+    },
+    {
+      "category": "Photos and videos",
+      "type": "Videos",
+      "collected": true,
+      "shared": false,
+      "optional": true,
+      "purposes": ["App functionality"],
+      "ephemeral": false
+    },
+    {
+      "category": "Audio files",
+      "type": "Voice or sound recordings",
+      "collected": true,
+      "shared": false,
+      "optional": true,
+      "purposes": ["App functionality"],
+      "ephemeral": false
+    }
+  ],
+  "security_practices": {
+    "data_encrypted_in_transit": true,
+    "users_can_request_deletion": true
+  },
+  "permissions_declared": [
+    "CAMERA",
+    "RECORD_AUDIO",
+    "POST_NOTIFICATIONS",
+    "INTERNET",
+    "ACCESS_NETWORK_STATE",
+    "FOREGROUND_SERVICE",
+    "FOREGROUND_SERVICE_DATA_SYNC"
+  ],
+  "foreground_services": [
+    {
+      "type": "dataSync",
+      "why": "Finish uploading a photo, video, or recording the person already chose to keep if the app is backgrounded."
+    }
+  ],
+  "approximate_location": false,
+  "precise_location": false,
+  "tracking": false
+}

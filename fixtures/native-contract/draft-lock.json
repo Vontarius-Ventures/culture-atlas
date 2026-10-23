@@ -1,0 +1,35 @@
+{
+  "fixture_version": 1,
+  "note": "Local drafts are owned by the account that was signed in when they were captured (IDENTITY-CONTRACT, TEN-02). A draft is only listed and only uploaded while that same account is signed in; every upload mutation sends X-Atlas-Expected-Account = draft owner so the server rejects a switched credential with account_mismatch. Drafts of another account are never revealed beyond a generic notice, and are never re-owned.",
+  "accounts": {
+    "a": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "b": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+  },
+  "visibility": [
+    { "name": "owner_signed_in", "draft_owner": "a", "signed_in": "a", "visible": true, "uploadable": true, "locked_notice": false },
+    { "name": "other_account_signed_in", "draft_owner": "a", "signed_in": "b", "visible": false, "uploadable": false, "locked_notice": true },
+    { "name": "signed_out", "draft_owner": "a", "signed_in": null, "visible": false, "uploadable": false, "locked_notice": true },
+    { "name": "owner_signs_back_in", "draft_owner": "a", "signed_in": "a", "visible": true, "uploadable": true, "locked_notice": false }
+  ],
+  "upload_headers": [
+    { "name": "expected_account_is_draft_owner", "draft_owner": "a", "signed_in": "a", "expected_account_header": "a" }
+  ],
+  "server_responses": [
+    { "name": "account_mismatch_locks_draft", "error_code": "account_mismatch", "draft_effect": "lock_to_owner", "retry": false },
+    { "name": "paused_upload_waits_for_owner", "upload_state": "paused", "pause_reason": "authority_ended", "draft_effect": "lock_to_owner", "retry": false },
+    { "name": "token_revoked_signs_out_and_keeps_drafts", "error_code": "token_revoked", "draft_effect": "keep_locked", "retry": false }
+  ],
+  "sign_out_choices": [
+    { "name": "keep_on_device", "choice": "keep", "drafts_after": "retained_encrypted_locked", "capture_and_arm_after": "ended", "polling_after": "stopped" },
+    { "name": "delete_local_drafts", "choice": "delete", "drafts_after": "deleted", "capture_and_arm_after": "ended", "polling_after": "stopped" }
+  ],
+  "sign_out_order": [
+    "stop_capture_and_recording",
+    "disarm_and_end_capture_session_best_effort",
+    "stop_command_polling",
+    "cancel_in_flight_transfers",
+    "lock_pending_drafts_to_owner",
+    "call_identity_switch",
+    "clear_credentials"
+  ]
+}

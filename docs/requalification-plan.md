@@ -1,0 +1,371 @@
+# Photo-role requalification plan
+
+Status: plan, October 19, 2026. Follows [docs/quality-plan.md](quality-plan.md) §13.6 and §14.5. Goal: switch photo analysis back on (`vision_photo`, `vision_photo_enrich` qualified) without weakening any safety gate, and show a real upload reaching `complete`.
+
+## Owner decisions (delegated to and taken by the build lead)
+
+| # | Question | Decision | Why |
+| --- | --- | --- | --- |
+| 1 | p14 label requires "cannondale", which the dog hides | **Change the label to what is legible** ("…ndale" frame text and "CAAD8" stay must-read only as far as readable at 768 px; the full maker name becomes acceptable, not required) | A golden label must describe the photo, not demand an unreadable word. Record the change and its reason in the label history. |
+| 2 | Brand or person names read only in the stage-2 reply (NBA, EMT Madrid, poster credits) | **Publish as text-only references**: shown under "Explore the references" with the text they were read from, never used as anchors, never searched in Qloo, never confirmed as identity. Brands still require every word in `visible_text`; person names still require text evidence and stay out of anchors and "What caught your eye?" | Restores coverage of what is actually written in the photo, without the look-alike or identity risk the strict rule was preventing. |
+| 3 | Which run the coverage (M5) and must-read text (M9) gates apply to | **The two-stage run** (quick read + enrichment + guards). Stage 1 alone keeps its own coverage gate at ≥ 0.60 | The design deliberately leaves brands and sign text to stage 2; holding stage 1 to the combined bar measured the wrong thing. No threshold value changes. |
+| 4 | Qloo grounding recall 0.54 vs 0.60 | **Accept, with zero wrong matches as the hard gate.** Lower the recall gate to 0.50 and record the trade-off; add only the measured brand-acronym rule (e.g. NBA) if it keeps precision at 1.0 | A missing Qloo link costs one card; a wrong one misleads. Recall can be raised later with evidence. |
+| 5 | Wikipedia access | **Done**: en.wikipedia.org is reachable from the environment now | Research can run, so a real capture can complete. |
+
+The independent verifier (quality-plan §7.6) is **built this round** for wrong attributions that deterministic rules cannot catch (Lustreware, Iznik, Yuyuan Garden, Georgian). It runs in the background after stage 2 only for non-anchor style, place and tradition claims that stage 2 hedged or that conflict with read text, and can only lower certainty or mark a reference qualified; it never removes a card already shown. It is enabled by default only if it lowers the forbidden-label count on the tune split without dropping coverage below the gate.
+
+## Blind held-out set (the key integrity step)
+
+- A curator gathers **12–16 new public photos** from GitHub-hosted test-image sets not used before (photos outside git, sources + licenses + sha256 in `fixtures/eval/golden-v2/`), covering food, interiors, crafts, signage with text, vehicles with and without legible badges, clothing with and without logos, a person, a busy scene.
+- Labels are written **before any model sees these photos**, then frozen: the freeze commit hash is recorded in `fixtures/eval/golden-v2/FREEZE.md` and bound into `eval-binding.ts`.
+- **No rule, prompt, label or threshold may change after the blind run.** If the blind run fails, the result is reported as a failure; fixes go into a future round with yet another fresh set.
+- Old held-out photos h01–h13 join the tune split.
+
+## Steps
+
+1. **Decisions + verifier** (code): label change for p14 with history; text-only reference path (guards, compiler, UI "Explore the references" with read-text attribution, inspector reason codes); gate assignment in `thresholds.json` and the scorer (M5/M9 on the two-stage run, stage-1 coverage ≥ 0.60, grounding recall gate 0.50, precision 1.0 hard); verifier role `vision_verify` (schema, prompt, budget, background ordering, guard integration) with tests. Regenerate the evaluation binding.
+2. **Blind set curation** (in parallel with step 1): gather, label, freeze. The curator does not run any model.
+3. **Tune-split evaluation**: run `eval:live` on the tune split (old 15 + h01–h13 + new labels) with and without the verifier; decide verifier default by the rule above. Rule tuning is allowed here, within budget.
+4. **Freeze, then blind run**: commit the final rules, regenerate the binding, then run the blind set once. No changes after.
+5. **Qualify** `vision_photo` and `vision_photo_enrich` (and `vision_verify` if enabled) with the binding-checked qualification script; the accepted `privacyVerifiedAt` exception carries over.
+6. **End to end**: real-stack upload with live models, live Qloo and live Wikipedia; confirm `complete`, record first-useful-section time and stage timings.
+7. **Review + fix**: adversarial review of the new text-only path, the verifier and the blind-set integrity; final gate; push.
+
+## Step 1 record (decisions + verifier, built)
+
+Built on branch `rq/decisions`. No provider call was made (0 Concentrate, 0 Qloo, 0 Wikipedia); every number below is an offline replay of recorded data.
+
+**Decision 1, p14 label.** At 768 px the down tube shows "…ndale" and the top-tube decal "CAAD8"; the dog hides the rest of the maker's name. `must_read_text` is now `["ndale", "CAAD8"]`; the expected reference is the legible model "CAAD8" (`requires_text: "CAAD"`); "Cannondale" moved to acceptable and still needs "cannondale" read in full. Labels gained a `history` field; p14's entry records the change, the reason and this decision.
+
+**Decision 2, text-only references (guard-v4, rule G-TEXT-ONLY).** A stage-2 addition naming a brand or a person whose every word is transcribed at stage 2 but which the stage-1 call never said (previously dropped as `single_read`) publishes as a text-only reference. Evidence gates are unchanged: brands need every brand word in `visible_text` and a `read_text`/`logo` claim; persons need every name word transcribed; a claim still held at stage 2 (low certainty, text echo) is dropped. A text-only reference:
+- carries `text_only: true` and the transcription in `evidence_text`, no category, no tag query; a person's name stays "resembles";
+- is never brand-corroborated, never searched in Qloo (`planLookup` → `text_only_reference`; the grounding gate counts any lookup as `text_only_searched`), never an anchor or signal, never researched, never a dish-idea input;
+- is stored as `capture_references.text_only` with `read_text` (migration 170; a CHECK keeps it non-anchor);
+- is listed under "Explore the references" by name with "Read in the photo: “…”" (`ReferenceSummary.read_text`), never phrased as a resemblance or a match;
+- never becomes a "What caught your eye?" choice when it is a person (G-SUBJECT drops any label sharing a word of the name);
+- shows in the inspector's new "Reading decisions" section with reason code `single_read_text_only`.
+
+**Decision 3, gate assignment (thr-v2).** `thresholds.json` gains `"two_stage_only": ["M5", "M9"]`. The scorer (score-v4) classifies each split as `two_stage`, `stage1` or `mixed`; only a stage-1-only split leaves M5 and M9 ungated (reported, listed under `scopedOut`), and its coverage gate is M15 ≥ 0.60. A mixed split (some enrichment failed) is gated as strictly as two-stage. No gate value changed.
+
+**Decision 4, grounding (thr-v2, ground-v4).** `recall_min` 0.60 → 0.50; `grounding_precision_min` 0.95 → 1.0 (zero wrong matches is the hard gate); every other grounding gate unchanged. The brand-acronym rule (Q-ACRONYM: a brand written as an acronym in capitals matches the one brand whose multi-word name has exactly those initials; two such brands are a doubt; an exact name always wins) was measured on the recorded live grounding records before it was kept: of the 5 brand-only searches with recorded results (iteration 2; iteration 1 recorded no result lists), exactly one decision changed, "NBA" → "National Basketball Association", which is the correct entity. Citroën, Fila, Selznick International Pictures and Lukfook Jewellery did not change. Precision on the recorded data stays 1.0 (27/27 accepted matches correct by the existing hand judgements plus this one); recall on the recorded findable set rises from 14/26 to 15/26 (0.58).
+
+**The verifier (role `vision_verify`, default off).**
+- Schema `atlas_verify_v1` / prompt `vlm-verify-v1` (`packages/providers/src/vlm/verify.ts`): one batched yes/no/unsure per claim; the security rules word for word; claims and transcribed text passed only inside the escaped `user_data` block and named as claims to check, never instructions; at most 6 claims, image at ≤ 768 px.
+- Targets (pure, shared by compiler and evaluation): published style, place and tradition claims that are not anchors and not text-only, and that stage 2 hedged (verdict weak) or whose own words the photo's legible text does not contain while that text names something.
+- Outcome: "no" lowers certainty × 0.5 and marks the reference qualified; "unsure" (or no answer) marks it qualified; "yes" changes nothing. Never removes or reorders a reference or a card, never touches an anchor, never raises certainty; a failed call changes nothing. Stored as `capture_references.verifier_check` (published order kept via `published_certainty`).
+- Plumbing: model role, profile validation, gateway runner and readiness (never a fallback), registry, job identity binding, ledger role CHECK (migration 170), qualification gating (golden-v1 eval block, current guardrail version, blind held-out split, ≥ 10 fixtures; the binding now also covers `verify.ts`).
+- Runtime: planned with the two-stage reading before stage 1; its call is reserved then in the spend ledger (all three profiles) and in the job's vision-call budget (`visionCallsPerAnalysis` 2 → 3; reserved only when the verifier is on). It runs in the background after stage 2 published and before research. On only with `ANALYSIS_VERIFIER_ENABLED=true`, a two-stage plan, a qualified role and no kill (`analysis_verifier_enabled`, `fast_analysis_two_stage` or `concentrate_analysis_enabled`); the server flag `analysis_verifier_enabled` (default false) reports the same.
+- Not built here: qualification of the verifier by `qualify:concentrate` (it refuses the role explicitly). If Tune enables the verifier, that run is added before step 5.
+
+**How Tune measures the verifier (step 3).** Since the verifier never removes a claim, M2 cannot move. score-v4 reports, without gates: `forbidden_published` (forbidden labels published), `forbidden_uncontested` (those the verifier did not answer "no" to), `M5_uncontested` (expected coverage counting only claims it did not contest) and `verifier_checked`. `pnpm eval:live --roles vision_photo,vision_photo_enrich,vision_verify` records the verifier reply next to each reading; `pnpm eval:replay --recordings <dir> --mode live --verifier both` scores the same readings with and without it. The verifier is enabled by default only if `forbidden_uncontested` (with) is below `forbidden_published` (without) on the tune split and `M5_uncontested` stays at or above the M5 gate. Offline, no Qloo grounding runs, so no claim is known to anchor: every eligible claim is checked, which is stricter than production.
+
+**Offline replay of the recorded live readings (guard-v4, score-v4, thr-v2, live gates).**
+
+| Recordings | Tune | Held-out (not blind) |
+| --- | --- | --- |
+| Iteration 1 | FAIL only M9 0.87 (p14: neither "ndale" nor "CAAD8" transcribed); M5 0.83, M1 0, M7 1, text-only 1 | PASS |
+| Iteration 2 | FAIL M5 0.75 (p10: "RMT MADRID" misread, p11, p14 "CADE") and M9 0.87 (p14); M1 0, M7 1; "NBA" on p13 now publishes text-only | PASS (text-only 3) |
+
+The CI replay (`replay-v1`) passes every replay gate with guard-v4 (two synthetic stage-2-only names now publish text-only), and the unguarded readings still fail M1 (M17).
+
+## Step 3 record (tune split)
+
+Results, rule changes (guard-v5, `vlm-enrich-v3`, `vlm-verify-v2`) and the verifier decision are in [quality-plan §15](quality-plan.md#15-requalification-tune-split-plan-step-3-guard-v5-2026-10-19). In short: the tune split passes every live gate on run 2 under the final rules (run 1 still misses M8 and M9 on model readings); the verifier lowered no forbidden-label count, so it stays off by default and is not qualified in step 5. The freeze commit `9e24243` is recorded in `fixtures/eval/golden-v2/FREEZE.md`; no held-out photo or label was opened.
+
+## Steps 4–6 record (freeze, blind run)
+
+Results are in [quality-plan §16](quality-plan.md#16-requalification-blind-run-plan-steps-46-2026-10-19-fail-photo-roles-stay-off). In short:
+
+- **Freeze.** Rules frozen and golden-v2 bound at `b2cf11a` (photo code digest unchanged from the tune step's final rules), recorded in `fixtures/eval/golden-v2/FREEZE.md` at `303b29b`.
+- **Blind run, once: FAIL.** On h14–h29, two-stage, verifier off: M1 4 and M11 3 (h28's competing subjects "main player" / "background players" passed G-SUBJECT because the guard's people test does not count players; h26's interpretation kept "photographed", which G-MEDIUM does not match) and M4 0.2105 (8 of 38 label-good claims dropped; one of them, h26 "MG MGA roadster", is a label-pattern artifact). M2 0.027, M5 1.00, M7 1.00, M8 0, M9 1.00, latency and M15 pass; 0 Qloo forbidden accepts.
+- **Qualification and end to end: not run**, as the exit criteria require. The photo roles stay off; nothing was changed after the run. Fixes go into a future round with a fresh blind set (h30+), and h14–h29 move to tune.
+- **The failure is enforced, not only documented (review fix).** `fixtures/eval/golden-v2/freeze.json` records the failed run (`blind_run`), h14–h29 are marked `"blind": false`, and the binding marks golden-v2 `blind_consumed`: the qualification script refuses golden-v2 for the photo roles before any request and `evalGateFailure()` refuses every golden-v2 photo artifact (`blind_set_consumed`). No label, rule, prompt or threshold changed and the blind split was not re-run; requalifying the photo roles needs a new blind set.
+- The text roles were found stale under thr-v2 (`stale_thresholds`); their re-qualification (17 requests) is open.
+
+## Round 2 record (2026-10-19)
+
+Details in [quality-plan §17](quality-plan.md#17-requalification-round-2-blind-run-gaps-closed-text-roles-2026-10-19). Round budget: Concentrate ≤ 220, Qloo ≤ 150; used 62 and 33.
+
+- **The three blind-run gaps are closed for the failing words and their neighbours (guard-v6, score-v5).** The people test counts players, athletes, crowds, spectators and other people words (headline and observations); role nouns match singular and plural, never a playback device; G-MEDIUM matches the inflections of the listed medium words ("photographed", "photography", "rendered" …) and keeps the "painted" decoration exception. The scorer's copies got the plurals and people words (stricter only). The review after the blind run found synonyms these lists missed; see "Round-2 review fixes" below.
+- **golden-v3** is the new tune set: golden-v2's 44 photos, all tune, with h26's expected pattern narrowed (label history entry). golden-v2 is untouched and stays consumed. At `34fcc2e` the photo roles still required golden-v2, so they could not qualify until a fresh blind split (h30+) was curated, frozen and bound; since `a7f5a7b` they require golden-v3, which the failed blind run below consumed. No threshold changed.
+- **Offline replay of the round-1 blind recordings:** M1 0 and M11 0 under both label sets; M4 0.2105 on golden-v2 labels, 0.1892 on golden-v3, where the split passes every (tune) gate. All earlier replays score exactly as before.
+- **Text roles:** `research_text` re-qualified (6/6, `qualified`); `composer` failed T12 on the plan-prose injection fixture (10/11 content) and stays `catalog-compatible`. It needs an injection-hardened prose prompt before another run.
+- **Fresh blind split and freeze (steps 4–6, second attempt).** A curator added h30–h49 (20 photos, 12 new repositories, labels frozen at `f4f4a23` before any model run) to golden-v3; the fixes and the blind set were merged (`2c6cf56`, `420ec8c`), golden-v3 was bound for the photo roles at `a7f5a7b` (photo code and thresholds unchanged) and the freeze recorded at `cc281e4`. A replay of every recorded tune run under the final rules (no request) matched §17.2, so no live tune run was made.
+- **Blind run, once: FAIL.** On h30–h49, two-stage, verifier off, live Qloo: M1 1 and M11 1 (h47: "Prom" published as a tradition on context about two people in formal wear), M2 0.0541 (h47 "Prom" and h34 "Scandinavian minimalism", both context-only claims stage 2 called weak), M4 0.25 (10 of 40 label-good claims dropped) and M9 0.8947 (h40 "ALL YEAR ROUND" split over two transcribed lines; h43 "JOY DEFINES" not transcribed). M5 0.83, M7 1.00, M8 0, latency and M15 (0.611) pass; 0 Qloo forbidden accepts. Nothing was changed after the run.
+- **Enforced:** golden-v3's `freeze.json` records the failed `blind_run`, h30–h49 are `"blind": false`, and the binding marks golden-v3 `blind_consumed`, so the qualification script and `evalGateFailure()` refuse it. Qualification and the end-to-end upload were not run; both photo roles stay `catalog-compatible` and photos stay off. Another attempt needs the fixes listed in quality-plan §17.8 and yet another fresh blind set (h50+).
+- **Open owner items:** h33's licence (no licence file upstream) is unconfirmed; the ZDR/content-logging confirmation in the Concentrate dashboard is still pending.
+
+## Round-2 review fixes (2026-10-20)
+
+Details in [quality-plan §17.12](quality-plan.md#1712-review-fixes-after-the-blind-run-guard-v7-score-v6). No request was made (0 Concentrate, 0 Qloo, 0 Wikipedia).
+
+- **guard-v7, score-v6.** Role synonyms (strikers, defenders, pitchers, refs, linesmen, officials, drivers, riders, racers, boxers, sportsmen, batswomen …) are roles in the guard and the scorer; a role noun alone no longer counts as people, and role words that also name a thing (bowler hat, Singer sewing machine, tempura batter, captain's chair, Coach bag …) exclude it; riders, drivers, boxers, skiers, soldiers, fans, brides and grooms, guests and the always-people role nouns count as people; stage 1 tests people before person descriptions are removed from the observations; G-MEDIUM adds "engraved", "etched" and "water-colour", and no longer drops "photographic film".
+- **Every recorded run replays to the same scorecard** as under guard-v6/score-v5; the round-2 blind run still fails as recorded.
+- **Binding regenerated** (photo code digest and scorer version for golden-v1/v2/v3). This changes what is bound for the golden-v3 photo roles, so by design they lose any qualification; they had none (golden-v3 is consumed) and stay `catalog-compatible`. The blind set was not re-run. `research_text` stays qualified (text binding unchanged); `composer` stays `catalog-compatible`.
+- **Next attempt** still needs the §17.8 fixes and a fresh blind set (h50+), scored under guard-v7/score-v6 or later.
+
+## Budget
+
+Concentrate ≤ 300 requests, Qloo ≤ 200, Wikipedia as needed (polite rate). No Elorian.
+
+## Exit criteria
+
+- Tune split and blind split pass every gate in `fixtures/eval/thresholds.json` (as amended above) on the two-stage run; zero forbidden claims and zero person-identity claims on both.
+- Both photo roles report `qualified`; a real upload reaches `complete`.
+- If the blind split fails, photo roles stay off and the report says exactly which gate and why.
+
+## Round 3: structural change (decided October 20, 2026)
+
+Rounds 1 and 2 each failed their blind run on new edge cases ("players", "photographed", then "Prom", a weak "Scandinavian minimalism", unread "JOY DEFINES"). Each fix extended closed word lists, and each fresh blind set found the next gap. Round 3 changes the approach instead of extending the lists again. Thresholds stay unchanged.
+
+1. **Publish by evidence class, not by word list.**
+   - On any photo where people are present, claims about the people themselves (occasion, event, role, tradition, identity, style-of-person) never publish unless backed by read text. Clothing and objects can still publish.
+   - Stage-2 verdicts `weak` or `unsupported`, and any claim whose only support is "context", never publish as references; they stay as private observations for the inspector.
+   - Keep a read maker (e.g. "BMW") as a text-only brand reference when the full model name is not read.
+2. **Independent semantic verifier from a different model family** (e.g. `vertex/gemini-2.5-flash` on a zero-data-retention route), checking each style, tradition, place and occasion claim against the image before it can publish. It runs in parallel with Qloo resolution so the first section is not delayed; a "no" or "unsure" blocks publication of that claim only. Enabled by default only if it removes forbidden claims on the tune split without dropping coverage below the gate.
+3. **Scorer corrections declared before the freeze:** must-read text may span lines (h40 "ALL YEAR ROUND"); label patterns that match a correctly dropped specific claim are narrowed (as with h26). These are scorer fixes, not threshold changes, and are committed before the new blind set is labelled.
+4. **Composer injection hardening:** a hardened plan-prose prompt (new prompt version) so injected fixture text cannot be echoed; re-qualify the composer.
+5. **Larger fresh blind set (h50+, 24–30 photos)**, labelled before any model run and frozen, with the same no-change-after-blind-run rule. Previously consumed photos join the tune split.
+6. Tune, freeze, single blind run, qualify on pass, real end-to-end upload, review and fix, as before. Budget: Concentrate ≤ 260, Qloo ≤ 150.
+
+## Round 3 build record (2026-10-20)
+
+Items 1–4 built on branch `r3/structural` (from `74ec4f2`). Details and the
+replay table are in [quality-plan §18](quality-plan.md#18-requalification-round-3-structural-change-build-2026-10-20).
+No request was made (0 Concentrate, 0 Qloo, 0 Wikipedia); no threshold changed;
+golden-v2 and golden-v3 are untouched and stay consumed.
+
+1. **Evidence classes (guard-v8).** Claims about the people in a photo (a
+   tradition or style with no thing domain) need read text: held at stage 1,
+   private once stage 2 shows people. A held claim with a weak or unsupported
+   second reading never publishes. A stage-2 addition on context alone never
+   publishes. Withheld claims are private observations (guard action
+   `observe`), shown only in the inspector. A read maker ("BMW") is kept as a
+   text-only brand reference when the model name is not read. **Deviation:**
+   a stage-1 claim on context alone still publishes when the verifier is off,
+   because holding all of them empties the first section (M15 0.31–0.57 on the
+   recorded runs, and the CI replay would fail); with the verifier on it
+   publishes only on the verifier's "yes".
+2. **Different-family verifier (`vlm-verify-v3`).** Binding before
+   publication: the first section's attribution and context-only claims are
+   checked in parallel with Qloo resolution, what stage 2 would publish before
+   it does; "no", "unsure", no answer or a failed call block that claim.
+   Suggested route `vertex/gemini-2.5-flash` (family google, ZDR listed for the
+   vertex route in the snapshot; the `privacyVerifiedAt` exception is recorded
+   for it in docs/concentrate.md). `qualify:concentrate --role vision_verify`
+   now runs (independence and ZDR checked before any request, up to four
+   requests per photo, `verifier_same_family` / `verifier_unexercised` gates).
+   Default off.
+3. **score-v7 and golden-v4.** Must-read text may span up to three consecutive
+   transcriptions. golden-v4 = golden-v3's 64 photos, all tune, with label
+   fixes on h31, h43, h46 and h01 (each in the label's history).
+4. **Composer `composer-v2`.** Injection-hardened plan-prose system prompt,
+   escaped data blocks, pinned prompts, text fixtures rebuilt, binding
+   regenerated. Not run live. `research_text` becomes stale as a side effect
+   (the `text-v1` digest changed; its fixtures did not).
+
+**Replays (verifier off).** The round-2 blind readings now fail only M4 (0.25)
+on their held-out labels and pass every gate on golden-v4 (tune); M1, M2 and
+M11 are 0. The cost is M4 on every run (round-1 blind readings 0.216 on
+golden-v3/v4 tune labels, tune run 2 0.200 at the gate) from correct claims
+that rested on context alone or that stage 2 hedged.
+
+**Next (items 5–6, not started):** Tune with the verifier on the new route
+(live, on golden-v4 tune; it decides the default and whether the stage-1
+deviation closes), a fresh blind set h50+ (24–30 photos) added to golden-v4 and
+frozen before any model run, `REQUIRED_GOLDEN_SET` moved to golden-v4 at the
+freeze, the single blind run, then qualification of the photo roles and the
+verifier, `research_text` and `composer` (17 requests), and the end-to-end
+upload.
+
+## Round 3 merge and Tune record (2026-10-20)
+
+Details in [quality-plan §18.7–18.14](quality-plan.md#187-tune-plan-item-6-live-2026-10-20).
+
+- **Item 5 (blind set) merged.** `r3/blind` added a fresh blind split
+  h50–h79 (30 photos, labelled before any model run, frozen at `0427041`);
+  it was merged with the round-3 tune set (`2106f39`, `fe27e85`), the
+  held-out entries appended to golden-v4's manifest unchanged, and the freeze
+  recorded in `golden-v4/FREEZE.md`. No held-out photo or label was opened
+  while tuning; every model run used `--split tune`.
+- **Tune, live** (122 Concentrate requests of the 130 set aside for it): the
+  different-family verifier on the recorded readings of p01–h29 and in a fresh
+  production-order run on h30–h49, and a fresh verifier-off run on p01–p15.
+  Two forbidden claims the guard-v8 classes did not catch (h46 "Professional
+  basketball", h40 subject "OCBC Bank column sign"), one text description
+  (p05) and one label artifact (h31's fuzzy alias) were fixed with tests
+  (**guard-v9**; tune label h31 with history). Thresholds, scorer and held-out
+  labels are unchanged.
+- **Verifier: off by default.** On the 64-photo tune split it removed the one
+  remaining forbidden claim but blocked 20 label-good ones ("unsure" blocks),
+  so M4 (0.321) and M5 (0.786) fall outside their gates; verifier off, the
+  same readings pass every gate (M4 0.176, M5 0.911, M2 0.008). The stage-1
+  deviation (a first-section claim on context alone publishes when the
+  verifier is off) therefore stays open and is named here as the plan
+  requires.
+- **Text roles qualified:** `research_text` (6/6) and `composer` with
+  `composer-v2` (11/11; T12 passes on the injection fixture). 17 requests.
+- **Not yet passing on every fresh reading:** the freshest p01–p15 readings
+  fail M8 on p10's misread "minimo" and M9 on p14's decals (text-reading
+  variance, §15.3); the blind run may fail on the same class.
+- **Next:** bind golden-v4 (`REQUIRED_GOLDEN_SET` → golden-v4), record the
+  binding commit, run the h50–h79 blind split once (verifier off), qualify on a
+  pass, end-to-end upload. Owner decisions pending: the licence questions in
+  `golden-v4/FREEZE.md` and h33; ZDR confirmation for the vertex route only if
+  the verifier is ever enabled. Round spend so far: 139 of 260 Concentrate, 0
+  of 150 Qloo, 0 Wikipedia.
+
+## Round 3 freeze and blind run (2026-10-20): FAIL
+
+Details in [quality-plan §18.15–18.19](quality-plan.md#1815-freeze-and-blind-run-on-h50h79-once-fail).
+
+- **Freeze.** golden-v4 bound for `vision_photo`, `vision_photo_enrich` and
+  `vision_verify` at `9164518` (binding up to date: golden, photo code and
+  thresholds digests unchanged); recorded in `golden-v4/FREEZE.md` at
+  `1db0d4d`. Held-out labels and `freeze.json` unchanged since `0427041`.
+- **Blind run, once: FAIL.** h50–h79, two-stage, verifier off (Tune
+  decision), live Qloo, guard-v9, score-v7, thr-v2: M1 7, M2 0.1026, M5
+  0.5926, M7 0.75, M11 8, M15 0.5926 fail; M3, M4 (0.20, at the gate), M6, M8,
+  M9 (0.95), M10, M12, M13, latency (stage 1 p50 2.1 s, p95 2.8 s;
+  enrichment p95 4.6 s) and Qloo forbidden accepts (0) pass. 60 Concentrate,
+  38 Qloo, all 200. Nothing changed after the run.
+- **Root cause.** Every forbidden claim was published at stage 1 and hedged
+  by stage 2, which cannot retract a shown claim: two context-only claims
+  (h72 "Little League baseball", h58 "Scandinavian minimalist design": the
+  stage-1 deviation named open after Tune) and two people claims the model
+  filed under thing domains (h73 a national team as a sport tradition, h74
+  "Wedding cake" as food), which G-PEOPLE-CLAIM does not see (**rule gap**).
+  Coverage (M5, M15) fails mostly because the model never offered the
+  expected claim (8 of 11 misses; on people photos it names the people's
+  event or unit, not the clothes or objects) and partly from three rule
+  over-drops (**model limitation**). The word "tall" in eleven held-out
+  person-descriptor patterns matched observations about things (3 of M1, 6 of
+  M11), and h78's label counts a paraphrase of the injected instruction
+  (**label/scorer artifacts**); without them the run still fails M1, M2, M5,
+  M7, M11 and M15.
+- **Enforced:** golden-v4 `freeze.json` records the failed `blind_run`,
+  h50–h79 are `"blind": false`, the binding marks golden-v4
+  `blind_consumed`; the qualification script and `evalGateFailure()` refuse
+  it. Qualification, the end-to-end upload, the v2 media analysis and the
+  composer plan were not run (they follow only a pass). Photo roles stay
+  `catalog-compatible`; photos fail closed. Text roles stay qualified.
+- **Round 3 spend:** 199 of 260 Concentrate (122 Tune, 17 text, 60 blind),
+  38 of 150 Qloo, 0 Wikipedia. No Elorian.
+- **Open owner items:** the golden-v4 and h33 licence questions; ZDR
+  confirmation for the photo route (and the vertex route if the verifier is
+  ever enabled).
+- **Next attempt** needs the changes listed in quality-plan §18.16 and a fresh
+  blind set (h80+).
+
+## Round 3 review fixes (2026-10-20): guard-v10, score-v8
+
+Details in [quality-plan §18.20](quality-plan.md#1820-round-3-review-fixes-guard-v10-score-v8-no-request).
+No request was made (0 Concentrate, 0 Qloo, 0 Wikipedia). Thresholds, labels,
+prompts and the verifier are unchanged. The h50–h79 blind run still fails as
+recorded and was not re-run.
+
+- **Headline (major).** The people class now applies to the always-visible
+  title and interpretation. A line naming a relationship or a role of the
+  people, or an occasion, team, league or unit on a photo with people, or
+  repeating a withheld people claim is replaced by a neutral line. This
+  happens at stage 1, and again at stage 2, which the compiler writes as a
+  retraction (analysis and capture card). score-v8 counts people-class label
+  patterns and its own role nouns in the headline. Under score-v8 the
+  recorded run scores M1 18 and M11 19 (11 headline hits that score-v7 missed).
+- **Read text (major).** A people claim rests on read text only when the text
+  names it (`claimReadIn`), at stage 1 (the model's own `evidence_text`) and
+  at stage 2 (the transcriptions), never on the model's evidence label alone.
+- **Type or domain bypass (minor).** A claim naming a relationship, role,
+  occasion, team, league or unit of the people is about them whatever type or
+  domain it was filed under (h73, h74, h72 shapes). This is a closed-list
+  backstop to the class rules; synonyms outside it are a named residual gap.
+- **Media result with the verifier on (minor, latent).** The verifier's
+  targets are left out of the v2 media citations while
+  `ANALYSIS_VERIFIER_ENABLED` is set.
+- **Docs:** `.env.example` now gives 20 label-good blocked claims, not 21.
+  §18.16 now names h27, h29 and h46 for "tall". docs/concentrate.md now says
+  h50–h79 is consumed and that a fresh h80+ split is needed to qualify the
+  verifier.
+- **Replays:** every recorded run gives the same guarded scorecard. The only
+  exception is h50–h79: FAIL M1 4, M11 6 (the "tall" and h78 artifacts), M5
+  0.5926, M15 0.5926; h58 is the one forbidden claim left. Under score-v8,
+  guard-v9 failed the tune split on headline leaks (M1 10); guard-v10 passes
+  it as before.
+- **Binding** regenerated: photo code digest and score-v8 for golden-v1 to
+  golden-v4; `text-v1` is unchanged. The photo roles, unqualified and
+  `catalog-compatible`, would lose any qualification by design. `research_text`
+  and `composer` stay qualified. `vision_verify` is off and its ZDR exception
+  is recorded unchanged.
+- **Next attempt:** the 18.16 list (stage-1 context-only decision, prompting
+  for garments and objects on people photos, the read-model rule, descriptor
+  labels scoped to people) and a fresh blind set h80+.
+- **Gate (hermetic, no provider key):** `pnpm install --frozen-lockfile`,
+  typecheck and lint clean. `pnpm test` passed 1397/1397 (143 files, 63 s).
+  `pnpm build` (including `next build`) took 1 min 58 s. Playwright mock
+  suite: 411 passed, 21 skipped (7.9 min). Real stack without provider keys:
+  v1 and v2 journeys 6/6 at 1440, 390 and 360 px (2.9 min; the v2 fidelity
+  spec was skipped because it needs its own mailbox). Amendment 2.2 journeys
+  with fake Qloo and the fake model transport: 9/9 at 1440, 390 and 320 px
+  (2.5 min). A fresh database applied all 29 migrations.
+
+## Round 4 build (2026-10-20): hold until confirmed, prompts, golden-v5, model sweep
+
+Details in [quality-plan §19](quality-plan.md#19-round-4-hold-until-confirmed-prompts-for-people-photos-stronger-models-build-2026-10-20).
+Owner decisions A (try stronger vision models), C (hold people, occasion and
+context-only claims at stage 1 until stage 2 confirms them) and D (fix the
+labels). No request was made for the build; thresholds are unchanged.
+
+- **guard-v11.** At stage 1 a style or tradition on a photo with people, and a
+  style, tradition or place resting only on context, are held unless they name
+  a garment or a sport alone; they publish only on a supported stage-2 verdict
+  (FAST-02 by construction). People presence is read from words, never from the
+  model's domain label alone. Read model ("Z4" without "BMW") publishes the code
+  as a text-only brand; brand residue keeps naming words only (h70); a
+  well-known work named by its form publishes on a supported second reading.
+- **Prompts** `vlm-quick-v3` / `vlm-enrich-v4`: garments, objects, food and
+  activities on people photos, never who they are or their event; works and
+  landmarks by title; at least three candidates on a usable photo; one verdict
+  per candidate. `eval:live` and qualification refuse a stale prompt version.
+- **golden-v5** (94 tune photos, no held-out split; "tall"/"height" scoped to
+  people), **score-v9** (M11 double count, two-character model codes),
+  `REQUIRED_GOLDEN_SET` → golden-v5: nothing qualifies until a frozen h80+
+  split exists. Binding regenerated; text roles stay qualified.
+- **Cost (offline, haiku readings, old prompts):** M15 0.735 → 0.651 on the 94
+  tune readings; M4 and M5 worsen slightly; h58's forbidden style and the h72–h74
+  people claims can no longer publish. The sweep measures the new prompts on
+  haiku, sonnet, gemini-3.8-flash and gpt-5.4-mini.
+
+
+### Round 4, after the sweep (2026-10-20): guard-v12, score-v10, the mix: Tune FAIL
+
+Details in quality-plan §19.8–19.12. The sweep (haiku, sonnet,
+gpt-5.4-mini; gemini stopped on invalid outputs) passed no run. guard-v12
+applies the people test to observations and "What caught your eye?" labels,
+replaces headlines in which the model talks about itself or its
+instructions, stops calling dictionary-word garment names unknown makers,
+follows the prompt for garment, equipment and sport claims, holds art-domain
+paintings for stage 2, treats a second read work title as a mention, keeps
+common-word read text as text, and lets a highly uncertain stage 2 confirm
+nothing. score-v10 lets a label's own longer accepted name win over a
+non-brand forbidden match (h72); "slim" is scoped to people in golden-v5;
+`pnpm eval:lint-labels` checks a new split before the freeze. Replayed, every
+recorded run loses its forbidden-gate failures except haiku's own
+misreadings (h28 "Wilson") and two label-bound h72 names. The live mix (haiku
+stage 1, sonnet stage 2, 187 requests, $1.63) fails Tune on M1 4, M4 0.335,
+M11 2 and M13 (one timeout): sonnet hedges 37 held claims, 27 of them
+context-only. h80+ is not frozen; the stage-2 verdict policy for held
+context-only claims needs a decision first.
+
+### Round 4, iteration 2 (2026-10-20): vlm-enrich-v5, guard-v13, score-v11: Tune FAIL
+
+Details in quality-plan §19.13. Stage 2 now judges each claim by its kind (a
+style, tradition, cuisine or named type is a resemblance supported by the
+features that define it; a place needs a landmark, text or a form found only
+there); on a photo with people the headline is replaced as a unit; score-v11
+lets a label's own expected name win over the medium class (h37). The live mix
+(haiku stage 1, sonnet stage 2, 188 requests, $1.70) fails Tune on M1 2, M4
+0.321, M7 and M11 1: h72 (label) and h15 ("apple" in the scorer's maker list),
+and M4 because 54 of 90 dropped good claims are stage-2 additions the policy
+never publishes. Latency, M5 0.880, M15 0.711 and M13 pass. h80+ is not
+frozen; the addition policy or the M4 definition needs an owner decision.
+

@@ -1,0 +1,78 @@
+{
+  "quick": {
+    "title": "Shanghai street sign",
+    "interpretation": "A blue street sign names a road in Chinese and English.",
+    "candidates": [
+      {
+        "name": "Yuyuan Road",
+        "type": "place",
+        "relation": "depicted",
+        "certainty": 0.8,
+        "domain": "place",
+        "evidence": "read_text",
+        "evidence_text": "Yuyuan Rd.",
+        "tag_query": null
+      },
+      {
+        "name": "Yuyuan Garden",
+        "type": "place",
+        "relation": "depicted",
+        "certainty": 0.6,
+        "domain": "place",
+        "evidence": "read_text",
+        "evidence_text": "愚园路",
+        "tag_query": null
+      },
+      {
+        "name": "Shanghainese cuisine",
+        "type": "cuisine",
+        "relation": "resembles",
+        "certainty": 0.4,
+        "domain": "food",
+        "evidence": "context",
+        "evidence_text": null,
+        "tag_query": "shanghainese"
+      }
+    ],
+    "quality": {
+      "usable": true,
+      "issue": null
+    }
+  },
+  "enrichment": {
+    "observations": [
+      {
+        "text": "Blue and white enamel sign",
+        "kind": "text"
+      }
+    ],
+    "visible_text": [
+      "愚园路",
+      "Yuyuan Rd.",
+      "W",
+      "E"
+    ],
+    "illegible_text_present": false,
+    "confirmed": [
+      {
+        "name": "Yuyuan Road",
+        "rationale": "The sign reads Yuyuan Rd.",
+        "verdict": "supported"
+      },
+      {
+        "name": "Yuyuan Garden",
+        "rationale": "The sign reads 愚园路, not 豫园",
+        "verdict": "unsupported"
+      }
+    ],
+    "additional_candidates": [],
+    "regions": [],
+    "uncertainty": {
+      "overall": "medium",
+      "notes": []
+    },
+    "competing_subjects": []
+  },
+  "quick_ms": 2000,
+  "enrich_ms": 4300
+}

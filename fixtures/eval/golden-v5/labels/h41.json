@@ -1,0 +1,77 @@
+{
+  "id": "h41",
+  "split": "tune",
+  "file": "h41-sign-bank-bilingual.jpg",
+  "subject_domains": [
+    "signage",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Agricultural Bank of China",
+      "pattern": "agricultural bank of china",
+      "type": "brand",
+      "requires_text": "AGRICULTURAL BANK"
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "中国农业银行",
+      "pattern": "中国农业银行|农业银行|農業銀行",
+      "type": "brand",
+      "requires_text": "中国农业银行"
+    },
+    {
+      "name": "China",
+      "pattern": "^china$",
+      "type": "place",
+      "requires_text": "CHINA"
+    },
+    {
+      "pattern": "bank branch|bank fa[cç]ade|banking hall|led (sign|ticker|scroller|display)|scrolling (led )?sign|storefront|shopfront|glass doors|air conditioner",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "industrial and commercial bank|icbc|中国工商银行|construction bank|中国建设银行|^bank of china$|^中国银行$|bank of communications|交通银行|china merchants",
+      "why": "the sign names the Agricultural Bank of China only",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "beijing|shanghai|guangzhou|shenzhen|chengdu|wuhan|hong kong|taiwan|taipei",
+      "why": "no text names a city"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [
+    "中国农业银行",
+    "AGRICULTURAL BANK OF CHINA"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Bank branch front: green logo with 中国农业银行 and AGRICULTURAL BANK OF CHINA, a red LED ticker that is only partly legible, glass doors, an air conditioner. Bilingual signage: the Chinese and the English name are both must-read. Native size 489 px."
+}

@@ -12,6 +12,7 @@ export type ProviderErrorKind =
   | 'not_found' // 404
   | 'server' // 5xx
   | 'invalid_response' // response failed schema validation
+  | 'incomplete_response' // structured model response truncated or otherwise incomplete
   | 'content_rejected' // model refused / unsupported content
   | 'aborted'
   | 'budget_exhausted'; // per-job request/retry budget reached (never retried)
@@ -21,12 +22,14 @@ export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly status?: number;
   readonly retryAfterMs?: number;
+  /** Gateway request id for operator correlation (never a secret). */
+  readonly requestId?: string;
 
   constructor(
     provider: string,
     kind: ProviderErrorKind,
     message: string,
-    options: { status?: number; retryAfterMs?: number; cause?: unknown } = {},
+    options: { status?: number; retryAfterMs?: number; cause?: unknown; requestId?: string } = {},
   ) {
     super(message, { cause: options.cause });
     this.name = 'ProviderError';
@@ -34,6 +37,7 @@ export class ProviderError extends Error {
     this.kind = kind;
     this.status = options.status;
     this.retryAfterMs = options.retryAfterMs;
+    this.requestId = options.requestId;
   }
 
   /** Transient errors are retried with backoff (bounded per stage). */
@@ -58,7 +62,14 @@ export interface RequestBudget {
 
 /** Observes each HTTP attempt (for provider_queries / traces). Never receives secrets. */
 export interface AttemptObserver {
-  (event: { provider: string; operation: string; attempt: number; status: number | null; durationMs: number; error?: ProviderErrorKind }): void;
+  (event: {
+    provider: string;
+    operation: string;
+    attempt: number;
+    status: number | null;
+    durationMs: number;
+    error?: ProviderErrorKind;
+  }): void;
 }
 
 /** Common per-call options. */
@@ -71,4 +82,12 @@ export interface CallOptions {
   maxRetries?: number;
   budget?: RequestBudget;
   onAttempt?: AttemptObserver;
+  /** Verified server-owned context required by budgeted model gateways. */
+  modelIdentity?: {
+    accountId: string;
+    jobId: string;
+    attemptKey: string;
+    assetId?: string;
+    queueAttemptId?: string;
+  };
 }

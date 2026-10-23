@@ -9,16 +9,61 @@ const optional = z
  * Provider configuration from environment variables (all documented in .env.example).
  * Absent keys never throw: the matching capability reports 'unavailable/not_configured'.
  */
+/**
+ * Live Featherless catalog pin (2026-10-22 `GET /v1/models`, HTTP 200).
+ * Explicit `LLM_PROVIDER=featherless` rollback only — never an automatic
+ * fallback from Concentrate. The catalog listed `features.image_input: true`.
+ */
+export const PINNED_FEATHERLESS_ROLLBACK = {
+  catalogFetchedAt: '2026-10-22T03:19:12.000Z',
+  model: 'google/gemma-3-27b-it',
+  imageInput: true,
+} as const;
+
 /** Default models per LLM provider (override with VLM_MODEL / RESEARCH_MODEL / COMPOSER_MODEL). */
 export const DEFAULT_MODELS = {
   // Featherless serves vision on Gemma- and Mistral-class models; Gemma 3 27B handles both image and text.
-  featherless: { vlm: 'google/gemma-3-27b-it', text: 'google/gemma-3-27b-it' },
+  featherless: {
+    vlm: PINNED_FEATHERLESS_ROLLBACK.model,
+    text: PINNED_FEATHERLESS_ROLLBACK.model,
+  },
   anthropic: { vlm: 'claude-sonnet-5-5', text: 'claude-sonnet-5-5' },
+  // Empty on purpose: a catalog pin is not a dispatch default. After the
+  // 2026-10-22 live catalog run the documented IDs are anthropic/claude-haiku-5-5
+  // (PINNED_CONCENTRATE_ROUTES). Set VLM_MODEL / RESEARCH_MODEL as assertions
+  // against a profile file; do not bake a marketing-page example here.
+  concentrate: { vlm: '', text: '' },
 } as const;
 
 const BaseProviderConfigSchema = z.object({
-  /** Which LLM service backs the VLM and text models. */
-  LLM_PROVIDER: z.enum(['featherless', 'anthropic']).default('featherless'),
+  /**
+   * Which LLM gateway backs the VLM and text models. Concentrate is the v2
+   * default. featherless/anthropic remain explicit operational rollback
+   * options only: nothing ever falls back to them automatically.
+   */
+  LLM_PROVIDER: z.enum(['featherless', 'anthropic', 'concentrate']).default('concentrate'),
+  CONCENTRATE_API_KEY: optional,
+  CONCENTRATE_BASE_URL: z
+    .literal('https://api.concentrate.ai/v1')
+    .default('https://api.concentrate.ai/v1'),
+  CONCENTRATE_PROFILE_FILE: optional,
+  /** Same array as CONCENTRATE_PROFILE_FILE, inline (for hosted secret/parameter stores). */
+  CONCENTRATE_PROFILES_JSON: optional,
+  /** Directory with catalog-snapshot.json and qualification artifacts (scripts/qualify-concentrate.ts). */
+  CONCENTRATE_QUALIFICATION_DIR: optional,
+  CONCENTRATE_REQUIRE_ZDR: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  CONCENTRATE_ALLOW_CONTENT_LOGGING: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  CONCENTRATE_GATEWAY_FALLBACKS_ENABLED: z.literal('false').default('false'),
+  MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
+  MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
+  MODEL_MAX_UNKNOWN_SPEND_USD: z.coerce.number().positive().optional(),
+  ACCOUNT_DAILY_MEDIA_ANALYSES: z.coerce.number().int().positive().default(50),
   FEATHERLESS_API_KEY: optional,
   FEATHERLESS_BASE_URL: z.string().default('https://api.featherless.ai/v1'),
   /**
@@ -27,6 +72,19 @@ const BaseProviderConfigSchema = z.object({
    * none (schema in the prompt only). Output is always re-validated with zod.
    */
   FEATHERLESS_JSON_MODE: z.enum(['json_schema', 'json_object', 'none']).default('json_object'),
+  /**
+   * Elorian (OpenAI-compatible Chat Completions) as an explicit operator-chosen
+   * fallback for the vision/text roles when the primary gateway cannot serve a
+   * request (unavailable, timeout, incomplete, 429, 5xx). Off unless both
+   * MODEL_FALLBACK=elorian and ELORIAN_API_KEY are set.
+   */
+  MODEL_FALLBACK: z.enum(['none', 'elorian']).default('none'),
+  ELORIAN_API_KEY: optional,
+  ELORIAN_BASE_URL: z.string().default('https://api.elorian.ai/v1'),
+  ELORIAN_MODEL: z.string().default('elorian-1-agent'),
+  // Elorian rejects response_format (structured_output_unsupported), so the schema goes in the prompt.
+  ELORIAN_JSON_MODE: z.enum(['json_schema', 'json_object', 'none']).default('none'),
+  ELORIAN_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   ANTHROPIC_API_KEY: optional,
   ANTHROPIC_BASE_URL: optional,
   VLM_MODEL: optional,
@@ -37,6 +95,8 @@ const BaseProviderConfigSchema = z.object({
   QLOO_API_KEY: optional,
   QLOO_API_URL: z.string().default('https://hackathon.api.qloo.com'),
   QLOO_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  /** Qloo requests in flight at once per process (shared by every caller; the hackathon key throttles bursts). */
+  QLOO_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(3),
   /** Allow recorded fixtures as labeled "Example result" when Qloo is unavailable. */
   QLOO_REPLAY_FIXTURES: z
     .enum(['true', 'false', '1', '0'])
@@ -83,8 +143,12 @@ export const ProviderConfigSchema = BaseProviderConfigSchema.transform((c) => ({
 
 export type ProviderConfig = z.output<typeof ProviderConfigSchema>;
 
-export function loadProviderConfig(env: Record<string, string | undefined> = process.env): ProviderConfig {
+export function loadProviderConfig(
+  env: Record<string, string | undefined> = process.env,
+): ProviderConfig {
   // Empty strings (e.g. `NAME=` copied from .env.example) count as unset.
-  const cleaned = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ''));
+  const cleaned = Object.fromEntries(
+    Object.entries(env).filter(([, v]) => v !== undefined && v.trim() !== ''),
+  );
   return ProviderConfigSchema.parse(cleaned);
 }

@@ -96,6 +96,12 @@ export const ReferenceSummary = z.object({
   qualified: z.boolean(),
   /** True when a reference page with sourced content is available. */
   has_page: z.boolean(),
+  /**
+   * Only for a text-only reference (a name read in the photo once, never
+   * looked up or confirmed): the text it was read from. The UI shows it with
+   * that text instead of phrasing it as a match or a resemblance.
+   */
+  read_text: z.string().nullable().optional(),
 });
 export type ReferenceSummary = z.infer<typeof ReferenceSummary>;
 

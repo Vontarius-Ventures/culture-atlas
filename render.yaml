@@ -1,7 +1,11 @@
 # Render blueprint for the culture atlas demo (see docs/deploy.md).
-# One Docker image runs both services. Secrets are `sync: false`: Render asks
+# PAID ONLY: background workers have no free plan (paid `starter` / `0.5c-512mb`).
+# This file is web + two workers + Postgres `basic-256mb` — do not apply it and
+# do not spend money. Default for this run is docker-compose.yml self-host.
+# One Docker image runs web and workers. Secrets are `sync: false`: Render asks
 # for them when the blueprint is applied; nothing secret lives in this file.
-# Plan names change over time; check them against Render's current list.
+# There is no Render API key in this repository. Plan names change over time;
+# check them against Render's current list.
 
 databases:
   - name: culture-atlas-db
@@ -21,11 +25,39 @@ envVarGroups:
       # base64 of 32 random bytes (openssl rand -base64 32). Needed for World Sensor poll mode.
       - key: CREDENTIAL_ENCRYPTION_KEY
         sync: false
+      # Concentrate is the v2 model gateway.
+      - key: LLM_PROVIDER
+        value: concentrate
+      - key: CONCENTRATE_BASE_URL
+        value: https://api.concentrate.ai/v1
+      # Every role stays unavailable until the key, qualified profiles,
+      # qualification artifacts and spend ceilings below are set
+      # (docs/concentrate.md); capture, library and uploads work regardless.
+      - key: CONCENTRATE_API_KEY
+        sync: false
+      # JSON array of qualified role profiles (exact provider/model ids).
+      - key: CONCENTRATE_PROFILES_JSON
+        sync: false
+      # Directory on the worker/web image holding catalog-snapshot.json and the
+      # passing qualification artifacts from `pnpm qualify:concentrate`.
+      - key: CONCENTRATE_QUALIFICATION_DIR
+        sync: false
+      - key: MODEL_DAILY_SPEND_LIMIT_USD
+        sync: false
+      - key: MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD
+        sync: false
+      - key: MODEL_MAX_UNKNOWN_SPEND_USD
+        sync: false
+      # Explicit rollback only (set LLM_PROVIDER=featherless); never an automatic
+      # fallback. rc_ keys belong here, not as a Render API key.
       - key: FEATHERLESS_API_KEY
         sync: false
-      # Leave empty until the hackathon key arrives: Qloo then reports "unavailable", never fake data.
+      # Qloo hackathon key: set in the dashboard when applying a paid blueprint.
+      # Never invent results if this is unset.
       - key: QLOO_API_KEY
         sync: false
+      - key: QLOO_API_URL
+        value: https://hackathon.api.qloo.com
       - key: WIKIMEDIA_USER_AGENT
         sync: false
       # Web and worker run on separate machines, so media must live in shared S3-compatible storage.
@@ -47,6 +79,18 @@ envVarGroups:
       - key: SENSOR_ALLOWED_ORIGINS
         sync: false
       - key: DEMO_INSPECTOR_ACCOUNT_IDS
+        sync: false
+      # Identity email delivery (docs/deploy.md): "ses" needs IDENTITY_MAIL_FROM,
+      # AWS_REGION and SES-capable AWS credentials; unset = sign-in email fails closed.
+      - key: IDENTITY_MAIL_DRIVER
+        sync: false
+      - key: IDENTITY_MAIL_FROM
+        sync: false
+      # Comma-separated feature kill switches (docs/runbooks/glasses-kill-switch.md).
+      - key: FEATURE_KILL_SWITCHES
+        sync: false
+      # "live" sends APNs/FCM wake-ups (PUSH_APNS_*/PUSH_FCM_* secrets); default none.
+      - key: PUSH_DRIVER
         sync: false
 
 services:
@@ -72,6 +116,8 @@ services:
       - key: TRUSTED_PROXY_HOPS
         value: "1"
 
+  # Not free: Render workers have no free plan. Do not apply this blueprint
+  # unless a paid account is an explicit, funded choice. Prefer docker-compose.yml.
   - type: worker
     name: culture-atlas-worker
     runtime: docker
@@ -79,6 +125,25 @@ services:
     dockerContext: .
     plan: starter
     dockerCommand: pnpm worker
+    envVars:
+      - fromGroup: culture-atlas-shared
+      - key: DATABASE_URL
+        fromDatabase:
+          name: culture-atlas-db
+          property: connectionString
+      - key: APP_BASE_URL
+        sync: false
+
+  # Capture v2 media worker: verification, ffmpeg preparation, frames, cleanup and
+  # storage reconciliation. Without it uploads stay in "verifying" and video stays off.
+  # Not free: same Render worker plan constraint as culture-atlas-worker.
+  - type: worker
+    name: culture-atlas-media-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    dockerCommand: pnpm media-worker
     envVars:
       - fromGroup: culture-atlas-shared
       - key: DATABASE_URL

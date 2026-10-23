@@ -1,0 +1,838 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  culture atlas on one small EC2 instance (web, worker and media worker in
+  Docker Compose behind Caddy HTTPS), PostgreSQL 16 on RDS or on the instance,
+  a private S3 media bucket, SSM Parameter Store configuration, CloudWatch
+  logs/alarms and a 1 USD budget alert. See docs/deploy-aws.md. Not free:
+  it runs on Free plan credits or bills (about USD 15-27/month); verify
+  current AWS terms before deploying.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedPattern: '^[a-z][a-z0-9-]{1,19}$'
+    Description: Short name used in resource names and the SSM path /culture-atlas/<name>/.
+  DomainName:
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+    Description: >-
+      Public host name for HTTPS (an A record you point at the Elastic IP). Leave
+      empty to use <elastic-ip>.sslip.io until you have a domain.
+  AlertEmail:
+    Type: String
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    Description: Receives alarm and budget emails (confirm the SNS subscription email).
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t2.micro]
+    Description: >-
+      x86_64 burstable type. t3.micro (1 GiB) is the cheapest default;
+      t3.small (2 GiB) is far more comfortable for video but costs about
+      twice as much. CPU credits are fixed to "standard" so bursts never bill extra.
+  SwapGiB:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 4
+  RootVolumeGiB:
+    Type: Number
+    Default: 20
+    MinValue: 16
+    MaxValue: 30
+    Description: gp3, encrypted. The legacy free tier covered 30 GiB of EBS in total.
+  DatabaseMode:
+    Type: String
+    Default: rds
+    AllowedValues: [rds, instance]
+    Description: >-
+      rds = managed PostgreSQL 16 (backups and point-in-time recovery).
+      instance = PostgreSQL 16 in Docker on the EC2 instance (no extra
+      service, nightly logical backups to S3 only).
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    AllowedValues: [db.t4g.micro, db.t3.micro]
+  DbPasswordParameter:
+    Type: String
+    Default: /culture-atlas/prod/DB_PASSWORD
+    AllowedPattern: '^/culture-atlas/[a-z0-9-]+/DB_PASSWORD$'
+    Description: >-
+      SSM SecureString you create BEFORE the stack (see docs/deploy-aws.md).
+      CloudFormation reads it with a dynamic reference; it never appears in
+      the template, events or outputs.
+  MailFrom:
+    Type: String
+    Default: ''
+    Description: >-
+      Sender for sign-in emails, e.g. "culture atlas <no-reply@example.com>".
+      Empty disables email sign-in (it then fails closed with 503).
+  SesIdentity:
+    Type: String
+    Default: ''
+    Description: SES verified identity (domain or address) the instance may send as. Empty = no SES permission.
+  UbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Ubuntu 24.04 LTS (amd64) from Canonical's public SSM parameter.
+
+Conditions:
+  UseRds: !Equals [!Ref DatabaseMode, rds]
+  UseInstanceDb: !Equals [!Ref DatabaseMode, instance]
+  HasDomain: !Not [!Equals [!Ref DomainName, '']]
+  HasMail: !And
+    - !Not [!Equals [!Ref MailFrom, '']]
+    - !Not [!Equals [!Ref SesIdentity, '']]
+
+Resources:
+  # ---------------------------------------------------------------- network
+  # A VPC, subnets, route tables, an internet gateway and an S3 gateway
+  # endpoint have no hourly charge. There is deliberately NO NAT gateway.
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.40.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: [{ Key: Name, Value: !Sub 'culture-atlas-${EnvironmentName}' }]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.10.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.40.11.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  PublicSubnetRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+  PrivateSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+  PrivateSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds: [!Ref PublicRouteTable]
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: HTTPS to Caddy only. No SSH; use SSM Session Manager.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: ACME HTTP-01 and redirect to HTTPS }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS }
+        - { IpProtocol: udp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTP/3 }
+      SecurityGroupEgress:
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: AWS APIs, ACME, model/Qloo providers, push }
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: Ubuntu package mirrors }
+        - { IpProtocol: udp, FromPort: 123, ToPort: 123, CidrIp: 0.0.0.0/0, Description: NTP }
+        - { IpProtocol: tcp, FromPort: 5432, ToPort: 5432, CidrIp: 10.40.0.0/16, Description: RDS inside the VPC }
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: UseRds
+    Properties:
+      GroupDescription: PostgreSQL from the app instance only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 5432, ToPort: 5432, SourceSecurityGroupId: !Ref AppSecurityGroup }
+      SecurityGroupEgress:
+        - { IpProtocol: '-1', CidrIp: 127.0.0.1/32, Description: No outbound }
+
+  # Elastic IP on a network interface that exists BEFORE the instance boots, so
+  # bootstrap has internet access and the address survives instance replacement.
+  # Public IPv4 addresses are billed hourly unless your plan's free allowance covers them.
+  AppNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      GroupSet: [!Ref AppSecurityGroup]
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+  ElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIp.AllocationId
+      NetworkInterfaceId: !Ref AppNetworkInterface
+
+  # ---------------------------------------------------------------- storage
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-multipart
+            Status: Enabled
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 }
+          - Id: staging-objects
+            Status: Enabled
+            TagFilters: [{ Key: atlas-lifecycle, Value: staging }]
+            ExpirationInDays: 2
+          - Id: previous-versions-30-days
+            Status: Enabled
+            NoncurrentVersionExpiration: { NoncurrentDays: 30 }
+            ExpiredObjectDeleteMarker: true
+          - Id: deploy-bundles
+            Status: Enabled
+            Prefix: deploy/
+            ExpirationInDays: 14
+          - Id: logical-backups-30-days
+            Status: Enabled
+            Prefix: backups/
+            ExpirationInDays: 30
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins:
+              - !If [HasDomain, !Sub 'https://${DomainName}', !Sub 'https://${ElasticIp}.sslip.io']
+            AllowedHeaders: ['*']
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+  MediaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt MediaBucket.Arn, !Sub '${MediaBucket.Arn}/*']
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+
+  # ---------------------------------------------------------------- database
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Condition: UseRds
+    Properties:
+      DBSubnetGroupDescription: Private subnets with no internet route.
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+  Database:
+    Type: AWS::RDS::DBInstance
+    Condition: UseRds
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: postgres
+      EngineVersion: '16'
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: '20'
+      StorageType: gp2
+      StorageEncrypted: true
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref DbSecurityGroup]
+      DBName: culture_atlas
+      MasterUsername: culture_atlas
+      MasterUserPassword: !Sub '{{resolve:ssm-secure:${DbPasswordParameter}}}'
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: '03:00-03:30'
+      DeletionProtection: true
+      CopyTagsToSnapshot: true
+      AutoMinorVersionUpgrade: true
+      EnablePerformanceInsights: false
+      MonitoringInterval: 0
+
+  # ---------------------------------------------------------------- configuration (non-secret)
+  # Secrets (SESSION_SECRET, CREDENTIAL_ENCRYPTION_KEY, DB_PASSWORD, provider
+  # keys) are SecureString parameters you create yourself; CloudFormation
+  # cannot create SecureStrings and never sees their values.
+  ParamNodeEnv:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/NODE_ENV', Value: production }
+  ParamOpsEnvironment:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/OPS_ENVIRONMENT', Value: !Ref EnvironmentName }
+  ParamStorageDriver:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/STORAGE_DRIVER', Value: s3 }
+  ParamBucket:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/S3_BUCKET', Value: !Ref MediaBucket }
+  ParamRegion:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/S3_REGION', Value: !Ref 'AWS::Region' }
+  ParamAwsRegion:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/AWS_REGION', Value: !Ref 'AWS::Region' }
+  ParamSiteAddress:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: !Sub '/culture-atlas/${EnvironmentName}/SITE_ADDRESS'
+      Value: !If [HasDomain, !Ref DomainName, !Sub '${ElasticIp}.sslip.io']
+  ParamAppBaseUrl:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: !Sub '/culture-atlas/${EnvironmentName}/APP_BASE_URL'
+      Value: !If [HasDomain, !Sub 'https://${DomainName}', !Sub 'https://${ElasticIp}.sslip.io']
+  ParamTrustedProxyHops:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/TRUSTED_PROXY_HOPS', Value: '1' }
+  ParamDbHost:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: !Sub '/culture-atlas/${EnvironmentName}/DB_HOST'
+      Value: !If [UseRds, !GetAtt Database.Endpoint.Address, postgres]
+  ParamDbSslMode:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: !Sub '/culture-atlas/${EnvironmentName}/DB_SSLMODE'
+      Value: !If [UseRds, verify-full, disable]
+  ParamDbPool:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/DATABASE_POOL_MAX', Value: '5' }
+  ParamWorkerConcurrency:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/WORKER_CONCURRENCY', Value: '2' }
+  ParamMediaWorkerConcurrency:
+    Type: AWS::SSM::Parameter
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/MEDIA_WORKER_CONCURRENCY', Value: '1' }
+  ParamMailDriver:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Name: !Sub '/culture-atlas/${EnvironmentName}/IDENTITY_MAIL_DRIVER'
+      Value: !If [HasMail, ses, none]
+  ParamMailFrom:
+    Type: AWS::SSM::Parameter
+    Condition: HasMail
+    Properties: { Type: String, Name: !Sub '/culture-atlas/${EnvironmentName}/IDENTITY_MAIL_FROM', Value: !Ref MailFrom }
+
+  # ---------------------------------------------------------------- identity (least privilege)
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Session Manager shell and Run Command (deploys) instead of SSH.
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore'
+      Policies:
+        - PolicyName: culture-atlas-app
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: MediaObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                  - s3:PutObjectTagging
+                Resource:
+                  - !Sub '${MediaBucket.Arn}/accounts/*'
+                  - !Sub '${MediaBucket.Arn}/owners/*'
+              - Sid: MediaListing
+                Effect: Allow
+                Action: [s3:ListBucket, s3:ListBucketMultipartUploads]
+                Resource: !GetAtt MediaBucket.Arn
+                Condition:
+                  StringLike: { 's3:prefix': ['accounts/*', 'owners/*', 'deploy/*'] }
+              - Sid: ReadReleases
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${MediaBucket.Arn}/deploy/*'
+              - Sid: WriteBackupsOnly
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${MediaBucket.Arn}/backups/*'
+              - Sid: ReadConfiguration
+                Effect: Allow
+                Action: [ssm:GetParametersByPath, ssm:GetParameter, ssm:GetParameters]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/culture-atlas/${EnvironmentName}'
+                  - !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/culture-atlas/${EnvironmentName}/*'
+              - Sid: DecryptSecureStringsViaSsmOnly
+                Effect: Allow
+                Action: kms:Decrypt
+                Resource: !Sub 'arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/*'
+                Condition:
+                  StringEquals: { 'kms:ViaService': !Sub 'ssm.${AWS::Region}.amazonaws.com' }
+                  ForAnyValue:StringLike:
+                    'kms:ResourceAliases': ['alias/aws/ssm']
+              - Sid: ShipLogs
+                Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents, logs:DescribeLogStreams]
+                Resource:
+                  - !GetAtt LogGroup.Arn
+                  - !Sub '${LogGroup.Arn}:log-stream:*'
+        - !If
+          - HasMail
+          - PolicyName: culture-atlas-mail
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Sid: SendIdentityMail
+                  Effect: Allow
+                  Action: ses:SendEmail
+                  Resource:
+                    - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${SesIdentity}'
+          - !Ref AWS::NoValue
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref AppRole]
+
+  # ---------------------------------------------------------------- instance
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref UbuntuAmi
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile: { Arn: !GetAtt AppInstanceProfile.Arn }
+        CreditSpecification: { CpuCredits: standard }
+        MetadataOptions:
+          HttpTokens: required
+          # 2 hops so containers (awslogs, SDK) can reach IMDSv2 for role credentials.
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs: { VolumeSize: !Ref RootVolumeGiB, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            NetworkInterfaceId: !Ref AppNetworkInterface
+        TagSpecifications:
+          - ResourceType: instance
+            Tags: [{ Key: Name, Value: !Sub 'culture-atlas-${EnvironmentName}' }]
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              # culture atlas host bootstrap. Installs Docker, swap and the
+              # deploy stub; the application itself arrives with the first
+              # release bundle (infra/aws/ship.sh). Logs: /var/log/culture-atlas-bootstrap.log
+              set -euo pipefail
+              exec > >(tee -a /var/log/culture-atlas-bootstrap.log) 2>&1
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -q
+              apt-get install -y -q --no-install-recommends docker.io docker-compose-v2 python3 ca-certificates curl unattended-upgrades
+              snap install aws-cli --classic
+              export PATH="$PATH:/snap/bin"
+              if [ ! -f /swapfile ]; then
+                fallocate -l ${SwapGiB}G /swapfile
+                chmod 600 /swapfile
+                mkswap /swapfile
+                echo '/swapfile none swap sw 0 0' >> /etc/fstab
+              fi
+              swapon -a
+              echo 'vm.swappiness=10' > /etc/sysctl.d/90-culture-atlas.conf
+              sysctl --system >/dev/null
+              systemctl enable --now docker
+              install -d -m 0750 /etc/culture-atlas /etc/culture-atlas/tls /opt/culture-atlas /var/lib/culture-atlas/backups
+              cat > /etc/culture-atlas/stack.env <<'EOF'
+              ATLAS_STACK=${AWS::StackName}
+              ATLAS_ENV=${EnvironmentName}
+              ATLAS_REGION=${AWS::Region}
+              ATLAS_BUCKET=${MediaBucket}
+              ATLAS_PARAM_PATH=/culture-atlas/${EnvironmentName}/
+              ATLAS_LOG_GROUP=${LogGroup}
+              ATLAS_DB_MODE=${DatabaseMode}
+              ATLAS_ACME_EMAIL=${AlertEmail}
+              EOF
+              cat > /usr/local/sbin/atlas-deploy <<'EOF'
+              #!/bin/bash
+              # Fetch a release bundle shipped to S3 and run its installer.
+              set -euo pipefail
+              export PATH="$PATH:/snap/bin"
+              . /etc/culture-atlas/stack.env
+              release="${!1:-}"
+              if [ -z "$release" ]; then
+                release="$(aws s3 cp --only-show-errors "s3://$ATLAS_BUCKET/deploy/current.txt" - | tr -dc 'a-zA-Z0-9._-')"
+              fi
+              case "$release" in ''|*[!a-zA-Z0-9._-]*) echo 'invalid release id' >&2; exit 2;; esac
+              dir="/opt/culture-atlas/releases/$release"
+              install -d -m 0750 "$dir"
+              # A kept local release still deploys after its S3 bundle expired (rollback).
+              if aws s3 cp --only-show-errors "s3://$ATLAS_BUCKET/deploy/$release/bundle.tar.gz" "$dir/bundle.tar.gz"; then
+                tar -xzf "$dir/bundle.tar.gz" -C "$dir"
+              elif [ ! -x "$dir/bundle/bin/atlas-install" ]; then
+                echo "release $release is neither in S3 nor on this host" >&2; exit 1
+              fi
+              exec "$dir/bundle/bin/atlas-install" "$release"
+              EOF
+              chmod 0755 /usr/local/sbin/atlas-deploy
+              # Deploy the current release if one was already shipped (instance replacement).
+              /usr/local/sbin/atlas-deploy || echo 'No release shipped yet: run infra/aws/ship.sh.'
+            - {}
+  AppInstance:
+    Type: AWS::EC2::Instance
+    DependsOn: [ElasticIpAssociation, PublicDefaultRoute]
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppLaunchTemplate
+        Version: !GetAtt AppLaunchTemplate.LatestVersionNumber
+
+  # ---------------------------------------------------------------- logs, metrics, alarms
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/culture-atlas/${EnvironmentName}'
+      RetentionInDays: 14
+  # Custom metrics (9 in total, inside the 10 the legacy free tier included):
+  # seven from the ops snapshot line (pnpm ops:metrics, packages/domain/src/ops/metrics.ts)
+  # and two from Caddy's JSON access log. Metric filters are used instead of
+  # relying on EMF auto-extraction from the Docker awslogs driver.
+  OpsCaptureQueueOldestSecondsFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ops_snapshot" && $.CaptureQueueOldestSeconds >= 0 }'
+      MetricTransformations:
+        - MetricNamespace: CultureAtlas
+          MetricName: CaptureQueueOldestSeconds
+          MetricValue: '$.CaptureQueueOldestSeconds'
+          Unit: Seconds
+          Dimensions: [{ Key: Environment, Value: '$.Environment' }]
+  OpsJobQueueOldestSecondsFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ops_snapshot" && $.JobQueueOldestSeconds >= 0 }'
+      MetricTransformations:
+        - MetricNamespace: CultureAtlas
+          MetricName: JobQueueOldestSeconds
+          MetricValue: '$.JobQueueOldestSeconds'
+          Unit: Seconds
+          Dimensions: [{ Key: Environment, Value: '$.Environment' }]
+  OpsWorkFailedLastHourFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ops_snapshot" && $.WorkFailedLastHour >= 0 }'
+      MetricTransformations:
+        - MetricNamespace: CultureAtlas
+          MetricName: WorkFailedLastHour
+          MetricValue: '$.WorkFailedLastHour'
+          Unit: Count
+          Dimensions: [{ Key: Environment, Value: '$.Environment' }]
+  OpsExpiredLeasesFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ops_snapshot" && $.ExpiredLeases >= 0 }'
+      MetricTransformations:
+        - MetricNamespace: CultureAtlas
+          MetricName: ExpiredLeases
+          MetricValue: '$.ExpiredLeases'
+          Unit: Count
+          Dimensions: [{ Key: Environment, Value: '$.Environment' }]
+  OpsUploadsStuckVerifyingFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ops_snapshot" && $.UploadsStuckVerifying >= 0 }'
+      MetricTransformations:
+        - MetricNamespace: CultureAtlas
+          MetricName: UploadsStuckVerifying
+          MetricValue: '$.UploadsStuckVerifying'
+          Unit: Count
+          Dimensions: [{ Key: Environment, Value: '$.Environment' }]
+  OpsStorageCleanupBacklogFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ops_snapshot" && $.StorageCleanupBacklog >= 0 }'
+      MetricTransformations:
+        - MetricNamespace: CultureAtlas
+          MetricName: StorageCleanupBacklog
+          MetricValue: '$.StorageCleanupBacklog'
+          Unit: Count
+          Dimensions: [{ Key: Environment, Value: '$.Environment' }]
+  OpsModelAttemptsUnknownFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.event = "ops_snapshot" && $.ModelAttemptsUnknown >= 0 }'
+      MetricTransformations:
+        - MetricNamespace: CultureAtlas
+          MetricName: ModelAttemptsUnknown
+          MetricValue: '$.ModelAttemptsUnknown'
+          Unit: Count
+          Dimensions: [{ Key: Environment, Value: '$.Environment' }]
+  RequestsMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.logger = "http.log.access*" }'
+      MetricTransformations:
+        - { MetricNamespace: CultureAtlas, MetricName: HttpRequests, MetricValue: '1', DefaultValue: 0, Unit: Count }
+  ServerErrorsMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref LogGroup
+      FilterPattern: '{ $.logger = "http.log.access*" && $.status >= 500 }'
+      MetricTransformations:
+        - { MetricNamespace: CultureAtlas, MetricName: Http5xx, MetricValue: '1', DefaultValue: 0, Unit: Count }
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription: [{ Protocol: email, Endpoint: !Ref AlertEmail }]
+
+  CaptureQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-CaptureQueueAge'
+      AlarmDescription: Oldest runnable capture work > 5 min. docs/runbooks/queue-recovery.md
+      Namespace: CultureAtlas
+      MetricName: CaptureQueueOldestSeconds
+      Dimensions: [{ Name: Environment, Value: !Ref EnvironmentName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+  JobQueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-JobQueueAge'
+      AlarmDescription: Oldest runnable job > 5 min. docs/runbooks/queue-recovery.md
+      Namespace: CultureAtlas
+      MetricName: JobQueueOldestSeconds
+      Dimensions: [{ Name: Environment, Value: !Ref EnvironmentName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 300
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  ExpiredLeasesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-ExpiredLeases'
+      AlarmDescription: Work with expired leases for 15 min (worker crash/stall). docs/runbooks/queue-recovery.md
+      Namespace: CultureAtlas
+      MetricName: ExpiredLeases
+      Dimensions: [{ Name: Environment, Value: !Ref EnvironmentName }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  StorageCleanupAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-StorageCleanup'
+      AlarmDescription: Purge overdue > 24h or reservations unsettled. docs/runbooks/queue-recovery.md#storage-cleanup
+      Namespace: CultureAtlas
+      MetricName: StorageCleanupBacklog
+      Dimensions: [{ Name: Environment, Value: !Ref EnvironmentName }]
+      Statistic: Minimum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  ModelSpendUnknownAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-ModelSpendUnknown'
+      AlarmDescription: Model attempts with unknown billing are accumulating. docs/runbooks/credit-exhaustion.md
+      Namespace: CultureAtlas
+      MetricName: ModelAttemptsUnknown
+      Dimensions: [{ Name: Environment, Value: !Ref EnvironmentName }]
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  OpsMetricsMissingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-OpsMetricsMissing'
+      AlarmDescription: No ops snapshot for 15 min (metrics job, logs or database down). docs/runbooks/queue-recovery.md#metrics-missing
+      Namespace: CultureAtlas
+      MetricName: CaptureQueueOldestSeconds
+      Dimensions: [{ Name: Environment, Value: !Ref EnvironmentName }]
+      Statistic: SampleCount
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+  Http5xxRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-Http5xxRate'
+      AlarmDescription: More than 5% of requests failed with 5xx for 5 minutes (min 20 requests).
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 5
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      Metrics:
+        - Id: rate
+          Expression: IF(requests >= 20, 100 * errors / requests, 0)
+          Label: 5xx percent
+          ReturnData: true
+        - Id: errors
+          ReturnData: false
+          MetricStat:
+            Metric: { Namespace: CultureAtlas, MetricName: Http5xx }
+            Period: 300
+            Stat: Sum
+        - Id: requests
+          ReturnData: false
+          MetricStat:
+            Metric: { Namespace: CultureAtlas, MetricName: HttpRequests }
+            Period: 300
+            Stat: Sum
+  InstanceStatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-InstanceStatusCheck'
+      AlarmDescription: EC2 system status check failed; recovers the instance onto healthy hardware.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_System
+      Dimensions: [{ Name: InstanceId, Value: !Ref AppInstance }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertTopic
+        - !Sub 'arn:${AWS::Partition}:automate:${AWS::Region}:ec2:recover'
+  CpuCreditsLowAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'culture-atlas-${EnvironmentName}-CpuCreditsLow'
+      AlarmDescription: Burst credits nearly exhausted; the instance is throttled to baseline (video preparation slows sharply).
+      Namespace: AWS/EC2
+      MetricName: CPUCreditBalance
+      Dimensions: [{ Name: InstanceId, Value: !Ref AppInstance }]
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 10
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+  # ---------------------------------------------------------------- spend
+  # Budgets bill nothing for the first two budgets per account. Emails when
+  # ACTUAL spend passes 1 USD, and when the month is FORECAST to pass 1 USD.
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub 'culture-atlas-${EnvironmentName}-1usd'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: 1, Unit: USD }
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 1, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+Outputs:
+  InstanceId:
+    Value: !Ref AppInstance
+  PublicIp:
+    Value: !Ref ElasticIp
+    Description: Point your DomainName A record here.
+  SiteUrl:
+    Value: !If [HasDomain, !Sub 'https://${DomainName}', !Sub 'https://${ElasticIp}.sslip.io']
+  BucketName:
+    Value: !Ref MediaBucket
+  ParameterPath:
+    Value: !Sub '/culture-atlas/${EnvironmentName}/'
+  LogGroupName:
+    Value: !Ref LogGroup
+  DatabaseEndpoint:
+    Condition: UseRds
+    Value: !GetAtt Database.Endpoint.Address
+  ShellCommand:
+    Value: !Sub 'aws ssm start-session --region ${AWS::Region} --target ${AppInstance}'

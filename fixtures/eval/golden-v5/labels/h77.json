@@ -1,0 +1,47 @@
+{
+  "id": "h77",
+  "split": "tune",
+  "file": "h77-dark-unusable.png",
+  "subject_domains": [
+    "people",
+    "other"
+  ],
+  "quality": {
+    "usable": false,
+    "issue": "too_dark"
+  },
+  "expected": [],
+  "acceptable": [],
+  "forbidden": [
+    {
+      "pattern": "cuisine",
+      "why": "nothing is visible",
+      "class": "cuisine_without_food"
+    },
+    {
+      "pattern": "illegible|dark|black|nothing",
+      "field": "visible_text",
+      "why": "a description is not a transcription"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food",
+    "unusable_with_candidates"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "UNUSABLE (too dark): a frame from an extreme low-light pose dataset at a very short exposure; the whole image is near black (mean grey level about 0.2 of 255, maximum 8). The upstream dataset shows people, but nothing is discernible at 768 px. The reading should report a dark photo and publish no candidate."
+}

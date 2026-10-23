@@ -1,0 +1,59 @@
+{
+  "bundle_id": "com.cultureatlas.app",
+  "note": "App Store privacy answers for the public CultureAtlas build (no Meta SDK). Matches PrivacyInfo.xcprivacy in the binary. Do not copy experimental-flavor Bluetooth/glasses rows into this form.",
+  "privacy_nutrition_labels": [
+    {
+      "data_type": "Email Address",
+      "linked_to_user": true,
+      "used_for_tracking": false,
+      "purposes": ["App Functionality"],
+      "collected": true
+    },
+    {
+      "data_type": "User ID",
+      "linked_to_user": true,
+      "used_for_tracking": false,
+      "purposes": ["App Functionality"],
+      "collected": true
+    },
+    {
+      "data_type": "Photos or Videos",
+      "linked_to_user": true,
+      "used_for_tracking": false,
+      "purposes": ["App Functionality"],
+      "collected": true,
+      "optional": true
+    },
+    {
+      "data_type": "Audio Data",
+      "linked_to_user": true,
+      "used_for_tracking": false,
+      "purposes": ["App Functionality"],
+      "collected": true,
+      "optional": true
+    }
+  ],
+  "tracking": false,
+  "tracking_domains": [],
+  "usage_descriptions": {
+    "NSCameraUsageDescription": "culture atlas uses the camera when you take a photo or record a video to keep in your private library.",
+    "NSMicrophoneUsageDescription": "culture atlas records sound when you choose to capture audio for your private library.",
+    "NSPhotoLibraryUsageDescription": "culture atlas lets you choose photos, videos, and audio files to upload to your private library."
+  },
+  "privacy_manifest": "apps/ios/CultureAtlas/PrivacyInfo.xcprivacy",
+  "required_reason_apis": [
+    {
+      "category": "Disk Space",
+      "reasons": ["85F4.1"],
+      "why": "Check whether there is enough space to keep a photo or recording before capture."
+    },
+    {
+      "category": "File Timestamp",
+      "reasons": ["C617.1"],
+      "why": "Read size/metadata of capture drafts the app created in its container."
+    }
+  ],
+  "encryption": {
+    "ITSAppUsesNonExemptEncryption": false
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "id": "h36",
+  "split": "tune",
+  "file": "h36-craft-cat-mugs.jpg",
+  "subject_domains": [
+    "craft",
+    "design"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Cat mug",
+      "pattern": "cats?.*(mugs?|cups?)|(mugs?|cups?).*cats?",
+      "aliases": [
+        "Cat mugs"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "ceramic|porcelain|stoneware|glazed|relief|sculpted|three-dimensional|3d|kawaii|novelty mugs?|couple mugs?|pair of mugs|mugs?|cups?"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "maneki[- ]?neko|lucky cat|beckoning cat",
+      "why": "the cats sit with closed or raised eyes; they are not beckoning-cat figures"
+    },
+    {
+      "pattern": "starbucks|ikea|muji|hello kitty|sanrio|disney|nyan",
+      "why": "no brand or character name is legible",
+      "class": "brand_without_text"
+    },
+    {
+      "pattern": "kutani|arita|imari|satsuma|mashiko|delft|wedgwood|royal copenhagen|jingdezhen",
+      "why": "no maker or ware is stated or marked"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "Two light-blue ceramic mugs, each with a sculpted cat (one black, one white) on its side, on a card with small Chinese print that is not legible at 768 px. The ware and maker are not stated."
+}

@@ -22,6 +22,11 @@ export const JobPayloads = {
       .optional(),
     /** Optional targeted retry: only these sections are recomputed. */
     sections: z.array(z.string()).optional(),
+    /**
+     * v2 media analysis whose validated vision reading (Concentrate, possibly
+     * aggregated over video frames) replaces the observe stage's VLM call.
+     */
+    media_analysis_id: Uuid.optional(),
   }),
   discover_related: z.object({
     discovery_job_id: Uuid,
@@ -43,6 +48,31 @@ export const JobPayloads = {
   }),
   sensor_poll: z.object({ sensor_connection_id: Uuid }),
   purge_deleted: z.object({ before: z.iso.datetime({ offset: true }).optional() }),
+  /**
+   * Seeds the account's feed pool from its onboarding picks: Qloo insights per
+   * category (at most 6 Qloo requests, at most 3 concurrent), then a new
+   * FeedSnapshot. Reads the picks current at run time; `taste_revision` is the
+   * revision that completed onboarding (dedupe and staleness checks).
+   */
+  taste_seed: z.object({
+    taste_revision: z.number().int().nonnegative(),
+    catalog_version: z.string().min(1).max(64).nullable(),
+    categories: z.array(Category).min(1).max(4).default(['wear', 'play', 'watch', 'eat']),
+  }),
+  /**
+   * One Qloo insights (or Eat search) pass that appends cards to the latest
+   * taste seed. `wave` buckets refreshes so pull-to-refresh does not spend a
+   * request every time; `category` is which lane this wave walks.
+   */
+  interest_expand: z.object({
+    wave: z.number().int().nonnegative(),
+    category: Category,
+  }),
+  analyze_audio: z.object({
+    analysis_id: Uuid,
+    asset_id: Uuid,
+    expected_generation: z.number().int().positive(),
+  }),
 } as const satisfies Record<JobType, z.ZodType>;
 
 export type JobPayload<T extends JobType> = z.infer<(typeof JobPayloads)[T]>;

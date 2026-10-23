@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { loadProviderConfig } from '../config';
+import { DEFAULT_MODELS, PINNED_FEATHERLESS_ROLLBACK, loadProviderConfig } from '../config';
 import { createTextModel, createVlm } from '../llm';
+import { resolveFromWorkspace } from '../paths';
 import { createFeatherlessTransport, extractJsonText } from './transport';
 
 const validAnalysis = {
@@ -37,8 +39,8 @@ const chat = (content: string, finish = 'stop') => ({
 const image = { bytes: new Uint8Array([0xff, 0xd8, 0xff]), mediaType: 'image/jpeg' as const };
 
 describe('featherless provider', () => {
-  it('is the default LLM provider and reports unavailable without FEATHERLESS_API_KEY', async () => {
-    const config = loadProviderConfig({});
+  it('is an explicit rollback provider and reports unavailable without FEATHERLESS_API_KEY', async () => {
+    const config = loadProviderConfig({ LLM_PROVIDER: 'featherless' });
     expect(config.LLM_PROVIDER).toBe('featherless');
     const vlm = createVlm(config);
     expect(vlm.capability()).toMatchObject({ status: 'unavailable', reason: 'not_configured' });
@@ -47,9 +49,27 @@ describe('featherless provider', () => {
   });
 
   it('is unverified with a key until the first successful call', () => {
-    const vlm = createVlm(loadProviderConfig({ FEATHERLESS_API_KEY: 'fk' }));
+    const vlm = createVlm(loadProviderConfig({ LLM_PROVIDER: 'featherless', FEATHERLESS_API_KEY: 'fk' }));
     expect(vlm.id).toBe('vlm:featherless:google/gemma-3-27b-it');
     expect(vlm.capability()).toMatchObject({ status: 'unverified', provider: 'featherless:google/gemma-3-27b-it' });
+  });
+
+  it('keeps google/gemma-3-27b-it as the vision-capable rollback pin from the live catalog', () => {
+    expect(PINNED_FEATHERLESS_ROLLBACK.model).toBe('google/gemma-3-27b-it');
+    expect(PINNED_FEATHERLESS_ROLLBACK.imageInput).toBe(true);
+    expect(DEFAULT_MODELS.featherless).toEqual({
+      vlm: PINNED_FEATHERLESS_ROLLBACK.model,
+      text: PINNED_FEATHERLESS_ROLLBACK.model,
+    });
+    const selection = JSON.parse(
+      readFileSync(resolveFromWorkspace('fixtures/featherless/model-selection.json'), 'utf8'),
+    );
+    expect(selection.preferred_rollback).toMatchObject({
+      id: 'google/gemma-3-27b-it',
+      present: true,
+      features: { image_input: true },
+    });
+    expect(selection.http_status).toBe(200);
   });
 
   it('sends an OpenAI-compatible request with bearer auth, text before the image, and validates the reply', async () => {
@@ -114,5 +134,29 @@ describe('featherless provider', () => {
     expect(extractJsonText('```json\n{"a":1}\n```')).toBe('{"a":1}');
     expect(extractJsonText('Here you go: {"a":1}')).toBe('{"a":1}');
     expect(extractJsonText('{"a":1}')).toBe('{"a":1}');
+  });
+});
+
+describe('featherless-style transport deadlines', () => {
+  it('reports a deadline that interrupts the response body as a timeout, not invalid_response', async () => {
+    const slowBody = (async (_url: string, init: RequestInit) => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"choices":['));
+          init.signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')));
+        },
+      });
+      return new Response(stream, { status: 200 });
+    }) as unknown as typeof fetch;
+    const { AnthropicTextModel } = await import('../text/anthropic');
+    const text = new AnthropicTextModel('m', createFeatherlessTransport({ apiKey: 'k', baseUrl: 'https://x.test/v1', jsonMode: 'none', fetch: slowBody }), {
+      timeoutMs: 50,
+      effort: 'medium',
+      refusalFallback: false,
+      vendor: 'elorian',
+    });
+    await expect(
+      text.generateStructured({ system: 's', prompt: 'p', schema: z.object({ ok: z.boolean() }), schemaName: 'x' }, { maxRetries: 0 }),
+    ).rejects.toMatchObject({ kind: 'timeout' });
   });
 });

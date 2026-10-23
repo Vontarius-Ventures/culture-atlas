@@ -1,0 +1,63 @@
+{
+  "id": "h13",
+  "split": "tune",
+  "file": "h13-qwenvl_shanghai.jpg",
+  "subject_domains": [
+    "place",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Oriental Pearl Tower",
+      "pattern": "oriental pearl",
+      "aliases": [
+        "Oriental Pearl TV Tower"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "pattern": "^shanghai$|shanghai skyline|lujiazui|pudong|the bund"
+    },
+    {
+      "pattern": "shanghai world financial|\\bswfc\\b"
+    },
+    {
+      "pattern": "jin ?mao"
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "hong kong|tokyo|dubai|singapore|taipei|seoul",
+      "why": "wrong city: the TV tower is unmistakable"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": false
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "No text: the landmark is identified by its distinctive form."
+}

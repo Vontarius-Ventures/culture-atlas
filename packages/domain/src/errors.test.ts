@@ -20,6 +20,12 @@ describe('AppError', () => {
     expect(body).toEqual({ code: 'rate_limited', message: expect.any(String), retryable: true, request_id: 'req-1' });
   });
 
+  it('carries the backoff hint as retry_after_ms when the error has one', () => {
+    const { body } = toErrorBody(new AppError('rate_limited', { retryAfter: 60 }), 'req-3');
+    expect(body).toMatchObject({ code: 'rate_limited', retryable: true, retry_after_ms: 60_000 });
+    expect('retry_after_ms' in toErrorBody(new AppError('conflict'), 'req-4').body).toBe(false);
+  });
+
   it('hides unknown errors behind internal', () => {
     const { status, body } = toErrorBody(new Error('db password=secret'), 'req-2');
     expect(status).toBe(500);

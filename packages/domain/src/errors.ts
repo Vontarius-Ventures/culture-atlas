@@ -9,6 +9,8 @@ import { z } from 'zod';
 export const ERROR_CODES = {
   invalid_input: 400,
   unsupported_image: 400,
+  unsupported_media: 400,
+  duration_exceeded: 400,
   csrf_failed: 403,
   unauthenticated: 401,
   token_expired: 401,
@@ -17,7 +19,14 @@ export const ERROR_CODES = {
   account_required: 403,
   not_found: 404,
   conflict: 409,
+  account_mismatch: 409,
   revision_conflict: 409,
+  precondition_failed: 412,
+  precondition_required: 428,
+  action_required: 409,
+  /** Amendment 2.2 (ONB-01): the account still owes the taste questionnaire. */
+  onboarding_required: 409,
+  cursor_expired: 410,
   idempotency_conflict: 409,
   idempotency_in_progress: 409,
   payload_too_large: 413,
@@ -43,6 +52,8 @@ const DEFAULT_RETRYABLE: Partial<Record<ErrorCode, boolean>> = {
 const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   invalid_input: 'The request is not valid.',
   unsupported_image: 'Use a JPEG, PNG or WebP photo.',
+  unsupported_media: 'This file could not be decoded. Use an MP4, MOV or WebM video with a supported codec.',
+  duration_exceeded: 'This video is longer than the allowed duration.',
   csrf_failed: 'The request could not be verified. Refresh and try again.',
   unauthenticated: 'Sign in to continue.',
   token_expired: 'This connection has expired.',
@@ -51,7 +62,13 @@ const DEFAULT_MESSAGES: Record<ErrorCode, string> = {
   account_required: 'Create an account to continue.',
   not_found: 'Not found.',
   conflict: 'This changed since you last loaded it.',
+  account_mismatch: 'The signed-in account changed. Return to the original account before retrying.',
   revision_conflict: 'This collection changed. Review the latest version and try again.',
+  precondition_failed: 'Preferences changed. Reload before saving.',
+  precondition_required: 'An If-Match version is required.',
+  action_required: 'Allow this action on the selected phone first.',
+  onboarding_required: 'Pick at least 3 things you love to start your feed.',
+  cursor_expired: 'This cursor expired. Resync the current state.',
   idempotency_conflict: 'This idempotency key was already used with a different request.',
   idempotency_in_progress: 'The original request is still being processed.',
   payload_too_large: 'Photos can be up to 15 MB.',
@@ -99,12 +116,14 @@ export function httpStatusFor(code: ErrorCode): number {
   return ERROR_CODES[code];
 }
 
-/** Standard error body: {code, message, retryable, request_id} (+ optional details). */
+/** Standard error body: {code, message, retryable, request_id} (+ optional retry_after_ms, details). */
 export const ErrorBody = z.object({
   code: ErrorCodeSchema,
   message: z.string(),
   retryable: z.boolean(),
   request_id: z.string(),
+  /** Backoff hint (BACKEND-CONTRACTS standard error); mirrors the Retry-After header. */
+  retry_after_ms: z.number().int().nonnegative().optional(),
   details: z.unknown().optional(),
 });
 export type ErrorBody = z.infer<typeof ErrorBody>;
@@ -118,6 +137,8 @@ export function toErrorBody(err: unknown, requestId: string): { status: number; 
     retryable: appErr.retryable,
     request_id: requestId,
   };
+  if (appErr.retryAfter !== undefined && Number.isFinite(appErr.retryAfter) && appErr.retryAfter >= 0)
+    body.retry_after_ms = Math.round(appErr.retryAfter * 1000);
   if (appErr.details !== undefined) body.details = appErr.details;
   return { status: appErr.status, body };
 }

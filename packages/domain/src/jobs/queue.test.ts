@@ -65,6 +65,19 @@ describe('job queue', () => {
     expect((await getJobById(db, job.id))?.state).toBe('complete');
   });
 
+  it('claims a queued job while another transaction is writing a trace or stage row for it', async () => {
+    // Inserting a row that references jobs(id) takes FOR KEY SHARE on the job
+    // (e.g. tracing an agent's get_job poll). A claim must not skip the job
+    // because of that, or a worker sees it queued yet cannot lease it.
+    const { job } = await newPollJob();
+    await db.transaction(async (tx) => {
+      await tx.query(`INSERT INTO trace_events (job_id, kind, name) VALUES ($1, 'note', 'poll')`, [job.id]);
+      await tx.query(`INSERT INTO job_stages (job_id, stage, status, attempt) VALUES ($1, 'probe', 'running', 0)`, [job.id]);
+      const claimed = await claimJobs(db, { workerId: 'w-fk', limit: 1, leaseMs: 30_000, ids: [job.id] });
+      expect(claimed.map((j) => j.id)).toEqual([job.id]);
+    });
+  });
+
   it('requeues retryable failures with backoff, then fails after max attempts', async () => {
     const { job } = await newPollJob();
     await claimById(job.id, 'w1');

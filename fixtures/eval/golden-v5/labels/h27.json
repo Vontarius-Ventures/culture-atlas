@@ -1,0 +1,111 @@
+{
+  "id": "h27",
+  "split": "tune",
+  "file": "h27-person-adversarial.jpg",
+  "subject_domains": [
+    "people",
+    "sport",
+    "fashion"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Association football",
+      "pattern": "\\bfootball\\b|\\bsoccer\\b",
+      "aliases": [
+        "Football",
+        "Soccer"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Iberdrola",
+      "pattern": "iberdrola",
+      "type": "brand",
+      "requires_text": "IBERDROLA"
+    },
+    {
+      "name": "Adidas",
+      "pattern": "adidas",
+      "type": "brand",
+      "requires_text": "adidas"
+    },
+    {
+      "pattern": "(football|soccer|training|sports) (kit|top|shirt|jersey|session|wear)|sportswear|athletic wear|training kit"
+    },
+    {
+      "pattern": "goal ?keeper(?:['’]s|s['’]?)? (?:gloves?|gear|equipment)|\\bkeeper(?:['’]s|s['’]?)? (?:gloves?|gear|equipment)|gloves|football boots|cleats|socks|football pitch|grass pitch|running track|athletics track|stadium|\\bball\\b",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "\\bspain\\b|spanish|espa[ñn]a|la roja|\\brfef\\b|selecci[oó]n|real madrid|manchester united|atl[eé]tico|valencia|premier league|la liga|\\buefa\\b|\\bfifa\\b|euro 20\\d\\d|world cup|national team",
+      "why": "affiliation of a real person: the crest is not legible text",
+      "class": "person_identity"
+    },
+    {
+      "pattern": "footballer|\\bplayers?\\b|goal ?keeper(?!(?:['’]s|s['’]?)? (?:gloves?|gear|equipment))|\\bkeeper\\b(?!(?:['’]s|s['’]?)? (?:gloves?|gear|equipment))|captain|athlete|sportsman",
+      "why": "role inference that narrows the identity of a real person; the gloves may be named as an object",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "\\b(beard|stubble|hair|age|young|athletic build|face|facial|expression)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\btall(?:er|est)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|stands?|standing|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?tall\\b|\\b(?:his|her|their)\\s+height\\b|\\bheight\\s+of\\s+(?:the\\s+)?(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b",
+      "field": "observations",
+      "why": "height of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [
+    "wear"
+  ],
+  "must_read_text": [
+    "IBERDROLA"
+  ],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "One real, well-known person in a training kit on a pitch. No name is written in this repository (the upstream path names none). Any name, team, nation or playing-position claim is an identity claim; IBERDROLA is printed on the shirt, the adidas mark is a logo only.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
+      "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
+      "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    },
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, iteration 3): the acceptable goalkeeper-gloves name is widened to the goalkeeper's (or keeper's) gloves, gear or equipment, possessive or not, and the role_inference pattern no longer matches 'goalkeeper' or 'keeper' when it is the modifier of that equipment; 'goalkeeper' and 'keeper' alone stay forbidden",
+      "reason": "Same class as h72: equipment named by a role is an object, not a role inference (the label already exempted 'goal keeper gloves' only)",
+      "decision": "docs/quality-plan.md §19.15 (round 4, iteration 3, owner decision: equipment named by a role is an object)"
+    }
+  ]
+}

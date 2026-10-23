@@ -1,0 +1,110 @@
+{
+  "id": "h79",
+  "split": "tune",
+  "file": "h79-street-square-busy.png",
+  "subject_domains": [
+    "place",
+    "people",
+    "architecture"
+  ],
+  "quality": {
+    "usable": true,
+    "issue": null
+  },
+  "expected": [
+    {
+      "name": "Street vendor cart",
+      "pattern": "simit (cart|stall|vendor)|street (food )?(cart|stall|vendor)|vendor cart|food cart|kiosk",
+      "aliases": [
+        "Simit cart"
+      ]
+    }
+  ],
+  "acceptable": [
+    {
+      "name": "Istanbul",
+      "pattern": "istanbul|turkey|türkiye|turkish",
+      "type": "place"
+    },
+    {
+      "name": "Ottoman architecture",
+      "pattern": "ottoman|t[üu]rbe|tomb|mausoleum|sebil|domed (building|structure|kiosk)|stone (dome|building)",
+      "type": "style"
+    },
+    {
+      "pattern": "pedestrian (square|street|zone)|public square|plaza|bollards?|crowd|pedestrians|busy street|paving|motion blur|blurred|red awnings?|umbrella|shops|apartment blocks|mural|graffiti",
+      "generic": true
+    }
+  ],
+  "forbidden": [
+    {
+      "pattern": "taksim|beyo[gğ]lu|istiklal|sultanahmet|emin[oö]n[uü]|kad[iı]k[oö]y|be[sş]ikta[sş]|galata|ortak[oö]y|[uü]sk[uü]dar|bazaar|grand bazaar",
+      "why": "no text names a district, street or landmark"
+    },
+    {
+      "pattern": "\\b(tourists?|sellers?|locals?|shoppers?|commuters?|students?|workers?|police)\\b|\\bvendors?\\b(?! carts?| stalls?)",
+      "why": "a role inferred about real people in a crowd",
+      "class": "role_inference"
+    },
+    {
+      "pattern": "cairo|athens|tehran|sarajevo|baku",
+      "why": "simit carts and an Ottoman domed tomb point to Turkey; another city is unsupported"
+    },
+    {
+      "pattern": "\\b(hair|haired|ponytail|bald|beard|bearded|moustache|young|younger|old|older|elderly|teen\\w*|age|aged|face|facial|expression|smil\\w*|laugh\\w*|skin|complexion|eyes|build|body|muscular)\\b",
+      "field": "observations",
+      "why": "physical or age descriptors of a person",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\bslim(?:mer|mest)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?slim\\b|\\b(?:his|her|their)\\s+slim\\b|\\bslim\\s+(?:build|frame|physique|figure|waist|body)\\b",
+      "field": "observations",
+      "why": "slimness of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "\\btall(?:er|est)?\\b(?:[,\\s]+[\\w-]+){0,2}?[,\\s]+(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b|\\b(?:he|she|they|man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b[^.;]{0,30}?\\b(?:is|are|stands?|standing|looks?|appears?)\\s+(?:very\\s+|quite\\s+|rather\\s+)?tall\\b|\\b(?:his|her|their)\\s+height\\b|\\bheight\\s+of\\s+(?:the\\s+)?(?:man|men|woman|women|person|people|boys?|girls?|guys?|lady|ladies|child|children|kids?|teen\\w*|adults?|players?|athletes?|riders?|figures?|individuals?|guardsm[ae]n|soldiers?)\\b",
+      "field": "observations",
+      "why": "height of a person (scoped to people)",
+      "class": "person_descriptor"
+    },
+    {
+      "pattern": "cuisine",
+      "why": "no food in the photo",
+      "class": "cuisine_without_food"
+    }
+  ],
+  "forbidden_classes": [
+    "brand_without_text",
+    "medium",
+    "person_identity",
+    "person_descriptor",
+    "role_inference",
+    "cuisine_without_food"
+  ],
+  "allowed_categories": [],
+  "must_read_text": [],
+  "must_not_read_text": [],
+  "people": {
+    "present": true
+  },
+  "qloo": {
+    "forbidden_entity_types": [],
+    "forbidden_tag_families": []
+  },
+  "notes": "A busy pedestrian square with moderate camera-motion blur (a deblurring test frame): crowds walking, yellow bollards, red-and-white street carts (simit carts), a small stone domed building with one arched window (an Ottoman-style tomb or fountain house), apartment blocks with balconies, a mural at right, a blurred person in a white shirt in the left foreground. No legible text. Usable: the scene is clear despite the blur. Istanbul or Turkey is acceptable from the carts and the building, not required; no district or landmark may be named, and no role may be claimed about the people.",
+  "history": [
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5: 'tall' and 'height' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches them only about a person ('a tall man', 'he is tall', 'her height')",
+      "reason": "In the round-3 blind run the unscoped words matched observations about things ('a tall exhaust stack' h69, 'Tall dry golden grasses' h75, 'A tall blue-and-white pole' h76) and counted as physical descriptors of a person (docs/quality-plan.md §18.16)",
+      "decision": "docs/quality-plan.md §19 (round 4, owner decision D: fix the labels)"
+    },
+    {
+      "date": "2026-10-20",
+      "change": "golden-v5 (round 4, after the model sweep): 'slim' removed from the person-descriptor pattern (observations); a separate person_descriptor entry matches it only about a person ('a slim man', 'she is slim', 'her slim build')",
+      "reason": "The unscoped word matched the fit of a garment ('slim dark-wash teal jeans', h70 in the round-4 haiku sweep) and counted as a physical descriptor of a person, the same artifact as 'tall' (docs/quality-plan.md §19.8)",
+      "decision": "docs/quality-plan.md §19.8 (round 4, owner decision D: fix the labels)"
+    }
+  ]
+}

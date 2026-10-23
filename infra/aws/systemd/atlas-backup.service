@@ -1,0 +1,10 @@
+[Unit]
+Description=culture atlas nightly logical backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/atlas-backup
+TimeoutStartSec=1800
+Nice=10

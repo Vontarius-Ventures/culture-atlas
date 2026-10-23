@@ -13,6 +13,10 @@ export type ItemQuery = z.infer<typeof ItemQuery>;
 
 export const ItemDetailResponse = z.object({
   item: DiscoveryCard,
+  /** Provider description of the thing itself (Qloo short_description, etc.). */
+  description: z.string().nullable(),
+  /** Extra sourced line: cuisine, artist name, address detail. */
+  detail: z.string().nullable(),
   /** Short explanation shown in the detail view. */
   reason: z.string().nullable(),
   /** "Why this?" disclosure: plain-language reason + optional sources. No raw scores. */

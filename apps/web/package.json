@@ -9,13 +9,15 @@
     "start": "next start --port 3000",
     "typecheck": "tsc -p tsconfig.json",
     "test:e2e": "playwright test",
-    "test:e2e:real": "playwright test -c playwright.real.config.ts"
+    "test:e2e:real": "playwright test -c playwright.real.config.ts",
+    "test:e2e:real:v22": "playwright test -c playwright.real-v22.config.ts"
   },
   "dependencies": {
     "@culture-atlas/agent-gateway": "workspace:*",
     "@culture-atlas/domain": "workspace:*",
     "@culture-atlas/providers": "workspace:*",
     "next": "16.3.7",
+    "qrcode-generator": "2.0.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "0.0.1",
