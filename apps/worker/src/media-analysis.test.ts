@@ -609,12 +609,12 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
       waiting_reason: 'ai_paused',
     });
     // Paused: a fresh worker claims nothing and sends nothing (no paid probe).
-    await db.query('UPDATE capture_work SET available_at=now() WHERE id=$1', [req.job_id]);
+    await db.query("UPDATE capture_work SET available_at=now() - interval '1 minute' WHERE id=$1", [req.job_id]);
     await worker(gateway, accountId).drain();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     credits = true;
     await gateway.ledger!.resume();
-    await db.query('UPDATE capture_work SET available_at=now() WHERE id=$1', [req.job_id]);
+    await db.query("UPDATE capture_work SET available_at=now() - interval '1 minute' WHERE id=$1", [req.job_id]);
     await worker(gateway, accountId).drain();
     row = await analysisRow(req.analysis_id);
     expect(row).toMatchObject({ state: 'complete', waiting_reason: null });
@@ -676,7 +676,7 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
     await w.drain();
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect((await analysisRow(req.analysis_id)).state).toBe('queued');
-    await db.query('UPDATE capture_work SET available_at=now() WHERE id=$1', [req.job_id]);
+    await db.query("UPDATE capture_work SET available_at=now() - interval '1 minute' WHERE id=$1", [req.job_id]);
     await w.drain();
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     const row = await analysisRow(req.analysis_id);
