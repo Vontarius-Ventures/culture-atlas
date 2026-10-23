@@ -228,7 +228,7 @@ export const TOOLS = [
     name: 'create_plan',
     title: 'Create a movie night',
     description:
-      'Create a movie-night plan from 2-5 items of one collection (include expected_revision). Returns immediately; poll get_job, then get_plan.',
+      'Create a movie-night plan (film, food and music; the only plan template) from 2-5 items of one collection (include expected_revision). Returns immediately; poll get_job, then get_plan. For any other board (a dinner party, a trip, a mood board), use create_collection and add_collection_item instead.',
     scopes: ['plans:write', 'collections:read'],
     input: schemas.CreatePlanRequest,
     startsJob: true,

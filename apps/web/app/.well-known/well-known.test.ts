@@ -12,3 +12,16 @@ describe('Apple App Site Association', () => {
     expect(body.applinks.details[0]?.paths).toContain('/identity/callback');
   });
 });
+
+describe('OAuth protected-resource metadata (MCP)', () => {
+  it('advertises every grantable scope, including captures, taste, media and devices', async () => {
+    const { SCOPES } = await import('@culture-atlas/domain');
+    const { GET } = await import('./oauth-protected-resource/mcp/route');
+    const body = (await GET().json()) as { resource: string; scopes_supported: string[] };
+    expect(body.resource).toMatch(/\/mcp$/);
+    expect(body.scopes_supported).toEqual([...SCOPES]);
+    for (const s of ['captures:read', 'captures:write', 'taste:read', 'taste:write', 'media:analyze', 'devices:command']) {
+      expect(body.scopes_supported).toContain(s);
+    }
+  });
+});

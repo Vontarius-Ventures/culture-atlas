@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import * as schemas from '../packages/domain/src/schemas';
 import { SPEC_TOOL_NAMES, TOOLS } from '../packages/agent-gateway/src/tools';
-import { buildAgentContract, buildAgentContractFiles, NAMED_SCHEMAS } from './generate-agent-contract';
+import { SCOPES } from '../packages/domain/src/enums';
+import { buildAgentContract, buildAgentContractFiles, buildAgentsReference, NAMED_SCHEMAS, withAgentsReference } from './generate-agent-contract';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -50,6 +51,17 @@ describe('agent OpenAPI 3.1', () => {
       expect(await readFile(resolve(root, 'docs/api', path), 'utf8'), path).toBe(expected);
     }
     expect(Object.keys(NAMED_SCHEMAS).length).toBeGreaterThan(10);
+  });
+
+  it('docs/agents.md carries the generated scope and tool reference (every SCOPE and TOOL)', async () => {
+    const doc = await readFile(resolve(root, 'docs/agents.md'), 'utf8');
+    expect(withAgentsReference(doc)).toBe(doc);
+    const reference = buildAgentsReference();
+    for (const scope of SCOPES) expect(reference).toContain(`| \`${scope}\` |`);
+    for (const tool of TOOLS) expect(reference).toContain(`| \`${tool.name}\` |`);
+    // The upload field name and the v2 connection route are documented.
+    expect(doc).toContain('**`image`**');
+    expect(doc).toContain('POST /v2/agent-connections');
   });
 
   it('documented examples validate against the live schemas', async () => {

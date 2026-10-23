@@ -30,7 +30,13 @@ function capture(ctx: ServiceContext): CaptureV2Context {
 export async function getMedia(ctx: ServiceContext, id: string) {
   ({ ctx } = await authorizeMedia(ctx, 'media:read', id));
   const detail = await new MediaIntake(capture(ctx)).detail(id);
-  const rewrite = (url: string | null) => url?.replace('/v2/media/', '/v2/agent-media/') ?? null;
+  // Absolute links from APP_BASE_URL: an agent has no page origin to resolve a relative path against.
+  const base = ctx.config.APP_BASE_URL.replace(/\/+$/, '');
+  const rewrite = (url: string | null) => {
+    if (!url) return null;
+    const path = url.replace('/v2/media/', '/v2/agent-media/');
+    return path.startsWith('/') ? `${base}${path}` : path;
+  };
   // Owner analysis links can reveal capture reasoning. Media read alone cannot.
   return { ...detail, links: { original: null, playback: rewrite(detail.links.playback), poster: rewrite(detail.links.poster), analysis: null },
     frames: detail.frames.map((f) => ({ ...f, thumbnail_url: rewrite(f.thumbnail_url) })) };
