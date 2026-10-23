@@ -43,7 +43,8 @@ final class ConveyorDriver<Card: ConveyorCard>: ObservableObject {
     if running, let lastTick {
       let dt = date.timeIntervalSince(lastTick)
       // After a pause (touch, background), resume smoothly instead of jumping.
-      conveyor.advance(seconds: dt > 0.1 ? 1.0 / 60 : dt)
+      // A slow frame still advances by real time (the model caps a step).
+      conveyor.advance(seconds: dt > 0.5 ? 1.0 / 60 : dt)
     }
     lastTick = running ? date : nil
     return conveyor
@@ -79,7 +80,13 @@ extension View {
   func pausesDrift(_ pause: DriftPause) -> some View {
     if #available(iOS 18.0, *) {
       onScrollPhaseChange { _, phase in
-        if phase == .idle { pause.release() } else { pause.touch() }
+        // Only a finger on the scroll view holds the drift. Programmatic
+        // scrolls (tab re-tap scrolls to top) can stay in .animating without
+        // reporting .idle, so they must never pause it.
+        switch phase {
+        case .tracking, .interacting: pause.touch()
+        default: pause.release()
+        }
       }
     } else {
       simultaneousGesture(
