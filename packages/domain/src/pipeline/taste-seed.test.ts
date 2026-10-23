@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FASHION_BRAND_TAG } from '../compiler/grounding';
-import { filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, signalsFor, type SeedSignal, type SeedSignals } from './taste-seed';
+import { eatPlaceSearchQueries, filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, signalsFor, type SeedSignal, type SeedSignals } from './taste-seed';
 
 /**
  * Taste-seed signal rules (docs/quality-plan.md §6). The tag lists mirror the
@@ -38,12 +38,24 @@ describe('food signals (S-EAT-SIGNAL)', () => {
     expect(signalsFor('eat', { tags: [SIGNALS.tags[1]!], entities: [] })).toEqual({ tags: [], entities: [] });
   });
 
-  it('Wear asks Qloo for fashion brands only (S-WEAR-FILTER); Eat for cuisine tags', () => {
+  it('Wear asks Qloo for fashion brands only (S-WEAR-FILTER); Eat for cuisine tags, then places with photos', () => {
     expect(SEED_CATEGORY_PLAN.wear.filterTags).toEqual([FASHION_BRAND_TAG]);
     expect(FASHION_BRAND_TAG).toBe('urn:tag:genre:brand:fashion');
     expect(SEED_CATEGORY_PLAN.eat.filterTagTypes).toEqual(['urn:tag:cuisine:qloo']);
     expect(SEED_CATEGORY_PLAN.play.filterTags).toBeUndefined();
     expect(SEED_CATEGORY_PLAN.watch.filterTags).toBeUndefined();
+  });
+
+  it('searches several pictured place queries, not only the first cuisine name', () => {
+    expect(
+      eatPlaceSearchQueries({
+        tags: [food('urn:tag:cuisine:qloo:fixture_dim_sum', 'Dim Sum'), food('urn:tag:cuisine:qloo:fixture_sichuan', 'Sichuan')],
+        entities: [{ id: 'FIXTURE-PLACE-0001', name: 'Havana 1957 Cuban Cuisine', food: true }],
+      }),
+    ).toEqual(['Dim Sum restaurant', 'Sichuan restaurant', 'Havana 1957 Cuban Cuisine restaurant']);
+    expect(eatPlaceSearchQueries({ tags: [food('urn:tag:cuisine:qloo:fixture_bao', 'BAO Restaurant')], entities: [] })).toEqual([
+      'BAO Restaurant',
+    ]);
   });
 });
 

@@ -546,6 +546,12 @@
               "glasses_unavailable",
               "arm_on_phone_required"
             ]
+          },
+          "music_match": {
+            "available": false,
+            "reasons": [
+              "fingerprint_unavailable"
+            ]
           }
         }
       }
@@ -1202,6 +1208,168 @@
         "capture_id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
         "waiting_reason": null,
         "error_code": null
+      }
+    },
+    "discoveries_response": {
+      "direction": "response",
+      "route": "GET /v1/discoveries",
+      "schema": "schemas.DiscoveriesResponse",
+      "body": {
+        "items": [
+          {
+            "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+            "kind": "artist",
+            "category": "play",
+            "title": "Nina Simone",
+            "subtitle": "Artist",
+            "image": null,
+            "is_example": true,
+            "saved": false,
+            "saved_item_id": null,
+            "recommendation_id": null,
+            "evidence_available": false
+          }
+        ],
+        "next_cursor": null,
+        "feed_id": "a4b5c6d7-e8f9-4a0b-9c1d-2e3f40516273",
+        "feed_revision": 1,
+        "is_example_feed": true,
+        "available_categories": ["wear", "play", "watch", "eat"]
+      }
+    },
+    "collections_list_response": {
+      "direction": "response",
+      "route": "GET /v1/collections",
+      "schema": "schemas.CollectionsListResponse",
+      "body": {
+        "collections": [
+          {
+            "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+            "name": "Weekend board",
+            "description": null,
+            "item_count": 0,
+            "cover": [],
+            "revision": 1,
+            "created_at": "2026-01-15T12:00:00.000Z",
+            "updated_at": "2026-01-15T12:00:00.000Z"
+          }
+        ],
+        "unfiled": {
+          "item_count": 0,
+          "cover": []
+        }
+      }
+    },
+    "collection_create_request": {
+      "direction": "request",
+      "route": "POST /v1/collections",
+      "schema": "schemas.CreateCollectionRequest",
+      "body": {
+        "name": "Weekend board"
+      }
+    },
+    "collection_create_response": {
+      "direction": "response",
+      "route": "POST /v1/collections",
+      "schema": "schemas.CollectionSummary",
+      "body": {
+        "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+        "name": "Weekend board",
+        "description": null,
+        "item_count": 0,
+        "cover": [],
+        "revision": 1,
+        "created_at": "2026-01-15T12:00:00.000Z",
+        "updated_at": "2026-01-15T12:00:00.000Z"
+      }
+    },
+    "collection_detail_response": {
+      "direction": "response",
+      "route": "GET /v1/collections/{id}",
+      "schema": "schemas.CollectionDetailResponse",
+      "body": {
+        "collection": {
+          "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+          "name": "Weekend board",
+          "description": null,
+          "item_count": 0,
+          "cover": [],
+          "revision": 1,
+          "created_at": "2026-01-15T12:00:00.000Z",
+          "updated_at": "2026-01-15T12:00:00.000Z"
+        },
+        "items": [],
+        "next_cursor": null,
+        "available_filters": ["photos", "music", "films", "food", "style"]
+      }
+    },
+    "collection_add_item_request": {
+      "direction": "request",
+      "route": "PUT /v1/collections/{id}/items/{item_id}",
+      "schema": "schemas.AddCollectionItemRequest",
+      "body": {}
+    },
+    "collection_add_item_response": {
+      "direction": "response",
+      "route": "PUT /v1/collections/{id}/items/{item_id}",
+      "schema": "schemas.AddCollectionItemResponse",
+      "body": {
+        "collection_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+        "membership_id": "a4b5c6d7-e8f9-4a0b-9c1d-2e3f40516273",
+        "saved_item_id": "b5c6d7e8-f90a-4b1c-8d2e-3f4051627384",
+        "collection_revision": 2,
+        "created": true,
+        "saved": true
+      }
+    },
+    "item_detail_response": {
+      "direction": "response",
+      "route": "GET /v1/items/{id}",
+      "schema": "schemas.ItemDetailResponse",
+      "body": {
+        "item": {
+          "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+          "kind": "artist",
+          "category": "play",
+          "title": "Nina Simone",
+          "subtitle": "Artist",
+          "image": null,
+          "is_example": true,
+          "saved": false,
+          "saved_item_id": null,
+          "recommendation_id": null,
+          "evidence_available": false
+        },
+        "description": "American singer, songwriter and pianist.",
+        "detail": null,
+        "reason": "Because you picked jazz.",
+        "why_this": {
+          "text": "Because you picked jazz.",
+          "sources": []
+        },
+        "destination_url": "https://en.wikipedia.org/wiki/Nina_Simone",
+        "references": [],
+        "related": [],
+        "related_state": "none",
+        "related_job_id": null,
+        "collection_ids": [],
+        "capture_id": null
+      }
+    },
+    "related_discovery_request": {
+      "direction": "request",
+      "route": "POST /v1/items/{id}/discoveries",
+      "schema": "schemas.RelatedDiscoveryRequest",
+      "body": {}
+    },
+    "related_discovery_response": {
+      "direction": "response",
+      "route": "POST /v1/items/{id}/discoveries",
+      "schema": "schemas.RelatedDiscoveryResponse",
+      "body": {
+        "job_id": "a4b5c6d7-e8f9-4a0b-9c1d-2e3f40516273",
+        "discovery_job_id": "b5c6d7e8-f90a-4b1c-8d2e-3f4051627384",
+        "reused": false
       }
     }
   }

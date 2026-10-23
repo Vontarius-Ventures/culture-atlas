@@ -72,12 +72,23 @@ struct AudioDetailView: View {
           Text("Speech transcription is off in Music Mode.")
             .font(.footnote)
             .foregroundStyle(AtlasTheme.muted)
+          if CapabilityGate.musicMatch(controller.capabilities).available {
+            Text("Explore looks for artists from this recording when it can, and never invents a match. Song fingerprint matching isn't available yet.")
+              .font(.footnote)
+              .foregroundStyle(AtlasTheme.muted)
+          } else {
+            Text(CapabilityGate.musicMatch(controller.capabilities).message)
+              .font(.footnote)
+              .foregroundStyle(AtlasTheme.muted)
+          }
           Label("Sounds and atmosphere", systemImage: "circle")
             .foregroundStyle(AtlasTheme.muted)
             .accessibilityLabel("Sounds and atmosphere, off")
         }
 
-        exploreButton
+        if CapabilityGate.musicMatch(controller.capabilities).available {
+          exploreButton
+        }
         Text("Saving this recording does not add everything heard to your taste.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)

@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.cultureatlas.app.AppGraph
 import com.cultureatlas.capture.core.policy.AudioPolicy
+import com.cultureatlas.capture.core.policy.CapabilityGate
 import com.cultureatlas.capture.core.policy.ClipClock
 import com.cultureatlas.capture.core.store.DraftRecord
 import kotlinx.coroutines.delay
@@ -53,6 +54,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun MusicScreen(graph: AppGraph, onBack: () -> Unit) {
     val controller = graph.controller
+    val capabilities by controller.capabilities.collectAsState()
+    val musicMatch = CapabilityGate.musicMatch(capabilities)
     val audio = graph.audio
     val recording by audio.recording.collectAsState()
     val captureState by audio.state.collectAsState()
@@ -187,16 +190,20 @@ fun MusicScreen(graph: AppGraph, onBack: () -> Unit) {
         ) { Text("Upload an audio file") }
         kept?.let { draft ->
             Text(AudioPolicy.KEEP_COPY)
-            Button(
-                onClick = {
-                    scope.launch {
-                        controller.exploreMusic(draft)
-                        kept = null
-                        onBack()
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            ) { Text(AudioPolicy.EXPLORE_LABEL) }
+            if (musicMatch.available) {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            controller.exploreMusic(draft)
+                            kept = null
+                            onBack()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) { Text(AudioPolicy.EXPLORE_LABEL) }
+            } else {
+                Text(musicMatch.message, color = AtlasColors.muted)
+            }
             TextButton(onClick = { kept = null; onBack() }) { Text("Stay on this phone") }
         }
     }

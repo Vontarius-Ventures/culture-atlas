@@ -83,6 +83,67 @@ public struct HTTPTransport: Sendable {
       throw AtlasClientError.decoding(String(describing: Result.self))
     }
   }
+
+  /// `POST /v2/media/audio`: form fields plus a WAV `file` part. No JSON body.
+  public func multipart<Result: Decodable>(
+    baseURL: URL, path: String, fields: [String: String], file: (name: String, type: String, data: Data),
+    bearer: String?, idempotencyKey: UUID?, expectedAccount: UUID?, timeout: TimeInterval = 120
+  ) async throws -> Result {
+    let boundary = "atlas-\(UUID().uuidString.lowercased())"
+    var body = Data()
+    for (name, value) in fields.sorted(by: { $0.key < $1.key }) {
+      body.append("--\(boundary)\r\n".data(using: .utf8)!)
+      body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+      body.append(value.data(using: .utf8)!)
+      body.append("\r\n".data(using: .utf8)!)
+    }
+    body.append("--\(boundary)\r\n".data(using: .utf8)!)
+    body.append(
+      "Content-Disposition: form-data; name=\"file\"; filename=\"\(file.name)\"\r\n".data(using: .utf8)!)
+    body.append("Content-Type: \(file.type)\r\n\r\n".data(using: .utf8)!)
+    body.append(file.data)
+    body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+    var request = URLRequest(url: baseURL.appendingPathComponent(path), timeoutInterval: timeout)
+    request.httpMethod = "POST"
+    request.httpBody = body
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    if let bearer { request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization") }
+    if let idempotencyKey {
+      request.setValue(idempotencyKey.uuidString.lowercased(), forHTTPHeaderField: "Idempotency-Key")
+    }
+    if let expectedAccount {
+      request.setValue(expectedAccount.uuidString.lowercased(), forHTTPHeaderField: "X-Atlas-Expected-Account")
+    }
+    let data: Data
+    let response: URLResponse
+    do {
+      (data, response) = try await session.data(for: request)
+    } catch {
+      throw AtlasClientError.transport((error as NSError).domain + ":\((error as NSError).code)")
+    }
+    guard let http = response as? HTTPURLResponse else { throw AtlasClientError.transport("no_http_response") }
+    if !(200..<300).contains(http.statusCode) {
+      if let body = try? AtlasJSON.decoder().decode(ServerErrorBody.self, from: data) {
+        throw AtlasClientError.server(
+          status: http.statusCode, code: body.error.code, message: body.error.message,
+          retryable: body.error.retryable, retryAfter: body.error.retryAfterMS.map { $0 / 1000 })
+      }
+      if let flat = try? AtlasJSON.decoder().decode(FlatServerError.self, from: data) {
+        throw AtlasClientError.server(
+          status: http.statusCode, code: flat.code, message: flat.message, retryable: flat.retryable,
+          retryAfter: flat.retryAfterMS.map { $0 / 1000 })
+      }
+      throw AtlasClientError.server(
+        status: http.statusCode, code: "http_\(http.statusCode)", message: "", retryable: http.statusCode >= 500,
+        retryAfter: nil)
+    }
+    do {
+      return try AtlasJSON.decoder().decode(Result.self, from: data)
+    } catch {
+      throw AtlasClientError.decoding(String(describing: Result.self))
+    }
+  }
 }
 
 extension HTTPTransport {

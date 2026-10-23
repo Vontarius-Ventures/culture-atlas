@@ -1355,8 +1355,9 @@ describe('native taste onboarding fixtures (amendment 2.2)', () => {
       const contractRoute = schemas.ROUTES[operation as keyof typeof schemas.ROUTES];
       expect(contractRoute, operation).toBeDefined();
       expect(`${contractRoute.method} ${contractRoute.path}`, operation).toBe(route);
-      // Only owner/account routes may ever be bridged; never demo, public or agent routes.
-      expect(['owner', 'account'], operation).toContain(contractRoute.auth);
+      // Bridged routes are owner/account (or 'any', which still requires taste:read
+      // once the installation is converted to the account owner).
+      expect(['owner', 'account', 'any'], operation).toContain(contractRoute.auth);
     }
     expect(onboardingFixture.auth.mutation_headers).toEqual([
       contract.headers.idempotency_key,
@@ -1590,6 +1591,9 @@ describe('native owner bridge and push registration through the real handlers', 
     createTastePick: 'onboarding_pick_search_request',
     putOnboardingExclusions: 'onboarding_exclusions_request',
     completeOnboarding: 'onboarding_complete_request',
+    createCollection: 'collection_create_request',
+    addCollectionItem: 'collection_add_item_request',
+    discoverRelated: 'related_discovery_request',
   };
   const responseMessage: Record<string, string> = {
     getOnboardingCatalog: 'onboarding_catalog_response',
@@ -1603,6 +1607,13 @@ describe('native owner bridge and push registration through the real handlers', 
     listTastePicks: 'taste_picks_response',
     createTastePick: 'onboarding_pick_response',
     deleteTastePick: 'onboarding_delete_pick_response',
+    getDiscoveries: 'discoveries_response',
+    getItem: 'item_detail_response',
+    discoverRelated: 'related_discovery_response',
+    listCollections: 'collections_list_response',
+    createCollection: 'collection_create_response',
+    getCollection: 'collection_detail_response',
+    addCollectionItem: 'collection_add_item_response',
   };
   const pickId = '6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20';
   type Operation = keyof typeof schemas.ROUTES;
@@ -1636,14 +1647,18 @@ describe('native owner bridge and push registration through the real handlers', 
     const bodyKey = requestMessage[operation];
     if (bodyKey) headers['content-type'] = 'application/json';
     const path =
-      route.path.replace('{id}', pickId) + (operation === 'searchOnboarding' ? '?q=nina' : '');
+      route.path.replace('{id}', pickId).replace('{item_id}', pickId) +
+      (operation === 'searchOnboarding' ? '?q=nina' : '');
+    const params: Record<string, string> = {};
+    if (route.path.includes('{id}')) params.id = pickId;
+    if (route.path.includes('{item_id}')) params.item_id = pickId;
     const response = await handler(
       new NextRequest(`http://localhost:3399${path}`, {
         method: route.method,
         headers,
         body: bodyKey ? JSON.stringify(messages[bodyKey]!.body) : undefined,
       }),
-      { params: Promise.resolve(route.path.includes('{id}') ? { id: pickId } : {}) },
+      { params: Promise.resolve(params) },
     );
     return { response, seen };
   }

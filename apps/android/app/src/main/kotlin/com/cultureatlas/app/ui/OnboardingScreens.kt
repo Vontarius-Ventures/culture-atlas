@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -78,7 +79,7 @@ import okhttp3.Request
 // Selection is an olive outline plus a check, never colour alone; every pick
 // is a toggle; the counter is a polite live region.
 
-private val API_BASE = "https://${BuildConfig.ATLAS_API_HOST}"
+internal val AtlasApiBase = "https://${BuildConfig.ATLAS_API_HOST}"
 
 @Composable
 fun OnboardingFlowScreen(onboarding: OnboardingController) {
@@ -137,8 +138,19 @@ private fun PickBar(onboarding: OnboardingController, step: Int) {
                 )
                 Spacer(Modifier.weight(1f))
                 if (step < 3) {
-                    OutlinedButton(onClick = { onboarding.step.value = step + 1 }, modifier = Modifier.heightIn(min = 48.dp)) {
-                        Text("${OnboardingCopy.NEXT} →")
+                    if (counter.canComplete) {
+                        Button(
+                            onClick = { onboarding.step.value = step + 1 },
+                            modifier = Modifier.heightIn(min = 48.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = AtlasColors.olive,
+                                contentColor = AtlasColors.paper,
+                            ),
+                        ) { Text("${OnboardingCopy.NEXT} →") }
+                    } else {
+                        OutlinedButton(onClick = { onboarding.step.value = step + 1 }, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text("${OnboardingCopy.NEXT} →")
+                        }
                     }
                 }
             }
@@ -217,13 +229,11 @@ fun ChipPickStep(onboarding: OnboardingController, settings: Boolean) {
     val busy by onboarding.busy.collectAsState()
     Text(OnboardingCopy.CHIPS_TITLE, Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif))
     catalog?.let { c ->
-        TasteCategory.entries.forEach { category ->
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(OnboardingCopy.group(category), Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    c.chips[category].forEach { entry ->
-                        PillToggle(entry.label, onboarding.isPicked(entry, picks), enabled = entry.id !in busy) { onboarding.toggle(entry, settings) }
-                    }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OnboardingPolicy.mixChips(c.chips).forEach { entry ->
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(OnboardingCopy.group(entry.category), color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall)
+                    PillToggle(entry.label, onboarding.isPicked(entry, picks), enabled = entry.id !in busy) { onboarding.toggle(entry, settings) }
                 }
             }
         }
@@ -367,7 +377,7 @@ fun BuildingFeedScreen(onboarding: OnboardingController) {
         }
         if (action == OnboardingPolicy.SeedAction.BACKGROUND) {
             Text(OnboardingCopy.BUILDING_UNAVAILABLE, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-            Button(onClick = { onboarding.finish() }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(OnboardingCopy.TASTE_DONE) }
+            Button(onClick = { onboarding.finish() }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(OnboardingCopy.SEE_FEED) }
         }
     }
 }
@@ -395,7 +405,16 @@ fun TasteSettingsScreen(onboarding: OnboardingController, onBack: () -> Unit) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        TextButton(onClick = if (addingMore) ({ addingMore = false; scope.launch { onboarding.loadTaste() } }) else onBack) {
+        TextButton(
+            onClick = {
+                if (addingMore) {
+                    addingMore = false
+                    scope.launch { onboarding.loadTaste() }
+                } else {
+                    onBack()
+                }
+            },
+        ) {
             Text("← ${if (addingMore) OnboardingCopy.TASTE_DONE else OnboardingCopy.BACK}")
         }
         if (addingMore) {
@@ -447,7 +466,11 @@ private val imageCache = LruCache<String, ImageBitmap>(32)
 
 @Composable
 fun RemoteImage(image: OnboardingImage?, modifier: Modifier) {
-    val url = image?.resolved(API_BASE)
+    RemoteImage(image?.resolved(AtlasApiBase), modifier)
+}
+
+@Composable
+fun RemoteImage(url: String?, modifier: Modifier, contentDescription: String? = null) {
     val bitmap by produceState<ImageBitmap?>(initialValue = url?.let { imageCache.get(it) }, url) {
         if (url == null || value != null) return@produceState
         value = withContext(Dispatchers.IO) {
@@ -461,7 +484,7 @@ fun RemoteImage(image: OnboardingImage?, modifier: Modifier) {
     }
     val current = bitmap
     if (current != null) {
-        Image(current, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
+        Image(current, contentDescription = contentDescription, modifier = modifier, contentScale = ContentScale.Crop)
     } else {
         Box(modifier.background(AtlasColors.quiet))
     }

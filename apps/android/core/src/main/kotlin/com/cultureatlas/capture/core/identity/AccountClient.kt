@@ -79,7 +79,9 @@ class AccountClient(
     /** Completes the email proof from the App Link and enrolls this installation. */
     suspend fun completeSignIn(callback: String): String {
         val saved = pending.read() ?: throw CallbackException("no_pending_sign_in")
-        val values = parseCallback(callback) ?: throw CallbackException("malformed_callback")
+        val values =
+            parseCallback(callback, setOf("app.cultureatlas.com", http.baseUrl.host))
+                ?: throw CallbackException("malformed_callback")
         if (values["state"] != saved.state || values["nonce"] != saved.nonce) throw CallbackException("state_mismatch")
         val completion = http.call(
             "POST", "/v2/identity/email/complete",
@@ -166,10 +168,13 @@ class AccountClient(
         fun pkceChallenge(verifier: String): String =
             EnrollmentProof.base64Url(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
 
-        /** https://app.cultureatlas.com/identity/callback#challenge_id=…&token=…&state=…&nonce=… */
-        fun parseCallback(value: String): Map<String, String>? {
+        /** https://{api-host}/identity/callback#challenge_id=…&token=…&state=…&nonce=… */
+        fun parseCallback(
+            value: String,
+            allowedHosts: Set<String> = setOf("app.cultureatlas.com"),
+        ): Map<String, String>? {
             val uri = runCatching { URI(value) }.getOrNull() ?: return null
-            if (uri.scheme != "https" || uri.host != "app.cultureatlas.com" || uri.path != "/identity/callback") return null
+            if (uri.scheme != "https" || uri.host !in allowedHosts || uri.path != "/identity/callback") return null
             val fragment = uri.rawFragment ?: return null
             val values = fragment.split('&').mapNotNull { pair ->
                 val index = pair.indexOf('=')

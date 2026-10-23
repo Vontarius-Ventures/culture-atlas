@@ -31,10 +31,11 @@ class MainActivity : ComponentActivity() {
         handle(intent)
     }
 
-    /** Verified App Link: https://app.cultureatlas.com/identity/callback#… */
+    /** Verified App Link on the store host or this build's API host. */
     private fun handle(intent: Intent?) {
         val data = intent?.data ?: return
-        if (data.host == "app.cultureatlas.com" && data.path == "/identity/callback") {
+        val hosts = setOf("app.cultureatlas.com", BuildConfig.ATLAS_API_HOST)
+        if (data.scheme == "https" && data.host in hosts && data.path == "/identity/callback") {
             lifecycleScope.launch { graph.controller.handleLink(data) }
         }
     }

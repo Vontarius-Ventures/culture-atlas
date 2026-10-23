@@ -59,6 +59,15 @@ export const JobPayloads = {
     catalog_version: z.string().min(1).max(64).nullable(),
     categories: z.array(Category).min(1).max(4).default(['wear', 'play', 'watch', 'eat']),
   }),
+  /**
+   * One Qloo insights (or Eat search) pass that appends cards to the latest
+   * taste seed. `wave` buckets refreshes so pull-to-refresh does not spend a
+   * request every time; `category` is which lane this wave walks.
+   */
+  interest_expand: z.object({
+    wave: z.number().int().nonnegative(),
+    category: Category,
+  }),
   analyze_audio: z.object({
     analysis_id: Uuid,
     asset_id: Uuid,

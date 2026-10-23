@@ -15,7 +15,7 @@ expected behaviour is written down.
 | `draft-lock.json` | Account ownership of local drafts, sign-out order and choices, server responses that lock a draft | `DraftLockPolicyTests` / `DraftLockPolicyTest`, TS test |
 | `capability-gate.json` | Experimental Meta glasses state from server policy + local SDK state; phone camera gating | `CapabilityGateTests` / `CapabilityGateTest`, TS test |
 | `error-policy.json` | Client action per server error code, backoff schedule, refresh retry rules | `ErrorPolicyTests` / `ErrorPolicyTest`, TS test |
-| `onboarding.json` | Taste onboarding (amendment 2.2, screens 14/15/18): the 11 `/v1` routes a phone may call as its account owner (native owner bridge), exact copy, limits, counter, search, exclusion, entry, complete and seed decision tables | `OnboardingTests` / `OnboardingTest`, TS test |
+| `onboarding.json` | Taste onboarding (amendment 2.2, screens 14/15/18) plus Discover and boards: the `/v1` routes a phone may call as its account owner (native owner bridge), exact copy, limits, counter, search, exclusion, entry, complete and seed decision tables | `OnboardingTests` / `OnboardingTest`, TS test |
 | `ready-notice.json` | Ready notice (screen 17): silent APNs/FCM wake shapes, valid and invalid wakes, push-token registration, watched-analysis limits and the notification/toast decision table | `ReadyNoticeTests` / `ReadyNoticeTest`, TS test |
 
 ## How they are verified

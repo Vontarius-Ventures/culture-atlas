@@ -7,6 +7,9 @@ import com.cultureatlas.capture.core.policy.ErrorPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -150,12 +153,15 @@ class AtlasHttp(
         val url = baseUrl.newBuilder().apply {
             path.trim('/').split('/').forEach { addPathSegment(it) }
         }.build()
-        val json = AtlasContract.json.encodeToString(bodySerializer, body)
-            .toRequestBody("application/json".toMediaType())
-        val payload = MultipartBody.Builder().setType(MultipartBody.FORM)
-            .addFormDataPart("request", null, json)
-            .addFormDataPart("file", file.name, file.asRequestBody("audio/wav".toMediaType()))
-            .build()
+        val fields = AtlasContract.json.encodeToJsonElement(bodySerializer, body).jsonObject
+        val payload = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+            for ((name, value) in fields) {
+                if (value is kotlinx.serialization.json.JsonNull) continue
+                val text = (value as? kotlinx.serialization.json.JsonPrimitive)?.content ?: value.toString()
+                addFormDataPart(name, text)
+            }
+            addFormDataPart("file", file.name, file.asRequestBody("audio/wav".toMediaType()))
+        }.build()
         val request = Request.Builder().url(url).post(payload).apply {
             header("Accept", "application/json")
             bearer?.let { header("Authorization", "Bearer $it") }

@@ -321,7 +321,7 @@ for (const width of WIDTHS) {
       });
       expect(excl.ok(), await excl.text()).toBeTruthy();
       await page.goto('/settings/taste');
-      await expect(page.getByRole('heading', { name: 'Taste', exact: true })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Interests', exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Remove Film noir' })).toBeVisible();
       await page.getByRole('button', { name: /Add more to Watch/ }).click();
       await expect(

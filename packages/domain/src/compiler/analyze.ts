@@ -42,6 +42,7 @@ import type { Owner } from '../principal';
 import type { Focus } from '../schemas/common';
 import { activateAnalysis, ensureAnalysisRow } from '../services/analyses';
 import { foodExclusionsFor } from '../services/onboarding';
+import { destinationFromQlooProperties, imageFromQlooProperties, type DisplayImage } from '../services/display';
 import { stripSafetyClaims, violatedExclusions } from '../composer/dietary';
 import { JobBudget } from './budget';
 import { composeDishIdeas } from './dishes';
@@ -212,6 +213,8 @@ interface CategoryCandidate {
   name: string;
   year: number | null;
   explain: string[];
+  image: DisplayImage | null;
+  destination_url: string | null;
 }
 
 interface RecommendOutput {
@@ -1596,7 +1599,14 @@ export class CaptureCompiler {
         status: 'complete',
         providerQueryId,
         isReplay: res.is_replay,
-        candidates: entities.map((e) => ({ entityId: e.entity_id, name: e.name, year: entityYear(e), explain: (e.query?.explainability ?? []).sort((a, b) => b.score - a.score).map((x) => x.entity_id) })),
+        candidates: entities.map((e) => ({
+          entityId: e.entity_id,
+          name: e.name,
+          year: entityYear(e),
+          explain: (e.query?.explainability ?? []).sort((a, b) => b.score - a.score).map((x) => x.entity_id),
+          image: imageFromQlooProperties(e.properties, e.name),
+          destination_url: destinationFromQlooProperties(e.properties),
+        })),
       };
     } catch (err) {
       const e = errorSummary(err);
@@ -1711,7 +1721,13 @@ export class CaptureCompiler {
             category,
             canonicalKey: p.key,
             title: c.name,
-            displayMetadata: { subtitle: kind === 'film' && c.year ? String(c.year) : null, year: kind === 'film' ? c.year : null, image: null, example: Boolean(rec.isReplay) },
+            displayMetadata: {
+              subtitle: kind === 'film' && c.year ? String(c.year) : null,
+              year: kind === 'film' ? c.year : null,
+              ...(c.image ? { image: c.image } : {}),
+              ...(c.destination_url ? { destination_url: c.destination_url } : {}),
+              example: Boolean(rec.isReplay),
+            },
             externalIds: { qloo: c.entityId },
             resolvedAnchorIds: contributors.map((r) => r.referenceId),
           });
@@ -1734,7 +1750,7 @@ export class CaptureCompiler {
             category: 'wear',
             canonicalKey: p.key,
             title: r.name,
-            displayMetadata: { subtitle: 'Style direction', image: null, example: Boolean(r.isReplay) },
+            displayMetadata: { subtitle: 'Style direction', example: Boolean(r.isReplay) },
             externalIds: { qloo_tag: r.qloo!.tagId },
             referenceId: r.referenceId,
             resolvedAnchorIds: [r.referenceId],
@@ -1824,7 +1840,7 @@ export class CaptureCompiler {
           category: 'eat',
           canonicalKey: key,
           title: idea.name,
-          displayMetadata: { subtitle: idea.cuisine || null, detail: idea.cuisine || null, image: null },
+          displayMetadata: { subtitle: idea.cuisine || null, detail: idea.cuisine || null },
           externalIds: {},
           resolvedAnchorIds: idea.referenceIds,
         });

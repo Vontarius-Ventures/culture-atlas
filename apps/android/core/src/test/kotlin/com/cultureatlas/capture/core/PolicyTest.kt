@@ -2,6 +2,8 @@ package com.cultureatlas.capture.core
 
 import com.cultureatlas.capture.core.commands.CommandRunner
 import com.cultureatlas.capture.core.contract.AtlasContract
+import com.cultureatlas.capture.core.contract.Availability
+import com.cultureatlas.capture.core.contract.Capabilities
 import com.cultureatlas.capture.core.contract.CommandAck
 import com.cultureatlas.capture.core.contract.CommandAction
 import com.cultureatlas.capture.core.contract.DeviceCommand
@@ -26,6 +28,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -225,6 +228,35 @@ class CapabilityGateTest {
         for (row in fixture["status_freshness"]!!.arr) {
             assertEquals(row.obj["may_show_ready"].bool, CapabilityGate.mayShowReady(row.obj["last_status_age_seconds"].long!!))
         }
+    }
+
+    @Test
+    fun photoAnalysisUnavailableWhenVisionIsUnqualified() {
+        val caps = Capabilities(
+            contractVersion = "2",
+            flags = mapOf("concentrate_analysis_enabled" to false, "camera_photo" to true),
+            limits = emptyMap(),
+            availability = mapOf("analysis" to Availability(false, listOf("model_unqualified"))),
+        )
+        val analysis = CapabilityGate.photoAnalysis(caps)
+        assertFalse(analysis.available)
+        assertTrue(analysis.message.contains("isn't qualified"))
+        assertTrue(CapabilityGate.phoneCamera(caps).photo)
+    }
+
+    @Test
+    fun musicMatchUnavailableWhenFingerprintAndTranscriptAreOff() {
+        val caps = Capabilities(
+            contractVersion = "2",
+            flags = mapOf("microphone_audio" to true),
+            limits = emptyMap(),
+            availability = mapOf(
+                "music_match" to Availability(false, listOf("fingerprint_unavailable", "transcript_unconfigured")),
+            ),
+        )
+        val match = CapabilityGate.musicMatch(caps)
+        assertFalse(match.available)
+        assertTrue(match.message.contains("Nothing was invented"))
     }
 }
 

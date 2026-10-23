@@ -20,7 +20,16 @@ final class CaptureController: ObservableObject {
   @Published private(set) var capabilities: Capabilities?
   @Published private(set) var armed: RemoteArming.Armed?
   @Published var message: String?
+  @Published var rootTab: RootTab = .feed
+  @Published var openCamera = false
+  @Published var openMusic = false
+  @Published var openGlasses = false
+  @Published var openFeedDetail = false
   @Published private(set) var recordingDraftID: UUID?
+
+  enum RootTab: Hashable {
+    case feed, capture, library, settings
+  }
 
   let api: AtlasAPI
   let accounts: AccountService
@@ -96,6 +105,29 @@ final class CaptureController: ObservableObject {
 
   func handle(url: URL) async {
     if await wearables.handleURL(url) { return }
+    if url.scheme == "cultureatlas" {
+      switch url.host {
+      case "feed":
+        rootTab = .feed
+        openFeedDetail = url.path.lowercased().contains("detail")
+        return
+      case "library":
+        rootTab = .library
+        return
+      case "settings":
+        rootTab = .settings
+        openGlasses = url.path.lowercased().contains("glasses")
+        return
+      case "capture":
+        rootTab = .capture
+        openCamera = url.path.lowercased().contains("camera")
+        openMusic = url.path.lowercased().contains("music")
+        openGlasses = url.path.lowercased().contains("glasses")
+        return
+      default:
+        break
+      }
+    }
     guard AccountService.parseCallback(url) != nil else { return }
     do {
       let account = try await accounts.completeSignIn(callback: url)
@@ -311,7 +343,8 @@ final class CaptureController: ObservableObject {
     await uploads.drive(draft.id)
   }
 
-  /// Explore music: upload the local recording and, once committed, start music_match.
+  /// Explore music: keep WAV on `/v2/media/audio`, then start music_match.
+  /// AAC drafts stay on the phone; Explore converts them because keep is WAV-only.
   func queueAudioExplore(_ draft: DraftRecord, startMS: Int, endMS: Int) async {
     guard let account = signedInAccount else { return }
     _ = try? draftStore.update(draft.id, owner: account) {
@@ -326,7 +359,29 @@ final class CaptureController: ObservableObject {
       await finishExplores([latest])
       return
     }
-    await uploads.drive(draft.id)
+    do {
+      let preview = try draftStore.openForPlayback(draft)
+      defer { try? FileManager.default.removeItem(at: preview) }
+      let wav = try AudioWav.pcmS16le(fromFile: preview)
+      let kept = try await api.keepAudioRecording(
+        KeepAudioRecordingRequest(
+          clientCaptureID: draft.clientCaptureID, source: draft.source,
+          filename: "music-mode.wav", contentType: "audio/wav",
+          capturedAt: draft.capturedAt, captureSessionID: draft.captureSessionID,
+          sourceRoute: draft.sourceRoute ?? AudioInputRoute.phoneMicrophone.rawValue),
+        wav: wav, expectedAccount: account)
+      guard let assetID = kept.resolvedAssetID else {
+        message = "Exploring isn't available right now. Your recording is safe on this phone."
+        return
+      }
+      _ = try? draftStore.update(draft.id, owner: account) {
+        $0.status = .committed
+        $0.assetID = assetID
+      }
+      reloadDrafts()
+    } catch {
+      message = "Exploring isn't available right now. Your recording is safe on this phone."
+    }
   }
 
   func discard(_ draft: DraftRecord) async {

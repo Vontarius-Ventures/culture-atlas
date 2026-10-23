@@ -7,7 +7,23 @@ plugins {
 
 // Included from settings.gradle.kts only when an Android SDK is present.
 
-val atlasApiHost: String = providers.gradleProperty("atlasApiHost").get()
+fun localProperty(name: String): String? {
+    val f = rootProject.file("local.properties")
+    if (!f.exists()) return null
+    return f.readLines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() && !it.startsWith("#") }
+        .firstOrNull { it.startsWith("$name=") }
+        ?.substringAfter("=")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+}
+
+// Gitignored local.properties wins (same pattern as iOS LocalAPI.xcconfig) so
+// a laptop Debug APK can reach the live tunnel without changing the committed
+// production host in gradle.properties. CI still uses -PatlasApiHost=...
+val atlasApiHost: String = localProperty("atlasApiHost")
+    ?: providers.gradleProperty("atlasApiHost").get()
 // Ready-notice push (FCM). Supplied by CI for release builds; empty keeps push
 // off (notices then appear only while the app is open). No google-services.json
 // is committed: Firebase is initialized from these values at runtime.
@@ -24,6 +40,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         buildConfigField("String", "ATLAS_API_HOST", "\"$atlasApiHost\"")
+        manifestPlaceholders["atlasApiHost"] = atlasApiHost
         buildConfigField("String", "ATLAS_PUSH_ENVIRONMENT", "\"${pushProperty("atlasPushEnvironment").ifEmpty { "production" }}\"")
         buildConfigField("String", "FCM_PROJECT_ID", "\"${pushProperty("atlasFcmProjectId")}\"")
         buildConfigField("String", "FCM_APP_ID", "\"${pushProperty("atlasFcmAppId")}\"")

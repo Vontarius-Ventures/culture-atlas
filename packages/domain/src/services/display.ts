@@ -40,3 +40,105 @@ export function readDisplayMetadata(value: unknown): DisplayMetadata {
   const parsed = DisplayMetadata.safeParse(value ?? {});
   return parsed.success ? parsed.data : {};
 }
+
+/**
+ * JSONB `||` overwrites keys present on the right, including `"image": null`.
+ * Drop null/undefined so a later writer that has no picture cannot wipe one
+ * Qloo already stored on the same canonical item.
+ */
+export function forDisplayUpsert(meta: DisplayMetadata): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined && v !== null));
+}
+
+/**
+ * Real provider picture only: an https URL Qloo actually returned. Never a
+ * guessed portrait or a generated stand-in. Attribution/license pass through
+ * when present so the card can credit the source.
+ */
+export function imageFromQlooProperties(
+  properties: Record<string, unknown> | undefined,
+  alt: string,
+): DisplayImage | null {
+  if (!properties) return null;
+  const candidates: unknown[] = [properties.image, properties.photo];
+  if (Array.isArray(properties.images)) candidates.push(...properties.images);
+  for (const raw of candidates) {
+    const parsed = parseQlooImage(raw, alt);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function parseQlooImage(raw: unknown, alt: string): DisplayImage | null {
+  let url: string | undefined;
+  let attribution: string | undefined;
+  let license: string | undefined;
+  if (typeof raw === 'string') url = raw.trim();
+  else if (raw && typeof raw === 'object') {
+    const rec = raw as Record<string, unknown>;
+    if (typeof rec.url === 'string') url = rec.url.trim();
+    else if (rec.url && typeof rec.url === 'object') {
+      const nested = rec.url as Record<string, unknown>;
+      if (typeof nested.value === 'string') url = nested.value.trim();
+    }
+    if (typeof rec.attribution === 'string') attribution = rec.attribution.trim() || undefined;
+    if (typeof rec.license === 'string') license = rec.license.trim() || undefined;
+  }
+  if (!url || !/^https:\/\//i.test(url)) return null;
+  return { url, alt, attribution, license };
+}
+
+/**
+ * Qloo sometimes returns a real https URL that is a 30×30 placeholder PNG
+ * (often served with a .jpg path). A restaurant photo or album cover is tens
+ * of kilobytes; anything under this is not a usable source image.
+ */
+export const MIN_SOURCE_IMAGE_BYTES = 2048;
+
+export function sourceImageTooSmall(byteLength: number | null | undefined): boolean {
+  return typeof byteLength !== 'number' || !Number.isFinite(byteLength) || byteLength < MIN_SOURCE_IMAGE_BYTES;
+}
+
+/** Keep the URL only when the bytes behind it are a real picture, not a stub. */
+export async function qlooImageIfRenderable(
+  image: DisplayImage | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<DisplayImage | null> {
+  if (!image?.url) return null;
+  try {
+    const head = await fetchImpl(image.url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(2500) });
+    const headLen = Number(head.headers.get('content-length'));
+    if (head.ok && Number.isFinite(headLen)) {
+      return sourceImageTooSmall(headLen) ? null : image;
+    }
+    const get = await fetchImpl(image.url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(2500) });
+    if (!get.ok) return image;
+    const buf = await get.arrayBuffer();
+    return sourceImageTooSmall(buf.byteLength) ? null : image;
+  } catch {
+    // Probe failed: keep the URL. Do not drop a real photo because HEAD timed out.
+    return image;
+  }
+}
+
+/** Official https site Qloo actually returned. Never a guessed Wikipedia URL. */
+export function destinationFromQlooProperties(
+  properties: Record<string, unknown> | undefined,
+): string | null {
+  if (!properties) return null;
+  const raw = properties.website;
+  let url: string | undefined;
+  if (typeof raw === 'string') url = raw.trim();
+  else if (raw && typeof raw === 'object') {
+    const rec = raw as Record<string, unknown>;
+    if (typeof rec.url === 'string') url = rec.url.trim();
+  }
+  if (!url || !/^https:\/\//i.test(url)) return null;
+  return url;
+}
+
+/** Home feed and similar rails: keep sourced pictures; only fall back to imageless when none have one. */
+export function preferPicturedCards<T extends { image?: unknown }>(cards: readonly T[]): T[] {
+  const pictured = cards.filter((c) => c.image != null);
+  return pictured.length > 0 ? pictured : [...cards];
+}

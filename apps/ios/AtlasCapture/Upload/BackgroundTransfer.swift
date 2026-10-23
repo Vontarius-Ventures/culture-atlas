@@ -63,6 +63,23 @@ public final class BackgroundTransfer: NSObject, URLSessionDataDelegate, @unchec
     return URLSession(configuration: config, delegate: self, delegateQueue: queue)
   }
 
+  /// Foreground PUT used while the app is open. Background sessions can sit
+  /// waiting for connectivity forever against a tunnel host; Keep then never
+  /// leaves "Uploading" even on Wi-Fi.
+  public func uploadForeground(_ info: TaskInfo, instruction: PartInstruction) async -> Outcome {
+    var request = URLRequest(url: instruction.url, timeoutInterval: 120)
+    request.httpMethod = instruction.method
+    for (name, value) in instruction.headers { request.setValue(value, forHTTPHeaderField: name) }
+    do {
+      let (_, response) = try await URLSession.shared.upload(for: request, fromFile: info.partFile)
+      try? FileManager.default.removeItem(at: info.partFile)
+      return outcome(from: response, error: nil)
+    } catch {
+      try? FileManager.default.removeItem(at: info.partFile)
+      return .failed((error as NSError).domain + ":\((error as NSError).code)")
+    }
+  }
+
   /// Starts one part PUT from a plaintext part file.
   public func upload(_ info: TaskInfo, instruction: PartInstruction, allowCellular: Bool) throws {
     var request = URLRequest(url: instruction.url)
@@ -102,6 +119,18 @@ public final class BackgroundTransfer: NSObject, URLSessionDataDelegate, @unchec
     }
   }
 
+  private func outcome(from response: URLResponse?, error: Error?) -> Outcome {
+    if let error { return .failed((error as NSError).domain + ":\((error as NSError).code)") }
+    let http = response as? HTTPURLResponse
+    if let http, (200..<300).contains(http.statusCode),
+      let etag = http.value(forHTTPHeaderField: "ETag"), !etag.isEmpty
+    {
+      return .uploaded(etag: etag)
+    }
+    if let http, http.statusCode == 403 { return .expiredInstruction }
+    return .failed("http_\(http?.statusCode ?? 0)")
+  }
+
   static func info(_ task: URLSessionTask) -> TaskInfo? {
     guard let description = task.taskDescription, let data = description.data(using: .utf8) else { return nil }
     return try? JSONDecoder().decode(TaskInfo.self, from: data)
@@ -112,21 +141,7 @@ public final class BackgroundTransfer: NSObject, URLSessionDataDelegate, @unchec
   public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     guard let info = Self.info(task) else { return }
     try? FileManager.default.removeItem(at: info.partFile)
-    let http = task.response as? HTTPURLResponse
-    let outcome: Outcome
-    if let error {
-      outcome = .failed((error as NSError).domain + ":\((error as NSError).code)")
-    } else if let http, (200..<300).contains(http.statusCode),
-      let etag = http.value(forHTTPHeaderField: "ETag"), !etag.isEmpty
-    {
-      outcome = .uploaded(etag: etag)
-    } else if let http, http.statusCode == 403 {
-      // Expired or invalid signature: request fresh instructions.
-      outcome = .expiredInstruction
-    } else {
-      outcome = .failed("http_\(http?.statusCode ?? 0)")
-    }
-    onPartFinished?(info, outcome)
+    onPartFinished?(info, outcome(from: task.response, error: error))
   }
 
   public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {

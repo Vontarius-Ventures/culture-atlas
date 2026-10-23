@@ -67,6 +67,7 @@ export async function photoAnalysisReady(): Promise<boolean> {
 export async function photoAnalysisReadiness(): Promise<{
   budgetAvailable: boolean;
   providerReady: boolean;
+  qualityQualified: boolean;
   enrichReady: boolean;
   verifyReady: boolean;
 }> {
@@ -78,7 +79,21 @@ export async function photoAnalysisReadiness(): Promise<{
   return {
     providerReady: availability !== 'unavailable',
     budgetAvailable: availability === 'available',
+    qualityQualified: await visionPhotoQualityQualified(),
     enrichReady: enrich === 'available',
     verifyReady: verify === 'available',
   };
+}
+
+/** Catalog-compatible / not_qualified must not be reported as a budget pause. */
+async function visionPhotoQualityQualified(
+  gateway: ModelGateway | undefined = getProviders().modelGateway,
+): Promise<boolean> {
+  if (!gateway) return true;
+  try {
+    const detail = (await gateway.readiness()).vision_photo;
+    return detail.reason !== 'not_qualified';
+  } catch {
+    return true;
+  }
 }

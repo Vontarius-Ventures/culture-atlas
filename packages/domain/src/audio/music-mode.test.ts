@@ -16,7 +16,15 @@ import {
   musicModePermissionRequest,
 } from './music-mode';
 import { AUDIO_CAPABILITIES } from './limits';
-import { ELEVENLABS_TRANSCRIPTION } from './transcription';
+import { queriesFromTranscript } from './qloo-seeds';
+import {
+  ELEVENLABS_TRANSCRIPTION,
+  ElevenLabsScribeTranscription,
+  audioUploadFile,
+  elevenLabsFromConfig,
+  sniffAudioType,
+} from './transcription';
+import { testConfig } from '../testing';
 
 describe('AUD01 camera-off Music Mode', () => {
   it('never requests a camera permission or getUserMedia video track', () => {
@@ -32,6 +40,43 @@ describe('AUD01 camera-off Music Mode', () => {
     expect(AUDIO_CAPABILITIES.camera_required_for_music_mode).toBe(false);
     expect(AUDIO_CAPABILITIES.elevenlabs_transcription.enabled).toBe(false);
     expect(ELEVENLABS_TRANSCRIPTION.enabled).toBe(false);
+    expect(elevenLabsFromConfig(testConfig()).enabled).toBe(false);
+    expect(elevenLabsFromConfig(testConfig({ ELEVENLABS_API_KEY: 'test-key' })).enabled).toBe(true);
+  });
+
+  it('extracts artist queries from a transcript and never invents names', () => {
+    expect(queriesFromTranscript('That was Feeling Good by Nina Simone.')).toEqual(['Nina Simone']);
+    expect(queriesFromTranscript('"Redbone" by Childish Gambino')).toEqual(['Redbone', 'Childish Gambino']);
+    expect(queriesFromTranscript('')).toEqual([]);
+    expect(queriesFromTranscript('   ')).toEqual([]);
+  });
+
+  it('parses Scribe v2 JSON without sending live audio', async () => {
+    const adapter = new ElevenLabsScribeTranscription({
+      apiKey: 'test-key',
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            text: 'Nina Simone',
+            words: [
+              { text: 'Nina', start: 0.1, end: 0.4, type: 'word' },
+              { text: ' ', start: 0.4, end: 0.45, type: 'spacing' },
+              { text: 'Simone', start: 0.45, end: 0.9, type: 'word' },
+            ],
+          }),
+          { status: 200 },
+        ),
+    });
+    const got = await adapter.transcribe({
+      bytes: new Uint8Array([1, 2, 3]),
+      signal: new AbortController().signal,
+      mediaType: 'audio/wav',
+    });
+    expect(got.text).toBe('Nina Simone');
+    expect(got.words).toEqual([
+      { text: 'Nina', start_ms: 100, end_ms: 400 },
+      { text: 'Simone', start_ms: 450, end_ms: 900 },
+    ]);
   });
 
   it('records a session without initializing a camera', () => {
@@ -112,5 +157,36 @@ describe('audio analysis contract', () => {
         selection: { start_ms: 0, end_ms: 15000 },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('ElevenLabs upload MIME', () => {
+  it('keeps iPhone AAC as audio/mp4 instead of relabeling it WAV', () => {
+    const ftyp = new Uint8Array(32);
+    ftyp.set([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20]);
+    expect(sniffAudioType(ftyp)).toBe('audio/mp4');
+    expect(audioUploadFile({ bytes: ftyp, mediaType: 'audio/mp4' })).toEqual({
+      type: 'audio/mp4',
+      filename: 'clip.m4a',
+    });
+    expect(audioUploadFile({ bytes: ftyp })).toEqual({ type: 'audio/mp4', filename: 'clip.m4a' });
+  });
+
+  it('sends Scribe the stored MIME, not a hardcoded WAV container', async () => {
+    let uploaded: { name: string; type: string } | null = null;
+    const adapter = new ElevenLabsScribeTranscription({
+      apiKey: 'test-key',
+      fetch: async (_url, init) => {
+        const file = (init?.body as FormData).get('file') as File;
+        uploaded = { name: file.name, type: file.type };
+        return new Response(JSON.stringify({ text: 'Nina Simone', words: [] }), { status: 200 });
+      },
+    });
+    await adapter.transcribe({
+      bytes: new Uint8Array([1, 2, 3, 4]),
+      signal: new AbortController().signal,
+      mediaType: 'audio/mp4',
+    });
+    expect(uploaded).toEqual({ name: 'clip.m4a', type: 'audio/mp4' });
   });
 });

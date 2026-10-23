@@ -2,7 +2,7 @@ import type { QlooEntity } from '@culture-atlas/providers';
 import type { Queryable } from '../db/pool';
 import type { Category, ItemKind, RecommendationOrigin } from '../enums';
 import { ownerColumns, type Owner } from '../principal';
-import type { DisplayMetadata } from '../services/display';
+import { forDisplayUpsert, type DisplayMetadata } from '../services/display';
 import type { RecordedQuery } from './provider-calls';
 
 /**
@@ -54,6 +54,7 @@ export const QLOO_KIND: Record<string, { kind: ItemKind; category: Category }> =
   'urn:entity:movie': { kind: 'film', category: 'watch' },
   'urn:entity:artist': { kind: 'artist', category: 'play' },
   'urn:entity:brand': { kind: 'brand', category: 'wear' },
+  'urn:entity:place': { kind: 'food', category: 'eat' },
 };
 
 export function yearOf(entity: QlooEntity): number | null {
@@ -97,16 +98,12 @@ export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: Ite
       item.canonical_key,
       item.reference_id ?? null,
       item.title,
-      JSON.stringify(stripUndefined(item.display_metadata)),
+      JSON.stringify(forDisplayUpsert(item.display_metadata)),
       JSON.stringify(item.external_ids ?? {}),
       [...(item.resolved_anchor_ids ?? [])],
     ],
   );
   return rows[0]!.id;
-}
-
-function stripUndefined(o: object): object {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
 }
 
 function parentColumns(parent: RecommendationParent) {

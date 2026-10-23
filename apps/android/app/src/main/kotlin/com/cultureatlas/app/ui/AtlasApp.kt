@@ -55,9 +55,13 @@ object AtlasColors {
     val olive = Color(0xFF566347)
     val quiet = Color(0xFFEEEAE2)
     val line = Color(0xFFDCDDD3)
+    /** Typographic poster fills when a feed card has no licensed image. */
+    val posterPlay = Color(0xFF475161)
+    val posterWatch = Color(0xFF38332E)
+    val posterEat = Color(0xFF6B4738)
 }
 
-enum class Tab { LIBRARY, CAPTURE, SETTINGS }
+enum class Tab { FEED, CAPTURE, LIBRARY, SETTINGS }
 
 @Composable
 fun AtlasApp(graph: AppGraph, activity: ComponentActivity) {
@@ -133,7 +137,7 @@ fun AtlasApp(graph: AppGraph, activity: ComponentActivity) {
 
 @Composable
 private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
-    var tab by remember { mutableStateOf(Tab.LIBRARY) }
+    var tab by remember { mutableStateOf(Tab.FEED) }
     var subScreen by remember { mutableStateOf<String?>(null) }
     val armed by graph.controller.armed.collectAsState()
     Scaffold(
@@ -142,8 +146,9 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
             // Camera screens suppress the bottom bar (SCREEN-CONTRACT).
             if (subScreen == null) {
                 NavigationBar(containerColor = AtlasColors.quiet) {
-                    NavigationBarItem(selected = tab == Tab.LIBRARY, onClick = { tab = Tab.LIBRARY }, icon = {}, label = { Text("Library") })
+                    NavigationBarItem(selected = tab == Tab.FEED, onClick = { tab = Tab.FEED }, icon = {}, label = { Text("Feed") })
                     NavigationBarItem(selected = tab == Tab.CAPTURE, onClick = { tab = Tab.CAPTURE }, icon = {}, label = { Text("Capture") })
+                    NavigationBarItem(selected = tab == Tab.LIBRARY, onClick = { tab = Tab.LIBRARY }, icon = {}, label = { Text("Library") })
                     NavigationBarItem(selected = tab == Tab.SETTINGS, onClick = { tab = Tab.SETTINGS }, icon = {}, label = { Text("Settings") })
                 }
             }
@@ -155,8 +160,15 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
                 "music" -> MusicScreen(graph, onBack = { subScreen = null })
                 "glasses" -> GlassesScreen(graph, activity, onBack = { subScreen = null }, onUseCamera = { subScreen = "camera" })
                 "taste" -> TasteSettingsScreen(graph.onboarding, onBack = { subScreen = null })
+                "boards" -> BoardsScreen(graph.api, graph.notices, onBack = { subScreen = null })
                 else -> when (tab) {
-                    Tab.LIBRARY -> LibraryScreen(graph.controller, graph.notices)
+                    Tab.FEED -> FeedScreen(graph.api, graph.notices)
+                    Tab.LIBRARY -> LibraryScreen(
+                        graph.controller,
+                        graph.notices,
+                        graph.api,
+                        onBoards = { subScreen = "boards" },
+                    )
                     Tab.CAPTURE -> CaptureSourceScreen(
                         graph.controller,
                         onCamera = { subScreen = "camera" },
@@ -184,6 +196,11 @@ private fun SignInScreen(controller: AppController) {
         Text("culture atlas", style = MaterialTheme.typography.headlineLarge.copy(fontFamily = FontFamily.Serif))
         Text("Keep what catches your eye.", style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Serif))
         Text("Sign in with your email to capture and keep photos and videos in your private library.", color = AtlasColors.muted)
+        Text(
+            "This test build doesn't send email. After you tap, the sign-in link opens on this phone.",
+            color = AtlasColors.muted,
+            style = MaterialTheme.typography.bodySmall,
+        )
         OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email address") }, modifier = Modifier.fillMaxWidth())
         Button(
             onClick = { sending = true; scope.launch { controller.sendLink(email.trim()); sending = false } },

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { authorizeOperation } from '../authz';
 import { exclusionTerms } from '../composer/dietary';
 import { JOB_TYPES } from '../enums';
-import { JobPayloads, tasteSeedDedupeKey } from '../jobs';
+import { JobPayloads, interestExpandDedupeKey, tasteSeedDedupeKey } from '../jobs';
 import type { JobContext } from '../jobs/handler';
 import { JOB_HANDLERS } from '../pipeline';
 import type { AccountPrincipal, AgentPrincipal, AnonymousPrincipal } from '../principal';
@@ -154,5 +154,25 @@ describe('taste_seed job type', () => {
     // no fabrication) is in apps/worker/src/taste-seed.test.ts.
     const ctx = { job: { owner_account_id: null } } as unknown as JobContext<'taste_seed'>;
     await expect(JOB_HANDLERS.taste_seed(ctx)).rejects.toMatchObject({ code: 'invalid_input', retryable: false });
+  });
+});
+
+describe('interest_expand job type', () => {
+  it('is registered with a payload schema, a wave-bucketed dedupe key and a handler', () => {
+    expect(JOB_TYPES).toContain('interest_expand');
+    const payload = JobPayloads.interest_expand.parse({ wave: 12, category: 'play' });
+    expect(payload).toEqual({ wave: 12, category: 'play' });
+    expect(JobPayloads.interest_expand.safeParse({ wave: -1, category: 'play' }).success).toBe(false);
+    const owner = { kind: 'account' as const, accountId: 'a1' };
+    const key = interestExpandDedupeKey({ owner, wave: 12 });
+    expect(key).toMatch(/^interest_expand:[0-9a-f]{64}$/);
+    expect(interestExpandDedupeKey({ owner, wave: 12 })).toBe(key);
+    expect(interestExpandDedupeKey({ owner, wave: 13 })).not.toBe(key);
+    expect(JOB_HANDLERS.interest_expand).toBeTypeOf('function');
+  });
+
+  it('refuses, without retry, an expand that has no account (nothing is ever pretended)', async () => {
+    const ctx = { job: { owner_account_id: null } } as unknown as JobContext<'interest_expand'>;
+    await expect(JOB_HANDLERS.interest_expand(ctx)).rejects.toMatchObject({ code: 'invalid_input', retryable: false });
   });
 });

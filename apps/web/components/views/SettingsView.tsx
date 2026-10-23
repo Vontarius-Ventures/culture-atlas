@@ -199,12 +199,12 @@ function TasteEntry() {
   return (
     <section className="settings__section" aria-labelledby="taste-heading">
       <h2 id="taste-heading" className="section-title section-title--display">
-        Taste
+        Interests
       </h2>
       <p className="muted">What you picked when you joined, and foods to leave out.</p>
       <p style={{ marginTop: 12 }}>
         <Link href="/settings/taste" className="button button--outline">
-          Edit your taste
+          Edit your interests
           <Icon name="chevronRight" size={18} />
         </Link>
       </p>

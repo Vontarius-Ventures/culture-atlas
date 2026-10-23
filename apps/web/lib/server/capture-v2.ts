@@ -45,6 +45,7 @@ import {
 } from '@culture-atlas/providers';
 import { abuseLimitIp } from './http';
 import { analysisAvailability, photoAnalysisReadiness } from './model-readiness';
+import { musicMatchAvailability } from './music-readiness';
 import { ensureServerRuntime } from './runtime';
 import { audioAssetKind, isCreateAudioUpload, readKeepAudioBody } from './audio-http';
 
@@ -322,7 +323,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
       match: RegExpExecArray | null;
     if (path === '/v2/capabilities' && method === 'GET') {
       const evaluation = contextFlags.get(ctx)!;
-      result = applyFeatureFlagsToCapabilities(
+      const caps = applyFeatureFlagsToCapabilities(
         evaluateCaptureCapabilities(
           {
             mediaCreationEnabled: ctx.mediaCreationEnabled,
@@ -345,6 +346,16 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         ),
         evaluation,
       );
+      result = {
+        ...caps,
+        availability: {
+          ...caps.availability,
+          music_match: musicMatchAvailability({
+            ELEVENLABS_API_KEY: getDomainConfig().ELEVENLABS_API_KEY,
+            QLOO_API_KEY: process.env.QLOO_API_KEY,
+          }),
+        },
+      };
     } else if (keepAudio) {
       const kept = await readKeepAudioBody(request);
       result = await audioLibrary.keepRecording(kept.meta, kept.bytes, key);

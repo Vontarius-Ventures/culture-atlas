@@ -111,6 +111,13 @@ class ContractTest {
         assertNull(AccountClient.parseCallback("https://evil.example/identity/callback#challenge_id=a&token=b&state=c&nonce=d"))
         assertNull(AccountClient.parseCallback("http://app.cultureatlas.com/identity/callback#challenge_id=a&token=b&state=c&nonce=d"))
         assertNull(AccountClient.parseCallback("https://app.cultureatlas.com/identity/callback#challenge_id=a&token=b"))
+        val tunnel =
+            "https://example.trycloudflare.com/identity/callback#challenge_id=4f1d9a52-7b8c-4e3d-9a10-2b3c4d5e6f70&token=t0k&state=s&nonce=n"
+        assertEquals(
+            "4f1d9a52-7b8c-4e3d-9a10-2b3c4d5e6f70",
+            AccountClient.parseCallback(tunnel, setOf("example.trycloudflare.com"))?.get("challenge_id"),
+        )
+        assertNull(AccountClient.parseCallback(tunnel))
     }
 
     @Test

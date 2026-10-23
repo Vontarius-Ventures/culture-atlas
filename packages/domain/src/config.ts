@@ -94,6 +94,15 @@ export const DomainConfigSchema = z.object({
     .string()
     .default('')
     .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean)),
+  /**
+   * ElevenLabs Scribe for Music Mode Explore. Absent key keeps transcription
+   * disabled. Transcript text is searched in Qloo as urn:entity:artist only;
+   * catalog ids are never invented.
+   */
+  ELEVENLABS_API_KEY: z.string().optional(),
+  ELEVENLABS_TRANSCRIPTION_MODEL: z.string().default('scribe_v2'),
+  /** true sends enable_logging=false (enterprise). Default off: owner-approved Music Mode transcripts. */
+  ELEVENLABS_REQUIRE_ZERO_RETENTION: bool(false),
 });
 
 export type DomainConfig = z.infer<typeof DomainConfigSchema>;

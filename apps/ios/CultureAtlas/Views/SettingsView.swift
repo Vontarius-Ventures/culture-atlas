@@ -20,11 +20,19 @@ struct SettingsView: View {
         // Screen 18: picks grouped by category, add more, exclusions.
         NavigationLink(OnboardingCopy.tasteTitle) { TasteSettingsView() }
       }
+      Section("Language") {
+        Text("Translations aren't available in this version.")
+          .font(.footnote)
+          .foregroundStyle(AtlasTheme.muted)
+      }
       Section("Account") {
         Button("Sign out or switch account", role: .destructive) { confirmSignOut = true }
       }
     }
     .navigationTitle("Settings")
+    .navigationDestination(isPresented: $controller.openGlasses) {
+      GlassesView()
+    }
     .confirmationDialog("Sign out", isPresented: $confirmSignOut, titleVisibility: .visible) {
       Button("Keep on this device") { Task { await controller.signOut(drafts: .keep) } }
       Button("Delete local drafts", role: .destructive) { Task { await controller.signOut(drafts: .delete) } }

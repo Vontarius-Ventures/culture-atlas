@@ -8,12 +8,12 @@ independent Android implementation, and the shared contract both follow.
 
 | Item | State |
 | --- | --- |
-| iOS source (`apps/ios`) | Written. **Never compiled or run**: this environment has no Xcode, Swift toolchain or XcodeGen. |
-| Android source (`apps/android`) | `:app` written but **never compiled or run**: no Android SDK and no access to Google's Maven repository (AGP, AndroidX, Firebase). The pure-JVM `:core` module **does compile and its JUnit tests pass** (28 tests, Kotlin 2.1.0) in a throwaway Gradle build that resolves Kotlin, kotlinx and OkHttp from Maven Central and points at `apps/android/core/src` (amendment 2.2 package E; see "Build and test"). That run found and fixed one pre-existing compile error (`AtlasClientException.code` needed `open`/`override`). The Android onboarding controller (`app/.../onboarding/OnboardingController.kt`, no Android APIs) compiles in the same build. |
-| Meta SDK binding, iOS | Uses only SDK calls that World Observer already compiles and ran on Ray-Ban Meta Gen 2 (`MWDATCore`/`MWDATCamera` 1.0.0). |
-| Meta SDK binding, Android | `app/src/experimental/.../MetaDatBinding.kt` is **unverified**: package, class and method names follow the toolkit's Android developer-preview documentation from memory. The version in `libs.versions.toml` (`metaWearables`) and the manifest meta-data names must be confirmed on the first experimental build. All other Android code talks to the `DatSdk` interface, so fixes stay in that one file. |
-| Shared contract | `fixtures/native-contract/*.json`, verified against the real server by `apps/web/lib/server/native-contract.test.ts` (runs in `pnpm test`). |
-| Physical-device qualification (DEV-01..03, MED-05 native rows) | Not started. See "What remains on physical devices". |
+| iOS Debug (`com.aomg.cultureatlas`) | Compiled, signed with Apple Development (team `U9XG3X374H`), installed on the owner's iPhone 16 (`00008140-000964563AEB001C`). Feed, Boards, item detail and related Qloo cards load live https images. Interests board is filled. Keep part PUTs run in the foreground. PrivacyInfo declares Disk Space `85F4.1` and File Timestamp `C617.1`. Phone camera Keep is proven on this iPhone 16: `media_assets` photo `phone_camera` JPEG 4032×3024 status `ready`, `upload_sessions` `committed` (2026-10-22 19:28). Analysis stays `not_requested` until Explore; vision_photo is still not qualified. Meta glasses fail closed on device (Unavailable; public build has no glasses SDK). Music Keep is still unproven (Music Mode idle on Record). Translations fail closed on Settings: “Translations aren't available in this version.” Library shows the kept photo with vision_photo not_qualified copy. Living feed: `interest_expand` complete for watch then eat then watch; pool is 51 personal cards with https Qloo images (watch 32 pictured). A Debug binary with home-grid floating tiles is built at `/tmp/ca-ios-dd` but not reinstalled while Music Mode is on Record. Device Hub cannot screen-share iOS 26.6.2 (needs 27.0+). XCUITest timed out enabling automation mode. iPhone Mirroring cannot use camera/mic. |
+| App Store id `com.cultureatlas.app` | Blocked. Xcode: the identifier cannot be registered to this development team because it is not available. Release also needs Associated Domains and Push on a real App ID. |
+| Android store APK (`com.cultureatlas.app`) | Rebuilt 2026-10-22 21:26: `apps/android/dist/app-store-debug.apk` (34M) and `.aab` (12M) include floating feed tiles, debug cert, tunnel API host, no Meta SDK, `FOREGROUND_SERVICE_DATA_SYNC`. Native `.so` PT_LOAD align 16KB (`0x4000`). `adb` is installed (`android-platform-tools` 37.0.1). No Android device attached, so not sideloaded. Play upload keystore is not in the repo. |
+| Meta SDK | Public `CultureAtlas` / `store` flavor never link it. `/v2/capabilities` keeps glasses capture off. Experimental targets exist for permitted channels only. |
+| Shared contract | `fixtures/native-contract/*.json`, verified against the real server by `apps/web/lib/server/native-contract.test.ts`. |
+| Physical-device qualification (DEV-01..03, MED-05 native rows) | Phone camera Keep observed on this iPhone 16 (JPEG ready, upload committed). Glasses capture fail-closed observed on device. Music Keep not yet observed. Discover images are on-device. See "What remains on physical devices". |
 
 ## Taste onboarding and ready notices (amendment 2.2)
 
@@ -31,11 +31,11 @@ and `ready-notice.json`; wire examples are the `onboarding_*`,
   transient error); a server that does not offer native onboarding
   (`not_found`/`scope_denied`) never blocks the app.
 - **Native owner bridge (server, additive).** `/v1` refuses installation
-  tokens. `packages/domain/src/authz/native-owner.ts` lists the 11 onboarding
-  and taste operations (`NATIVE_OWNER_OPERATIONS`) on which `apiRoute`
-  (`apps/web/lib/server/http.ts`) converts a live installation session into
-  its account owner (`sessionId: null`). It rechecks that the installation is
-  neither revoked nor ended on every call and requires
+  tokens. `packages/domain/src/authz/native-owner.ts` lists the onboarding,
+  taste, Discover, and board operations (`NATIVE_OWNER_OPERATIONS`) on which
+  `apiRoute` (`apps/web/lib/server/http.ts`) converts a live installation
+  session into its account owner (`sessionId: null`). It rechecks that the
+  installation is neither revoked nor ended on every call and requires
   `X-Atlas-Expected-Account` on mutations (`account_mismatch` otherwise); every
   other `/v1` route still answers `scope_denied`. `/v1` errors are flat
   (`{code,message,…}`); both HTTP clients decode the flat and the `/v2` shape.
@@ -52,8 +52,8 @@ and `ready-notice.json`; wire examples are the `onboarding_*`,
   `GET /v1/onboarding/seed` at `poll_after_ms`; it leaves for the app as soon
   as a category is ready (or the seed is complete or not started) and shows
   "We'll keep building in the background." with Done when Qloo is
-  unavailable, the job retries or fails, or 20 s pass. The native apps have no
-  Discover feed; Done returns to the library.
+  unavailable, the job retries or fails, or 20 s pass. Done returns to the
+  Feed tab (Discover).
 - **Screen 18 (Settings → Taste):** picks grouped by category with Remove
   (below 3 is allowed), Add more with the same pickers through
   `/v1/taste/picks`, and the exclusions editor with Save.
@@ -135,8 +135,9 @@ exercised end to end by the TS contract test.
    `POST …/complete` with a persisted key. Every mutation carries
    `X-Atlas-Expected-Account` = the draft's owner, so a switched credential
    fails with `account_mismatch` before any effect. Wi-Fi only unless the
-   person chooses mobile data for an item. iOS uses a background `URLSession`
-   per network policy; Android uses WorkManager (`UNMETERED` by default).
+   person chooses mobile data for an item. iOS PUTs parts in the foreground
+   while the app is open (background `URLSession` remains for process-death
+   completions). Android uses WorkManager (`UNMETERED` by default) with OkHttp.
 5. **Remote capture.** Arming is local and explicit: open a capture session,
    report a fresh `ready` + `foreground` status (the server refuses to arm
    otherwise), arm for at most 600 s for individually selected agents. Poll
@@ -213,10 +214,14 @@ gradle wrapper --gradle-version 8.14.3     # once, creates gradlew and the wrapp
 ./gradlew :app:assembleExperimentalDebug    # Meta SDK flavor (confirm MetaDatBinding first)
 ```
 
-API host: `-PatlasApiHost=…` (default in `gradle.properties`). The App Link
-needs `https://app.cultureatlas.com/.well-known/assetlinks.json` listing both
-application ids and signing certificates; the iOS custom scheme needs no
-server file.
+API host: `-PatlasApiHost=…` (default in `gradle.properties`). Android App
+Links need `/.well-known/assetlinks.json` listing both application ids and
+signing certificates. iOS Associated Domains (Release entitlements
+`applinks:app.cultureatlas.com`) need
+`/.well-known/apple-app-site-association` on that host. This API serves both
+routes; Apple and Google only fetch them from the durable production host, not
+from a `trycloudflare.com` tunnel. The debug iOS custom scheme
+`cultureatlas://` still needs no server file.
 
 ## Release channels and store eligibility gates
 
@@ -316,3 +321,19 @@ These are outside `apps/ios`, `apps/android` and `fixtures/native-contract`:
 8. **Result view:** the apps open the web result page for "Open"; that page
    needs a browser session, so a person who never signed in on the web sees
    the sign-in page first.
+
+## Remaining credentials for App Store / Play testing
+
+Named missing items. Features that depend on them fail closed and do not invent results.
+
+| Credential / qualification | Blocks | Evidence |
+| --- | --- | --- |
+| App Store bundle `com.cultureatlas.app` on team `U9XG3X374H` | Store-signed iOS / TestFlight of the production id | `xcodebuild -configuration Release`: identifier cannot be registered because it is not available |
+| Apple Distribution certificate | App Store / TestFlight upload | `security find-identity -p codesigning` lists only Apple Development |
+| Play upload keystore | Play AAB / Console upload | Not in the repo; store debug APK uses the Android debug cert |
+| Durable public hostname | Production identity, App Links, signed media URLs that survive a process restart | `app.cultureatlas.com` does not resolve (no A/CNAME). Current API is a Cloudflare quick tunnel (`trycloudflare.com`); `~/.cloudflared` has no named-tunnel login. Well-known files are served on the tunnel but stores will not treat it as `app.cultureatlas.com` |
+| Real identity mail (not `IDENTITY_MAIL_DRIVER=file`) | Store-review sign-in that must send email | This test build writes sign-in links to a local mailbox file |
+| Qualified `vision_photo` artifact | Photo Explore / Concentrate image analysis | Role is catalog-compatible (`not_qualified`); Library hides Explore and states that |
+| Licensed fingerprint / catalog vendor | `music.recognize` | Health: `unavailable` / `not_implemented`. `GET /v2/capabilities` `availability.music_match` is on only when ElevenLabs and Qloo keys are present (artist-from-transcript). Otherwise Explore is hidden and the phone says nothing was invented. Recording still works. |
+| Meta glasses qualification env and SDK channel | Glasses capture | Public binary contains no SDK; server hard-codes glasses gates off |
+| Phone unlock / iPhone Mirroring allow | Operator-driven camera Keep on the physical iPhone | Device Hub: iOS 26.6.2 cannot screen-share (needs 27.0+). XCUITest: `Timed out while enabling automation mode.` iPhone Mirroring: camera and microphone are unavailable while mirroring; the session is locked behind the Mac login. Take photo must be done on the phone. |

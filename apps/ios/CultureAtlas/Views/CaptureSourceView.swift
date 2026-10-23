@@ -22,7 +22,13 @@ struct CaptureSourceView: View {
         } label: {
           Label("This camera", systemImage: "camera")
         }
+        .accessibilityIdentifier("capture.this-camera")
         .disabled(!camera.photo && !camera.video)
+        if !camera.photo && !camera.video {
+          Text("This camera is paused on the server. You can still keep files already on this phone.")
+            .font(.footnote)
+            .foregroundStyle(AtlasTheme.muted)
+        }
         NavigationLink {
           MusicView()
         } label: {
@@ -46,6 +52,15 @@ struct CaptureSourceView: View {
       }
     }
     .navigationTitle("Capture")
+    .navigationDestination(isPresented: $controller.openCamera) {
+      CameraView()
+    }
+    .navigationDestination(isPresented: $controller.openMusic) {
+      MusicView()
+    }
+    .navigationDestination(isPresented: $controller.openGlasses) {
+      GlassesView()
+    }
     .onChange(of: picked) { _, items in
       Task {
         for item in items { await importItem(item) }
@@ -58,7 +73,7 @@ struct CaptureSourceView: View {
   private func importItem(_ item: PhotosPickerItem) async {
     let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
     let isAudio = item.supportedContentTypes.contains { $0.conforms(to: .audio) }
-    guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+    guard var data = try? await item.loadTransferable(type: Data.self) else { return }
     let type = item.supportedContentTypes.first
     let contentType: String
     let kind: MediaKind
@@ -79,17 +94,11 @@ struct CaptureSourceView: View {
     } else if isVideo {
       kind = .video
       contentType = type?.conforms(to: .mpeg4Movie) == true ? "video/mp4" : "video/quicktime"
-    } else if type?.conforms(to: .png) == true {
+    } else if let photo = PhotoImport.payload(data: data, type: type) {
       kind = .photo
-      contentType = "image/png"
-    } else if type?.conforms(to: .jpeg) == true {
-      kind = .photo
-      contentType = "image/jpeg"
-    } else if type?.conforms(to: .webP) == true {
-      kind = .photo
-      contentType = "image/webp"
+      contentType = photo.contentType
+      data = photo.data
     } else {
-      // HEIC/HEIF is not accepted until the server qualifies a decoder.
       controller.message = "This photo format isn't supported yet. Export it as JPEG and try again."
       return
     }

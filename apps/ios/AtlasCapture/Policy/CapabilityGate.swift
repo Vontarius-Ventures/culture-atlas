@@ -104,8 +104,69 @@ public enum CapabilityGate {
   }
 
   public static func phoneCamera(_ capabilities: Capabilities?) -> PhoneCamera {
-    guard let capabilities else { return PhoneCamera(photo: false, video: false) }
-    return PhoneCamera(photo: capabilities.flag("camera_photo"), video: capabilities.flag("camera_video"))
+    // Core capture stays on unless the server explicitly paused it. A missed
+    // capabilities fetch must not hide This camera.
+    guard let capabilities else { return PhoneCamera(photo: true, video: true) }
+    return PhoneCamera(
+      photo: capabilities.flags["camera_photo"] ?? true,
+      video: capabilities.flags["camera_video"] ?? true)
+  }
+
+  /// Photo Explore: server `availability.analysis`. Capture still works when this is off.
+  public struct PhotoAnalysis: Equatable, Sendable {
+    public var available: Bool
+    public var message: String
+  }
+
+  public static func photoAnalysis(_ capabilities: Capabilities?) -> PhotoAnalysis {
+    guard let capabilities else {
+      return PhotoAnalysis(available: true, message: "")
+    }
+    let analysis = capabilities.availability["analysis"]
+    let flaggedOff = capabilities.flags["concentrate_analysis_enabled"] == false
+    if analysis?.available == false || (analysis == nil && flaggedOff) {
+      return PhotoAnalysis(available: false, message: photoAnalysisMessage(reasons: analysis?.reasons ?? []))
+    }
+    return PhotoAnalysis(available: true, message: "")
+  }
+
+  public static func photoAnalysisMessage(reasons: [String]) -> String {
+    if reasons.contains("model_unqualified") {
+      return "Photo analysis isn't available yet. The vision model isn't qualified for this build. Your photos stay in this private library."
+    }
+    if reasons.contains("provider_unconfigured") {
+      return "Photo analysis isn't configured. Your photos stay in this private library."
+    }
+    if reasons.contains("budget_exhausted") {
+      return "Photo analysis is paused. Your photos stay in this private library."
+    }
+    if reasons.contains("privacy_unverified") {
+      return "Photo analysis is waiting on a privacy confirmation. Your photos stay in this private library."
+    }
+    return "Photo analysis isn't available yet. Your photos stay in this private library."
+  }
+
+  /// Music Mode Explore: server `availability.music_match`. Recording still works when this is off.
+  public struct MusicMatch: Equatable, Sendable {
+    public var available: Bool
+    public var message: String
+  }
+
+  public static func musicMatch(_ capabilities: Capabilities?) -> MusicMatch {
+    guard let capabilities else { return MusicMatch(available: true, message: "") }
+    guard let match = capabilities.availability["music_match"] else {
+      return MusicMatch(available: true, message: "")
+    }
+    if match.available { return MusicMatch(available: true, message: "") }
+    return MusicMatch(available: false, message: musicMatchMessage(reasons: match.reasons))
+  }
+
+  public static func musicMatchMessage(reasons: [String]) -> String {
+    if reasons.contains("transcript_unconfigured") || reasons.contains("qloo_unconfigured")
+      || reasons.contains("fingerprint_unavailable") {
+      return "Song catalog matching isn't available yet. Your recording stays in this private library. Nothing was invented."
+    }
+    return "Music identification isn't available. Your recording stays in this private library. Nothing was invented."
   }
 
   /// Music Mode is core capture. A missing flag does not hide it; only an

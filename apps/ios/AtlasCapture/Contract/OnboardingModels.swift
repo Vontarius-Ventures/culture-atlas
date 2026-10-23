@@ -363,6 +363,71 @@ public struct AnalyzeMediaRequest: Codable, Sendable, Equatable {
   }
 }
 
+/// `POST /v2/media/audio` keep. WAV bytes travel as the `file` part; these
+/// fields are sent as form strings (same as the web keep helper).
+public struct KeepAudioRecordingRequest: Encodable, Sendable {
+  public var clientCaptureID: UUID
+  public var source: MediaSource
+  public var filename: String
+  public var contentType: String
+  public var capturedAt: Date?
+  public var captureSessionID: UUID?
+  public var sourceRoute: String
+  public var title: String?
+
+  public init(
+    clientCaptureID: UUID, source: MediaSource, filename: String = "music-mode.wav",
+    contentType: String = "audio/wav", capturedAt: Date? = nil, captureSessionID: UUID? = nil,
+    sourceRoute: String = "phone_microphone", title: String? = nil
+  ) {
+    self.clientCaptureID = clientCaptureID
+    self.source = source
+    self.filename = filename
+    self.contentType = contentType
+    self.capturedAt = capturedAt
+    self.captureSessionID = captureSessionID
+    self.sourceRoute = sourceRoute
+    self.title = title
+  }
+
+  public func formFields() -> [String: String] {
+    var fields = [
+      "client_capture_id": clientCaptureID.uuidString.lowercased(),
+      "source": source.rawValue,
+      "filename": filename,
+      "content_type": contentType,
+      "source_route": sourceRoute,
+    ]
+    if let capturedAt {
+      let stamp = ISO8601DateFormatter()
+      stamp.formatOptions = [.withInternetDateTime]
+      fields["captured_at"] = stamp.string(from: capturedAt)
+    }
+    if let captureSessionID {
+      fields["capture_session_id"] = captureSessionID.uuidString.lowercased()
+    }
+    if let title { fields["title"] = title }
+    return fields
+  }
+}
+
+public struct KeptAudioResponse: Codable, Sendable, Equatable {
+  public var assetID: UUID?
+  public var generation: Int
+  public var media: AudioAsset?
+
+  public struct AudioAsset: Codable, Sendable, Equatable {
+    public var id: UUID
+  }
+
+  public var resolvedAssetID: UUID? { assetID ?? media?.id }
+
+  enum CodingKeys: String, CodingKey {
+    case generation, media
+    case assetID = "asset_id"
+  }
+}
+
 /// Contract-2 analysis for Music Mode. Speech is never requested here.
 public struct AnalyzeAudioRequest: Codable, Sendable, Equatable {
   public struct Selection: Codable, Sendable, Equatable {

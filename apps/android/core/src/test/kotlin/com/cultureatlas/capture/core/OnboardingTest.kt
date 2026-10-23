@@ -83,6 +83,24 @@ class OnboardingTest {
         assertEquals(OnboardingPolicy.SeedAction.BACKGROUND, OnboardingPolicy.seed(retrying, 0))
         val taste = decode(TastePicksResponse.serializer(), "taste_picks_response")
         assertEquals(taste.picksCount, taste.picks.all.size)
+        val discoveries = decode(com.cultureatlas.capture.core.contract.DiscoveriesResponse.serializer(), "discoveries_response")
+        assertEquals("Nina Simone", discoveries.items.first().title)
+        assertTrue(discoveries.isExampleFeed)
+        assertEquals(
+            "https://app.cultureatlas.com/samples/feed/tea.jpg",
+            com.cultureatlas.capture.core.contract.LibraryImage("/samples/feed/tea.jpg", alt = "tea")
+                .resolved("https://app.cultureatlas.com/"),
+        )
+        val boards = decode(com.cultureatlas.capture.core.contract.CollectionsListResponse.serializer(), "collections_list_response")
+        assertEquals("Weekend board", boards.collections.first().name)
+        decode(com.cultureatlas.capture.core.contract.CollectionDetailResponse.serializer(), "collection_detail_response")
+        decode(com.cultureatlas.capture.core.contract.AddCollectionItemResponse.serializer(), "collection_add_item_response")
+        val detail = decode(com.cultureatlas.capture.core.contract.ItemDetailResponse.serializer(), "item_detail_response")
+        assertEquals("Nina Simone", detail.item.title)
+        assertEquals("none", detail.relatedState)
+        decode(com.cultureatlas.capture.core.contract.RelatedDiscoveryResponse.serializer(), "related_discovery_response")
+        roundTrip(EmptyBody.serializer(), "related_discovery_request")
+        roundTrip(com.cultureatlas.capture.core.contract.CreateCollectionRequest.serializer(), "collection_create_request")
     }
 
     @Test
@@ -123,6 +141,23 @@ class OnboardingTest {
         assertEquals(OnboardingPolicy.SEARCH_DEBOUNCE_MS, fixture["search"]!!.obj["debounce_ms"].long)
         assertEquals(OnboardingPolicy.DEFAULT_SEED_POLL_MS, fixture["seed"]!!.obj["default_poll_ms"].long)
         assertEquals(OnboardingPolicy.SEED_MAX_WAIT_MS, fixture["seed"]!!.obj["max_wait_ms"].long)
+    }
+
+    @Test
+    fun mixChipsRoundRobinsCategories() {
+        fun chip(id: String, category: TasteCategory) = com.cultureatlas.capture.core.contract.OnboardingCatalogEntry(
+            id = id, kind = "chip", category = category, label = id, picked = false,
+        )
+        val chips = com.cultureatlas.capture.core.contract.OnboardingChips(
+            wear = listOf(chip("w1", TasteCategory.WEAR), chip("w2", TasteCategory.WEAR)),
+            play = listOf(chip("p1", TasteCategory.PLAY)),
+            watch = listOf(chip("wa1", TasteCategory.WATCH)),
+            eat = listOf(chip("e1", TasteCategory.EAT), chip("e2", TasteCategory.EAT)),
+        )
+        assertEquals(
+            listOf("w1", "p1", "wa1", "e1", "w2", "e2"),
+            OnboardingPolicy.mixChips(chips).map { it.id },
+        )
     }
 
     @Test
@@ -223,6 +258,9 @@ class OnboardingTest {
             "GET /v1/onboarding/state", "GET /v1/onboarding/catalog", "GET /v1/onboarding/search", "POST /v1/onboarding/picks",
             "DELETE /v1/onboarding/picks/{id}", "PUT /v1/onboarding/exclusions", "POST /v1/onboarding/complete",
             "GET /v1/onboarding/seed", "GET /v1/taste/picks", "POST /v1/taste/picks", "DELETE /v1/taste/picks/{id}",
+            "GET /v1/discoveries", "GET /v1/items/{id}", "POST /v1/items/{id}/discoveries",
+            "GET /v1/collections", "POST /v1/collections",
+            "GET /v1/collections/{id}", "PUT /v1/collections/{id}/items/{item_id}",
         )
         assertEquals(operations, called.toSet())
         assertEquals(called.toSet(), AtlasApi.ONBOARDING_OPERATIONS)

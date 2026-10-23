@@ -61,3 +61,43 @@ export function searchQueryForHit(hit: MusicRecognitionHit): string | null {
   const name = hit.artist_name?.trim();
   return name ? name : null;
 }
+
+const MAX_TRANSCRIPT_QUERIES = 3;
+const MAX_QUERY_CHARS = 80;
+
+function addQuery(queries: string[], seen: Set<string>, raw: string): void {
+  const query = raw.replace(/\s+/g, ' ').replace(/[.,;:!?]+$/g, '').trim();
+  if (query.length < 2 || query.length > MAX_QUERY_CHARS) return;
+  const key = query.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  queries.push(query);
+}
+
+/**
+ * Pull artist/title phrases from a Scribe transcript. Never invent names;
+ * Qloo is searched only with text the vendor returned.
+ */
+export function queriesFromTranscript(text: string): string[] {
+  const cleaned = text.replace(/\s+/g, ' ').trim();
+  if (!cleaned) return [];
+  const queries: string[] = [];
+  const seen = new Set<string>();
+  for (const match of cleaned.matchAll(/["“']([^"'“”]{2,80})["”']/g)) {
+    addQuery(queries, seen, match[1] ?? '');
+  }
+  for (const match of cleaned.matchAll(/\bby\s+([A-Z][\w'.]+(?:\s+[A-Z][\w'.]+){0,4})/g)) {
+    addQuery(queries, seen, match[1] ?? '');
+  }
+  for (const match of cleaned.matchAll(
+    /([A-Z][\w'.]+(?:\s+[A-Z][\w'.]+){0,4})\s+-\s+([A-Z][\w'.]+(?:\s+[A-Z][\w'.]+){0,5})/g,
+  )) {
+    addQuery(queries, seen, match[1] ?? '');
+    addQuery(queries, seen, `${match[1] ?? ''} ${match[2] ?? ''}`);
+  }
+  if (queries.length === 0) {
+    const first = (cleaned.split(/[.!?]/)[0] ?? '').trim().slice(0, MAX_QUERY_CHARS);
+    addQuery(queries, seen, first);
+  }
+  return queries.slice(0, MAX_TRANSCRIPT_QUERIES);
+}

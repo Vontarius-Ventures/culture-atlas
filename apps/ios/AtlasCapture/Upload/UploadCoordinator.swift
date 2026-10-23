@@ -48,8 +48,11 @@ public actor UploadCoordinator {
   }
 
   /// Wi-Fi only by default; a per-draft explicit cellular override.
+  /// Before the first NWPath callback, `path` is nil — still try. Blocking
+  /// here left Keep photos queued forever until the network next changed.
   func networkAllows(_ draft: DraftRecord) -> Bool {
-    guard let path, path.status == .satisfied else { return false }
+    guard let path else { return true }
+    guard path.status == .satisfied else { return false }
     return draft.allowCellular || (!path.isExpensive && !path.isConstrained)
   }
 
@@ -90,11 +93,15 @@ public actor UploadCoordinator {
     running.insert(draftID)
     defer { running.remove(draftID) }
     do {
-      draft = try await step(draft)
-      draft.attempts = 0
-      draft.nextAttemptAt = nil
-      draft.errorCode = nil
-      try persist(draft)
+      var current = draft
+      for _ in 0..<24 {
+        current = try await step(current)
+        current.attempts = 0
+        current.nextAttemptAt = nil
+        current.errorCode = nil
+        try persist(current)
+        if ![.queued, .uploading, .verifying].contains(current.status) { break }
+      }
     } catch let error as AtlasClientError {
       await handle(error, draft: draft)
     } catch {
@@ -184,9 +191,30 @@ public actor UploadCoordinator {
       guard let instruction = instructions[draft.id]?[number], let part = plan.first(where: { $0.number == number })
       else { continue }
       let file = try store.preparePart(draft, part: part)
-      try transfer.upload(
-        .init(draftID: draft.id, ownerAccountID: draft.ownerAccountID, uploadID: uploadID, partNumber: number, partFile: file),
-        instruction: instruction, allowCellular: draft.allowCellular)
+      let info = BackgroundTransfer.TaskInfo(
+        draftID: draft.id, ownerAccountID: draft.ownerAccountID, uploadID: uploadID, partNumber: number, partFile: file)
+      switch await transfer.uploadForeground(info, instruction: instruction) {
+      case .uploaded(let etag):
+        draft.receipts.removeAll { $0.partNumber == number }
+        draft.receipts.append(PartReceipt(partNumber: number, etag: etag))
+      case .expiredInstruction:
+        instructions[draft.id]?[number] = nil
+      case .failed:
+        break
+      }
+    }
+    let uploaded = PartPlanner.merge(server: status.verifiedParts, local: draft.receipts)
+    draft.receipts = uploaded.map { PartReceipt(partNumber: $0.key, etag: $0.value) }.sorted { $0.partNumber < $1.partNumber }
+    if let parts = PartPlanner.completion(partCount: status.partCount, receipts: uploaded) {
+      if draft.completeKey == nil {
+        draft.completeKey = UUID()
+        try persist(draft)
+      }
+      let completed: UploadResponse = try await api.call(
+        "POST", "/v2/uploads/\(uploadID.uuidString.lowercased())/complete", body: CompleteUploadRequest(parts: parts),
+        idempotencyKey: draft.completeKey, expectedAccount: draft.ownerAccountID)
+      draft.status = completed.state == .committed ? .committed : .verifying
+      return draft
     }
     draft.status = .uploading
     return draft

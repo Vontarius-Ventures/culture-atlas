@@ -1,5 +1,7 @@
 package com.cultureatlas.capture.core.onboarding
 
+import com.cultureatlas.capture.core.contract.OnboardingCatalogEntry
+import com.cultureatlas.capture.core.contract.OnboardingChips
 import com.cultureatlas.capture.core.contract.SeedCategoryState
 import com.cultureatlas.capture.core.contract.SeedState
 import com.cultureatlas.capture.core.contract.TasteCategory
@@ -30,7 +32,7 @@ object OnboardingCopy {
     const val PRIMARY_DISABLED = "Pick at least 3 so your feed starts with you."
     const val BACK = "Back"
     const val NEXT = "Next"
-    const val HINT = "Pick at least 3. You can change them later in Settings."
+    const val HINT = "Pick at least 3. You can change them later under Interests."
     fun step(n: Int) = "Step $n of 3"
 
     const val BUILDING_TITLE = "Building your feed…"
@@ -39,8 +41,9 @@ object OnboardingCopy {
     const val BUILDING_CATEGORY_READY = "Ready"
     const val BUILDING_CATEGORY_LOOKING = "Looking"
 
-    const val TASTE_TITLE = "Taste"
-    const val TASTE_LEDE = "What you pick shapes your feed. Remove anything that no longer fits, or add more."
+    const val TASTE_TITLE = "Interests"
+    const val TASTE_LEDE = "Your interests shape the feed. Remove anything that no longer fits, or add more."
+    const val SEE_FEED = "See my feed"
     const val TASTE_ADD_MORE = "Add more"
     const val TASTE_DONE = "Done"
     const val TASTE_SAVE = "Save"
@@ -83,6 +86,7 @@ object OnboardingCopy {
         "building.unavailable" to BUILDING_UNAVAILABLE,
         "building.category_ready" to BUILDING_CATEGORY_READY,
         "building.category_looking" to BUILDING_CATEGORY_LOOKING,
+        "building.go" to SEE_FEED,
         "settings_taste.title" to TASTE_TITLE,
         "settings_taste.lede" to TASTE_LEDE,
         "settings_taste.add_more" to TASTE_ADD_MORE,
@@ -114,6 +118,18 @@ object OnboardingPolicy {
             else -> OnboardingCopy.COUNTER_3
         }
         return Counter(text, picks.coerceAtMost(MIN_PICKS), picks >= MIN_PICKS)
+    }
+
+    /** Round-robin Wear / Play / Watch / Eat so the first screen is not one category. */
+    fun mixChips(chips: OnboardingChips): List<OnboardingCatalogEntry> {
+        val queues = TasteCategory.entries.associateWith { ArrayDeque(chips[it]) }
+        val mixed = mutableListOf<OnboardingCatalogEntry>()
+        while (queues.values.any { it.isNotEmpty() }) {
+            for (category in TasteCategory.entries) {
+                queues[category]?.removeFirstOrNull()?.let(mixed::add)
+            }
+        }
+        return mixed
     }
 
     /** The query to send, or null while it is too short or too long to search. */

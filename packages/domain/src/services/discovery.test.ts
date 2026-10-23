@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { SAMPLE_ITEMS } from '../feed/samples';
 import { accountCtx, anonCtx, ctxFor, insertCaptureWithAnalysis, insertItem, saveDirect } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAgentConnection } from '../testing';
-import { FEED_TOP_UP_MIN, getDiscoveries, interleaveFeed, longestCategoryRun } from './discovery';
+import { FEED_TOP_UP_MIN, getDiscoveries, interleaveFeed, longestCategoryRun, weaveRecentIntoFront } from './discovery';
 import { getItem, startRelatedDiscovery } from './items';
 import { recordPreference } from './preferences';
 
@@ -36,6 +36,19 @@ describe('interleaveFeed (pure)', () => {
   it('keeps priority order within each category', () => {
     const out = interleaveFeed([cand('a', 'wear'), cand('b', 'play'), cand('c', 'wear'), cand('d', 'play')], new Set());
     expect(out.map((c) => c.id)).toEqual(['a', 'b', 'c', 'd']);
+  });
+});
+
+describe('weaveRecentIntoFront (pure)', () => {
+  it('places newest cards every third slot so expand results reach the first page', () => {
+    const fused = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id }));
+    expect(weaveRecentIntoFront(fused, ['f', 'e']).map((x) => x.id)).toEqual(['a', 'b', 'f', 'c', 'd', 'e']);
+  });
+
+  it('leaves the fused order alone when nothing recent matches', () => {
+    const fused = [{ id: 'a' }, { id: 'b' }];
+    expect(weaveRecentIntoFront(fused, ['missing'])).toEqual(fused);
+    expect(weaveRecentIntoFront(fused, [])).toEqual(fused);
   });
 });
 
@@ -125,6 +138,28 @@ describe('discovery feed', () => {
     expect(longestCategoryRun(feed.items)).toBeLessThanOrEqual(2);
     expect(feed.available_categories).toEqual(['wear', 'play', 'watch', 'eat']);
     expect(feed.feed_revision).toBeGreaterThan(0);
+  });
+
+  it('does not put related-discovery results on the home feed', async () => {
+    const { principal, ctx } = await accountCtx();
+    const owner = { accountId: principal.accountId };
+    const film = await insertItem(owner, { kind: 'film', title: 'Playtime' });
+    const junk = await insertItem(owner, { kind: 'brand', title: 'Tesla' });
+    const cap = await insertCaptureWithAnalysis(owner, { recommendItemIds: [film] });
+    await recordPreference(ctx, { action: 'save', target_type: 'capture', target_id: cap.captureId });
+    await saveDirect(principal.accountId, film);
+    const job = await db.query<{ id: string }>(
+      `INSERT INTO discovery_jobs (owner_account_id, origin_item_id) VALUES ($1, $2) RETURNING id`,
+      [principal.accountId, film],
+    );
+    await db.query(
+      `INSERT INTO recommendations (discovery_item_id, discovery_job_id, rank, title, origin, category)
+       VALUES ($1, $2, 1, 'Tesla', 'vlm_creative', 'wear')`,
+      [junk, job.rows[0]!.id],
+    );
+    const feed = await getDiscoveries(ctx, { limit: 24, refresh: true });
+    expect(feed.items.map((c) => c.id)).toContain(film);
+    expect(feed.items.map((c) => c.id)).not.toContain(junk);
   });
 
   it('selected-collection agents cannot read the global feed', async () => {

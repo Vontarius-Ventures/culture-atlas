@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -9,6 +10,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Ready notices (screen 17): asked when the user first explores a photo. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- WorkManager may promote an upload to a dataSync foreground service (targetSdk 35). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -32,7 +36,7 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Verified App Link for the email sign-in callback (fixed destination only). -->
+            <!-- Store host plus this build's API host (atlasApiHost / LocalAPI tunnel). -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -41,8 +45,17 @@
                     android:host="app.cultureatlas.com"
                     android:path="/identity/callback"
                     android:scheme="https" />
+                <data
+                    android:host="${atlasApiHost}"
+                    android:path="/identity/callback"
+                    android:scheme="https" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
 
         <!-- Data-only FCM wake-ups carrying an opaque reference (ready notices). -->
         <service

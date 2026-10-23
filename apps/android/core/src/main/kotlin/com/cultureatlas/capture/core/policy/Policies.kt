@@ -110,7 +110,52 @@ object CapabilityGate {
     data class PhoneCamera(val photo: Boolean, val video: Boolean)
 
     fun phoneCamera(capabilities: Capabilities?): PhoneCamera =
-        PhoneCamera(capabilities?.flag("camera_photo") == true, capabilities?.flag("camera_video") == true)
+        PhoneCamera(
+            capabilities?.flags?.get("camera_photo") ?: true,
+            capabilities?.flags?.get("camera_video") ?: true,
+        )
+
+    /** Photo Explore: server `availability.analysis`. Capture still works when this is off. */
+    data class PhotoAnalysis(val available: Boolean, val message: String)
+
+    fun photoAnalysis(capabilities: Capabilities?): PhotoAnalysis {
+        if (capabilities == null) return PhotoAnalysis(true, "")
+        val analysis = capabilities.availability["analysis"]
+        val flaggedOff = capabilities.flags["concentrate_analysis_enabled"] == false
+        if (analysis?.available == false || (analysis == null && flaggedOff)) {
+            return PhotoAnalysis(false, photoAnalysisMessage(analysis?.reasons.orEmpty()))
+        }
+        return PhotoAnalysis(true, "")
+    }
+
+    fun photoAnalysisMessage(reasons: List<String>): String = when {
+        "model_unqualified" in reasons ->
+            "Photo analysis isn't available yet. The vision model isn't qualified for this build. Your photos stay in this private library."
+        "provider_unconfigured" in reasons ->
+            "Photo analysis isn't configured. Your photos stay in this private library."
+        "budget_exhausted" in reasons ->
+            "Photo analysis is paused. Your photos stay in this private library."
+        "privacy_unverified" in reasons ->
+            "Photo analysis is waiting on a privacy confirmation. Your photos stay in this private library."
+        else ->
+            "Photo analysis isn't available yet. Your photos stay in this private library."
+    }
+
+    /** Music Mode Explore: server `availability.music_match`. Recording still works when this is off. */
+    data class MusicMatch(val available: Boolean, val message: String)
+
+    fun musicMatch(capabilities: Capabilities?): MusicMatch {
+        if (capabilities == null) return MusicMatch(true, "")
+        val match = capabilities.availability["music_match"] ?: return MusicMatch(true, "")
+        if (match.available) return MusicMatch(true, "")
+        return MusicMatch(false, musicMatchMessage(match.reasons))
+    }
+
+    fun musicMatchMessage(reasons: List<String>): String =
+        if (reasons.any { it == "transcript_unconfigured" || it == "qloo_unconfigured" || it == "fingerprint_unavailable" })
+            "Song catalog matching isn't available yet. Your recording stays in this private library. Nothing was invented."
+        else
+            "Music identification isn't available. Your recording stays in this private library. Nothing was invented."
 }
 
 /** Client reaction to server error codes (error-policy.json). */

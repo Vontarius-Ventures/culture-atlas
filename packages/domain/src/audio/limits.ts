@@ -34,7 +34,7 @@ export const AUDIO_CAPABILITIES = {
   elevenlabs_transcription: {
     preferred: true,
     enabled: false,
-    reason: 'zero_retention_unproven',
+    reason: 'api_key_missing',
   },
   music_recognition: {
     adapter: 'unavailable',

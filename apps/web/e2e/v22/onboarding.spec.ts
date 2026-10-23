@@ -195,7 +195,7 @@ test.describe('Taste onboarding (screen 14)', () => {
     await expect(page.getByText("We'll keep building in the background.")).toBeVisible();
     await expect(page.getByText('Until then, Discover shows example results.')).toBeVisible();
     await expectNoHorizontalScroll(page);
-    await page.getByRole('link', { name: 'Go to Discover' }).click();
+    await page.getByRole('link', { name: 'See my feed' }).click();
     await expect(page).toHaveURL(/\/$/);
     expect(api.onboarding.picks).toHaveLength(3);
   });

@@ -176,7 +176,7 @@ test.describe('Settings → Taste (screen 18)', () => {
     const api = await openV22(page, '/settings', opts);
     await page.getByRole('link', { name: /Edit your taste/ }).click();
     await expect(page).toHaveURL(/\/settings\/taste$/);
-    await expect(page.getByRole('heading', { name: 'Taste', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Interests', exact: true })).toBeVisible();
     const wear = page.getByRole('region', { name: /^Wear/ });
     await expect(wear.getByRole('listitem')).toHaveCount(2);
     const play = page.getByRole('region', { name: /^Play/ });

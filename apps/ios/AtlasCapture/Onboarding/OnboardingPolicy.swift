@@ -21,7 +21,7 @@ public enum OnboardingCopy {
   public static let primaryDisabled = "Pick at least 3 so your feed starts with you."
   public static let back = "Back"
   public static let next = "Next"
-  public static let hint = "Pick at least 3. You can change them later in Settings."
+  public static let hint = "Pick at least 3. You can change them later under Interests."
   public static func step(_ n: Int) -> String { "Step \(n) of 3" }
 
   public static let buildingTitle = "Building your feed…"
@@ -30,8 +30,9 @@ public enum OnboardingCopy {
   public static let buildingCategoryReady = "Ready"
   public static let buildingCategoryLooking = "Looking"
 
-  public static let tasteTitle = "Taste"
-  public static let tasteLede = "What you pick shapes your feed. Remove anything that no longer fits, or add more."
+  public static let tasteTitle = "Interests"
+  public static let tasteLede = "Your interests shape the feed. Remove anything that no longer fits, or add more."
+  public static let seeFeed = "See my feed"
   public static let tasteAddMore = "Add more"
   public static let tasteDone = "Done"
   public static let tasteSave = "Save"
@@ -76,6 +77,7 @@ public enum OnboardingCopy {
     "building.unavailable": buildingUnavailable,
     "building.category_ready": buildingCategoryReady,
     "building.category_looking": buildingCategoryLooking,
+    "building.go": seeFeed,
     "settings_taste.title": tasteTitle,
     "settings_taste.lede": tasteLede,
     "settings_taste.add_more": tasteAddMore,

@@ -1,22 +1,30 @@
 package com.cultureatlas.capture.core.net
 
+import com.cultureatlas.capture.core.contract.AddCollectionItemResponse
 import com.cultureatlas.capture.core.contract.AnalysisStatus
 import com.cultureatlas.capture.core.contract.AnalyzeAudioRequest
 import com.cultureatlas.capture.core.contract.AnalyzeMediaRequest
-import com.cultureatlas.capture.core.contract.KeepAudioRecordingRequest
-import com.cultureatlas.capture.core.contract.KeptAudioResponse
+import com.cultureatlas.capture.core.contract.CollectionDetailResponse
+import com.cultureatlas.capture.core.contract.CollectionSummary
+import com.cultureatlas.capture.core.contract.CollectionsListResponse
 import com.cultureatlas.capture.core.contract.CompleteOnboardingResponse
+import com.cultureatlas.capture.core.contract.CreateCollectionRequest
 import com.cultureatlas.capture.core.contract.CreatePickRequest
 import com.cultureatlas.capture.core.contract.CreatePickResponse
 import com.cultureatlas.capture.core.contract.DeletePickResponse
+import com.cultureatlas.capture.core.contract.DiscoveriesResponse
 import com.cultureatlas.capture.core.contract.EmptyBody
 import com.cultureatlas.capture.core.contract.FoodExclusionsBody
+import com.cultureatlas.capture.core.contract.ItemDetailResponse
+import com.cultureatlas.capture.core.contract.KeepAudioRecordingRequest
+import com.cultureatlas.capture.core.contract.KeptAudioResponse
 import com.cultureatlas.capture.core.contract.MediaDetail
 import com.cultureatlas.capture.core.contract.OnboardingCatalog
 import com.cultureatlas.capture.core.contract.OnboardingSearchResponse
 import com.cultureatlas.capture.core.contract.OnboardingStateResponse
 import com.cultureatlas.capture.core.contract.PushTokenRequest
 import com.cultureatlas.capture.core.contract.PushTokenResponse
+import com.cultureatlas.capture.core.contract.RelatedDiscoveryResponse
 import com.cultureatlas.capture.core.contract.TasteCategory
 import com.cultureatlas.capture.core.contract.TastePicksResponse
 import com.cultureatlas.capture.core.contract.TasteSeedStatus
@@ -109,6 +117,36 @@ suspend fun AtlasApi.analysis(mediaId: String, analysisId: String): AnalysisStat
  * Keep a Music Mode WAV on the account. Does not start analysis.
  * Multipart: JSON [KeepAudioRecordingRequest] + `audio/wav` file.
  */
+suspend fun AtlasApi.discoveries(refresh: Boolean = false): DiscoveriesResponse {
+    val query = mutableMapOf("limit" to "24")
+    if (refresh) query["refresh"] = "true"
+    return get("/v1/discoveries", DiscoveriesResponse.serializer(), query)
+}
+
+suspend fun AtlasApi.item(id: String): ItemDetailResponse =
+    get("/v1/items/${id.lowercase()}", ItemDetailResponse.serializer())
+
+suspend fun AtlasApi.discoverRelated(id: String, key: UUID = UUID.randomUUID()): RelatedDiscoveryResponse =
+    call(
+        "POST", "/v1/items/${id.lowercase()}/discoveries",
+        EmptyBody(), EmptyBody.serializer(), RelatedDiscoveryResponse.serializer(),
+        idempotencyKey = key,
+    )
+
+suspend fun AtlasApi.collections(): CollectionsListResponse = get("/v1/collections", CollectionsListResponse.serializer())
+
+suspend fun AtlasApi.createCollection(request: CreateCollectionRequest, key: UUID = UUID.randomUUID()): CollectionSummary =
+    call("POST", "/v1/collections", request, CreateCollectionRequest.serializer(), CollectionSummary.serializer(), idempotencyKey = key)
+
+suspend fun AtlasApi.collection(id: String): CollectionDetailResponse =
+    get("/v1/collections/${id.lowercase()}", CollectionDetailResponse.serializer())
+
+suspend fun AtlasApi.addCollectionItem(collectionId: String, itemId: String, key: UUID = UUID.randomUUID()): AddCollectionItemResponse =
+    call(
+        "PUT", "/v1/collections/${collectionId.lowercase()}/items/${itemId.lowercase()}",
+        EmptyBody(), EmptyBody.serializer(), AddCollectionItemResponse.serializer(), idempotencyKey = key,
+    )
+
 suspend fun AtlasApi.keepAudioRecording(
     request: KeepAudioRecordingRequest,
     wav: java.io.File,

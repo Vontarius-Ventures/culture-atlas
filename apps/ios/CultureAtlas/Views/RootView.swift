@@ -51,13 +51,19 @@ struct RootView: View {
   }
 
   private var tabs: some View {
-    TabView {
-      NavigationStack { LibraryView() }
-        .tabItem { Label("Library", systemImage: "photo.on.rectangle") }
+    TabView(selection: $controller.rootTab) {
+      NavigationStack { FeedView() }
+        .tabItem { Label("Feed", systemImage: "square.stack.fill") }
+        .tag(CaptureController.RootTab.feed)
       NavigationStack { CaptureSourceView() }
         .tabItem { Label("Capture", systemImage: "camera") }
+        .tag(CaptureController.RootTab.capture)
+      NavigationStack { LibraryView() }
+        .tabItem { Label("Library", systemImage: "photo.on.rectangle") }
+        .tag(CaptureController.RootTab.library)
       NavigationStack { SettingsView() }
         .tabItem { Label("Settings", systemImage: "gearshape") }
+        .tag(CaptureController.RootTab.settings)
     }
     .safeAreaInset(edge: .top) {
       if controller.armed != nil { RemoteArmBanner() }
@@ -109,6 +115,9 @@ struct SignInView: View {
       Text("Keep what catches your eye.").font(.system(.title3, design: .serif))
       Text("Sign in with your email to capture and keep photos, videos and music in your private library.")
         .foregroundStyle(.secondary)
+      Text("This test build doesn't send email. After you tap, the sign-in link opens on this phone.")
+        .font(.footnote)
+        .foregroundStyle(AtlasTheme.muted)
       TextField("Email address", text: $email)
         .textContentType(.emailAddress)
         .keyboardType(.emailAddress)

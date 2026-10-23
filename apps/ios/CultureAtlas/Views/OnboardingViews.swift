@@ -99,7 +99,9 @@ private struct PickBar: View {
               .labelStyle(TrailingIconLabelStyle())
               .frame(minHeight: 44)
           }
-          .buttonStyle(.bordered)
+          .buttonStyle(.borderedProminent)
+          .tint(counter.canComplete ? AtlasTheme.olive : AtlasTheme.line)
+          .foregroundStyle(counter.canComplete ? Color.white : AtlasTheme.ink)
         }
       }
       if onboarding.step == 3 {
@@ -208,20 +210,18 @@ struct ChipPickStep: View {
     Text(OnboardingCopy.chipsTitle)
       .font(.system(.title, design: .serif))
       .accessibilityAddTraits(.isHeader)
-    if let catalog = onboarding.catalog {
-      ForEach(TasteCategory.allCases) { category in
-        VStack(alignment: .leading, spacing: 8) {
-          Text(OnboardingCopy.group(category))
-            .font(.system(.title3, design: .serif))
-            .accessibilityAddTraits(.isHeader)
-          FlowLayout(spacing: 8) {
-            ForEach(catalog.chips[category]) { entry in
-              let picked = onboarding.isPicked(entry)
-              PillToggle(label: entry.label, selected: picked) {
-                Task { await onboarding.toggle(entry, settings: settings) }
-              }
-              .disabled(onboarding.busyIDs.contains(entry.id))
+    if onboarding.catalog != nil {
+      FlowLayout(spacing: 8) {
+        ForEach(mixedChips) { entry in
+          let picked = onboarding.isPicked(entry)
+          VStack(alignment: .leading, spacing: 2) {
+            Text(OnboardingCopy.group(entry.category))
+              .font(.caption2)
+              .foregroundStyle(AtlasTheme.muted)
+            PillToggle(label: entry.label, selected: picked) {
+              Task { await onboarding.toggle(entry, settings: settings) }
             }
+            .disabled(onboarding.busyIDs.contains(entry.id))
           }
         }
       }
@@ -229,6 +229,24 @@ struct ChipPickStep: View {
       ProgressView().frame(maxWidth: .infinity, minHeight: 120)
     }
     SearchBlock(settings: settings)
+  }
+
+  /// Round-robin Wear / Play / Watch / Eat so the first screen is not one category.
+  private var mixedChips: [OnboardingCatalogEntry] {
+    guard let catalog = onboarding.catalog else { return [] }
+    var queues = Dictionary(uniqueKeysWithValues: TasteCategory.allCases.map { ($0, catalog.chips[$0]) })
+    var out: [OnboardingCatalogEntry] = []
+    var index = 0
+    let order = TasteCategory.allCases
+    while queues.values.contains(where: { !$0.isEmpty }) && index < 64 {
+      let category = order[index % order.count]
+      if var remaining = queues[category], !remaining.isEmpty {
+        out.append(remaining.removeFirst())
+        queues[category] = remaining
+      }
+      index += 1
+    }
+    return out
   }
 }
 
@@ -463,7 +481,7 @@ struct BuildingFeedView: View {
           Button {
             onboarding.finish()
           } label: {
-            Text(OnboardingCopy.tasteDone).frame(maxWidth: .infinity, minHeight: 48)
+            Text(OnboardingCopy.seeFeed).frame(maxWidth: .infinity, minHeight: 48)
           }
           .buttonStyle(.borderedProminent)
         }

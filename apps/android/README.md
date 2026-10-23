@@ -73,9 +73,11 @@ store build does not claim one).
 
 These are not done here and must not be inferred from source landing:
 
-- Install Android SDK 35, assemble and run `assembleStoreDebug` on a device
-- Play Console: data safety, microphone / camera / photos declarations, package
-  signing, `assetlinks.json` for the App Link
+- Sideload `dist/app-store-debug.apk` (store debug, HTTPS-only) onto a physical
+  Android phone; this Mac has `adb` but no device attached
+- Play Console: paste `play/data-safety.json`, upload keystore (not the debug
+  cert), and a Play AAB signed with that keystore
+- `assetlinks.json` is served on the live API host for the debug cert fingerprint
 - Physical AUD01–AUD03 (camera-off instrumentation, route loss, codecs)
 - Experimental Meta DAT compile, license copy into the experimental APK, and
   Play / Meta tester-channel eligibility (`docs/native.md`)

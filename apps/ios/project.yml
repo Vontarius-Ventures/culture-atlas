@@ -44,6 +44,10 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cultureatlas.AtlasCapture
         GENERATE_INFOPLIST_FILE: true
+      configs:
+        Debug:
+          # com.cultureatlas.* is not available on the Art of Marketing Group team.
+          PRODUCT_BUNDLE_IDENTIFIER: com.aomg.atlascapture
   AtlasGlasses:
     # The only code that imports the Meta SDK.
     type: framework
@@ -77,6 +81,11 @@ targets:
         INFOPLIST_FILE: CultureAtlas/Info.plist
         CODE_SIGN_ENTITLEMENTS: CultureAtlas/CultureAtlas.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      configs:
+        Debug:
+          # Device testing on team U9XG3X374H. Store ID is not available to this team.
+          PRODUCT_BUNDLE_IDENTIFIER: com.aomg.cultureatlas
+          CODE_SIGN_ENTITLEMENTS: CultureAtlas/CultureAtlas.Debug.entitlements
   CultureAtlasExperimental:
     type: application
     platform: iOS
@@ -114,15 +123,28 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: true
+  CultureAtlasUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - CultureAtlasUITests
+    dependencies:
+      - target: CultureAtlas
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true
+        PRODUCT_BUNDLE_IDENTIFIER: com.aomg.cultureatlas.uitests
 schemes:
   CultureAtlas:
     build:
       targets:
         CultureAtlas: all
         AtlasCaptureTests: [test]
+        CultureAtlasUITests: [test]
     test:
       targets:
         - AtlasCaptureTests
+        - CultureAtlasUITests
   CultureAtlasExperimental:
     build:
       targets:

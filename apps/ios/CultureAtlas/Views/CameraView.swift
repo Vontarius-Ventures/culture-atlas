@@ -39,6 +39,9 @@ struct CameraView: View {
         }
       }
       if let error { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText) }
+      else if let message = controller.message, review == nil {
+        Text(message).foregroundStyle(.red).accessibilityAddTraits(.isStaticText)
+      }
       if saving { Text("Saving on this phone…").accessibilityAddTraits(.updatesFrequently) }
 
       Picker("Mode", selection: $mode) {
@@ -46,7 +49,7 @@ struct CameraView: View {
         Text("Video").tag(MediaKind.video).disabled(!allowed.video)
       }
       .pickerStyle(.segmented)
-      .disabled(camera.isRecording)
+      .disabled(camera.isRecording || !camera.isRunning)
 
       if mode == .video {
         Toggle(isOn: Binding(get: { camera.microphoneOn }, set: { on in Task { _ = await camera.setMicrophone(on) } })) {
@@ -59,7 +62,7 @@ struct CameraView: View {
       }
 
       HStack(spacing: 24) {
-        Button("Flip camera") { try? camera.flip() }.disabled(camera.isRecording)
+        Button("Flip camera") { try? camera.flip() }.disabled(camera.isRecording || !camera.isRunning || saving)
         shutter
       }
 
@@ -87,13 +90,18 @@ struct CameraView: View {
       Button {
         Task {
           saving = true
+          error = nil
           review = await controller.capturePhoto(source: .phoneCamera)
           saving = false
+          if review == nil {
+            error = controller.message ?? "The photo wasn't saved. Try again."
+          }
         }
       } label: {
         Text("Take photo").frame(minWidth: 140, minHeight: 44)
       }
       .buttonStyle(.borderedProminent)
+      .accessibilityIdentifier("capture.take-photo")
       .disabled(!camera.isRunning || saving)
     } else if camera.isRecording {
       Button(role: .destructive) {
@@ -147,6 +155,7 @@ struct ReviewSheet: View {
           }
         }
         .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("capture.keep")
       }
     }
     .padding(24)

@@ -55,6 +55,8 @@ public final class PhoneCamera: NSObject, ObservableObject {
   private var photoContinuation: CheckedContinuation<Data, Error>?
   private var movieContinuation: CheckedContinuation<ClipResult, Error>?
   private var observers: [NSObjectProtocol] = []
+  /// AVCaptureSession start/stop must run on one serial queue, not the cooperative pool.
+  private let sessionQueue = DispatchQueue(label: "com.cultureatlas.capture.session")
 
   public override init() {
     super.init()
@@ -100,8 +102,14 @@ public final class PhoneCamera: NSObject, ObservableObject {
     guard await requestCameraAccess() else { throw CameraError.permissionDenied }
     try configure(position: position)
     let session = self.session
-    await Task.detached { session.startRunning() }.value
+    await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+      sessionQueue.async {
+        session.startRunning()
+        cont.resume()
+      }
+    }
     isRunning = session.isRunning
+    if !isRunning { throw CameraError.configurationFailed }
   }
 
   public func stop() {
@@ -110,14 +118,14 @@ public final class PhoneCamera: NSObject, ObservableObject {
       isRunning = false
       return
     }
-    Task.detached { session.stopRunning() }
+    sessionQueue.async { session.stopRunning() }
     isRunning = false
   }
 
   private func configure(position: Position) throws {
     session.beginConfiguration()
     defer { session.commitConfiguration() }
-    session.sessionPreset = .high
+    session.sessionPreset = session.canSetSessionPreset(.photo) ? .photo : .high
     if let videoInput { session.removeInput(videoInput) }
     guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position == .back ? .back : .front)
     else { throw CameraError.noDevice }
@@ -130,6 +138,15 @@ public final class PhoneCamera: NSObject, ObservableObject {
       guard session.canAddOutput(photoOutput) else { throw CameraError.configurationFailed }
       session.addOutput(photoOutput)
     }
+    // iPhone 16 can defer JPEGs; fileDataRepresentation() is then nil in the
+    // processing callback and Take photo fails closed with nothing saved.
+    if photoOutput.isAutoDeferredPhotoDeliverySupported {
+      photoOutput.isAutoDeferredPhotoDeliveryEnabled = false
+    }
+    photoOutput.maxPhotoQualityPrioritization = .quality
+    // iOS 16+: capture hangs unless maxPhotoDimensions is set. The absolute
+    // max is often a 48MP ProRAW size that JPEG capture rejects on iPhone 16.
+    photoOutput.maxPhotoDimensions = jpegPhotoDimensions(device.activeFormat.supportedMaxPhotoDimensions)
     if !session.outputs.contains(movieOutput) {
       guard session.canAddOutput(movieOutput) else { throw CameraError.configurationFailed }
       session.addOutput(movieOutput)
@@ -177,8 +194,19 @@ public final class PhoneCamera: NSObject, ObservableObject {
     guard photoContinuation == nil, isRunning else { throw CameraError.busy }
     return try await withCheckedThrowingContinuation { continuation in
       photoContinuation = continuation
-      let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
-      photoOutput.capturePhoto(with: settings, delegate: self)
+      // capturePhoto must run on the session queue; MainActor calls hang on
+      // iOS 26 / iPhone 16 once the session itself started on that queue.
+      sessionQueue.async { [photoOutput] in
+        let settings: AVCapturePhotoSettings
+        if photoOutput.availablePhotoCodecTypes.contains(.jpeg) {
+          settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+        } else {
+          settings = AVCapturePhotoSettings()
+        }
+        settings.maxPhotoDimensions = photoOutput.maxPhotoDimensions
+        settings.photoQualityPrioritization = .quality
+        photoOutput.capturePhoto(with: settings, delegate: self)
+      }
     }
   }
 
@@ -201,15 +229,34 @@ public final class PhoneCamera: NSObject, ObservableObject {
 
 extension PhoneCamera: AVCapturePhotoCaptureDelegate {
   nonisolated public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-    let data = photo.fileDataRepresentation()
+    let jpeg = jpegData(from: photo)
     Task { @MainActor in
       guard let continuation = self.photoContinuation else { return }
       self.photoContinuation = nil
-      if let data, error == nil { continuation.resume(returning: data) } else {
+      if let jpeg, error == nil { continuation.resume(returning: jpeg) } else {
         continuation.resume(throwing: error ?? CameraError.configurationFailed)
       }
     }
   }
+}
+
+/// ~12MP: large enough for the library, small enough that JPEG capture is valid.
+private func jpegPhotoDimensions(_ supported: [CMVideoDimensions]) -> CMVideoDimensions {
+  let cap = Int32(4032 * 3024)
+  let usable = supported.filter { $0.width * $0.height <= cap }
+  let pool = usable.isEmpty ? supported : usable
+  return pool.max(by: { $0.width * $0.height < $1.width * $1.height }) ?? CMVideoDimensions(width: 4032, height: 3024)
+}
+
+private func jpegData(from photo: AVCapturePhoto) -> Data? {
+  if let data = photo.fileDataRepresentation() {
+    if let image = UIImage(data: data), let jpeg = image.jpegData(compressionQuality: 0.92) { return jpeg }
+    return data
+  }
+  if let cg = photo.cgImageRepresentation() {
+    return UIImage(cgImage: cg).jpegData(compressionQuality: 0.92)
+  }
+  return nil
 }
 
 extension PhoneCamera: AVCaptureFileOutputRecordingDelegate {

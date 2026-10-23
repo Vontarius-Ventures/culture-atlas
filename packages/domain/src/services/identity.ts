@@ -60,6 +60,21 @@ async function addressLimit(
 }
 
 /** Never returns whether an email/account exists, nor any email proof. */
+const PRODUCTION_ANDROID_CALLBACK = 'https://app.cultureatlas.com/identity/callback';
+
+/** Android App Link. HTTPS APP_BASE_URL on a real host (phone-reachable tunnel or production). */
+export function androidIdentityCallback(appBaseUrl: string): string {
+  try {
+    const base = new URL(appBaseUrl);
+    if (base.protocol === 'https:' && base.hostname !== 'localhost' && base.hostname !== '127.0.0.1') {
+      return new URL('/identity/callback', base).toString().replace(/\/$/, '');
+    }
+  } catch {
+    // Fall through to the store hostname.
+  }
+  return PRODUCTION_ANDROID_CALLBACK;
+}
+
 export async function startEmail(ctx: ServiceContext, raw: Start): Promise<typeof accepted> {
   const input = EmailStart.parse(raw);
   const email = normalizeEmail(input.email);
@@ -130,7 +145,7 @@ export async function startEmail(ctx: ServiceContext, raw: Start): Promise<typeo
       ? new URL('/identity/callback', ctx.config.APP_BASE_URL).toString()
       : input.destination === 'ios'
         ? 'cultureatlas://identity/callback'
-        : 'https://app.cultureatlas.com/identity/callback';
+        : androidIdentityCallback(ctx.config.APP_BASE_URL);
   const fragment = new URLSearchParams({
     challenge_id: rows[0]!.id,
     token,

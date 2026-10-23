@@ -11,6 +11,7 @@ import {
 } from '../testing';
 import { hashToken, randomToken, resolvePrincipal } from './auth';
 import {
+  androidIdentityCallback,
   completeEmail,
   DevIdentityOutbox,
   EmailStart,
@@ -87,6 +88,17 @@ async function verifiedNative() {
   });
   return { request, completed, pair };
 }
+
+describe('Android identity callback host', () => {
+  it('keeps the store App Link on localhost and uses a public https APP_BASE_URL on a phone host', () => {
+    expect(androidIdentityCallback('http://localhost:3000')).toBe(
+      'https://app.cultureatlas.com/identity/callback',
+    );
+    expect(androidIdentityCallback('https://example.trycloudflare.com')).toBe(
+      'https://example.trycloudflare.com/identity/callback',
+    );
+  });
+});
 
 describe('verified email identity', () => {
   it('creates a recoverable identity, binds native grant to it, and never stores raw proofs', async () => {

@@ -21,7 +21,9 @@ import { JobCancelledError, type JobContext, type JobHandler } from '../jobs/han
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
 import type { SeedCategoryState } from '../schemas/onboarding';
+import { fillInterestsBoard } from '../services/collections';
 import { rebuildFeedSnapshots } from '../services/discovery';
+import { destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, type DisplayImage } from '../services/display';
 import {
   ensureSeedRun,
   readFoodExclusions,
@@ -66,6 +68,8 @@ import {
 export const SEED_SIGNALS_MAX = 12;
 export const SEED_RESULTS_TAKE = 15;
 export const SEED_CARDS_PER_CATEGORY = 8;
+/** Distinct cuisine/place names to search so expand waves don't repeat one query. */
+export const EAT_PLACE_SEARCHES = 3;
 /** Cuisine-tag insights measured ~12 s uncached on the hackathon key (Oct 2026). */
 export const SEED_EAT_TIMEOUT_MS = 25_000;
 /** Retry delay when Qloo's circuit is open and the adapter cannot say for how long (its default cooldown). */
@@ -108,6 +112,23 @@ export function isFoodSignal(input: { id: string; kind: string | null; category:
 export function signalsFor(category: Category, signals: SeedSignals): SeedSignals {
   if (category !== 'eat') return signals;
   return { tags: signals.tags.filter((s) => s.food), entities: signals.entities.filter((s) => s.food) };
+}
+
+/** Place search queries from food signals. "Sichuan" → "Sichuan restaurant". */
+export function eatPlaceSearchQueries(signals: SeedSignals, max = EAT_PLACE_SEARCHES): string[] {
+  const queries: string[] = [];
+  const seen = new Set<string>();
+  for (const signal of [...signals.tags, ...signals.entities]) {
+    const name = signal.name.trim();
+    if (!name) continue;
+    const query = /restaurant/i.test(name) ? name : `${name} restaurant`;
+    const key = query.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    queries.push(query);
+    if (queries.length >= max) break;
+  }
+  return queries;
 }
 
 /** Words that make a dish name a re-spelling, not a new dish ("Dim Sum-Style Dishes" for "Dim Sum"). */
@@ -163,7 +184,7 @@ export interface SeedSignals {
 }
 
 /** JSON-serializable stage output for one category (reused by a retry attempt). */
-interface SeedCard {
+export interface SeedCard {
   key: string;
   kind: ItemKind;
   category: Category;
@@ -172,12 +193,14 @@ interface SeedCard {
   qloo_id: string;
   subtitle: string | null;
   description: string | null;
+  image: DisplayImage | null;
+  destination_url: string | null;
   origin: 'qloo' | 'replay';
   provider_query_id: string;
   reason: string;
 }
 
-interface CategoryOutput {
+export interface CategoryOutput {
   state: 'ready' | 'empty';
   cards: SeedCard[];
   queries: RecordedQuery[];
@@ -237,13 +260,73 @@ function textProp(props: Record<string, unknown>, key: string): string | null {
   return typeof v === 'string' && v.trim() ? v.trim().slice(0, 280) : null;
 }
 
-async function fetchCategory(
+async function eatPlaceCards(
+  session: QlooSession,
+  signals: SeedSignals,
+  signalNames: Map<string, string>,
+  generic: string,
+  foodExclusions: readonly string[],
+): Promise<SeedCard[]> {
+  const cards: SeedCard[] = [];
+  const seen = new Set<string>();
+  for (const placeQuery of eatPlaceSearchQueries(signals)) {
+    try {
+      // Search is faster than place insights (which timed out at 25s on this key).
+      const { response, queryId } = await session.search(placeQuery, ['urn:entity:place'], {
+        purpose: 'taste_seed',
+        category: 'eat',
+      });
+      const origin = response.is_replay ? ('replay' as const) : ('qloo' as const);
+      const probed = await Promise.all(
+        response.data.map(async (e) => ({
+          e,
+          image: await qlooImageIfRenderable(imageFromQlooProperties(e.properties, e.name)),
+        })),
+      );
+      for (const { e, image } of probed) {
+        if (!image) continue;
+        if (violatedExclusions({ title: e.name, cuisine: e.name }, foodExclusions).length) continue;
+        const key = canonicalKeyFor({ kind: 'food', title: e.name, qlooId: e.entity_id });
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const contributors = (e.query?.explainability ?? [])
+          .filter((x) => signalNames.has(x.entity_id))
+          .sort((a, b) => b.score - a.score)
+          .map((x) => signalNames.get(x.entity_id)!);
+        cards.push({
+          key,
+          kind: 'food',
+          category: 'eat',
+          title: e.name,
+          year: null,
+          qloo_id: e.entity_id,
+          subtitle: e.disambiguation ?? 'Place',
+          description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
+          image,
+          destination_url: destinationFromQlooProperties(e.properties),
+          origin,
+          provider_query_id: queryId,
+          reason: contributors.length ? `Because you picked ${namesList(contributors)}.` : generic,
+        });
+      }
+    } catch (err) {
+      if (err instanceof BudgetExhaustedError || isProviderError(err)) break;
+      throw err;
+    }
+  }
+  return cards;
+}
+
+export async function fetchCategory(
   session: QlooSession,
   category: Category,
   input: {
     signals: SeedSignals;
     excludedKeys: ReadonlySet<string>;
     foodExclusions: readonly string[];
+    take?: number;
+    /** Qloo insights page (1-based). Expand uses later pages once the first is already in the pool. */
+    page?: number;
   },
 ): Promise<CategoryOutput> {
   const plan = SEED_CATEGORY_PLAN[category];
@@ -254,21 +337,6 @@ async function fetchCategory(
   const signalNames = new Map([...signals.tags, ...signals.entities].map((s) => [s.id, s.name]));
   const allNames = [...signals.tags, ...signals.entities].map((s) => s.name);
   const ownQueries = () => session.recorded.filter((q) => q.query_context['category'] === category);
-
-  const { response, queryId } = await session.insights(
-    {
-      filterType: plan.filterType,
-      ...(signals.tags.length ? { signalTags: signals.tags.map((t) => ({ id: t.id })) } : {}),
-      ...(signals.entities.length ? { signalEntities: signals.entities.map((e) => e.id) } : {}),
-      ...(plan.filterTagTypes ? { filterTagTypes: plan.filterTagTypes } : {}),
-      ...(plan.filterTags ? { filterTags: plan.filterTags } : {}),
-      ...(plan.filterType.startsWith('urn:entity:') ? { explainability: true } : {}),
-      take: SEED_RESULTS_TAKE,
-    },
-    { purpose: 'taste_seed', category },
-    plan.timeoutMs ? { timeoutMs: plan.timeoutMs } : {},
-  );
-  const origin = response.is_replay ? ('replay' as const) : ('qloo' as const);
   const generic = `From your picks: ${namesList(allNames)}.`;
   const seen = new Set<string>();
   const cards: SeedCard[] = [];
@@ -278,6 +346,30 @@ async function fetchCategory(
     seen.add(card.key);
     cards.push(card);
   };
+
+  // Pictured venues first so expand waves spend Qloo budget on new photos, not cuisine tags.
+  if (category === 'eat') {
+    for (const card of await eatPlaceCards(session, signals, signalNames, generic, input.foodExclusions)) {
+      consider(card);
+    }
+    if (cards.length > 0) return { state: 'ready', cards, queries: ownQueries() };
+  }
+
+  const { response, queryId } = await session.insights(
+    {
+      filterType: plan.filterType,
+      ...(signals.tags.length ? { signalTags: signals.tags.map((t) => ({ id: t.id })) } : {}),
+      ...(signals.entities.length ? { signalEntities: signals.entities.map((e) => e.id) } : {}),
+      ...(plan.filterTagTypes ? { filterTagTypes: plan.filterTagTypes } : {}),
+      ...(plan.filterTags ? { filterTags: plan.filterTags } : {}),
+      ...(plan.filterType.startsWith('urn:entity:') ? { explainability: true } : {}),
+      take: input.take ?? SEED_RESULTS_TAKE,
+      ...(input.page && input.page > 1 ? { page: input.page } : {}),
+    },
+    { purpose: 'taste_seed', category },
+    plan.timeoutMs ? { timeoutMs: plan.timeoutMs } : {},
+  );
+  const origin = response.is_replay ? ('replay' as const) : ('qloo' as const);
 
   if (plan.filterType === 'urn:tag') {
     const cuisine: QlooTag[] = response.data.tags.filter((t) => /(^|:)cuisine(:|$)/.test(t.type ?? '') || t.id.startsWith('urn:tag:cuisine:'));
@@ -293,6 +385,8 @@ async function fetchCategory(
         qloo_id: t.id,
         subtitle: 'Cuisine',
         description: null,
+        image: null,
+        destination_url: null,
         origin,
         provider_query_id: queryId,
         reason: generic,
@@ -315,6 +409,8 @@ async function fetchCategory(
         qloo_id: e.entity_id,
         subtitle: year ? String(year) : null,
         description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
+        image: imageFromQlooProperties(e.properties, e.name),
+        destination_url: destinationFromQlooProperties(e.properties),
         origin,
         provider_query_id: queryId,
         reason: contributors.length ? `Because you picked ${namesList(contributors)}.` : generic,
@@ -339,7 +435,14 @@ async function publishCategory(ctx: JobContext<'taste_seed'>, runId: string, own
         category: c.category,
         canonical_key: c.key,
         title: c.title,
-        display_metadata: { subtitle: c.subtitle, year: c.year, description: c.description, example: c.origin === 'replay' },
+        display_metadata: {
+          subtitle: c.subtitle,
+          year: c.year,
+          description: c.description,
+          image: c.image,
+          destination_url: c.destination_url,
+          example: c.origin === 'replay',
+        },
         external_ids: { qloo: c.qloo_id },
       });
       recs.push({
@@ -351,6 +454,7 @@ async function publishCategory(ctx: JobContext<'taste_seed'>, runId: string, own
         display_reason: c.reason,
         origin: c.origin,
         provider_query_ids: [c.provider_query_id],
+        destination_url: c.destination_url,
       });
     }
     await insertRecommendations(tx, parent, recs);
@@ -430,6 +534,21 @@ function retryError(failures: readonly Failure[]): unknown {
   const provider = withDelay ?? retryable.find((f) => isProviderError(f.error));
   if (provider) return provider.error;
   return new AppError('provider_unavailable', { message: 'Part of this is taking longer than usual. Try again in a little while.', retryable: true });
+}
+
+async function fileInterestsBoard(db: Queryable, accountId: string, runId: string): Promise<void> {
+  const { rows } = await db.query<{ discovery_item_id: string }>(
+    `SELECT DISTINCT r.discovery_item_id
+       FROM recommendations r
+       JOIN discovery_items di ON di.id = r.discovery_item_id
+      WHERE r.taste_seed_run_id = $1 AND di.is_sample IS NOT TRUE`,
+    [runId],
+  );
+  await fillInterestsBoard(
+    db,
+    accountId,
+    rows.map((r) => r.discovery_item_id),
+  );
 }
 
 export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
@@ -543,6 +662,7 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
 
   if (failures.length === 0) {
     await setRunState(ctx.db, runId, 'complete');
+    await fileInterestsBoard(ctx.db, accountId, runId);
     return { state: 'complete', ...result };
   }
   // A retry needs requests left in the job's budget; otherwise the job ends with what it has.
@@ -553,6 +673,9 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
   const after = await categoryStates(ctx.db, runId);
   const anyReady = [...after.values()].includes('ready');
   await setRunState(ctx.db, runId, anyReady ? 'partial' : 'failed');
-  if (anyReady) return { state: 'partial', ...result };
+  if (anyReady) {
+    await fileInterestsBoard(ctx.db, accountId, runId);
+    return { state: 'partial', ...result };
+  }
   throw new AppError('provider_unavailable', { message: 'Part of this is taking longer than usual. Try again in a little while.', retryable: false });
 };

@@ -1,6 +1,6 @@
 {
   "fixture_version": 1,
-  "note": "Native taste onboarding (spec amendment 2.2, screens 14, 15 and 18) for apps/ios and apps/android. Wire bodies are in messages.json (onboarding_*, taste_picks_response). The TS test checks routes against ROUTES and the native owner bridge, copy against design/copy.json, limits against the server schemas, and every decision table against its reference implementation.",
+  "note": "Native owner bridge for apps/ios and apps/android: taste onboarding (spec amendment 2.2, screens 14, 15 and 18) plus Discover, item detail, related discoveries, and boards. Wire bodies are in messages.json. The TS test checks routes against ROUTES and the native owner bridge, copy against design/copy.json, limits against the server schemas, and every decision table against its reference implementation.",
   "auth": {
     "bearer": "native access token (cna_), the same session the app uses for /v2",
     "operations": [
@@ -14,7 +14,14 @@
       "GET /v1/onboarding/seed",
       "GET /v1/taste/picks",
       "POST /v1/taste/picks",
-      "DELETE /v1/taste/picks/{id}"
+      "DELETE /v1/taste/picks/{id}",
+      "GET /v1/discoveries",
+      "GET /v1/items/{id}",
+      "POST /v1/items/{id}/discoveries",
+      "GET /v1/collections",
+      "POST /v1/collections",
+      "GET /v1/collections/{id}",
+      "PUT /v1/collections/{id}/items/{item_id}"
     ],
     "mutation_headers": [
       "Idempotency-Key",
@@ -68,6 +75,34 @@
     "delete_taste_pick": {
       "route": "DELETE /v1/taste/picks/{id}",
       "operation": "deleteTastePick"
+    },
+    "discoveries": {
+      "route": "GET /v1/discoveries",
+      "operation": "getDiscoveries"
+    },
+    "item": {
+      "route": "GET /v1/items/{id}",
+      "operation": "getItem"
+    },
+    "discover_related": {
+      "route": "POST /v1/items/{id}/discoveries",
+      "operation": "discoverRelated"
+    },
+    "list_collections": {
+      "route": "GET /v1/collections",
+      "operation": "listCollections"
+    },
+    "create_collection": {
+      "route": "POST /v1/collections",
+      "operation": "createCollection"
+    },
+    "get_collection": {
+      "route": "GET /v1/collections/{id}",
+      "operation": "getCollection"
+    },
+    "add_collection_item": {
+      "route": "PUT /v1/collections/{id}/items/{item_id}",
+      "operation": "addCollectionItem"
     }
   },
   "limits": {
@@ -124,8 +159,8 @@
     "onboarding.back": "Back",
     "building.title": "Building your feed…",
     "building.unavailable": "We'll keep building in the background.",
-    "settings_taste.title": "Taste",
-    "onboarding.hint": "Pick at least 3. You can change them later in Settings.",
+    "settings_taste.title": "Interests",
+    "onboarding.hint": "Pick at least 3. You can change them later under Interests.",
     "onboarding.next": "Next",
     "onboarding.step": "Step {n} of 3",
     "onboarding.search.add": "Add",
@@ -136,9 +171,9 @@
     "building.lede": "Starting with what you picked.",
     "building.category_ready": "Ready",
     "building.category_looking": "Looking",
-    "building.go": "Go to Discover",
-    "building.examples": "Until then, Discover shows example results.",
-    "settings_taste.lede": "What you pick shapes your feed. Remove anything that no longer fits, or add more.",
+    "building.go": "See my feed",
+    "building.examples": "Until then, your feed shows example results.",
+    "settings_taste.lede": "Your interests shape the feed. Remove anything that no longer fits, or add more.",
     "settings_taste.add_more": "Add more",
     "settings_taste.done": "Done",
     "settings_taste.remove": "Remove {label}",

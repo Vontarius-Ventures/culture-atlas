@@ -36,6 +36,20 @@ final class OnboardingTests: XCTestCase {
     XCTAssertEqual(OnboardingPolicy.seed(retrying, elapsed: 0), .background)
     let taste = try decoder.decode(TastePicksResponse.self, from: Fixtures.message("taste_picks_response"))
     XCTAssertEqual(taste.picks.wear.count + taste.picks.play.count + taste.picks.watch.count + taste.picks.eat.count, taste.picksCount)
+    let discoveries = try decoder.decode(DiscoveriesResponse.self, from: Fixtures.message("discoveries_response"))
+    XCTAssertEqual(discoveries.items.first?.title, "Nina Simone")
+    XCTAssertTrue(discoveries.isExampleFeed)
+    let boards = try decoder.decode(CollectionsListResponse.self, from: Fixtures.message("collections_list_response"))
+    XCTAssertEqual(boards.collections.first?.name, "Weekend board")
+    _ = try decoder.decode(CollectionDetailResponse.self, from: Fixtures.message("collection_detail_response"))
+    _ = try decoder.decode(AddCollectionItemResponse.self, from: Fixtures.message("collection_add_item_response"))
+    let detail = try decoder.decode(ItemDetailResponse.self, from: Fixtures.message("item_detail_response"))
+    XCTAssertEqual(detail.item.title, "Nina Simone")
+    XCTAssertEqual(detail.description, "American singer, songwriter and pianist.")
+    XCTAssertEqual(detail.relatedState, "none")
+    _ = try decoder.decode(RelatedDiscoveryResponse.self, from: Fixtures.message("related_discovery_response"))
+    try assertRoundTrip(EmptyBody.self, "related_discovery_request")
+    try assertRoundTrip(CreateCollectionRequest.self, "collection_create_request")
   }
 
   func testRequestsEncodeToTheExampleBodies() throws {

@@ -33,122 +33,6 @@
       "retrieved_at": "2026-10-18T20:53:02.735Z"
     },
     {
-      "id": "img-linen",
-      "kind": "image",
-      "category": "wear",
-      "label": "Linen days",
-      "qloo": [
-        {
-          "type": "tag",
-          "id": "urn:tag:style:qloo:minimalist",
-          "name": "Minimalist",
-          "subtype": "urn:tag:style:qloo"
-        },
-        {
-          "type": "tag",
-          "id": "urn:tag:decor:qloo:scandinavian",
-          "name": "Scandinavian",
-          "subtype": "urn:tag:decor:qloo"
-        }
-      ],
-      "image": {
-        "url": "/samples/onboarding/linen.jpg",
-        "width": 800,
-        "height": 1000,
-        "alt": "Oatmeal linen shirt on a wooden hanger with leaf shadows",
-        "credit": "culture atlas (generated mock photo)",
-        "license": "project-owned mock"
-      },
-      "retrieved_at": "2026-10-18T20:53:33.065Z"
-    },
-    {
-      "id": "img-tailoring",
-      "kind": "image",
-      "category": "wear",
-      "label": "Soft tailoring",
-      "qloo": [
-        {
-          "type": "tag",
-          "id": "urn:tag:decor:qloo:quiet_luxury",
-          "name": "Quiet Luxury",
-          "subtype": "urn:tag:decor:qloo"
-        },
-        {
-          "type": "tag",
-          "id": "urn:tag:decor:qloo:preppy",
-          "name": "Preppy",
-          "subtype": "urn:tag:decor:qloo"
-        }
-      ],
-      "image": {
-        "url": "/samples/onboarding/tailoring.jpg",
-        "width": 800,
-        "height": 1000,
-        "alt": "Camel blazer draped over a cane chair",
-        "credit": "culture atlas (generated mock photo)",
-        "license": "project-owned mock"
-      },
-      "retrieved_at": "2026-10-18T20:53:00.904Z"
-    },
-    {
-      "id": "img-corners",
-      "kind": "image",
-      "category": "wear",
-      "label": "Quiet corners",
-      "qloo": [
-        {
-          "type": "tag",
-          "id": "urn:tag:decor:qloo:japandi",
-          "name": "Japandi",
-          "subtype": "urn:tag:decor:qloo"
-        },
-        {
-          "type": "tag",
-          "id": "urn:tag:decor:qloo:wabi_sabi",
-          "name": "Wabi Sabi",
-          "subtype": "urn:tag:decor:qloo"
-        }
-      ],
-      "image": {
-        "url": "/samples/onboarding/corners.jpg",
-        "width": 800,
-        "height": 1000,
-        "alt": "Paned window with afternoon light, a low oak table and a branch in a vase",
-        "credit": "culture atlas (generated mock photo)",
-        "license": "project-owned mock"
-      },
-      "retrieved_at": "2026-10-18T20:52:59.866Z"
-    },
-    {
-      "id": "img-forms",
-      "kind": "image",
-      "category": "wear",
-      "label": "Sculptural forms",
-      "qloo": [
-        {
-          "type": "tag",
-          "id": "urn:tag:decor:qloo:mid_century_modern",
-          "name": "Mid Century Modern",
-          "subtype": "urn:tag:decor:qloo"
-        },
-        {
-          "type": "tag",
-          "id": "urn:tag:style:qloo:minimalist",
-          "name": "Minimalist",
-          "subtype": "urn:tag:style:qloo"
-        }
-      ],
-      "image": {
-        "url": "/samples/onboarding/forms.jpg",
-        "width": 800,
-        "height": 1000,
-        "alt": "Rounded cream boucle chair beside a teak side table",
-        "credit": "culture atlas (generated mock photo)",
-        "license": "project-owned mock"
-      },
-      "retrieved_at": "2026-10-18T20:53:06.725Z"
-    },
-    {
       "id": "img-listening",
       "kind": "image",
       "category": "play",
@@ -207,35 +91,6 @@
       "retrieved_at": "2026-10-18T20:53:43.911Z"
     },
     {
-      "id": "img-night",
-      "kind": "image",
-      "category": "watch",
-      "label": "Night wanderings",
-      "qloo": [
-        {
-          "type": "tag",
-          "id": "urn:tag:subgenre:qloo:neo_noir",
-          "name": "Neo-noir",
-          "subtype": "urn:tag:subgenre:qloo"
-        },
-        {
-          "type": "tag",
-          "id": "urn:tag:genre:music:ambient",
-          "name": "Ambient",
-          "subtype": "urn:tag:genre:music"
-        }
-      ],
-      "image": {
-        "url": "/samples/onboarding/night.jpg",
-        "width": 800,
-        "height": 1000,
-        "alt": "Empty lamplit city street after rain",
-        "credit": "culture atlas (generated mock photo)",
-        "license": "project-owned mock"
-      },
-      "retrieved_at": "2026-10-18T20:53:33.417Z"
-    },
-    {
       "id": "img-lanterns",
       "kind": "image",
       "category": "eat",
@@ -263,6 +118,64 @@
         "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:34.360Z"
+    },
+    {
+      "id": "img-linen",
+      "kind": "image",
+      "category": "wear",
+      "label": "Linen days",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:style:qloo:minimalist",
+          "name": "Minimalist",
+          "subtype": "urn:tag:style:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:scandinavian",
+          "name": "Scandinavian",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/onboarding/linen.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Oatmeal linen shirt on a wooden hanger with leaf shadows",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
+      },
+      "retrieved_at": "2026-10-18T20:53:33.065Z"
+    },
+    {
+      "id": "img-night",
+      "kind": "image",
+      "category": "watch",
+      "label": "Night wanderings",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:subgenre:qloo:neo_noir",
+          "name": "Neo-noir",
+          "subtype": "urn:tag:subgenre:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:genre:music:ambient",
+          "name": "Ambient",
+          "subtype": "urn:tag:genre:music"
+        }
+      ],
+      "image": {
+        "url": "/samples/onboarding/night.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Empty lamplit city street after rain",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
+      },
+      "retrieved_at": "2026-10-18T20:53:33.417Z"
     },
     {
       "id": "img-tea",
@@ -294,6 +207,35 @@
       "retrieved_at": "2026-10-18T20:53:34.662Z"
     },
     {
+      "id": "img-tailoring",
+      "kind": "image",
+      "category": "wear",
+      "label": "Soft tailoring",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:quiet_luxury",
+          "name": "Quiet Luxury",
+          "subtype": "urn:tag:decor:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:preppy",
+          "name": "Preppy",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/onboarding/tailoring.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Camel blazer draped over a cane chair",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
+      },
+      "retrieved_at": "2026-10-18T20:53:00.904Z"
+    },
+    {
       "id": "img-noodles",
       "kind": "image",
       "category": "eat",
@@ -323,6 +265,35 @@
       "retrieved_at": "2026-10-18T20:53:05.624Z"
     },
     {
+      "id": "img-corners",
+      "kind": "image",
+      "category": "wear",
+      "label": "Quiet corners",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:japandi",
+          "name": "Japandi",
+          "subtype": "urn:tag:decor:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:wabi_sabi",
+          "name": "Wabi Sabi",
+          "subtype": "urn:tag:decor:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/onboarding/corners.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Paned window with afternoon light, a low oak table and a branch in a vase",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
+      },
+      "retrieved_at": "2026-10-18T20:52:59.866Z"
+    },
+    {
       "id": "img-table",
       "kind": "image",
       "category": "eat",
@@ -350,6 +321,35 @@
         "license": "project-owned mock"
       },
       "retrieved_at": "2026-10-18T20:53:32.114Z"
+    },
+    {
+      "id": "img-forms",
+      "kind": "image",
+      "category": "wear",
+      "label": "Sculptural forms",
+      "qloo": [
+        {
+          "type": "tag",
+          "id": "urn:tag:decor:qloo:mid_century_modern",
+          "name": "Mid Century Modern",
+          "subtype": "urn:tag:decor:qloo"
+        },
+        {
+          "type": "tag",
+          "id": "urn:tag:style:qloo:minimalist",
+          "name": "Minimalist",
+          "subtype": "urn:tag:style:qloo"
+        }
+      ],
+      "image": {
+        "url": "/samples/onboarding/forms.jpg",
+        "width": 800,
+        "height": 1000,
+        "alt": "Rounded cream boucle chair beside a teak side table",
+        "credit": "culture atlas (generated mock photo)",
+        "license": "project-owned mock"
+      },
+      "retrieved_at": "2026-10-18T20:53:06.725Z"
     },
     {
       "id": "chip-wear-japandi",

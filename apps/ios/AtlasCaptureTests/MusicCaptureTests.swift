@@ -91,6 +91,21 @@ final class MusicCaptureTests: XCTestCase {
     XCTAssertEqual(MediaKind.audio.rawValue, "audio")
   }
 
+  func testPcmWavHeaderIsQualifiedKeepContainer() {
+    let wav = AudioWav.pcmS16le(samples: [0, 1, -1, 16_384], sampleRateHz: 16_000, channels: 1)
+    XCTAssertTrue(AudioWav.isPcmS16leWav(wav))
+    XCTAssertEqual(String(bytes: wav[0..<4], encoding: .ascii), "RIFF")
+    XCTAssertEqual(String(bytes: wav[8..<12], encoding: .ascii), "WAVE")
+    XCTAssertEqual(wav.count, 44 + 8)
+  }
+
+  func testPhotoImportKeepsJpeg() {
+    let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+    let got = PhotoImport.payload(data: jpeg, type: .jpeg)
+    XCTAssertEqual(got?.contentType, "image/jpeg")
+    XCTAssertEqual(got?.data, jpeg)
+  }
+
   func testAudioDraftFilenameAndContentType() {
     let draft = DraftRecord.new(
       owner: UUID(), kind: .audio, source: .phoneMicrophone, contentType: "audio/mp4", capturedAt: Date())

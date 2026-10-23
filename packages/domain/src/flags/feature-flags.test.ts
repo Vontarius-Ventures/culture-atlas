@@ -38,6 +38,7 @@ function inputs(over: Partial<FeatureFlagInputs> = {}): FeatureFlagInputs {
     analysis: {
       keyConfigured: true,
       profileQualified: true,
+      qualityQualified: true,
       privacyVerified: true,
       budgetAvailable: true,
       providerReady: true,
@@ -145,6 +146,18 @@ describe('evaluateFeatureFlags', () => {
     expect(noAnalysis.flags.concentrate_analysis_enabled).toBe(false);
     expect(noAnalysis.reasons.concentrate_analysis_enabled).toEqual(['budget_exhausted']);
     expect(noAnalysis.flags.automatic_analysis).toBe(false);
+    const unqualified = evaluateFeatureFlags(
+      inputs({
+        analysis: {
+          ...inputs().analysis,
+          qualityQualified: false,
+          budgetAvailable: false,
+          providerReady: false,
+        },
+      }),
+    );
+    expect(unqualified.flags.concentrate_analysis_enabled).toBe(false);
+    expect(unqualified.reasons.concentrate_analysis_enabled).toContain('model_unqualified');
   });
 
   it('video needs a qualified decoder; a creation pause stops every capture path', () => {

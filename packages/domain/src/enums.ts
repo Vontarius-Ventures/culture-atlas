@@ -50,6 +50,8 @@ export const JOB_TYPES = [
   'purge_deleted',
   /** Seeds a new account's feed from its onboarding picks (spec amendment 2.2). */
   'taste_seed',
+  /** Walks the interest graph: more Qloo cards from cards already in the pool. */
+  'interest_expand',
   /** Amendment 2.3 Music Mode: explicit Explore of a private audio asset. */
   'analyze_audio',
 ] as const;

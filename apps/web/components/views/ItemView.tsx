@@ -156,7 +156,9 @@ export function ItemView({ itemId }: { itemId: string }) {
         <div className="item-detail__body">
           <h1 className="display">{item.title}</h1>
           {item.subtitle && <p className="item-detail__subtitle">{item.subtitle}</p>}
-          {data.reason && <p className="lede">{data.reason}</p>}
+          {data.detail && <p className="item-detail__subtitle">{data.detail}</p>}
+          {data.description && <p className="lede">{data.description}</p>}
+          {data.reason && <p className="item-detail__subtitle">{data.reason}</p>}
           <div className="item-detail__actions">
             {/* Mockup 06: a plain "Save" button; the label itself says "Saved" afterwards. */}
             <button

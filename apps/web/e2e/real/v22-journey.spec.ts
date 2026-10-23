@@ -217,7 +217,7 @@ test('taste onboarding, personal feed and fast analysis on the real stack', asyn
     await page.goto('/settings');
     await page.getByRole('link', { name: /Edit your taste/ }).click();
     await expect(page).toHaveURL(/\/settings\/taste$/);
-    await expect(page.getByRole('heading', { name: 'Taste', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Interests', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove Japandi' })).toBeVisible();
     await page.getByRole('button', { name: 'Remove Japandi' }).click();
     await expect(page.getByRole('button', { name: 'Remove Japandi' })).toHaveCount(0);

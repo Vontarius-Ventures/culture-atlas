@@ -94,6 +94,8 @@ export interface FeatureFlagInputs {
   analysis: {
     keyConfigured: boolean;
     profileQualified: boolean;
+    /** False when the vision_photo role is catalog-compatible but not quality-qualified. */
+    qualityQualified: boolean;
     privacyVerified: boolean;
     budgetAvailable: boolean;
     providerReady: boolean;
@@ -158,6 +160,7 @@ export function evaluateFeatureFlags(i: FeatureFlagInputs): FeatureFlagEvaluatio
   const analysis = gate('concentrate_analysis_enabled', [
     [i.analysis.keyConfigured, 'provider_unconfigured'],
     [i.analysis.profileQualified, 'model_unqualified'],
+    [i.analysis.qualityQualified, 'model_unqualified'],
     [i.analysis.privacyVerified, 'privacy_unverified'],
     [i.analysis.budgetAvailable, 'budget_exhausted'],
     [i.analysis.providerReady, 'provider_unavailable'],
@@ -296,6 +299,8 @@ interface DeviceFlagState {
 export interface AnalysisReadiness {
   budgetAvailable: boolean;
   providerReady: boolean;
+  /** False when vision_photo is catalog-compatible but not quality-qualified. */
+  qualityQualified?: boolean;
   /** Stage-2 enrichment role is qualified and ready (absent: not ready). */
   enrichReady?: boolean;
   /** Verifier role (vision_verify) is qualified and ready (absent: not ready). */
@@ -399,6 +404,7 @@ export async function resolveFeatureFlags(
         !!env.CONCENTRATE_PROFILES_JSON ||
         (!!env.VLM_MODEL && !!env.CONCENTRATE_PROFILE_FILE) ||
         elorianFallback,
+      qualityQualified: analysisReadiness.qualityQualified !== false,
       // Spec defaults are the safe values (require ZDR, no content logging).
       privacyVerified:
         env.CONCENTRATE_REQUIRE_ZDR !== 'false' && env.CONCENTRATE_ALLOW_CONTENT_LOGGING !== 'true',

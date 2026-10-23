@@ -325,7 +325,7 @@ test('18 taste settings', async ({ browser }) => {
       },
     });
     await page.goto('/settings/taste');
-    await expect(page.getByRole('heading', { name: 'Taste', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Interests', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove Japandi' })).toBeVisible();
     // As in the mockup: the Watch group is adding more.
     await page.getByRole('button', { name: /Add more to Watch/ }).click();

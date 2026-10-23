@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FakeQloo } from '@culture-atlas/providers/testing';
+import { FakeQloo, MemoryObjectStorage } from '@culture-atlas/providers/testing';
 import { LocalMultipartStorage } from '@culture-atlas/providers';
 import { closeTestDb, getTestDb, insertAccount, testConfig, testProviders } from '../testing';
 import { createCaptureV2Context } from '../capture-v2/context';
@@ -80,9 +80,12 @@ function requireAudioJob(job: JobRecord | undefined): JobRecord<'analyze_audio'>
 function jobCtx(
   _f: Awaited<ReturnType<typeof fixture>>,
   job: JobRecord<'analyze_audio'>,
-  extra: { qloo?: FakeQloo; beforePublish?: () => Promise<void> } = {},
+  extra: { qloo?: FakeQloo; beforePublish?: () => Promise<void>; storage?: MemoryObjectStorage } = {},
 ) {
-  const providers = testProviders({ qloo: extra.qloo ?? new FakeQloo({}) });
+  const providers = testProviders({
+    qloo: extra.qloo ?? new FakeQloo({}),
+    ...(extra.storage ? { storage: extra.storage } : {}),
+  });
   let hook = false;
   return {
     job,
@@ -213,6 +216,88 @@ describe('Explore authorizes analysis', () => {
       requested.analysis_id,
     ]);
     expect(recordings.rows).toEqual([]);
+  });
+
+  it('uses an ElevenLabs transcript to search Qloo and stores only returned artist ids', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const requested = await f.analysis.request(
+      kept.asset_id,
+      {
+        contract_version: 2,
+        expected_generation: 1,
+        requested_components: ['music_match'],
+        selection: { start_ms: 0, end_ms: 15_000 },
+      },
+      randomUUID(),
+    );
+    const qloo = new FakeQloo(
+      {
+        search: (query) =>
+          query.toLowerCase().includes('nina')
+            ? [
+                {
+                  entity_id: 'qloo-artist-nina',
+                  name: 'Nina Simone',
+                  types: ['urn:entity:artist'],
+                  properties: {},
+                  tags: [],
+                },
+              ]
+            : [],
+      },
+      { live: true },
+    );
+    const claimed = requireAudioJob(
+      (
+        await claimJobs(db, {
+          workerId: 'audio-test',
+          limit: 1,
+          leaseMs: 30_000,
+          ids: [requested.job_id],
+        })
+      )[0],
+    );
+    const original = await db.query<{ original_key: string | null }>(
+      `SELECT original_key FROM media_assets WHERE id=$1`,
+      [kept.asset_id],
+    );
+    const storage = new MemoryObjectStorage();
+    if (original.rows[0]?.original_key) {
+      await storage.put(original.rows[0].original_key, wav(), { contentType: 'audio/wav' });
+    }
+    const outcome = await runAnalyzeAudio(jobCtx(f, claimed, { qloo, storage }), {
+      recognition: new UnavailableMusicRecognition('not_configured'),
+      transcription: {
+        enabled: true,
+        reason: 'configured',
+        async transcribe() {
+          return { text: 'That was Feeling Good by Nina Simone.', words: [] };
+        },
+      },
+    });
+    expect(outcome.state).toBe('complete');
+    const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
+    const result = got.result as {
+      music: string;
+      qloo_seeds: { entity_id: string; name: string }[];
+      components: { speech_references: { state: string } };
+    };
+    expect(result.music).toBe('identified');
+    expect(result.qloo_seeds).toEqual([
+      {
+        entity_id: 'qloo-artist-nina',
+        entity_type: 'urn:entity:artist',
+        name: 'Nina Simone',
+        insights_eligible: true,
+      },
+    ]);
+    expect(result.components.speech_references.state).toBe('not_requested');
+    const evidence = await db.query<{ method: string; qloo_entity_id: string }>(
+      `SELECT method, qloo_entity_id FROM media_evidence WHERE analysis_id=$1`,
+      [requested.analysis_id],
+    );
+    expect(evidence.rows).toEqual([{ method: 'transcript', qloo_entity_id: 'qloo-artist-nina' }]);
   });
 
   it('stores a Qloo artist seed only from a real returned catalog id', async () => {

@@ -205,6 +205,45 @@ final class CapabilityGateTests: XCTestCase {
         row["may_show_ready"] as? Bool)
     }
   }
+
+  func testPhotoAnalysisUnavailableWhenVisionIsUnqualified() {
+    let caps = Capabilities(
+      contractVersion: "2",
+      flags: ["concentrate_analysis_enabled": false, "camera_photo": true],
+      limits: [:],
+      availability: [
+        "analysis": Capabilities.Availability(available: false, reasons: ["model_unqualified"]),
+      ])
+    let analysis = CapabilityGate.photoAnalysis(caps)
+    XCTAssertFalse(analysis.available)
+    XCTAssertTrue(analysis.message.contains("isn't qualified"))
+    XCTAssertTrue(CapabilityGate.phoneCamera(caps).photo)
+  }
+
+  func testPhoneCameraStaysOnWhenCapabilitiesHaveNotLoaded() {
+    XCTAssertTrue(CapabilityGate.phoneCamera(nil).photo)
+    XCTAssertTrue(CapabilityGate.phoneCamera(nil).video)
+    let paused = Capabilities(
+      contractVersion: "2",
+      flags: ["camera_photo": false, "camera_video": false],
+      limits: [:],
+      availability: [:])
+    XCTAssertFalse(CapabilityGate.phoneCamera(paused).photo)
+  }
+
+  func testMusicMatchUnavailableWhenFingerprintAndTranscriptAreOff() {
+    let caps = Capabilities(
+      contractVersion: "2",
+      flags: ["microphone_audio": true],
+      limits: [:],
+      availability: [
+        "music_match": Capabilities.Availability(
+          available: false, reasons: ["fingerprint_unavailable", "transcript_unconfigured"]),
+      ])
+    let match = CapabilityGate.musicMatch(caps)
+    XCTAssertFalse(match.available)
+    XCTAssertTrue(match.message.contains("Nothing was invented"))
+  }
 }
 
 final class ErrorPolicyTests: XCTestCase {

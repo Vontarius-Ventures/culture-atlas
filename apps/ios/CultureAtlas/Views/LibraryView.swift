@@ -1,39 +1,71 @@
 import AtlasCapture
 import SwiftUI
+import UIKit
 
 /// Local drafts of the signed-in account with durable upload status
 /// (screen 08 on phone). Status is always written in words, never colour alone.
 struct LibraryView: View {
   @EnvironmentObject private var controller: CaptureController
+  @State private var boards: [CollectionSummary] = []
+
+  private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
   var body: some View {
-    List {
-      Section {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 16) {
         Text("Your library is private. Choose what to explore.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
         Text("Uploading does not start analysis.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
-      }
-      if controller.drafts.isEmpty {
-        Section {
-          VStack(alignment: .leading, spacing: 8) {
-            Text("Nothing here yet").font(.system(.title3, design: .serif))
-            Text("Take a photo, record music, or upload files from your phone.")
-            NavigationLink("Capture") { CaptureSourceView() }
+        HStack {
+          Text("Boards").font(.system(.title3, design: .serif))
+          Spacer()
+          NavigationLink("See all") { BoardsView() }
+        }
+        if boards.isEmpty {
+          Text("Boards you build from Feed show up here.")
+            .font(.footnote)
+            .foregroundStyle(AtlasTheme.muted)
+        } else {
+          LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(boards.prefix(4)) { board in
+              NavigationLink {
+                BoardDetailView(boardID: board.id, title: board.name)
+              } label: {
+                BoardCoverTile(board: board, baseURL: controller.api.baseURL)
+              }
+              .buttonStyle(.plain)
+            }
           }
         }
+        if controller.drafts.isEmpty {
+          Text("Nothing captured yet").font(.system(.title3, design: .serif))
+          Text("Take a photo, record music, or upload files from your phone.")
+            .foregroundStyle(AtlasTheme.muted)
+          NavigationLink("Capture") { CaptureSourceView() }
+        }
+        ForEach(controller.drafts) { draft in
+          DraftRow(draft: draft)
+        }
+        if controller.lockedDraftsExist {
+          LockedDraftsNotice()
+        }
       }
-      ForEach(controller.drafts) { draft in
-        DraftRow(draft: draft)
-      }
-      if controller.lockedDraftsExist {
-        Section { LockedDraftsNotice() }
-      }
+      .padding(16)
     }
+    .background(AtlasTheme.ivory.ignoresSafeArea())
     .navigationTitle("Library")
-    .refreshable { controller.reloadDrafts() }
+    .refreshable {
+      controller.reloadDrafts()
+      await loadBoards()
+    }
+    .task { await loadBoards() }
+  }
+
+  private func loadBoards() async {
+    boards = (try? await controller.api.collections())?.collections ?? []
   }
 }
 
@@ -44,9 +76,13 @@ struct DraftRow: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
-      HStack {
-        Image(systemName: kindIcon)
-          .accessibilityHidden(true)
+      HStack(alignment: .center, spacing: 12) {
+        if draft.kind == .photo {
+          DraftPhotoThumb(draft: draft)
+        } else {
+          Image(systemName: kindIcon)
+            .accessibilityHidden(true)
+        }
         Text(kindLabel)
         if let duration = draft.durationSeconds {
           Text(ClipClock.clock(Int(duration))).foregroundStyle(AtlasTheme.muted)
@@ -124,17 +160,23 @@ struct DraftRow: View {
       Button("Upload using mobile data") { Task { await controller.keep(draft, allowCellular: true) } }
     case .committed where draft.kind == .photo && draft.assetID != nil:
       // The user starts exploring; screen 17 tells them when it is ready.
+      let analysis = CapabilityGate.photoAnalysis(controller.capabilities)
       if let assetID = draft.assetID, notices.exploring.contains(assetID) {
         Text("Looking at your photo. This takes a few seconds.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
           .accessibilityAddTraits(.updatesFrequently)
+      } else if !analysis.available {
+        Text(analysis.message)
+          .font(.footnote)
+          .foregroundStyle(AtlasTheme.muted)
       } else if let assetID = draft.assetID {
         Button("Explore this photo") {
           Task {
             let started = await notices.explore(assetID: assetID)
             if !started {
-              controller.message = "Exploring isn't available right now. Your photo is safe in your library."
+              controller.message = CapabilityGate.photoAnalysisMessage(
+                reasons: controller.capabilities?.availability["analysis"]?.reasons ?? [])
             }
           }
         }
@@ -149,5 +191,39 @@ struct DraftRow: View {
     default:
       EmptyView()
     }
+  }
+}
+
+/// Local JPEG from the encrypted draft — the real capture, not a placeholder.
+private struct DraftPhotoThumb: View {
+  @EnvironmentObject private var controller: CaptureController
+  let draft: DraftRecord
+  @State private var image: UIImage?
+
+  var body: some View {
+    Group {
+      if let image {
+        Image(uiImage: image)
+          .resizable()
+          .scaledToFill()
+      } else {
+        Image(systemName: "photo")
+          .foregroundStyle(AtlasTheme.muted)
+      }
+    }
+    .frame(width: 56, height: 56)
+    .clipped()
+    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .accessibilityHidden(true)
+    .task { await load() }
+  }
+
+  @MainActor
+  private func load() async {
+    guard draft.kind == .photo else { return }
+    let url = try? controller.draftStore.openForPlayback(draft)
+    defer { if let url { try? FileManager.default.removeItem(at: url) } }
+    guard let url else { return }
+    image = UIImage(contentsOfFile: url.path)
   }
 }

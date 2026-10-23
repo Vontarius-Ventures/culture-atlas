@@ -28,7 +28,7 @@ import type {
 } from '../schemas/items';
 import { iso } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
-import { readDisplayMetadata } from './display';
+import { preferPicturedCards, readDisplayMetadata } from './display';
 import { getTasteRevision } from './taste';
 
 /**
@@ -148,6 +148,45 @@ async function referenceSummaries(db: Queryable, item: ItemRow): Promise<Referen
   }));
 }
 
+/**
+ * Same-category pictured cards already in this owner's interest pool.
+ * Opening a card never calls Qloo; this fills Similar immediately from
+ * taste-seed / expand recs so the rail is not empty while a related job runs.
+ */
+async function interestPoolRelatedIds(
+  ctx: ServiceContext,
+  owner: Owner,
+  item: ItemRow,
+  hidden: Set<string>,
+  take: number,
+): Promise<string[]> {
+  if (owner.kind !== 'account' || take <= 0) return [];
+  const { rows } = await ctx.db.query<{ item_id: string; canonical_key: string }>(
+    `SELECT di.id AS item_id, di.canonical_key
+       FROM recommendations r
+       JOIN discovery_items di ON di.id = r.discovery_item_id
+       JOIN taste_seed_runs ts ON ts.id = r.taste_seed_run_id
+      WHERE ts.owner_account_id = $1
+        AND ts.state IN ('complete', 'partial')
+        AND di.id <> $2
+        AND di.canonical_key <> $3
+      ORDER BY (di.category IS NOT DISTINCT FROM $4) DESC,
+               (di.display_metadata ? 'image') DESC,
+               ts.updated_at DESC, r.rank
+      LIMIT $5`,
+    [owner.accountId, item.id, item.canonical_key, item.category, take * 8],
+  );
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (hidden.has(row.canonical_key) || seen.has(row.canonical_key)) continue;
+    seen.add(row.canonical_key);
+    out.push(row.item_id);
+    if (out.length >= take) break;
+  }
+  return out;
+}
+
 function sampleRelated(item: ItemRow, available: { id: string; canonical_key: string; category: Category | null }[]): string[] {
   const idx = SAMPLE_ITEMS.findIndex((s) => sampleKey(s.slug) === item.canonical_key);
   const rotated = [...available.slice(idx + 1), ...available.slice(0, idx + 1)];
@@ -199,7 +238,9 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   const [card] = await loadCards(ctx, [item.id], { recommendations: recContext });
   if (!card) throw new AppError('not_found');
 
-  const reason = rec?.display_reason ?? meta.description ?? null;
+  const description = meta.description?.trim() || null;
+  const detail = meta.detail?.trim() || null;
+  const reason = rec?.display_reason ?? null;
   const sources = rec ? await loadSources(ctx.db, rec.source_ids) : [];
   const destination = rec?.destination_url ?? meta.destination_url ?? null;
 
@@ -237,14 +278,26 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
       if (!active && relatedIds.length) relatedState = 'cached';
     }
   }
+  if (!item.is_sample && relatedIds.length < LIMITS.relatedCachedMax) {
+    const poolIds = await interestPoolRelatedIds(ctx, owner, item, hidden, LIMITS.relatedCachedMax);
+    for (const id of poolIds) {
+      if (relatedIds.includes(id)) continue;
+      relatedIds.push(id);
+      if (relatedIds.length >= LIMITS.relatedCachedMax) break;
+    }
+  }
   const visibleRelated = await visibleItemIds(ctx, relatedIds);
-  const related = await loadCards(ctx, relatedIds.filter((id) => visibleRelated.has(id)).slice(0, LIMITS.relatedCachedMax));
+  const relatedCards = await loadCards(ctx, relatedIds.filter((id) => visibleRelated.has(id)).slice(0, LIMITS.relatedCachedMax));
+  const related = preferPicturedCards(relatedCards);
+  if (related.length > 0 && relatedState === 'none') relatedState = 'cached';
 
   let collectionIds: string[] = [];
   if (card.saved_item_id) collectionIds = (await membershipsFor(ctx, [card.saved_item_id])).get(card.saved_item_id)?.collectionIds ?? [];
 
   return {
     item: card,
+    description,
+    detail,
     reason,
     why_this: reason ? { text: reason, sources } : null,
     destination_url: destination && z.url().safeParse(destination).success ? destination : null,

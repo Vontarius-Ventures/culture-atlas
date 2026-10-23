@@ -125,4 +125,31 @@ describe('related discovery job', () => {
     const after = await getItem(ctx, { id: replayed.id, query: {} });
     expect(after.item.is_example).toBe(false);
   });
+
+  it('fills Similar from pictured interest-pool cards when no related job has run', async () => {
+    const { principal, ctx } = await accountCtx();
+    const owner = { accountId: principal.accountId };
+    const film = await insertItem(owner, { kind: 'film', title: 'Playtime' });
+    const similar = await insertItem(owner, { kind: 'film', title: 'Playtime adjacent' });
+    await db.query(
+      `UPDATE discovery_items
+          SET display_metadata = display_metadata || '{"image":{"url":"https://images.example/cover.jpg","alt":"cover"}}'::jsonb
+        WHERE id = $1`,
+      [similar],
+    );
+    const run = await db.query<{ id: string }>(
+      `INSERT INTO taste_seed_runs (owner_account_id, taste_revision, state)
+       VALUES ($1, 1, 'complete') RETURNING id`,
+      [principal.accountId],
+    );
+    await db.query(
+      `INSERT INTO recommendations (discovery_item_id, taste_seed_run_id, rank, title, origin, category)
+       VALUES ($1, $2, 1, 'Playtime adjacent', 'catalog', 'watch')`,
+      [similar, run.rows[0]!.id],
+    );
+    const detail = await getItem(ctx, { id: film, query: {} });
+    expect(detail.related_state).toBe('cached');
+    expect(detail.related.map((r) => r.id)).toContain(similar);
+    expect(detail.related.every((r) => r.id !== film)).toBe(true);
+  });
 });

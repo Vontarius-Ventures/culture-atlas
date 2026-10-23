@@ -7,9 +7,12 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -48,8 +51,11 @@ import com.cultureatlas.app.AppController
 import com.cultureatlas.app.AppGraph
 import com.cultureatlas.app.notify.ReadyNoticeCenter
 import com.cultureatlas.capture.core.contract.AgentConnection
+import com.cultureatlas.capture.core.contract.CollectionSummary
 import com.cultureatlas.capture.core.contract.MediaKind
 import com.cultureatlas.capture.core.contract.MediaSource
+import com.cultureatlas.capture.core.net.AtlasApi
+import com.cultureatlas.capture.core.net.collections
 import com.cultureatlas.capture.core.policy.AudioPolicy
 import com.cultureatlas.capture.core.policy.CapabilityGate
 import com.cultureatlas.capture.core.policy.ClipClock
@@ -58,16 +64,45 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun LibraryScreen(controller: AppController, notices: ReadyNoticeCenter) {
+fun LibraryScreen(
+    controller: AppController,
+    notices: ReadyNoticeCenter,
+    api: AtlasApi,
+    onBoards: () -> Unit = {},
+) {
     val drafts by controller.drafts.collectAsState()
     val locked by controller.lockedDraftsExist.collectAsState()
+    var boards by remember { mutableStateOf<List<CollectionSummary>>(emptyList()) }
+    LaunchedEffect(Unit) { boards = runCatching { api.collections() }.getOrNull()?.collections.orEmpty() }
     LazyColumn(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text("Library", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
             Text("Your library is private. Choose what to explore.", color = AtlasColors.muted)
             Text("Uploading does not start analysis.", color = AtlasColors.muted)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Boards", style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
+                TextButton(onClick = onBoards) { Text("See all") }
+            }
         }
-        if (drafts.isEmpty()) item { Text("Nothing here yet. Take a photo or video, record music, or upload files from your phone.") }
+        if (boards.isEmpty()) {
+            item { Text("Boards you build from Feed show up here.", color = AtlasColors.muted) }
+        } else {
+            items(boards.take(4).chunked(2)) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { board ->
+                        Column(
+                            Modifier.weight(1f).clickable(onClick = onBoards),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            BoardCover(board)
+                            Text(board.name, style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif), maxLines = 2)
+                        }
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+        if (drafts.isEmpty()) item { Text("Nothing captured yet. Take a photo, record music, or upload files from your phone.") }
         items(drafts, key = { it.id }) { DraftRow(controller, notices, it) }
         if (locked) item { LockedDraftsNotice() }
     }
@@ -76,6 +111,7 @@ fun LibraryScreen(controller: AppController, notices: ReadyNoticeCenter) {
 @Composable
 private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draft: DraftRecord) {
     val exploring by notices.exploring.collectAsState()
+    val capabilities by controller.capabilities.collectAsState()
     val scope = rememberCoroutineScope()
     // Asked at the moment of use: the user just chose to explore a photo.
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -115,6 +151,7 @@ private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draf
             DraftRecord.Status.COMMITTED -> {
                 val assetId = draft.assetId
                 val watching = assetId?.lowercase() in exploring || draft.id.lowercase() in exploring
+                val photoAnalysis = CapabilityGate.photoAnalysis(capabilities)
                 if (draft.kind == MediaKind.PHOTO && assetId != null) {
                     // The user starts exploring; screen 17 tells them when it is ready.
                     if (watching) {
@@ -123,6 +160,8 @@ private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draf
                             color = AtlasColors.muted,
                             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                         )
+                    } else if (!photoAnalysis.available) {
+                        Text(photoAnalysis.message, color = AtlasColors.muted)
                     } else {
                         TextButton(onClick = {
                             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -130,7 +169,9 @@ private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draf
                             }
                             scope.launch {
                                 if (!notices.explore(assetId)) {
-                                    controller.message.value = "Exploring isn't available right now. Your photo is safe in your library."
+                                    controller.message.value = CapabilityGate.photoAnalysisMessage(
+                                        capabilities?.availability?.get("analysis")?.reasons.orEmpty(),
+                                    )
                                 }
                             }
                         }) { Text("Explore this photo") }
@@ -269,7 +310,7 @@ fun CameraScreen(graph: AppGraph, activity: ComponentActivity, onBack: () -> Uni
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { mode = MediaKind.PHOTO }, enabled = !recording) { Text(if (mode == MediaKind.PHOTO) "Photo ✓" else "Photo") }
-            OutlinedButton(onClick = { mode = MediaKind.VIDEO }, enabled = !recording && capabilities?.flag("camera_video") == true) {
+            OutlinedButton(onClick = { mode = MediaKind.VIDEO }, enabled = !recording && CapabilityGate.phoneCamera(capabilities).video) {
                 Text(if (mode == MediaKind.VIDEO) "Video ✓" else "Video")
             }
         }
@@ -287,7 +328,7 @@ fun CameraScreen(graph: AppGraph, activity: ComponentActivity, onBack: () -> Uni
             if (!microphoneOn) Text("Video records without sound.", color = AtlasColors.muted)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { runCatching { camera.flip() } }, enabled = !recording) { Text("Flip camera") }
+            OutlinedButton(onClick = { runCatching { camera.flip() } }, enabled = !recording && running) { Text("Flip camera") }
             when {
                 mode == MediaKind.PHOTO -> Button(onClick = { scope.launch { review = controller.capturePhoto(MediaSource.PHONE_CAMERA) } }, enabled = running) {
                     Text("Take photo")
@@ -330,7 +371,7 @@ fun ReviewDialog(controller: AppController, draft: DraftRecord, onDone: () -> Un
                     MediaKind.AUDIO -> "Keep this recording?"
                 },
             )
-        }
+        },
         text = {
             Column {
                 Text("Saved on this phone. Keeping it uploads it to your private library.")
@@ -502,6 +543,7 @@ fun SettingsScreen(controller: AppController, onGlasses: () -> Unit, onTaste: ()
         OutlinedButton(onClick = onGlasses) { Text("Meta glasses (Experimental)") }
         // Screen 18: picks grouped by category, add more, exclusions.
         OutlinedButton(onClick = onTaste) { Text(com.cultureatlas.capture.core.onboarding.OnboardingCopy.TASTE_TITLE) }
+        Text("Translations aren't available in this version.", color = AtlasColors.muted)
         Text("Uploads use Wi-Fi unless you choose mobile data for an item.", color = AtlasColors.muted)
         Button(onClick = { confirm = true }) { Text("Sign out or switch account") }
     }

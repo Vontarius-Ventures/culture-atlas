@@ -314,7 +314,7 @@ class OnboardingController(private val api: AtlasApi, private val scope: Corouti
             }
             if (_catalog.value == null) loadCatalog()
         } catch (e: Exception) {
-            message.value = "We couldn't load your taste. Check your connection and try again."
+            message.value = "We couldn't load your interests. Check your connection and try again."
         }
     }
 

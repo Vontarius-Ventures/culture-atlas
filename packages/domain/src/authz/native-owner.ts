@@ -8,14 +8,14 @@ import { operationKey, type OperationPolicy } from './operations';
  *
  * Native phones authenticate with an installation session (`cna_` bearer),
  * which by default has NO authority on `/v1` (authorizeOperation refuses it:
- * "native installation policy belongs to v2"). The taste questionnaire is the
- * one owner-only `/v1` flow the amendment requires on native ("immediately
- * after account creation (web and native)"), so exactly these operations
- * accept the owner's own enrolled phone as the account owner:
+ * "native installation policy belongs to v2"). These operations accept the
+ * owner's own enrolled phone as the account owner:
  *
  *  - the onboarding questionnaire (screen 14/15) and Settings → Taste (18);
- *  - nothing else: every other `/v1` route still refuses installations with
- *    `scope_denied`, and agents are unaffected.
+ *  - Discover (`GET /v1/discoveries`), item detail (`GET /v1/items/{id}`),
+ *    related (`POST /v1/items/{id}/discoveries`), and boards (`/v1/collections*`);
+ *  - every other `/v1` route still refuses installations with `scope_denied`,
+ *    and agents are unaffected.
  *
  * The installation must still be live on every call (not revoked, authority
  * not ended, access token unexpired), and every mutation must name the
@@ -36,6 +36,13 @@ export const NATIVE_OWNER_OPERATIONS: ReadonlySet<string> = new Set([
   'GET /v1/taste/picks',
   'POST /v1/taste/picks',
   'DELETE /v1/taste/picks/{id}',
+  'GET /v1/discoveries',
+  'GET /v1/items/{id}',
+  'POST /v1/items/{id}/discoveries',
+  'GET /v1/collections',
+  'POST /v1/collections',
+  'GET /v1/collections/{id}',
+  'PUT /v1/collections/{id}/items/{item_id}',
 ]);
 
 export function isNativeOwnerOperation(op: Pick<OperationPolicy, 'method' | 'path'>): boolean {

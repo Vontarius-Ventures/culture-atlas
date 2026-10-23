@@ -56,6 +56,11 @@ export function tasteSeedDedupeKey(input: { owner: Owner; tasteRevision: number 
   return `taste_seed:${digest([ownerKey(input.owner), input.tasteRevision])}`;
 }
 
+/** One expand job per account and time-bucketed wave (complete jobs occupy the key). */
+export function interestExpandDedupeKey(input: { owner: Owner; wave: number }): string {
+  return `interest_expand:${digest([ownerKey(input.owner), input.wave])}`;
+}
+
 export function audioAnalysisDedupeKey(input: { owner: Owner; analysisId: string }): string {
   return `analyze_audio:${digest([ownerKey(input.owner), input.analysisId])}`;
 }
