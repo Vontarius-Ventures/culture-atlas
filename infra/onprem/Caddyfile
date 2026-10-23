@@ -1,0 +1,100 @@
+# HTTPS edge for culture atlas on-prem (docker-compose.yml, profile "edge").
+# Caddy obtains and renews certificates for APP_HOST and MEDIA_HOST
+# automatically (Let's Encrypt / ZeroSSL). Ports 80 and 443 must reach this
+# host from the internet (router port-forward) and both names must resolve to
+# its public address.
+{
+	email {$ACME_EMAIL}
+	# Caddy is the only proxy hop; the app's TRUSTED_PROXY_HOPS=1 reads the
+	# client address Caddy appends to X-Forwarded-For.
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# The web app: pages, REST /v1 and /v2, MCP /mcp, and
+# /.well-known/apple-app-site-association + /.well-known/assetlinks.json
+# (served by the app itself, so universal links and App Links verify over https).
+{$APP_HOST} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	# Uploads through the app are at most 15 MiB (UPLOAD_MAX_BYTES); capture
+	# media goes to MEDIA_HOST with presigned part URLs.
+	request_body {
+		max_size 20MB
+	}
+
+	reverse_proxy web:3000 {
+		# Server-sent events (/v2/events) and long polls (/v2/device/commands).
+		flush_interval -1
+		transport http {
+			read_timeout 60s
+		}
+	}
+
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				resp_headers delete
+				request>tls delete
+				request>uri query {
+					delete signature
+					delete expires
+					delete token
+					delete code
+					delete state
+					delete nonce
+				}
+			}
+		}
+	}
+}
+
+# Private media (Garage S3 API). Every request is a presigned URL or signed by
+# the app's key; Caddy keeps the Host header, which the signatures cover.
+{$MEDIA_HOST} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	# Capture parts are 8 MiB (CAPTURE_PART_SIZE); v1 uploads at most 15 MiB.
+	request_body {
+		max_size 32MB
+	}
+
+	reverse_proxy garage:3900 {
+		transport http {
+			read_timeout 120s
+			write_timeout 120s
+		}
+	}
+
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers delete
+				resp_headers delete
+				request>tls delete
+				request>uri query {
+					delete X-Amz-Signature
+					delete X-Amz-Credential
+					delete X-Amz-Security-Token
+					delete uploadId
+				}
+			}
+		}
+	}
+}
