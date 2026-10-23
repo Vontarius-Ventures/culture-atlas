@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { JOB_HANDLERS, devicePush, getDb, getDomainConfig, loadRootEnv, setAnalysisReadyListener } from '@culture-atlas/domain';
+import { JOB_HANDLERS, devicePush, getDb, getDomainConfig, loadRootEnv, setAnalysisReadyListener, setAudioOriginalStorage } from '@culture-atlas/domain';
 import { configureProviderRuntime, createPushDriverFromEnv, getProviders } from '@culture-atlas/providers';
 import { createCaptureStorage } from './capture-storage';
 import { MediaAnalysisWorker } from './media-analysis';
@@ -28,6 +28,8 @@ setAnalysisReadyListener(async (event) => {
   // IDs and an outcome code only; never the device token.
   console.log('[worker] ready_notice', JSON.stringify({ analysis_id: event.analysisId, state: event.state, outcome }));
 });
+// Music Mode reads recordings from the capture-v2 namespace (POST /v2/media/audio), not the legacy store.
+setAudioOriginalStorage(createCaptureStorage(providers.config, config.SESSION_SECRET));
 const worker = new Worker({ db: getDb(), providers, config, handlers: JOB_HANDLERS });
 
 // v2 media analysis (Concentrate). Disable only for a dedicated non-analysis worker.

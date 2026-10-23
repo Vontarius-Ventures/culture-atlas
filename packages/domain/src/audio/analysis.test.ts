@@ -14,7 +14,7 @@ import type { JobRecord } from '../jobs/types';
 import { JobCancelledError } from '../jobs/handler';
 import { AudioLibrary } from './assets';
 import { AudioAnalysis } from './analysis';
-import { createAnalyzeAudioHandler, runAnalyzeAudio } from './analyze-job';
+import { createAnalyzeAudioHandler, runAnalyzeAudio, setAudioOriginalStorage } from './analyze-job';
 import { pcmWavBytes } from './wav';
 import { UnavailableMusicRecognition, type MusicRecognition } from './recognition';
 import { artistSeedsFromQlooEntities, seedIfQlooReturned } from './qloo-seeds';
@@ -53,6 +53,8 @@ async function fixture(overrides: Partial<CaptureV2Context> = {}) {
   const account = await insertAccount();
   const storage = new LocalMultipartStorage(join(root, randomUUID()), 'http://127.0.0.1:3301', 'local-test-signing-key');
   const ctx = createCaptureV2Context({ db, authority: account, storage, identity, ...overrides });
+  // The analysis worker reads originals from the same capture-v2 storage the recording was kept in.
+  setAudioOriginalStorage(storage);
   return { ctx, account, storage, audio: new AudioLibrary(ctx), analysis: new AudioAnalysis(ctx), intake: new MediaIntake(ctx) };
 }
 
@@ -298,6 +300,60 @@ describe('Explore authorizes analysis', () => {
       [requested.analysis_id],
     );
     expect(evidence.rows).toEqual([{ method: 'transcript', qloo_entity_id: 'qloo-artist-nina' }]);
+    // The heard artist is stored and starts related discovery that feeds suggestions.
+    const artist = (got.result as { artist: { name: string; item_id: string; discovery_job_id: string; related_job_id: string } }).artist;
+    expect(artist).toMatchObject({ name: 'Nina Simone' });
+    const item = await db.query<{ title: string; kind: string; owner_account_id: string }>(
+      'SELECT title, kind, owner_account_id FROM discovery_items WHERE id = $1',
+      [artist.item_id],
+    );
+    expect(item.rows[0]).toEqual({ title: 'Nina Simone', kind: 'artist', owner_account_id: f.account.accountId });
+    const dj = await db.query<{ source: string; source_label: string }>(
+      'SELECT source, source_label FROM discovery_jobs WHERE id = $1',
+      [artist.discovery_job_id],
+    );
+    expect(dj.rows[0]).toEqual({ source: 'music_mode', source_label: 'Nina Simone' });
+    const related = await db.query<{ type: string }>('SELECT type FROM jobs WHERE id = $1', [artist.related_job_id]);
+    expect(related.rows[0]?.type).toBe('discover_related');
+    expect((got.result as { related_state: string }).related_state).toBe('pending');
+  });
+
+  it('reads the recording from capture-v2 storage and fails honestly when it is missing', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const requested = await f.analysis.request(
+      kept.asset_id,
+      {
+        contract_version: 2,
+        expected_generation: 1,
+        requested_components: ['music_match'],
+        selection: { start_ms: 0, end_ms: 15_000 },
+      },
+      randomUUID(),
+    );
+    const claimed = requireAudioJob(
+      (await claimJobs(db, { workerId: 'audio-test', limit: 1, leaseMs: 30_000, ids: [requested.job_id] }))[0],
+    );
+    const original = await db.query<{ original_key: string }>('SELECT original_key FROM media_assets WHERE id=$1', [kept.asset_id]);
+    await f.storage.delete(original.rows[0]!.original_key);
+    let transcribed = false;
+    await expect(
+      runAnalyzeAudio(jobCtx(f, claimed), {
+        recognition: new UnavailableMusicRecognition('not_configured'),
+        transcription: {
+          enabled: true,
+          reason: 'configured',
+          async transcribe() {
+            transcribed = true;
+            return { text: '', words: [] };
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'service_unavailable', retryable: false, details: { reason: 'storage_unavailable' } });
+    expect(transcribed).toBe(false);
+    const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
+    expect(got.state).toBe('failed');
+    expect(got.error_code).toBe('storage_unavailable');
   });
 
   it('stores a Qloo artist seed only from a real returned catalog id', async () => {

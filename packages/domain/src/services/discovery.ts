@@ -165,10 +165,12 @@ export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedC
                                                              AND r0.discovery_item_id IN (SELECT id FROM saved)))),
      ctx_seed AS (${seedSql})
      SELECT r.discovery_item_id AS item_id, di.canonical_key, di.category, di.kind,
-            COALESCE(r.analysis_id, r.taste_seed_run_id)::text || ':' || COALESCE(r.category, '-') AS list_id, r.rank, r.created_at
+            COALESCE(r.analysis_id, r.taste_seed_run_id, r.discovery_job_id)::text || ':' || COALESCE(r.category, '-') AS list_id, r.rank, r.created_at
        FROM recommendations r JOIN discovery_items di ON di.id = r.discovery_item_id
       WHERE (r.analysis_id IN (SELECT id FROM ctx_analyses)
-             OR (r.taste_seed_run_id, r.category) IN (SELECT run_id, category FROM ctx_seed))
+             OR (r.taste_seed_run_id, r.category) IN (SELECT run_id, category FROM ctx_seed)
+             -- Music Mode: suggestions from an artist the owner heard (not item-page related results).
+             OR r.discovery_job_id IN (SELECT dj.id FROM discovery_jobs dj WHERE ${own('dj')} AND dj.source = 'music_mode'))
         AND (di.is_sample OR ${own('di')})
         -- Explicit saves leave the feed; Interests auto-file does not write those events.
         AND di.id NOT IN (
@@ -212,12 +214,6 @@ async function savedItemIdSet(db: Queryable, owner: Owner): Promise<Set<string>>
   return new Set(rows.map((r) => r.discovery_item_id));
 }
 
-async function hasSaves(db: Queryable, owner: Owner): Promise<boolean> {
-  const own = ownerPredicate(owner, '', 1);
-  const { rows } = await db.query(`SELECT 1 FROM saved_items WHERE ${own.sql} LIMIT 1`, own.params);
-  return rows.length > 0;
-}
-
 interface SnapshotRow {
   id: string;
   taste_revision: number;
@@ -248,7 +244,8 @@ async function picturedItemIds(db: Queryable, ids: string[]): Promise<Set<string
 /** Build and store a new snapshot from the EXISTING pool (no provider calls, no jobs). */
 async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner, revision: number, category: Category | null): Promise<SnapshotRow> {
   const hidden = await hiddenKeys(ctx.db, owner);
-  let pool: FeedCandidate[] = (await hasSaves(ctx.db, owner)) ? await buildSavedPool(ctx.db, owner) : [];
+  // The pool is owner-scoped and empty without saves, a taste seed or Music Mode results.
+  let pool: FeedCandidate[] = await buildSavedPool(ctx.db, owner);
   pool = pool.filter((c) => !hidden.has(c.canonical_key));
   // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat suggestions.
   // Applied to the personal pool before the picture rule below, so an excluded

@@ -28,7 +28,7 @@ export interface TranscriptResult {
 export interface TranscribeInput {
   bytes: Uint8Array;
   signal: AbortSignal;
-  /** Upload/sniffed MIME. iPhone Music Mode records AAC as audio/mp4, not WAV. */
+  /** Stored MIME. Native Music Mode records AAC locally but uploads PCM WAV (iOS CaptureController keep path, Android AudioModels), so originals are audio/wav today. */
   mediaType?: string;
 }
 
