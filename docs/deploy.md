@@ -1,77 +1,120 @@
 # Deploying culture atlas
 
-The demo runs as three processes from one Docker image — `web` (Next.js app, REST `/v1` and `/v2`, MCP `/mcp`), `worker` (jobs) and `media-worker` (ffmpeg verify/prepare) — plus PostgreSQL 16. The World Sensor bridge is **not** deployed with them: it runs next to the relay (see [sensor.md](sensor.md)).
+**Production is on-prem: the Compose stack in `docker-compose.yml` on the
+owner's own hardware.** This is THE production path. The go-live checklist,
+with every owner action, is [production-readiness.md](production-readiness.md).
 
-**Hosting is not live.** There is no Render API key in this repository (`rc_` keys are Featherless, `FEATHERLESS_API_KEY`, not Render). Render cannot host this app for free: background workers have no free plan (paid `starter` / `0.5c-512mb`), and `render.yaml` is web + two workers + Postgres `basic-256mb`. Do not apply that blueprint and do not spend money.
+- **Not Render.** `render.yaml` stays unapplied: Render background workers have
+  no free plan and there is no Render API key in this repository (`rc_` keys
+  are Featherless, `FEATHERLESS_API_KEY`).
+- **Not AWS EC2/RDS.** [deploy-aws.md](deploy-aws.md) and `infra/aws/` remain
+  as reference only.
+- **Email is Amazon SES.** The on-prem host sends identity mail through SES
+  (`IDENTITY_MAIL_DRIVER=ses`) with an IAM user's keys; see
+  [production-readiness.md §5](production-readiness.md#5-amazon-ses-production-email).
 
-**Default for this run: Compose self-host** (`docker-compose.yml`). Concentrate is the v2 model gateway (`LLM_PROVIDER=concentrate`). The Qloo hackathon key has arrived: set `QLOO_API_KEY` in a gitignored `.env`, never in the blueprint or compose file. Missing keys keep those capabilities `unavailable`; nothing is invented.
+## The stack
 
-Locally verified earlier: `pnpm build`, `next start` with the worker and migrations. Treat the first Compose up as a check of these files.
+One Docker image runs three processes — `web` (Next.js app, REST `/v1` and
+`/v2`, MCP `/mcp`, `/.well-known` association files), `worker` (jobs, v2 media
+analysis) and `media-worker` (ffmpeg verify/prepare) — next to:
 
-AWS (one small EC2 instance, RDS or on-instance PostgreSQL, private S3, a 1 USD budget alert): see [deploy-aws.md](deploy-aws.md). Operational runbooks: [runbooks/README.md](runbooks/README.md).
+- **PostgreSQL 16** on the named volume `pgdata`;
+- **Garage**, an S3-compatible object store on the same host, for all media.
+  Production refuses the filesystem storage driver for v2 media, and the spec
+  sets `STORAGE_DRIVER=s3`, so on-prem storage is S3 served locally;
+- **Caddy** (profile `edge`), which terminates TLS for `APP_HOST` (→ web) and
+  `MEDIA_HOST` (→ Garage) with automatic certificates.
 
-## Option A: Compose self-host (`docker-compose.yml`)
-
-Postgres 16, web bound to `0.0.0.0:$PORT`, worker, media-worker, and a named volume for local object storage (shared by all three app processes).
+Start order: postgres and garage healthy → `preflight` (`pnpm ops:preflight`
+refuses unsafe production settings, e.g. `IDENTITY_MAIL_DRIVER=file`, http
+`APP_BASE_URL`, missing `SESSION_SECRET` / `STORAGE_SIGNING_SECRET` / SES
+credentials) → `storage-init` (`pnpm ops:storage init`: bucket, CORS,
+write/read/delete probe) → `migrate` (`pnpm db:migrate`) → web, worker,
+media-worker. Every long-running service has a healthcheck and
+`restart: unless-stopped`. Web and Garage bind to 127.0.0.1; only Caddy
+publishes 80/443.
 
 ```sh
-cp .env.example .env
-# Required: SESSION_SECRET (openssl rand -hex 32)
-# For live analysis/discovery: CONCENTRATE_API_KEY, QLOO_API_KEY
-# Optional rollback: FEATHERLESS_API_KEY (with LLM_PROVIDER=featherless)
-docker compose up --build
+cp .env.example .env && chmod 600 .env   # fill the REQUIRED names; never commit .env
+docker compose build
+docker compose up -d garage              # then the one-time Garage layout + key
+                                         # (production-readiness.md §4)
+docker compose up -d
+docker compose ps                        # everything healthy
+curl -fsS https://$APP_HOST/v1/health
 ```
 
-Then `http://localhost:3000/v1/health`. Cookies follow `APP_BASE_URL` (default `http://localhost:3000`). Identity email stays fail-closed until `IDENTITY_MAIL_DRIVER` is configured.
-
-## Option B: paid Render blueprint (`render.yaml`) — do not apply for this run
-
-Only if someone later chooses to pay. The blueprint names `LLM_PROVIDER=concentrate`, `CONCENTRATE_API_KEY` (`sync: false`), `CONCENTRATE_BASE_URL`, `QLOO_API_KEY` (`sync: false`) and `QLOO_API_URL=https://hackathon.api.qloo.com`. It still needs a real Render account key, an S3-compatible bucket, and `APP_BASE_URL` after the first deploy. Workers are not free.
-
-## Option C: any Docker host
-
-```sh
-docker build -t culture-atlas .
-# Run migrations before each release:
-docker run --rm --env-file prod.env culture-atlas pnpm db:migrate
-# Web (listens on $PORT, default 3000):
-docker run -d --env-file prod.env -p 3000:3000 culture-atlas
-# Worker:
-docker run -d --env-file prod.env culture-atlas pnpm worker
-```
-
-The image includes the full workspace install, because the worker and scripts run TypeScript through `tsx`. It runs as the `node` user and has a `HEALTHCHECK` on `/v1/health`. `.dockerignore` keeps `.env` files, `.data/`, `design/`, `research/` and `specs/` out of the build context.
+The World Sensor bridge is **not** part of the stack: it runs next to the
+relay (see [sensor.md](sensor.md) and the last section below).
 
 ## Environment
 
-Every name is listed in `.env.example`. An empty value counts as unset.
+Every name is listed in `.env.example`; an empty value counts as unset.
+Compose passes each service only the settings it reads (no blanket
+`env_file`), and `scripts/compose-self-host.test.ts` checks that every setting
+in the domain and provider config schemas is wired.
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `DATABASE_URL` | yes | Postgres 16 connection string |
-| `NODE_ENV` | yes | `production` |
-| `APP_BASE_URL` | yes | Public https URL |
-| `SESSION_SECRET` | yes | Same value on web and worker; startup fails in production without it |
-| `STORAGE_DRIVER` + `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_FORCE_PATH_STYLE` | yes | `s3` for any multi-machine deploy. Private bucket; disable versioning or expire old versions (see [privacy.md](privacy.md)). |
-| `LLM_PROVIDER` + `CONCENTRATE_API_KEY` + `CONCENTRATE_BASE_URL` + `CONCENTRATE_PROFILES_JSON` (or `CONCENTRATE_PROFILE_FILE`) + `CONCENTRATE_QUALIFICATION_DIR` + `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` | for analysis | Concentrate is the v2 model gateway (`LLM_PROVIDER=concentrate` in Compose and the paid blueprint). Each role needs a qualified profile ([concentrate.md](concentrate.md)); missing pieces keep that role `unavailable` while capture, library and uploads keep working. Explicit rollback only: `LLM_PROVIDER=featherless` + `FEATHERLESS_API_KEY` (`rc_` keys belong here, not as a Render API key) or `anthropic` + `ANTHROPIC_API_KEY`; v2 media analysis is unavailable under a rollback provider. |
-| `QLOO_API_KEY` + `QLOO_API_URL` | for Qloo discoveries | The hackathon key has arrived: set `QLOO_API_KEY` in `.env` / a paid dashboard, never in git. Default URL `https://hackathon.api.qloo.com`. Without the key every Qloo capability is `unavailable` and discovery categories show partial states, never invented results. |
-| `WIKIMEDIA_USER_AGENT` | recommended | Descriptive User-Agent with contact info (Wikimedia policy) |
-| `CREDENTIAL_ENCRYPTION_KEY` | for Sensor poll mode | `openssl rand -base64 32`. Not needed for bridge mode. Changing it makes stored viewer credentials unreadable (connections report `credential_key_mismatch`). |
-| `SENSOR_ALLOWED_ORIGINS` | for Sensor poll mode | Comma-separated https relay origins the server may poll. Keep it empty if you only use the bridge. Never list internal or loopback addresses on a public server. |
-| `DEMO_INSPECTOR_ACCOUNT_IDS` | for the demo | Accounts allowed to open the inspector for their own jobs |
-| Quotas and limits | optional | `ANON_DAILY_ANALYSES` (10), `ACCOUNT_DAILY_ANALYSES` (100), `ACCOUNT_DAILY_ONBOARDING_SEARCHES` (200), `ACCOUNT_DAILY_TASTE_SEEDS` (12), `IP_DAILY_REQUESTS` (2000), `WORKER_CONCURRENCY` (5)… |
-| Client address | check | `TRUSTED_PROXY_HOPS` (1): proxies that append to `X-Forwarded-For`; the address is read that many entries from the right, so a client cannot pick its own by sending the header. `CLIENT_IP_HEADER`: a platform header that carries the verified client address, if your host sets one. Check both against your host's proxy chain before launch: too few hops lets clients choose their address, too many makes everyone share the proxy's address. In production a request with no usable address falls into one shared, strict bucket. |
+| `APP_BASE_URL`, `APP_HOST` | yes | `https://<APP_HOST>`, origin only. Cookies are `Secure` because it is https; identity links and universal links use it. The native apps' release host is `app.cultureatlas.com` unless rebuilt ([production-readiness.md §12](production-readiness.md#12-native-apps-point-at-the-on-prem-host)). |
+| `MEDIA_HOST`, `S3_ENDPOINT` | yes | `S3_ENDPOINT=https://<MEDIA_HOST>`: phones and browsers upload parts and read media from presigned URLs on it. |
+| `ACME_EMAIL` | yes | Certificate account and expiry notices (Caddy). |
+| `POSTGRES_PASSWORD` | yes | `openssl rand -hex 24`; Compose builds `DATABASE_URL` from it. |
+| `SESSION_SECRET` | yes | `openssl rand -hex 32`; startup fails without it. |
+| `STORAGE_SIGNING_SECRET` | yes | `openssl rand -hex 32`, different from `SESSION_SECRET`. |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | yes | The Garage app key. `STORAGE_DRIVER=s3`, `S3_FORCE_PATH_STYLE=true`, `S3_BUCKET` (default `culture-atlas-media`) and `S3_REGION` (default `us-east-1`, equal to `garage.toml`) are set by Compose. |
+| `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN` | yes | Garage node secrets (`openssl rand -hex 32`, `openssl rand -base64 32`). |
+| `IDENTITY_MAIL_FROM`, `IDENTITY_MAIL_SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | yes | Amazon SES. `IDENTITY_MAIL_DRIVER` defaults to `ses` in Compose; the preflight refuses `file` and `none`. Optional `IDENTITY_MAIL_SES_CONFIGURATION_SET`. Web only. |
+| `LLM_PROVIDER` + `CONCENTRATE_API_KEY` + `CONCENTRATE_PROFILE_FILE` / `CONCENTRATE_PROFILES_JSON` + `CONCENTRATE_QUALIFICATION_DIR` + `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` | for analysis | Concentrate is the v2 model gateway. Compose mounts `CONCENTRATE_CONFIG_DIR` (default `./fixtures/concentrate`) read-only at `/etc/culture-atlas/concentrate` and points the profile/qualification settings there. Missing pieces keep that role `unavailable` while capture, library and uploads keep working ([concentrate.md](concentrate.md)). Explicit rollback only: `LLM_PROVIDER=featherless` + `FEATHERLESS_API_KEY` or `anthropic` + `ANTHROPIC_API_KEY`. |
+| `QLOO_API_KEY` + `QLOO_API_URL` | for Qloo discoveries | Hackathon key; default URL `https://hackathon.api.qloo.com`. Without the key every Qloo capability is `unavailable`, never invented. `QLOO_REPLAY_FIXTURES` is forced `false`. |
+| `ELEVENLABS_API_KEY` | for Music Mode | Scribe transcription; absent key keeps it unavailable. |
+| `WIKIMEDIA_USER_AGENT` | recommended | Descriptive User-Agent with contact info (Wikimedia policy). |
+| `APPLE_TEAM_ID`, `ANDROID_ASSETLINKS_SHA256` | for native links | Served by web at `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`. |
+| `PUSH_DRIVER=live` + `PUSH_APNS_*`, `PUSH_FCM_*`, `CREDENTIAL_ENCRYPTION_KEY` | for push | Web and worker. |
+| `CREDENTIAL_ENCRYPTION_KEY` | for push / Sensor poll mode | `openssl rand -base64 32`. Changing it makes stored credentials unreadable. |
+| `SENSOR_ALLOWED_ORIGINS` | for Sensor poll mode | https relay origins only; never internal or loopback addresses. |
+| Client address | check | `TRUSTED_PROXY_HOPS` (1 = Caddy only). Add one per extra proxy that appends `X-Forwarded-For` (e.g. a CDN). `CLIENT_IP_HEADER` only if your edge overwrites a verified client-address header. |
+| Quotas and switches | optional | `ANON_DAILY_ANALYSES` (10), `ACCOUNT_DAILY_ANALYSES` (100), `ACCOUNT_DAILY_ONBOARDING_SEARCHES` (200), `ACCOUNT_DAILY_TASTE_SEEDS` (12), `IP_DAILY_REQUESTS` (2000), `WORKER_CONCURRENCY` (5), feature switches… |
+| `BACKUP_DIR`, `BACKUP_KEEP_DAYS`, `BACKUP_OFFSITE_RSYNC` | for backups | `infra/onprem/atlas-backup.sh`. |
 
 ## Releasing
 
-1. CI (`.github/workflows/ci.yml`) runs typecheck, lint, the full test suite against Postgres 16, a fresh-database migration and `pnpm build` on every push and PR.
-2. Migrations are forward-only and checksummed (`scripts/migrate.ts`). Run them before starting the new version (Render's pre-deploy command does this).
+1. CI (`.github/workflows/ci.yml`) runs typecheck, lint, the full test suite
+   against Postgres 16, a fresh-database migration and `pnpm build` on every
+   push and PR.
+2. On the host: `git pull`, then `docker compose build` and `docker compose up -d`.
+   The one-shot `preflight`, `storage-init` and `migrate` run again before the
+   new web/worker/media-worker start. Migrations are forward-only and
+   checksummed (`scripts/migrate.ts`). Take a backup first
+   (`infra/onprem/atlas-backup.sh`).
 3. After deploy:
-   - `/v1/health` is green;
+   - `docker compose ps` shows every long-running service healthy;
+   - `https://<APP_HOST>/v1/health` is green;
    - a test upload produces a capture and a job;
    - `GET /v1/sensor-connections` works for the operator account;
    - start the bridge next to the relay and confirm one new glasses photo imports exactly once.
 
+## Backups
+
+`infra/onprem/atlas-backup.sh` (cron, nightly) runs in the `ops` image
+(PostgreSQL 16 client): `pnpm ops:backup` writes a consistent `pg_dump`
+snapshot with object and tombstone inventories, and `pnpm ops:storage mirror`
+copies every Garage object into the same snapshot directory. Restore drill:
+[runbooks/restore-drill.md](runbooks/restore-drill.md) ("On-prem (Compose)").
+
+## Other options (not production)
+
+- **Paid Render blueprint (`render.yaml`)** — do not apply. Only if someone
+  later chooses to pay; workers are not free.
+- **AWS** — [deploy-aws.md](deploy-aws.md), reference only.
+- **Local development** — `pnpm dev` with `.env` (filesystem storage and
+  `IDENTITY_MAIL_DRIVER=file` are fine there; production refuses both).
+
 ## Sensor bridge on the operator's machine
 
-The bridge is a plain Node process: `pnpm install`, then set the `BRIDGE_*` variables and run `pnpm sensor-bridge`. To keep it running, use whatever the machine offers (a `launchd` agent on macOS, a `systemd` user service on Linux, or `pm2`). It only makes outbound HTTPS calls to `BRIDGE_APP_URL`, so the relay never needs to be exposed. Details in [sensor.md](sensor.md).
+The bridge is a plain Node process: `pnpm install`, then set the `BRIDGE_*`
+variables and run `pnpm sensor-bridge`. To keep it running, use whatever the
+machine offers (a `launchd` agent on macOS, a `systemd` user service on Linux,
+or `pm2`). It only makes outbound HTTPS calls to `BRIDGE_APP_URL`, so the relay
+never needs to be exposed. Details in [sensor.md](sensor.md).
