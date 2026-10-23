@@ -250,6 +250,16 @@ async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner,
   const hidden = await hiddenKeys(ctx.db, owner);
   let pool: FeedCandidate[] = (await hasSaves(ctx.db, owner)) ? await buildSavedPool(ctx.db, owner) : [];
   pool = pool.filter((c) => !hidden.has(c.canonical_key));
+  // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat suggestions.
+  // Applied to the personal pool before the picture rule below, so an excluded
+  // pictured venue cannot evict the owner's remaining (image-less) Eat cards.
+  const exclusions = await foodExclusionsFor(ctx.db, owner);
+  const dropExcluded = async (cards: FeedCandidate[]) => {
+    if (!exclusions.length) return cards;
+    const drop = await excludedFoodItemIds(ctx.db, cards.filter((p) => p.kind === 'food').map((p) => p.id), exclusions);
+    return drop.size ? cards.filter((p) => !drop.has(p.id)) : cards;
+  };
+  pool = await dropExcluded(pool);
   // Cuisine tags have no pictures. When Qloo returned restaurant photos for
   // this owner, keep those and drop the owner's image-less Eat cards so the
   // grid is not a brown poster. Only the personal pool decides this, and it
@@ -270,12 +280,8 @@ async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner,
     const samples = (await sampleItemIds(ctx.db)).filter((s) => !inPool.has(s.canonical_key) && !hidden.has(s.canonical_key) && !saved.has(s.id));
     pool = [...pool, ...samples.slice(0, FEED_TOP_UP_MIN - pool.length)];
   }
-  // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat suggestions.
-  const exclusions = await foodExclusionsFor(ctx.db, owner);
-  if (exclusions.length) {
-    const drop = await excludedFoodItemIds(ctx.db, pool.filter((p) => p.kind === 'food').map((p) => p.id), exclusions);
-    if (drop.size) pool = pool.filter((p) => !drop.has(p.id));
-  }
+  // Samples added by the top-up (or the example feed) obey the same exclusions.
+  pool = await dropExcluded(pool);
   const available = CATEGORIES.filter((c) => pool.some((p) => p.category === c));
   const filtered = category ? pool.filter((p) => p.category === category) : pool;
   const ordered = interleaveFeed(filtered, hidden).map((c) => c.id);

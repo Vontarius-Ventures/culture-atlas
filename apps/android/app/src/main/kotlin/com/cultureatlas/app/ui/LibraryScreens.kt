@@ -145,10 +145,10 @@ fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
                 } else {
                     val incomingIds = feed.items.map { it.id }.toSet()
                     val keepOnScreen = conveyor.onScreenIds()
-                    var next = feed.items + pool.filter { it.id in keepOnScreen && it.id !in incomingIds }
-                    if (next.any { it.image != null }) {
-                        next = next.filter { it.image != null || it.id in keepOnScreen }
-                    }
+                    // Posters stay in the pool (as on iOS): the conveyor already takes pictured cards
+                    // first and never passes a waiting photo for a poster. Dropping them left too few
+                    // cards to fill both columns, so the feed drifted into empty gaps.
+                    val next = feed.items + pool.filter { it.id in keepOnScreen && it.id !in incomingIds }
                     // New cards join the conveyor; nothing on screen is reset or removed.
                     pool = next
                     message = null

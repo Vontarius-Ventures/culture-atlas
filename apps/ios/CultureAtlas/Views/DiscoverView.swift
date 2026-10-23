@@ -13,6 +13,7 @@ struct FeedView: View {
   @EnvironmentObject private var notices: ReadyNoticeCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
   @StateObject private var driver = ConveyorDriver<DiscoveryCard>(laneSpeeds: [14, 11], spacing: FeedTileMetrics.spacing)
   @StateObject private var pause = DriftPause()
   @State private var pool: [DiscoveryCard] = []
@@ -37,8 +38,9 @@ struct FeedView: View {
     return pool.filter { held.contains($0.id) }
   }
 
+  /// VoiceOver holds the drift: its cursor must not chase (or lose) a moving card.
   private var paused: Bool {
-    pause.held || scenePhase != .active || opened != nil || adding != nil
+    pause.held || scenePhase != .active || opened != nil || adding != nil || voiceOver
   }
 
   var body: some View {

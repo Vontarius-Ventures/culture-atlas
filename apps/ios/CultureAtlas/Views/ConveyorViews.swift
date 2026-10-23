@@ -197,6 +197,7 @@ struct SimilarConveyorRail: View {
   @StateObject private var pause = DriftPause()
   @State private var lastDrag: CGFloat = 0
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 
   private let tileWidth: CGFloat = 120
   private var tileHeight: CGFloat { FeedTileMetrics.height(forWidth: tileWidth) }
@@ -227,7 +228,8 @@ struct SimilarConveyorRail: View {
   }
 
   private func drifting(width: CGFloat) -> some View {
-    let paused = pause.held || scenePhase != .active
+    // VoiceOver holds the drift so its cursor never chases a moving card.
+    let paused = pause.held || scenePhase != .active || voiceOver
     return TimelineView(.animation(minimumInterval: nil, paused: paused)) { context in
       let state = driver.frame(at: context.date, running: !paused)
       ZStack(alignment: .leading) {

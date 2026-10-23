@@ -277,6 +277,7 @@ export function Conveyor({
     if (!flowing) return;
     let raf = 0;
     let last = 0;
+    let reconciledPool: readonly ConveyorCard[] | null = null;
     const frame = (t: number) => {
       const dt = last ? Math.min((t - last) / 1000, 0.1) : 0;
       last = t;
@@ -284,11 +285,16 @@ export function Conveyor({
       const m = modelRef.current;
       if (l && m) {
         if (pausesRef.current.size === 0 && dt > 0) {
-          offsetsRef.current = offsetsRef.current.map((o, lane) => o + laneSpeed(lane) * dt);
+          const offsets = offsetsRef.current;
+          for (let lane = 0; lane < offsets.length; lane++)
+            offsets[lane] = (offsets[lane] ?? 0) + laneSpeed(lane) * dt;
         }
         applyTransforms();
         const p = poolRef.current;
-        commit(step(reconcile(m, p), p, offsetsRef.current, l.geo));
+        // Reconcile (allocates a Set of the pool) only when the pool changed, not every frame.
+        const synced = p === reconciledPool ? m : reconcile(m, p);
+        reconciledPool = p;
+        commit(step(synced, p, offsetsRef.current, l.geo));
       }
       raf = requestAnimationFrame(frame);
     };

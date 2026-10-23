@@ -62,6 +62,12 @@ export function DiscoverView() {
   const restored = useRef(false);
   const { isAccount } = useSession();
   const [refreshing, setRefreshing] = useState(false);
+  // The filter on screen now: a refresh that lands after the filter changed
+  // updates its own cache entry but must not replace the visible feed.
+  const keyRef = useRef(key);
+  useIsoLayoutEffect(() => {
+    keyRef.current = key;
+  }, [key]);
 
   const load = useCallback(async (cat: Category | null) => {
     const k = cat ?? 'all';
@@ -186,6 +192,7 @@ export function DiscoverView() {
         };
         setFeedCache(key, entry);
         if (!category) setAllCategories(entry.availableCategories);
+        if (keyRef.current !== key) return;
         setFeed(entry);
         if (!opts.quiet || fresh > 0) {
           toast.announce(fresh > 0 ? `${fresh} new discoveries` : 'No new discoveries yet');

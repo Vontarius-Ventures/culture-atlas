@@ -134,6 +134,23 @@ describe('discovery feed', () => {
     expect(ids).not.toContain(cuisine);
     expect(venueFeed.items.filter((c) => !c.is_example).map((c) => c.id)).toEqual([venue]);
     expect(venueFeed.items).toHaveLength(FEED_TOP_UP_MIN);
+
+    // ONB-05 first: a pictured venue the owner has since excluded must not evict their remaining Eat card.
+    const excluded = await accountCtx();
+    const excludedOwner = { accountId: excluded.principal.accountId };
+    const shellfish = await insertItem(excludedOwner, { kind: 'food', title: 'Fixture Shellfish Shack' });
+    await pictured(shellfish);
+    const noodles = await insertItem(excludedOwner, { kind: 'food', title: 'Fixture Noodle Bar' });
+    const exCap = await insertCaptureWithAnalysis(excludedOwner, { recommendItemIds: [shellfish, noodles] });
+    await recordPreference(excluded.ctx, { action: 'save', target_type: 'capture', target_id: exCap.captureId });
+    await db.query(`UPDATE accounts SET preferences = preferences || $2::jsonb WHERE id = $1`, [
+      excludedOwner.accountId,
+      JSON.stringify({ food: { exclusions: ['shellfish'] } }),
+    ]);
+    const exFeed = await getDiscoveries(excluded.ctx, { limit: 24, refresh: true });
+    const exIds = exFeed.items.map((c) => c.id);
+    expect(exIds).not.toContain(shellfish);
+    expect(exIds).toContain(noodles);
   });
 
   it('returning users get a bounded pool connected to their saves, owner-scoped', async () => {
