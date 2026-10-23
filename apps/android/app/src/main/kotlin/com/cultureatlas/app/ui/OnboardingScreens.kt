@@ -175,7 +175,8 @@ fun ImagePickStep(onboarding: OnboardingController, settings: Boolean) {
         Text(OnboardingCopy.IMAGES_TITLE, Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif))
         if (!settings) Text(OnboardingCopy.HINT, color = AtlasColors.muted)
     }
-    val images = catalog?.images ?: return
+    // Interleave Wear / Play / Watch / Eat so the first screen is not five Wear photos.
+    val images = catalog?.images?.let(OnboardingPolicy::mixImages) ?: return
     // Two columns on a phone (390/320 px), as in the mockup.
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         images.chunked(2).forEach { row ->

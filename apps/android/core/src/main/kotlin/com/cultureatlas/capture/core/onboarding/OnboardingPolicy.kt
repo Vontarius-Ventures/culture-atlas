@@ -132,6 +132,22 @@ object OnboardingPolicy {
         return mixed
     }
 
+    /**
+     * Step 1 photos arrive grouped by category (five Wear photos first). Round-robin
+     * them the same way so the first screen shows Wear, Play, Watch and Eat.
+     * Keeps the server order within each category.
+     */
+    fun mixImages(images: List<OnboardingCatalogEntry>): List<OnboardingCatalogEntry> {
+        val queues = TasteCategory.entries.associateWith { category -> ArrayDeque(images.filter { it.category == category }) }
+        val mixed = mutableListOf<OnboardingCatalogEntry>()
+        while (queues.values.any { it.isNotEmpty() }) {
+            for (category in TasteCategory.entries) {
+                queues[category]?.removeFirstOrNull()?.let(mixed::add)
+            }
+        }
+        return mixed
+    }
+
     /** The query to send, or null while it is too short or too long to search. */
     fun searchQuery(input: String): String? = input.trim().takeIf { it.length in SEARCH_MIN_CHARS..SEARCH_MAX_CHARS }
 
