@@ -6,7 +6,8 @@ import SwiftUI
 /// stand-in portrait of a person or film. Example cards stay labeled.
 ///
 /// Cards float through on a continuous conveyor (two columns drifting upward
-/// at different speeds). Touching or scrolling pauses the drift; Reduce Motion
+/// at different speeds). Dragging scrubs the feed and a flick carries it with
+/// momentum; the drift resumes about two seconds after release. Reduce Motion
 /// shows a still grid that rotates one card at a time.
 struct FeedView: View {
   @EnvironmentObject private var controller: CaptureController
@@ -14,7 +15,12 @@ struct FeedView: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
-  @StateObject private var driver = ConveyorDriver<DiscoveryCard>(laneSpeeds: [14, 11], spacing: FeedTileMetrics.spacing)
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @StateObject private var driver = ConveyorDriver<DiscoveryCard>(
+    laneSpeeds: FeedTileMetrics.laneSpeeds, spacing: FeedTileMetrics.spacing)
+  /// Accessibility text sizes: one wide column so titles have room.
+  @StateObject private var singleDriver = ConveyorDriver<DiscoveryCard>(
+    laneSpeeds: [FeedTileMetrics.laneSpeeds[0]], spacing: FeedTileMetrics.spacing)
   @StateObject private var pause = DriftPause()
   @State private var pool: [DiscoveryCard] = []
   @State private var freshIDs: Set<UUID> = []
@@ -22,36 +28,41 @@ struct FeedView: View {
   @State private var staticSlots: [DiscoveryCard] = []
   @State private var hiddenID: UUID?
   @State private var exampleFeed = false
-  @State private var message: String?
-  @State private var loading = true
-  @State private var adding: DiscoveryCard?
-  @State private var boards: [CollectionSummary] = []
-  @State private var newBoardName = ""
+  @State private var banner: String?
+  @State private var emptyMessage: String?
+  /// Only the first load shows a spinner; polling and refresh never do.
+  @State private var initialLoading = true
+  @State private var refreshing = false
+  @State private var refreshSpin = 0.0
   @State private var opened: DiscoveryCard?
+  @Namespace private var zoom
 
   private static let staticCount = 6
+
+  private var oneColumn: Bool { dynamicTypeSize.isAccessibilitySize }
+  private var activeDriver: ConveyorDriver<DiscoveryCard> { oneColumn ? singleDriver : driver }
 
   /// Cards currently held on screen (conveyor or still grid).
   private var onScreen: [DiscoveryCard] {
     if reduceMotion { return staticSlots }
-    let held = driver.conveyor.heldIDs
+    let held = activeDriver.conveyor.heldIDs
     return pool.filter { held.contains($0.id) }
   }
 
   /// VoiceOver holds the drift: its cursor must not chase (or lose) a moving card.
   private var paused: Bool {
-    pause.held || scenePhase != .active || opened != nil || adding != nil || voiceOver
+    pause.held || scenePhase != .active || opened != nil || voiceOver
   }
 
   var body: some View {
     GeometryReader { outer in
       ScrollView {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
           header
-          feedBody(width: max(0, outer.size.width - 32), height: max(320, outer.size.height - 24))
+          feedBody(width: max(0, outer.size.width - 32), height: max(320, outer.size.height - 40))
         }
         .padding(.horizontal, 16)
-        .padding(.top, 16)
+        .padding(.top, 4)
       }
       .scrollBounceBehavior(.always, axes: .vertical)
       .pausesDrift(pause)
@@ -60,11 +71,23 @@ struct FeedView: View {
     .navigationTitle("Feed")
     .toolbar {
       ToolbarItem(placement: .topBarTrailing) {
-        NavigationLink("Boards") { BoardsView() }
+        Button {
+          Task { await userRefresh() }
+        } label: {
+          Image(systemName: "arrow.triangle.2.circlepath")
+            .rotationEffect(.degrees(refreshSpin))
+        }
+        .disabled(refreshing)
+        .accessibilityLabel("Fresh picks")
+        .accessibilityIdentifier("feed.refresh")
       }
     }
-    .overlay { if loading && pool.isEmpty { ProgressView() } }
-    .refreshable { await load(refresh: true) }
+    .overlay {
+      if initialLoading && pool.isEmpty { FeedSkeleton() }
+    }
+    // The pull runs detached: re-rendering while it is in flight must not
+    // cancel the request (that showed "Couldn't refresh" with no request sent).
+    .refreshable { await Task { await load(refresh: true) }.value }
     .task {
       await load(refresh: false)
       if controller.openFeedDetail {
@@ -86,114 +109,121 @@ struct FeedView: View {
         await rotateStatic()
       }
     }
-    .sheet(item: $adding) { card in
-      addToBoardSheet(card)
+    .onChange(of: oneColumn) { _, _ in activeDriver.setPool(pool, fresh: freshIDs) }
+    .onChange(of: controller.stackResets[.feed, default: 0]) { _, _ in opened = nil }
+    .onChange(of: controller.openFeedDetail) { _, open in
+      guard open else { return }
+      opened = onScreen.first { $0.image != nil } ?? onScreen.first
+      controller.openFeedDetail = false
     }
     .navigationDestination(item: $opened) { card in
-      FeedCardDetail(card: card, onAddToBoard: { adding = card })
+      FeedCardDetail(card: card)
+        .atlasZoomDestination(id: card.id, in: zoom)
     }
   }
 
   @ViewBuilder
   private var header: some View {
-    Text("A feed of what you’re into. Pull down for more.")
+    Text("Drag to browse. Pull down for fresh picks.")
       .font(.footnote)
       .foregroundStyle(AtlasTheme.muted)
     if exampleFeed {
-      Text("These are example results until your personal feed is ready.")
+      Label("Example results until your personal feed is ready.", systemImage: "sparkle")
         .font(.footnote)
         .foregroundStyle(AtlasTheme.muted)
     }
     if notices.exploring.isEmpty == false {
       AnalysisLookingBanner()
-    } else if notices.toast != nil {
-      AnalysisReadyBanner()
     }
-    if let message {
-      Text(message).foregroundStyle(AtlasTheme.muted)
-    } else if pool.isEmpty && !loading {
-      Text("No suggestions yet").font(.system(.title3, design: .serif))
-      Text("Finish picking your interests, then pull to refresh.")
-        .foregroundStyle(AtlasTheme.muted)
+    if let banner {
+      InlineBanner(text: banner, systemImage: "arrow.triangle.2.circlepath")
+        .transition(.move(edge: .top).combined(with: .opacity))
+    } else if let emptyMessage, pool.isEmpty, !initialLoading {
+      VStack(alignment: .leading, spacing: 6) {
+        Text("No suggestions yet").font(.system(.title3, design: .serif))
+        Text(emptyMessage).foregroundStyle(AtlasTheme.muted)
+      }
     }
   }
 
   @ViewBuilder
   private func feedBody(width: CGFloat, height: CGFloat) -> some View {
     if reduceMotion {
-      FeedStaticGrid(slots: staticSlots, hiddenID: hiddenID, baseURL: controller.api.baseURL) { opened = $0 }
-        // Floating tab bar sits over the last row; keep tap targets clear of it.
-        .padding(.bottom, 108)
+      FeedStaticGrid(slots: staticSlots, hiddenID: hiddenID, baseURL: controller.api.baseURL, columns: oneColumn ? 1 : 2) {
+        opened = $0
+      }
+      // Floating tab bar sits over the last row; keep tap targets clear of it.
+      .padding(.bottom, 108)
     } else {
       FeedConveyorColumns(
-        driver: driver,
+        driver: activeDriver,
+        pause: pause,
         paused: paused,
         width: width,
         height: height,
-        baseURL: controller.api.baseURL
-      ) { opened = $0 }
+        baseURL: controller.api.baseURL,
+        zoom: zoom,
+        onPullToRefresh: { Task { await userRefresh() } }
+      ) { card in
+        opened = card
+      }
     }
   }
 
-  @ViewBuilder
-  private func addToBoardSheet(_ card: DiscoveryCard) -> some View {
-    NavigationStack {
-      List {
-        Section("New board") {
-          TextField("Board name", text: $newBoardName)
-          Button("Create and add") {
-            Task { await add(card, creating: newBoardName) }
-          }
-          .disabled(newBoardName.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
-        Section("Your boards") {
-          if boards.isEmpty {
-            Text("No boards yet. Create one above.")
-              .foregroundStyle(AtlasTheme.muted)
-          }
-          ForEach(boards) { board in
-            Button(board.name) { Task { await add(card, to: board.id) } }
-          }
-        }
-      }
-      .navigationTitle("Add to a board")
-      .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { adding = nil } } }
-      .task { await loadBoards() }
-    }
+  private func userRefresh() async {
+    guard !refreshing else { return }
+    withAnimation(.easeInOut(duration: 0.6)) { refreshSpin += 360 }
+    await Task { await load(refresh: true) }.value
   }
 
   /// Pull-to-refresh and polling never wipe cards that are already on screen.
   private func load(refresh: Bool) async {
-    loading = true
-    defer { loading = false }
+    if refresh { refreshing = true }
+    defer {
+      if refresh { refreshing = false }
+      initialLoading = false
+    }
     do {
       let feed = try await controller.api.discoveries(refresh: refresh)
-      apply(feed)
+      apply(feed, refresh: refresh)
     } catch AtlasClientError.server(_, "onboarding_required", _, _, _) {
       pool = []
       staticSlots = []
       driver.removeAll()
-      message = "Finish picking your interests to see suggestions."
+      singleDriver.removeAll()
+      banner = nil
+      emptyMessage = "Finish picking your interests to see suggestions."
+    } catch where AtlasClientError.isCancellation(error) {
+      // Cancelled by the system (view went away): not a failure.
     } catch {
-      if pool.isEmpty {
-        message = "Suggestions aren't available right now. Pull to try again."
-      } else {
-        message = "Couldn't refresh. Still showing what you had."
+      withAnimation(AtlasMotion.spring) {
+        if pool.isEmpty {
+          banner = "Suggestions aren't available right now. Pull to try again."
+        } else if refresh {
+          banner = "Couldn't refresh. Still showing what you had."
+        }
       }
+      if refresh, !pool.isEmpty { clearBanner(after: 4) }
     }
   }
 
-  private func apply(_ feed: DiscoveriesResponse) {
+  private func apply(_ feed: DiscoveriesResponse, refresh: Bool) {
     exampleFeed = feed.isExampleFeed
     if feed.items.isEmpty {
       if pool.isEmpty {
-        message = "Still looking for things that match your interests. Pull to try again."
-      } else {
-        message = "Nothing new yet. Still showing what you had."
+        emptyMessage = "Still looking for things that match your interests. Pull to try again."
+      } else if refresh {
+        withAnimation(AtlasMotion.spring) { banner = "Nothing new yet. Still showing what you had." }
+        clearBanner(after: 3)
       }
       return
     }
-    message = nil
+    let known = Set(pool.map(\.id))
+    let newCount = feed.items.filter { !known.contains($0.id) }.count
+    withAnimation(AtlasMotion.spring) {
+      banner = nil
+      emptyMessage = nil
+    }
     let incomingIDs = Set(feed.items.map(\.id))
     freshIDs = incomingIDs
     let keepOnScreen = Set(onScreen.map(\.id))
@@ -202,8 +232,21 @@ struct FeedView: View {
     // so a short picture supply never leaves holes; the conveyor still takes
     // pictured cards first and never passes a waiting photo for a poster.
     pool = feed.items + pool.filter { keepOnScreen.contains($0.id) && !incomingIDs.contains($0.id) }
-    driver.setPool(pool, fresh: freshIDs)
+    activeDriver.setPool(pool, fresh: freshIDs)
     if reduceMotion { fillStatic() }
+    if refresh, !known.isEmpty {
+      controller.showFlash(
+        Flash(
+          text: newCount > 0 ? "\(newCount) fresh \(newCount == 1 ? "pick" : "picks") floating in" : "Your feed is up to date",
+          systemImage: newCount > 0 ? "sparkles" : "checkmark.circle.fill"))
+    }
+  }
+
+  private func clearBanner(after seconds: Double) {
+    Task {
+      try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+      withAnimation(AtlasMotion.spring) { banner = nil }
+    }
   }
 
   /// Reduce Motion: fill (never reset) the still grid, pictured cards first.
@@ -236,49 +279,63 @@ struct FeedView: View {
     }
     withAnimation(.easeInOut(duration: 0.35)) { hiddenID = nil }
   }
-
-  private func loadBoards() async {
-    boards = (try? await controller.api.collections())?.collections ?? []
-  }
-
-  private func add(_ card: DiscoveryCard, creating name: String) async {
-    let trimmed = name.trimmingCharacters(in: .whitespaces)
-    guard !trimmed.isEmpty else { return }
-    do {
-      let board = try await controller.api.createCollection(CreateCollectionRequest(name: trimmed))
-      _ = try await controller.api.addCollectionItem(collectionID: board.id, itemID: card.id)
-      newBoardName = ""
-      adding = nil
-    } catch {
-      controller.message = "Couldn't add that to a board. Try again."
-    }
-  }
-
-  private func add(_ card: DiscoveryCard, to boardID: UUID) async {
-    do {
-      _ = try await controller.api.addCollectionItem(collectionID: boardID, itemID: card.id)
-      adding = nil
-    } catch {
-      controller.message = "Couldn't add that to a board. Try again."
-    }
-  }
 }
 
 typealias DiscoverView = FeedView
 
+/// First-load placeholder: two columns of softly shimmering paper cards, so
+/// the feed never opens on a bare spinner.
+private struct FeedSkeleton: View {
+  @State private var phase = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    GeometryReader { geo in
+      let width = (geo.size.width - 32 - FeedTileMetrics.spacing) / 2
+      HStack(alignment: .top, spacing: FeedTileMetrics.spacing) {
+        ForEach(0..<2, id: \.self) { lane in
+          VStack(spacing: FeedTileMetrics.spacing) {
+            ForEach(0..<3, id: \.self) { _ in
+              RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(AtlasTheme.quiet)
+                .frame(width: width, height: width * 5 / 4)
+            }
+          }
+          .offset(y: lane == 1 ? width * 0.5 : 0)
+        }
+      }
+      .padding(.horizontal, 16)
+      .padding(.top, 60)
+      .opacity(phase ? 0.55 : 1)
+    }
+    .allowsHitTesting(false)
+    .onAppear {
+      guard !reduceMotion else { return }
+      withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { phase = true }
+    }
+    .accessibilityLabel("Loading your feed")
+  }
+}
+
 struct FeedCardTile: View {
   let card: DiscoveryCard
   let baseURL: URL
+  /// Poster tiles already show their title inside the poster; small rails hide the caption.
+  var captionForPosters = true
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       FeedCardVisual(card: card, baseURL: baseURL)
+        .frame(maxWidth: .infinity)
         .id(card.id)
-      Text(card.title)
-        .font(.system(.callout, design: .serif))
-        .foregroundStyle(AtlasTheme.ink)
-        .lineLimit(2)
-        .contentTransition(.identity)
+      if card.image != nil || captionForPosters {
+        Text(card.title)
+          .font(.system(.callout, design: .serif))
+          .foregroundStyle(AtlasTheme.ink)
+          .lineLimit(2)
+          .multilineTextAlignment(.leading)
+          .contentTransition(.identity)
+      }
       if card.isExample {
         Text("Example result").font(.caption2).foregroundStyle(AtlasTheme.muted)
       }
@@ -291,52 +348,63 @@ struct FeedCardTile: View {
 struct FeedCardVisual: View {
   let card: DiscoveryCard
   let baseURL: URL
+  var cornerRadius: CGFloat = 14
 
   var body: some View {
     Color.clear
       .aspectRatio(4 / 5, contentMode: .fit)
       .overlay {
-        Group {
-          if let url = card.image?.resolved(against: baseURL) {
-            AsyncImage(url: url) { phase in
-              switch phase {
-              case .success(let image):
-                image.resizable().scaledToFill()
-              case .failure:
-                posterFallback
-              default:
-                posterFill
-              }
-            }
+        if let url = card.image?.resolved(against: baseURL) {
+          // While the photo loads, the typographic poster holds the space,
+          // then the picture crossfades in (never a bare colour block).
+          RemoteImage(url: url) { posterFallback }
             .accessibilityLabel(card.image?.alt ?? card.title)
-          } else {
-            posterFallback
-              .accessibilityLabel(card.title)
-          }
+        } else {
+          posterFallback
+            .accessibilityLabel(card.title)
         }
       }
-      .clipped()
-      .clipShape(RoundedRectangle(cornerRadius: 14))
+      .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
   }
 
   private var posterFallback: some View {
     ZStack(alignment: .bottomLeading) {
-      posterFill
+      LinearGradient(
+        colors: [posterFill.opacity(0.92), posterFill],
+        startPoint: .topLeading, endPoint: .bottomTrailing)
+      Image(systemName: categorySymbol)
+        .font(.system(size: 120, weight: .ultraLight))
+        .foregroundStyle(.white.opacity(0.07))
+        .offset(x: 40, y: -40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 6) {
         if let category = card.category {
-          Text(OnboardingCopy.group(category))
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.white.opacity(0.8))
+          Text(OnboardingCopy.group(category).uppercased())
+            .font(.caption2.weight(.semibold))
+            .tracking(1.2)
+            .foregroundStyle(.white.opacity(0.75))
         }
         Text(card.title)
           .font(.system(.title3, design: .serif))
           .foregroundStyle(.white)
           .lineLimit(4)
+          .minimumScaleFactor(0.7)
         if let subtitle = card.subtitle {
           Text(subtitle).font(.caption).foregroundStyle(.white.opacity(0.75)).lineLimit(2)
         }
       }
       .padding(14)
+    }
+  }
+
+  private var categorySymbol: String {
+    switch card.category {
+    case .wear: return "tshirt"
+    case .play: return "music.note"
+    case .watch: return "film"
+    case .eat: return "fork.knife"
+    case .none: return "sparkle"
     }
   }
 
@@ -351,173 +419,258 @@ struct FeedCardVisual: View {
   }
 }
 
-/// Pinch to zoom. Focus is a separate tool: arm it, drag a box, then confirm.
-/// Analysis runs only on the owner's own captures — suggestion cards fail closed.
+/// Item detail: full-bleed 4:5 hero, one serif title (the nav bar shows it
+/// only after it scrolls away), why-this, references, Similar, and actions.
+/// Focus (drag a box and analyze a region) appears only on the owner's own
+/// captures; suggestion cards get Open source, Share and More like this.
 struct FeedCardDetail: View {
   @EnvironmentObject private var controller: CaptureController
   @EnvironmentObject private var notices: ReadyNoticeCenter
   let card: DiscoveryCard
-  var onAddToBoard: () -> Void
   @State private var scale: CGFloat = 1
   @State private var highlight: CGRect?
   @State private var dragStart: CGPoint?
   @State private var focusArmed = false
-  @State private var showFocusHint = false
   @State private var looking = false
-  @State private var finished = false
   @State private var analysisNote: String?
   @State private var detail: ItemDetailResponse?
   @State private var detailNote: String?
   @State private var related: [DiscoveryCard] = []
   @State private var relatedState = "none"
+  @State private var titleVisible = true
+  @State private var adding = false
+  @State private var savedIn: Set<UUID> = []
+  @State private var relatedPulse = 0
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+  private var shown: DiscoveryCard { detail?.item ?? card }
+  private var isCapture: Bool { card.kind == "capture" }
+
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        GeometryReader { geo in
-          ZStack(alignment: .topLeading) {
-            FeedCardVisual(card: detail?.item ?? card, baseURL: controller.api.baseURL)
-              .scaleEffect(scale)
-              .frame(width: geo.size.width, height: geo.size.height)
-              .clipped()
-              .gesture(
-                MagnifyGesture()
-                  .onChanged { value in scale = min(4, max(1, value.magnification)) }
-                  .onEnded { _ in
-                    if scale < 1.05 { scale = 1 }
+    ScrollViewReader { reader in
+      ScrollView {
+        VStack(alignment: .leading, spacing: 0) {
+          hero
+          VStack(alignment: .leading, spacing: 16) {
+            titleBlock
+            actionRow(reader)
+            if let reason = detail?.reason ?? detail?.whyThis?.text {
+              WhyThisCard(text: reason)
+            }
+            if let description = detail?.description {
+              Text(description)
+                .font(.body)
+                .foregroundStyle(AtlasTheme.ink)
+                .lineSpacing(3)
+            }
+            if let refs = detail?.references, refs.isEmpty == false {
+              VStack(alignment: .leading, spacing: 8) {
+                Text("References").font(.footnote.weight(.semibold)).foregroundStyle(AtlasTheme.muted)
+                FlowLayout(spacing: 6) {
+                  ForEach(refs) { ref in
+                    Text(ref.qualified ? ref.name : "Resembles \(ref.name)")
+                      .font(.footnote)
+                      .padding(.horizontal, 10)
+                      .padding(.vertical, 6)
+                      .background(Capsule().fill(AtlasTheme.quiet))
                   }
-              )
-              .simultaneousGesture(highlightGesture(in: geo.size), including: focusArmed ? .all : .none)
-            if let highlight {
-              RoundedRectangle(cornerRadius: 4)
-                .stroke(AtlasTheme.olive, lineWidth: 2)
-                .background(AtlasTheme.olive.opacity(0.18))
-                .frame(width: highlight.width, height: highlight.height)
-                .offset(x: highlight.minX, y: highlight.minY)
-                .allowsHitTesting(false)
+                }
+              }
+            }
+            if let detailNote {
+              InlineBanner(text: detailNote)
+            }
+            relatedRail
+              .id("similar")
+            if isCapture { focusTool }
+            if looking {
+              AnalysisLookingBanner()
+            }
+            if let analysisNote {
+              Text(analysisNote).font(.footnote).foregroundStyle(AtlasTheme.muted)
             }
           }
+          .padding(16)
+          .padding(.bottom, 32)
+          .animation(AtlasMotion.spring, value: detail)
         }
-        .aspectRatio(5 / 4, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        Text((detail?.item ?? card).title).font(.system(.title2, design: .serif))
-        if let subtitle = (detail?.item ?? card).subtitle {
-          Text(subtitle).foregroundStyle(AtlasTheme.muted)
-        }
-        if let detailLine = detail?.detail {
-          Text(detailLine).foregroundStyle(AtlasTheme.muted)
-        }
-        if card.isExample {
-          Text("Example result").font(.caption).foregroundStyle(AtlasTheme.muted)
-        }
-        if let description = detail?.description {
-          Text(description)
-        }
-        if let reason = detail?.reason ?? detail?.whyThis?.text {
-          Text(reason).font(.footnote).foregroundStyle(AtlasTheme.muted)
-        }
-        if let destination = detail?.destinationURL, let url = URL(string: destination) {
-          Link("Open source", destination: url)
-            .font(.footnote.weight(.semibold))
-        }
-        if let refs = detail?.references, refs.isEmpty == false {
-          VStack(alignment: .leading, spacing: 4) {
-            Text("References").font(.footnote.weight(.semibold))
-            ForEach(refs) { ref in
-              Text(ref.qualified ? ref.name : "Resembles \(ref.name)")
-                .font(.footnote)
-                .foregroundStyle(AtlasTheme.muted)
-            }
-          }
-        }
-        relatedRail
-        if looking {
-          AnalysisLookingBanner()
-        } else if finished {
-          AnalysisReadyBanner()
-        }
-        if let analysisNote {
-          Text(analysisNote).font(.footnote).foregroundStyle(AtlasTheme.muted)
-        }
-        if let detailNote {
-          Text(detailNote).font(.footnote).foregroundStyle(AtlasTheme.muted)
-        }
-        focusTool
-        Button("Add to a board") { onAddToBoard() }
-          .buttonStyle(.borderedProminent)
       }
-      .padding(16)
-      .padding(.bottom, 24)
+      .coordinateSpace(name: "detail")
     }
     .background(AtlasTheme.ivory.ignoresSafeArea())
-    .navigationTitle(card.title)
+    .navigationTitle(titleVisible ? "" : shown.title)
     .navigationBarTitleDisplayMode(.inline)
+    .toolbarBackground(titleVisible ? .hidden : .visible, for: .navigationBar)
+    .toolbarBackground(AtlasTheme.ivory, for: .navigationBar)
     .toolbar(.hidden, for: .tabBar)
+    .sheet(isPresented: $adding) {
+      AddToBoardSheet(card: shown, savedIn: savedIn) { boardID in
+        withAnimation(AtlasMotion.spring) { _ = savedIn.insert(boardID) }
+      }
+    }
     .task { await loadDetail() }
+  }
+
+  // MARK: Hero
+
+  private var hero: some View {
+    GeometryReader { geo in
+      ZStack(alignment: .topLeading) {
+        FeedCardVisual(card: shown, baseURL: controller.api.baseURL, cornerRadius: 0)
+          .frame(width: geo.size.width, height: geo.size.height)
+          .scaleEffect(scale)
+          .clipped()
+          .gesture(
+            MagnifyGesture()
+              .onChanged { value in scale = min(4, max(1, value.magnification)) }
+              .onEnded { _ in withAnimation(AtlasMotion.spring) { scale = 1 } }
+          )
+          .simultaneousGesture(highlightGesture(in: geo.size), including: focusArmed ? .all : .none)
+        if let highlight {
+          RoundedRectangle(cornerRadius: 6)
+            .stroke(AtlasTheme.olive, lineWidth: 2)
+            .background(AtlasTheme.olive.opacity(0.18))
+            .frame(width: highlight.width, height: highlight.height)
+            .offset(x: highlight.minX, y: highlight.minY)
+            .allowsHitTesting(false)
+        }
+      }
+    }
+    .aspectRatio(4 / 5, contentMode: .fit)
+    .accessibilityIdentifier("detail.hero")
+  }
+
+  private var titleBlock: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      if let category = shown.category {
+        Text(OnboardingCopy.group(category).uppercased())
+          .font(.caption.weight(.semibold))
+          .tracking(1.2)
+          .foregroundStyle(AtlasTheme.olive)
+      }
+      Text(shown.title)
+        .font(.system(.title, design: .serif))
+        .foregroundStyle(AtlasTheme.ink)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+          GeometryReader { geo in
+            Color.clear
+              .onChange(of: geo.frame(in: .named("detail")).maxY < 0) { _, hidden in
+                withAnimation(AtlasMotion.fade) { titleVisible = !hidden }
+              }
+          })
+      if let subtitle = shown.subtitle {
+        Text(subtitle).foregroundStyle(AtlasTheme.muted)
+      }
+      if let detailLine = detail?.detail {
+        Text(detailLine).font(.callout).foregroundStyle(AtlasTheme.muted)
+      }
+      if card.isExample {
+        Text("Example result").font(.caption).foregroundStyle(AtlasTheme.muted)
+      }
+    }
+  }
+
+  // MARK: Actions
+
+  private func actionRow(_ reader: ScrollViewProxy) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Button {
+        adding = true
+      } label: {
+        Label(
+          savedIn.isEmpty ? "Add to a board" : "Saved to \(savedIn.count) \(savedIn.count == 1 ? "board" : "boards")",
+          systemImage: savedIn.isEmpty ? "plus.square.on.square" : "checkmark.square.fill")
+          .contentTransition(.symbolEffect(.replace))
+          .frame(maxWidth: .infinity, minHeight: 46)
+      }
+      .buttonStyle(.borderedProminent)
+      .accessibilityIdentifier("detail.add-to-board")
+      .sensoryFeedback(.success, trigger: savedIn.count)
+
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: 8) {
+          if let destination = detail?.destinationURL, let url = URL(string: destination) {
+            Link(destination: url) {
+              ActionChip(title: "Open source", systemImage: "arrow.up.right.square")
+            }
+          }
+          ShareLink(item: shareText) {
+            ActionChip(title: "Share", systemImage: "square.and.arrow.up")
+          }
+          Button {
+            relatedPulse += 1
+            withAnimation(AtlasMotion.spring) { reader.scrollTo("similar", anchor: .top) }
+            if related.isEmpty, relatedState != "pending" { Task { await startRelated() } }
+          } label: {
+            ActionChip(title: "More like this", systemImage: "sparkles")
+          }
+          .sensoryFeedback(.selection, trigger: relatedPulse)
+        }
+      }
+      .scrollClipDisabled()
+    }
+  }
+
+  private var shareText: String {
+    if let destination = detail?.destinationURL { return "\(shown.title) — \(destination)" }
+    if let subtitle = shown.subtitle { return "\(shown.title) — \(subtitle) (via culture atlas)" }
+    return "\(shown.title) (via culture atlas)"
   }
 
   @ViewBuilder
   private var focusTool: some View {
     VStack(alignment: .leading, spacing: 8) {
       if focusArmed {
-        Text("Focus is on. Drag a box on the picture, then confirm. Pinch still zooms.")
+        Text("Drag a box on your photo, then confirm. Pinch still zooms.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
         HStack {
-          Button("Cancel focus") {
-            focusArmed = false
-            highlight = nil
-            showFocusHint = false
+          Button("Cancel") {
+            withAnimation(AtlasMotion.spring) {
+              focusArmed = false
+              highlight = nil
+            }
           }
           .buttonStyle(.bordered)
           if highlight != nil {
             Button("Look at this area") { Task { await analyzeHighlight() } }
               .buttonStyle(.borderedProminent)
+              .transition(.scale.combined(with: .opacity))
           }
         }
       } else {
-        Button("Focus on an area") {
-          focusArmed = true
-          showFocusHint = true
+        Button {
+          withAnimation(AtlasMotion.spring) { focusArmed = true }
+        } label: {
+          Label("Focus on part of your photo", systemImage: "viewfinder")
         }
         .buttonStyle(.bordered)
-        if showFocusHint {
-          Text("This looks at a region of a photo you captured. Suggestion cards are not analyzed.")
-            .font(.footnote)
-            .foregroundStyle(AtlasTheme.muted)
-        } else {
-          Text("Pinch to zoom. Use Focus on an area when you want to look at part of a picture.")
-            .font(.footnote)
-            .foregroundStyle(AtlasTheme.muted)
-        }
       }
     }
+    .animation(AtlasMotion.spring, value: highlight != nil)
   }
 
   @ViewBuilder
   private var relatedRail: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      Text("Similar")
-        .font(.system(.title3, design: .serif))
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .firstTextBaseline) {
+        Text("Similar")
+          .font(.system(.title3, design: .serif))
+          .foregroundStyle(AtlasTheme.ink)
+        if relatedState == "pending" {
+          Text("Looking for more…").font(.footnote).foregroundStyle(AtlasTheme.muted)
+        }
+      }
       if relatedState == "pending" && related.isEmpty {
         AnalysisLookingBanner()
-        Text("Looking for similar suggestions.")
-          .font(.footnote)
-          .foregroundStyle(AtlasTheme.muted)
       } else if related.isEmpty {
         Text("No similar suggestions yet.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
       } else {
-        VStack(alignment: .leading, spacing: 8) {
-          if relatedState == "pending" {
-            Text("Looking for more like this.")
-              .font(.footnote)
-              .foregroundStyle(AtlasTheme.muted)
-          }
-          picturedRelatedRail
-        }
+        picturedRelatedRail
+          .transition(.opacity)
       }
     }
   }
@@ -531,8 +684,10 @@ struct FeedCardDetail: View {
       baseURL: controller.api.baseURL,
       reduceMotion: reduceMotion
     ) { relatedCard in
-      FeedCardDetail(card: relatedCard, onAddToBoard: onAddToBoard)
+      FeedCardDetail(card: relatedCard)
     }
+    // Bleed past the 16 pt content inset so tiles slide off the screen edge.
+    .padding(.horizontal, -16)
   }
 
   private func highlightGesture(in size: CGSize) -> some Gesture {
@@ -552,15 +707,19 @@ struct FeedCardDetail: View {
   private func loadDetail() async {
     do {
       let loaded = try await controller.api.item(card.id)
-      detail = loaded
-      related = loaded.related
-      relatedState = loaded.relatedState
+      withAnimation(AtlasMotion.spring) {
+        detail = loaded
+        related = loaded.related
+        relatedState = loaded.relatedState
+        savedIn = Set(loaded.collectionIDs)
+      }
       detailNote = nil
       if loaded.relatedState == "none" {
         await startRelated()
       } else if loaded.relatedState == "pending" {
         await pollRelated()
       }
+    } catch where AtlasClientError.isCancellation(error) {
     } catch {
       if detail == nil {
         detailNote = "Couldn't load details right now. The card you opened is still here."
@@ -586,9 +745,11 @@ struct FeedCardDetail: View {
       guard !Task.isCancelled else { return }
       do {
         let loaded = try await controller.api.item(card.id)
-        detail = loaded
-        related = loaded.related
-        relatedState = loaded.relatedState
+        withAnimation(AtlasMotion.spring) {
+          detail = loaded
+          related = loaded.related
+          relatedState = loaded.relatedState
+        }
         if loaded.relatedState != "pending" { return }
       } catch {
         return
@@ -597,28 +758,56 @@ struct FeedCardDetail: View {
     if related.isEmpty { relatedState = "none" }
   }
 
+  /// Only the owner's own capture is ever sent; the tool is hidden on suggestions.
   private func analyzeHighlight() async {
-    looking = true
-    finished = false
+    guard isCapture else { return }
     analysisNote = nil
-    defer { looking = false }
-    // Suggestion cards have no capture to analyze. Fail closed — never invent a reading.
-    if card.kind != "capture" {
-      try? await Task.sleep(nanoseconds: 900_000_000)
-      finished = false
-      analysisNote = "Analysis looks at photos you capture. This card is a suggestion, so nothing was sent."
-      focusArmed = false
-      return
-    }
-    looking = false
     let started = await notices.explore(assetID: card.id)
-    if started {
-      finished = false
-      looking = true
-    } else {
-      analysisNote = "Exploring isn't available right now. The picture is still on this phone."
+    withAnimation(AtlasMotion.spring) {
+      if started {
+        looking = true
+      } else {
+        analysisNote = "We can't look at photos right now. Your photo is saved privately."
+      }
+      focusArmed = false
+      highlight = nil
     }
-    focusArmed = false
+  }
+}
+
+private struct ActionChip: View {
+  let title: String
+  let systemImage: String
+
+  var body: some View {
+    Label(title, systemImage: systemImage)
+      .font(.callout.weight(.medium))
+      .foregroundStyle(AtlasTheme.ink)
+      .padding(.horizontal, 14)
+      .frame(minHeight: 40)
+      .background(Capsule().fill(AtlasTheme.quiet))
+      .overlay(Capsule().stroke(AtlasTheme.line))
+  }
+}
+
+/// "Why this" — the server's reason, set apart as a quiet card.
+private struct WhyThisCard: View {
+  let text: String
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: "quote.opening")
+        .font(.footnote)
+        .foregroundStyle(AtlasTheme.olive)
+        .accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Why this").font(.caption.weight(.semibold)).foregroundStyle(AtlasTheme.olive)
+        Text(text).font(.callout).foregroundStyle(AtlasTheme.ink)
+      }
+    }
+    .padding(14)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(AtlasTheme.quiet))
   }
 }
 
@@ -630,6 +819,7 @@ struct AnalysisLookingBanner: View {
         Circle()
           .fill(AtlasTheme.olive.opacity(pulse))
           .frame(width: 14, height: 14)
+          .scaleEffect(0.85 + 0.15 * pulse)
         Text("Looking…")
           .font(.system(.callout, design: .serif))
           .foregroundStyle(AtlasTheme.olive)
@@ -659,6 +849,30 @@ struct AnalysisReadyBanner: View {
     .background(RoundedRectangle(cornerRadius: 12).fill(AtlasTheme.quiet))
     .onAppear {
       withAnimation(.spring(response: 0.45, dampingFraction: 0.65)) { shown = true }
+    }
+  }
+}
+
+// MARK: - iOS 18 zoom transitions (no-ops on iOS 17)
+
+extension View {
+  @ViewBuilder
+  func atlasZoomSource(id: UUID, in namespace: Namespace.ID) -> some View {
+    if #available(iOS 18.0, *) {
+      matchedTransitionSource(id: id, in: namespace) { config in
+        config.clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+      }
+    } else {
+      self
+    }
+  }
+
+  @ViewBuilder
+  func atlasZoomDestination(id: UUID, in namespace: Namespace.ID) -> some View {
+    if #available(iOS 18.0, *) {
+      navigationTransition(.zoom(sourceID: id, in: namespace))
+    } else {
+      self
     }
   }
 }

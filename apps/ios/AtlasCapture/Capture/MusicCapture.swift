@@ -112,7 +112,15 @@ public final class MusicCapture: NSObject, ObservableObject {
     let recorder = try makeRecorder(url: url)
     recorder.delegate = self
     recorder.isMeteringEnabled = true
-    guard recorder.record(forDuration: TimeInterval(maxSeconds)) else { throw CaptureError.configurationFailed }
+    guard recorder.record(forDuration: TimeInterval(maxSeconds)) else {
+      // Device qualification aid: which input the session had when the recorder refused.
+      let session = AVAudioSession.sharedInstance()
+      NSLog(
+        "[atlas] music record refused: inputs=%@ available=%d sampleRate=%.0f",
+        session.currentRoute.inputs.map { "\($0.portType.rawValue)" }.joined(separator: ","),
+        session.isInputAvailable ? 1 : 0, session.sampleRate)
+      throw CaptureError.configurationFailed
+    }
     self.recorder = recorder
     selectedRoute = route
     recordedRoute = route
@@ -181,7 +189,10 @@ public final class MusicCapture: NSObject, ObservableObject {
       AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
     ]
     let recorder = try AVAudioRecorder(url: url, settings: mono)
-    guard recorder.prepareToRecord() else { throw CaptureError.configurationFailed }
+    guard recorder.prepareToRecord() else {
+      NSLog("[atlas] music recorder could not prepare (mono AAC 44.1 kHz)")
+      throw CaptureError.configurationFailed
+    }
     return recorder
   }
 

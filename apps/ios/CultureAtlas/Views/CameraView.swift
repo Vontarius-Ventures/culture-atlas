@@ -1,5 +1,6 @@
 import AtlasCapture
 import AVFoundation
+import PhotosUI
 import SwiftUI
 
 /// Screen 03 (native camera): photo/video switch, explicit microphone state,
@@ -14,13 +15,105 @@ struct CameraView: View {
   @State private var saving = false
   @State private var error: String?
   @State private var showArming = false
+  @State private var unavailable: PhoneCamera.CameraError?
+  @State private var picked: [PhotosPickerItem] = []
+  @State private var shutterFlash = false
+  @State private var shots = 0
 
   var body: some View {
+    Group {
+      if let unavailable {
+        unavailableState(unavailable)
+          .transition(.opacity)
+      } else {
+        cameraBody
+      }
+    }
+    .background(AtlasTheme.ivory.ignoresSafeArea())
+    .navigationTitle("This camera")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbar(.hidden, for: .tabBar)
+    .task {
+      do { try await camera.start() } catch {
+        let cameraError = error as? PhoneCamera.CameraError
+        if cameraError == .noDevice || cameraError == .permissionDenied || cameraError == .configurationFailed {
+          withAnimation(AtlasMotion.fade) { unavailable = cameraError }
+        } else {
+          self.error = (error as? LocalizedError)?.errorDescription
+        }
+      }
+    }
+    .onDisappear { if !camera.isRecording { camera.stop() } }
+    .sheet(item: $review) { draft in ReviewSheet(draft: draft) }
+    .sheet(isPresented: $showArming) { RemoteArmSheet(source: .phoneCamera).tint(AtlasTheme.olive) }
+    .onChange(of: picked) { _, items in
+      guard !items.isEmpty else { return }
+      Task {
+        var added = 0
+        for item in items {
+          if await controller.importPicked(item) { added += 1 }
+        }
+        picked = []
+        if added > 0 {
+          controller.showFlash(Flash(text: added == 1 ? "Uploading to your library" : "Uploading \(added) files to your library",
+                                     systemImage: "tray.and.arrow.down.fill"))
+        }
+      }
+    }
+  }
+
+  /// No camera (simulator, restricted device) or no permission: a calm paper
+  /// screen with a way forward instead of a blank preview.
+  private func unavailableState(_ reason: PhoneCamera.CameraError) -> some View {
+    VStack(spacing: 18) {
+      Spacer()
+      Image(systemName: reason == .permissionDenied ? "camera.badge.ellipsis" : "camera.metering.unknown")
+        .font(.system(size: 54, weight: .light))
+        .foregroundStyle(AtlasTheme.olive)
+        .accessibilityHidden(true)
+      Text(reason == .permissionDenied ? "Camera access is off" : "No camera here")
+        .font(.system(.title2, design: .serif))
+      Text(reason == .permissionDenied
+        ? "Turn on camera access in Settings, or add photos and videos you already have."
+        : "This phone can't use its camera right now. You can still add photos and videos you already have.")
+        .multilineTextAlignment(.center)
+        .foregroundStyle(AtlasTheme.muted)
+        .padding(.horizontal, 12)
+      PhotosPicker(selection: $picked, maxSelectionCount: 20, matching: .any(of: [.images, .videos])) {
+        Label("Choose from Photos", systemImage: "photo.on.rectangle")
+          .frame(maxWidth: .infinity, minHeight: 50)
+      }
+      .buttonStyle(.borderedProminent)
+      .accessibilityIdentifier("camera.choose-photos")
+      if reason == .permissionDenied {
+        Button {
+          if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+        } label: {
+          Label("Open Settings", systemImage: "gear")
+            .frame(maxWidth: .infinity, minHeight: 50)
+        }
+        .buttonStyle(.bordered)
+      }
+      Spacer()
+      Spacer()
+    }
+    .padding(24)
+  }
+
+  private var cameraBody: some View {
     let allowed = CapabilityGate.phoneCamera(controller.capabilities)
-    VStack(spacing: 16) {
+    return VStack(spacing: 16) {
       ZStack(alignment: .top) {
         CameraPreview(session: camera.session)
           .aspectRatio(3 / 4, contentMode: .fit)
+          .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+          .overlay {
+            // Shutter blink: a quick white flash when a photo is taken.
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+              .fill(.white)
+              .opacity(shutterFlash ? 0.85 : 0)
+              .allowsHitTesting(false)
+          }
           .accessibilityLabel("Camera preview")
         if let startedAt {
           TimelineView(.periodic(from: startedAt, by: 0.5)) { context in
@@ -39,9 +132,6 @@ struct CameraView: View {
         }
       }
       if let error { Text(error).foregroundStyle(.red).accessibilityAddTraits(.isStaticText) }
-      else if let message = controller.message, review == nil {
-        Text(message).foregroundStyle(.red).accessibilityAddTraits(.isStaticText)
-      }
       if saving { Text("Saving on this phone…").accessibilityAddTraits(.updatesFrequently) }
 
       Picker("Mode", selection: $mode) {
@@ -67,22 +157,14 @@ struct CameraView: View {
       }
 
       // Remote capture is off until allowed here, on this phone, with the camera open.
-      Toggle("Allow remote capture", isOn: Binding(get: { controller.armed != nil }, set: { on in
-        if on { showArming = true } else { Task { await controller.stopArming() } }
-      }))
-      .disabled(!camera.isRunning)
-    }
-    .padding(20)
-    .navigationTitle("This camera")
-    .toolbar(.hidden, for: .tabBar)
-    .task {
-      do { try await camera.start() } catch {
-        self.error = (error as? LocalizedError)?.errorDescription
+      if camera.isRunning {
+        Toggle("Allow remote capture", isOn: Binding(get: { controller.armed != nil }, set: { on in
+          if on { showArming = true } else { Task { await controller.stopArming() } }
+        }))
       }
     }
-    .onDisappear { if !camera.isRecording { camera.stop() } }
-    .sheet(item: $review) { draft in ReviewSheet(draft: draft) }
-    .sheet(isPresented: $showArming) { RemoteArmSheet(source: .phoneCamera) }
+    .padding(20)
+    .sensoryFeedback(.impact(weight: .medium), trigger: shots)
   }
 
   @ViewBuilder private var shutter: some View {
@@ -91,10 +173,15 @@ struct CameraView: View {
         Task {
           saving = true
           error = nil
+          shots += 1
+          withAnimation(.easeOut(duration: 0.05)) { shutterFlash = true }
+          withAnimation(.easeIn(duration: 0.3).delay(0.08)) { shutterFlash = false }
           review = await controller.capturePhoto(source: .phoneCamera)
           saving = false
           if review == nil {
+            // Report once: inline here, not also as an alert.
             error = controller.message ?? "The photo wasn't saved. Try again."
+            controller.message = nil
           }
         }
       } label: {
@@ -160,6 +247,8 @@ struct ReviewSheet: View {
     }
     .padding(24)
     .presentationDetents([.medium])
+    .presentationCornerRadius(24)
+    .tint(AtlasTheme.olive)
   }
 
   private var keepTitle: String {
