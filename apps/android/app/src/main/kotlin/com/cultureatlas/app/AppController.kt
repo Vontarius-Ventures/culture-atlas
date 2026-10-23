@@ -84,9 +84,9 @@ class AppController(private val graph: AppGraph) : RemoteCaptureExecutor {
         try {
             graph.accounts.startSignIn(email)
             _phase.value = Phase.AwaitingEmail(email)
-            message.value = "Check your email for a sign-in link. Open it on this phone."
+            message.value = "Your sign-in link opens on this phone. This test build doesn't send email."
         } catch (e: Exception) {
-            message.value = "We couldn't send the link. Check your connection and try again."
+            message.value = "We couldn't get a sign-in link. Check your connection and try again."
         }
     }
 

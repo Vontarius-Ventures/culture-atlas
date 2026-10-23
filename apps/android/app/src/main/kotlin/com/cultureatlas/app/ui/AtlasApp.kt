@@ -206,10 +206,10 @@ private fun SignInScreen(controller: AppController) {
             onClick = { sending = true; scope.launch { controller.sendLink(email.trim()); sending = false } },
             enabled = !sending && email.contains('@'),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-        ) { Text(if (sending) "Sending…" else "Email me a sign-in link") }
+        ) { Text(if (sending) "Getting your link…" else "Get a sign-in link") }
         (phase as? AppController.Phase.AwaitingEmail)?.let {
             Text(
-                "We sent a link to ${it.email} if it can sign in. Open it on this phone.",
+                "If ${it.email} can sign in, its sign-in link opens on this phone. Nothing is sent to an inbox in this test build.",
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
