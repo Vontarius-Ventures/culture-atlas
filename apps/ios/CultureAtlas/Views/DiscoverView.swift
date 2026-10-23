@@ -4,13 +4,22 @@ import SwiftUI
 /// Living interest feed from `GET /v1/discoveries`. Visual-first: licensed
 /// pictures when we have them, typographic posters otherwise — never a
 /// stand-in portrait of a person or film. Example cards stay labeled.
+///
+/// Cards float through on a continuous conveyor (two columns drifting upward
+/// at different speeds). Touching or scrolling pauses the drift; Reduce Motion
+/// shows a still grid that rotates one card at a time.
 struct FeedView: View {
   @EnvironmentObject private var controller: CaptureController
   @EnvironmentObject private var notices: ReadyNoticeCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.scenePhase) private var scenePhase
+  @StateObject private var driver = ConveyorDriver<DiscoveryCard>(laneSpeeds: [14, 11], spacing: FeedTileMetrics.spacing)
+  @StateObject private var pause = DriftPause()
   @State private var pool: [DiscoveryCard] = []
-  @State private var shown: [DiscoveryCard] = []
   @State private var freshIDs: Set<UUID> = []
+  @State private var staticModel = FeedConveyor<DiscoveryCard>(laneSpeeds: [0], itemLength: 1, spacing: 0, viewport: 0)
+  @State private var staticSlots: [DiscoveryCard] = []
+  @State private var hiddenID: UUID?
   @State private var exampleFeed = false
   @State private var message: String?
   @State private var loading = true
@@ -19,46 +28,31 @@ struct FeedView: View {
   @State private var newBoardName = ""
   @State private var opened: DiscoveryCard?
 
-  private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+  private static let staticCount = 6
+
+  /// Cards currently held on screen (conveyor or still grid).
+  private var onScreen: [DiscoveryCard] {
+    if reduceMotion { return staticSlots }
+    let held = driver.conveyor.heldIDs
+    return pool.filter { held.contains($0.id) }
+  }
+
+  private var paused: Bool {
+    pause.held || scenePhase != .active || opened != nil || adding != nil
+  }
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 16) {
-        Text("A feed of what you’re into. Pull down for more.")
-          .font(.footnote)
-          .foregroundStyle(AtlasTheme.muted)
-        if exampleFeed {
-          Text("These are example results until your personal feed is ready.")
-            .font(.footnote)
-            .foregroundStyle(AtlasTheme.muted)
+    GeometryReader { outer in
+      ScrollView {
+        VStack(alignment: .leading, spacing: 12) {
+          header
+          feedBody(width: max(0, outer.size.width - 32), height: max(320, outer.size.height - 24))
         }
-        if notices.exploring.isEmpty == false {
-          AnalysisLookingBanner()
-        } else if notices.toast != nil {
-          AnalysisReadyBanner()
-        }
-        if let message {
-          Text(message).foregroundStyle(AtlasTheme.muted)
-        } else if shown.isEmpty && !loading {
-          Text("No suggestions yet").font(.system(.title3, design: .serif))
-          Text("Finish picking your interests, then pull to refresh.")
-            .foregroundStyle(AtlasTheme.muted)
-        }
-        LazyVGrid(columns: columns, spacing: 12) {
-          ForEach(Array(shown.enumerated()), id: \.offset) { index, card in
-            Button { opened = card } label: {
-              FloatingCard(reduceMotion: reduceMotion, phase: Double(index)) {
-                FeedCardTile(card: card, baseURL: controller.api.baseURL)
-              }
-            }
-            .buttonStyle(.plain)
-          }
-        }
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
       }
-      .padding(16)
-      // Floating tab bar sits over the last row; keep titles and tap targets clear of it.
-      .padding(.bottom, 108)
+      .scrollBounceBehavior(.always, axes: .vertical)
+      .pausesDrift(pause)
     }
     .background(AtlasTheme.ivory.ignoresSafeArea())
     .navigationTitle("Feed")
@@ -67,25 +61,27 @@ struct FeedView: View {
         NavigationLink("Boards") { BoardsView() }
       }
     }
-    .overlay { if loading && shown.isEmpty { ProgressView() } }
+    .overlay { if loading && pool.isEmpty { ProgressView() } }
     .refreshable { await load(refresh: true) }
     .task {
       await load(refresh: false)
       if controller.openFeedDetail {
-        opened = shown.first { $0.image != nil } ?? shown.first
+        opened = onScreen.first { $0.image != nil } ?? onScreen.first
         controller.openFeedDetail = false
       }
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 8_000_000_000)
-        // Pull new cards into the pool; never rebuild (that would reshuffle
-        // the grid). rotateOne floats them in from there.
+        // Pull new cards into the pool; never rebuild. The conveyor (or the
+        // Reduce Motion rotation) floats them in from there.
         await load(refresh: false)
       }
     }
-    .task {
+    .task(id: reduceMotion) {
+      guard reduceMotion else { return }
+      fillStatic()
       while !Task.isCancelled {
         try? await Task.sleep(nanoseconds: 6_000_000_000)
-        rotateOne()
+        await rotateStatic()
       }
     }
     .sheet(item: $adding) { card in
@@ -93,6 +89,47 @@ struct FeedView: View {
     }
     .navigationDestination(item: $opened) { card in
       FeedCardDetail(card: card, onAddToBoard: { adding = card })
+    }
+  }
+
+  @ViewBuilder
+  private var header: some View {
+    Text("A feed of what you’re into. Pull down for more.")
+      .font(.footnote)
+      .foregroundStyle(AtlasTheme.muted)
+    if exampleFeed {
+      Text("These are example results until your personal feed is ready.")
+        .font(.footnote)
+        .foregroundStyle(AtlasTheme.muted)
+    }
+    if notices.exploring.isEmpty == false {
+      AnalysisLookingBanner()
+    } else if notices.toast != nil {
+      AnalysisReadyBanner()
+    }
+    if let message {
+      Text(message).foregroundStyle(AtlasTheme.muted)
+    } else if pool.isEmpty && !loading {
+      Text("No suggestions yet").font(.system(.title3, design: .serif))
+      Text("Finish picking your interests, then pull to refresh.")
+        .foregroundStyle(AtlasTheme.muted)
+    }
+  }
+
+  @ViewBuilder
+  private func feedBody(width: CGFloat, height: CGFloat) -> some View {
+    if reduceMotion {
+      FeedStaticGrid(slots: staticSlots, hiddenID: hiddenID, baseURL: controller.api.baseURL) { opened = $0 }
+        // Floating tab bar sits over the last row; keep tap targets clear of it.
+        .padding(.bottom, 108)
+    } else {
+      FeedConveyorColumns(
+        driver: driver,
+        paused: paused,
+        width: width,
+        height: height,
+        baseURL: controller.api.baseURL
+      ) { opened = $0 }
     }
   }
 
@@ -129,10 +166,11 @@ struct FeedView: View {
     defer { loading = false }
     do {
       let feed = try await controller.api.discoveries(refresh: refresh)
-      apply(feed, refresh: refresh)
+      apply(feed)
     } catch AtlasClientError.server(_, "onboarding_required", _, _, _) {
       pool = []
-      shown = []
+      staticSlots = []
+      driver.removeAll()
       message = "Finish picking your interests to see suggestions."
     } catch {
       if pool.isEmpty {
@@ -143,7 +181,7 @@ struct FeedView: View {
     }
   }
 
-  private func apply(_ feed: DiscoveriesResponse, refresh: Bool) {
+  private func apply(_ feed: DiscoveriesResponse) {
     exampleFeed = feed.isExampleFeed
     if feed.items.isEmpty {
       if pool.isEmpty {
@@ -156,48 +194,45 @@ struct FeedView: View {
     message = nil
     let incomingIDs = Set(feed.items.map(\.id))
     freshIDs = incomingIDs
-    let keepOnScreen = Set(shown.map(\.id))
+    let keepOnScreen = Set(onScreen.map(\.id))
     // Keep the latest page plus whatever is on screen. Stale off-screen cards
-    // buried new Qloo results in a 50-item shuffle.
+    // buried new Qloo results in a 50-item shuffle. Posters stay in the pool
+    // so a short picture supply never leaves holes; the conveyor still takes
+    // pictured cards first and never passes a waiting photo for a poster.
     pool = feed.items + pool.filter { keepOnScreen.contains($0.id) && !incomingIDs.contains($0.id) }
-    if pool.contains(where: { $0.image != nil }) {
-      pool = pool.filter { $0.image != nil || keepOnScreen.contains($0.id) }
-    }
-    if shown.isEmpty || refresh {
-      shown = mosaic(from: pool)
-    }
+    driver.setPool(pool, fresh: freshIDs)
+    if reduceMotion { fillStatic() }
   }
 
-  private func mosaic(from pool: [DiscoveryCard]) -> [DiscoveryCard] {
-    let pictured = pool.filter { $0.image != nil }
-    if pictured.isEmpty { return Array(pool.prefix(4)) }
-    return Array(pictured.prefix(4))
+  /// Reduce Motion: fill (never reset) the still grid, pictured cards first.
+  private func fillStatic() {
+    staticModel.setPool(pool, fresh: freshIDs)
+    guard staticSlots.count < Self.staticCount else { return }
+    let held = Set(staticSlots.map(\.id))
+    let waiting = pool.filter { !held.contains($0.id) }
+    let ordered = waiting.filter(\.hasPicture) + waiting.filter { !$0.hasPicture }
+    staticSlots += ordered.prefix(Self.staticCount - staticSlots.count)
   }
 
-  private func rotateOne() {
-    let waiting = pool.filter { card in !shown.contains(where: { $0.id == card.id }) }
-    guard waiting.isEmpty == false, shown.isEmpty == false else { return }
-    let freshWaiting = waiting.filter { freshIDs.contains($0.id) }
-    let picturedWaiting = (freshWaiting.isEmpty ? waiting : freshWaiting).filter { $0.image != nil }
-    let incoming: DiscoveryCard
-    if let photo = picturedWaiting.randomElement() {
-      incoming = photo
-    } else if shown.contains(where: { $0.image != nil }) {
-      // Don't swap a real photo off for a typographic poster.
-      return
-    } else if let fallback = waiting.randomElement() {
-      incoming = fallback
-    } else {
+  /// Fade the outgoing card fully out, swap by id, then fade the new one in,
+  /// so two cards never share a cell.
+  private func rotateStatic() async {
+    staticModel.setPool(pool, fresh: freshIDs)
+    guard let step = staticModel.staticRotation(of: staticSlots) else { return }
+    let outgoing = staticSlots[step.index].id
+    withAnimation(.easeInOut(duration: 0.35)) { hiddenID = outgoing }
+    try? await Task.sleep(nanoseconds: 380_000_000)
+    guard staticSlots.indices.contains(step.index), staticSlots[step.index].id == outgoing else {
+      hiddenID = nil
       return
     }
-    let imageless = shown.indices.filter { shown[$0].image == nil }
-    let visible = shown.indices.prefix(min(4, shown.count))
-    guard let outgoing = imageless.randomElement() ?? visible.randomElement() else { return }
-    var next = shown
-    next[outgoing] = incoming
-    // Slot identity stays the grid offset, so don't animate the whole tile
-    // (that morphs a new photo onto the previous title for ~0.5s).
-    shown = next
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction) {
+      staticSlots[step.index] = step.card
+      hiddenID = step.card.id
+    }
+    withAnimation(.easeInOut(duration: 0.35)) { hiddenID = nil }
   }
 
   private func loadBoards() async {
@@ -228,21 +263,6 @@ struct FeedView: View {
 }
 
 typealias DiscoverView = FeedView
-
-/// Gentle drift so the grid is not a static poster wall. Off when Reduce Motion is on.
-private struct FloatingCard<Content: View>: View {
-  let reduceMotion: Bool
-  let phase: Double
-  @ViewBuilder var content: () -> Content
-
-  var body: some View {
-    TimelineView(.animation(minimumInterval: reduceMotion ? 10 : 1 / 24, paused: reduceMotion)) { context in
-      let t = context.date.timeIntervalSinceReferenceDate
-      let y = reduceMotion ? 0 : sin(t * 0.55 + phase * 0.9) * 5
-      content().offset(y: y)
-    }
-  }
-}
 
 struct FeedCardTile: View {
   let card: DiscoveryCard
@@ -500,28 +520,16 @@ struct FeedCardDetail: View {
     }
   }
 
-  @ViewBuilder
+  /// Cached related cards, pictured first; drifts left continuously.
   private var picturedRelatedRail: some View {
     let pictured = related.filter { $0.image != nil }
     let rail = pictured.isEmpty ? related : pictured
-    TimelineView(.animation) { context in
-      let t = context.date.timeIntervalSinceReferenceDate
-      ScrollView(.horizontal, showsIndicators: false) {
-        HStack(spacing: 12) {
-          ForEach(Array(rail.enumerated()), id: \.offset) { index, relatedCard in
-            let y = reduceMotion ? 0 : sin(t * 0.7 + Double(index) * 0.85) * 6
-            NavigationLink {
-              FeedCardDetail(card: relatedCard, onAddToBoard: onAddToBoard)
-            } label: {
-              FeedCardTile(card: relatedCard, baseURL: controller.api.baseURL)
-                .frame(width: 120)
-            }
-            .buttonStyle(.plain)
-            .offset(y: y)
-          }
-        }
-        .padding(.vertical, 10)
-      }
+    return SimilarConveyorRail(
+      cards: rail,
+      baseURL: controller.api.baseURL,
+      reduceMotion: reduceMotion
+    ) { relatedCard in
+      FeedCardDetail(card: relatedCard, onAddToBoard: onAddToBoard)
     }
   }
 
