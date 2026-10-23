@@ -199,7 +199,7 @@ private fun Screen.stateKey(depth: Int): String = "$depth:" + when (this) {
     else -> toString()
 }
 
-private data class ShellFrame(val tab: Tab, val screen: Screen?, val depth: Int)
+internal data class NavFrame<R>(val tab: Tab, val screen: R?, val depth: Int)
 
 private val Tab.label: String
     get() = when (this) {
@@ -243,6 +243,40 @@ private fun shellTransition(direction: BackStack.Direction): ContentTransform {
     }
 }
 
+/** Feed, Capture, Library, Settings with Material Symbols icons; the selected icon lifts with a spring. */
+@Composable
+internal fun AtlasTabBar(selected: Tab, onSelect: (Tab) -> Unit) {
+    NavigationBar(containerColor = AtlasColors.quiet) {
+        Tab.entries.forEach { t ->
+            val isSelected = selected == t
+            val lift by animateFloatAsState(
+                targetValue = if (isSelected) 1.12f else 1f,
+                animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+                label = "tab-icon",
+            )
+            NavigationBarItem(
+                selected = isSelected,
+                onClick = { onSelect(t) },
+                icon = {
+                    Icon(
+                        t.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp).graphicsLayer { scaleX = lift; scaleY = lift },
+                    )
+                },
+                label = { Text(t.label) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AtlasColors.ink,
+                    selectedTextColor = AtlasColors.ink,
+                    indicatorColor = AtlasColors.paper,
+                    unselectedIconColor = AtlasColors.muted,
+                    unselectedTextColor = AtlasColors.muted,
+                ),
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
@@ -257,8 +291,6 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
     // Feed and Library state outlive their tabs: switching back resumes, never reloads from empty.
     val feed = remember(graph) { FeedModel(graph.api) }
     val library = remember(graph) { LibraryModel(graph.api) }
-    val states = rememberSaveableStateHolder()
-    BackHandler(enabled = nav.handlesBack) { go(nav.back()) }
     val openRequest by graph.notices.openRequest.collectAsState()
     LaunchedEffect(openRequest) {
         val route = openRequest ?: return@LaunchedEffect
@@ -275,55 +307,23 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
                 enter = slideInVertically(tween(280)) { it } + fadeIn(tween(200)),
                 exit = slideOutVertically(tween(240)) { it } + fadeOut(tween(160)),
             ) {
-                NavigationBar(containerColor = AtlasColors.quiet) {
-                    Tab.entries.forEach { t ->
-                        val selected = nav.tab == t
-                        val lift by animateFloatAsState(
-                            targetValue = if (selected) 1.12f else 1f,
-                            animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
-                            label = "tab-icon",
-                        )
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                haptics.tick()
-                                go(nav.selectTab(t))
-                            },
-                            icon = {
-                                Icon(
-                                    t.icon,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp).graphicsLayer { scaleX = lift; scaleY = lift },
-                                )
-                            },
-                            label = { Text(t.label) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = AtlasColors.ink,
-                                selectedTextColor = AtlasColors.ink,
-                                indicatorColor = AtlasColors.paper,
-                                unselectedIconColor = AtlasColors.muted,
-                                unselectedTextColor = AtlasColors.muted,
-                            ),
-                        )
-                    }
+                AtlasTabBar(selected = nav.tab) { t ->
+                    haptics.tick()
+                    go(nav.selectTab(t))
                 }
             }
         },
     ) { padding ->
-        SharedTransitionLayout(Modifier.padding(padding).fillMaxSize().background(AtlasColors.paper)) {
-            AnimatedContent(
-                targetState = ShellFrame(nav.tab, nav.top, nav.depth),
-                transitionSpec = { shellTransition(direction) },
-                label = "shell",
-            ) { frame ->
-                CompositionLocalProvider(
-                    LocalSharedScope provides this@SharedTransitionLayout,
-                    LocalNavVisibility provides this@AnimatedContent,
-                ) {
-                    Box(Modifier.fillMaxSize().background(AtlasColors.paper)) {
+        AtlasNavHost(
+            nav = nav,
+            direction = direction,
+            onBack = { go(nav.back()) },
+            stateKey = { screen, depth -> screen.stateKey(depth) },
+            modifier = Modifier.padding(padding).fillMaxSize().background(AtlasColors.paper),
+        ) { frame ->
                         val screen = frame.screen
                         if (screen == null) {
-                            states.SaveableStateProvider(frame.tab.name) {
+                            run {
                                 when (frame.tab) {
                                     Tab.FEED -> FeedScreen(feed, graph.notices, onOpen = { go(nav.push(Screen.Card(it))) })
                                     Tab.LIBRARY -> LibraryScreen(
@@ -351,7 +351,7 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
                             }
                         } else {
                             val back = { go(nav.back()) }
-                            states.SaveableStateProvider(screen.stateKey(frame.depth)) {
+                            run {
                                 when (screen) {
                                     Screen.Camera -> CameraScreen(graph, activity, onBack = back)
                                     Screen.Music -> MusicScreen(graph, onBack = back)
@@ -373,7 +373,8 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
                                         onOpenRelated = { go(nav.push(Screen.Card(it))) },
                                     )
                                     is Screen.Result -> AnalysisResultScreen(
-                                        graph = graph,
+                                        api = graph.api,
+                                        notices = graph.notices,
                                         mediaId = screen.mediaId,
                                         analysisId = screen.analysisId,
                                         entry = screen.entry,
@@ -385,7 +386,41 @@ private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
                                 }
                             }
                         }
-                    }
+        }
+    }
+}
+
+/**
+ * The shell's screen host: system Back pops [nav] (via [onBack]) while it has
+ * somewhere to go, screens change with [shellTransition], card pictures morph
+ * through the shared scope, and each tab root / stack entry keeps its own
+ * saveable state (scroll position) so Back lands exactly where you were.
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+internal fun <R : Any> AtlasNavHost(
+    nav: BackStack<Tab, R>,
+    direction: BackStack.Direction,
+    onBack: () -> Unit,
+    stateKey: (R, Int) -> String,
+    modifier: Modifier = Modifier,
+    content: @Composable (NavFrame<R>) -> Unit,
+) {
+    val states = rememberSaveableStateHolder()
+    BackHandler(enabled = nav.handlesBack, onBack = onBack)
+    SharedTransitionLayout(modifier) {
+        AnimatedContent(
+            targetState = NavFrame(nav.tab, nav.top, nav.depth),
+            transitionSpec = { shellTransition(direction) },
+            label = "shell",
+        ) { frame ->
+            CompositionLocalProvider(
+                LocalSharedScope provides this@SharedTransitionLayout,
+                LocalNavVisibility provides this@AnimatedContent,
+            ) {
+                Box(Modifier.fillMaxSize().background(AtlasColors.paper)) {
+                    val key = frame.screen?.let { stateKey(it, frame.depth) } ?: frame.tab.name
+                    states.SaveableStateProvider(key) { content(frame) }
                 }
             }
         }

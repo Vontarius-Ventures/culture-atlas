@@ -36,7 +36,13 @@ cd apps/android
 gradle wrapper --gradle-version 8.14.3
 
 ./gradlew :core:test                        # JVM only; no Android SDK
+./gradlew :app:testStoreDebugUnitTest       # Robolectric: shell Back/transitions, screens; needs the SDK
 ```
+
+`:app` unit tests render Compose on the JVM (Robolectric + Roborazzi). They check
+system Back through the shell host, the Feed keeping its conveyor across tabs, the
+card detail order, and the native result screen, and write review screenshots to
+`app/build/outputs/roborazzi/` (evidence, not golden files).
 
 `:app` is included only when `ANDROID_HOME`, `ANDROID_SDK_ROOT`, or
 `local.properties` `sdk.dir` is set, so a missing SDK does not fail core tests.

@@ -228,7 +228,7 @@ fun LibraryScreen(
 
 /** A square tile: the picture, a play badge with the length for a video, and the explore state in words. */
 @Composable
-private fun LibraryTile(entry: LibraryEntry, modifier: Modifier = Modifier, onOpen: () -> Unit) {
+internal fun LibraryTile(entry: LibraryEntry, modifier: Modifier = Modifier, onOpen: () -> Unit) {
     val status = LibraryTileCopy.status(entry)
     val working = entry.media.analysisStatus == "queued" || entry.media.analysisStatus == "running"
     val pulse = rememberInfiniteTransition(label = "tile-looking")

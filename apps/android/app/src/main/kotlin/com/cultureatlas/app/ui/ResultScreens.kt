@@ -66,12 +66,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.cultureatlas.app.AppGraph
+import com.cultureatlas.app.notify.ReadyNoticeCenter
 import com.cultureatlas.capture.core.contract.AnalysisResultResponse
 import com.cultureatlas.capture.core.contract.AnalysisState
 import com.cultureatlas.capture.core.contract.CaptureResultResponse
 import com.cultureatlas.capture.core.contract.DiscoveryCard
 import com.cultureatlas.capture.core.contract.LibraryEntry
+import com.cultureatlas.capture.core.net.AtlasApi
 import com.cultureatlas.capture.core.net.AtlasClientException
 import com.cultureatlas.capture.core.net.analysisResult
 import com.cultureatlas.capture.core.net.captureResult
@@ -95,7 +96,8 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun AnalysisResultScreen(
-    graph: AppGraph,
+    api: AtlasApi,
+    notices: ReadyNoticeCenter,
     mediaId: String,
     analysisId: String?,
     entry: LibraryEntry?,
@@ -104,8 +106,6 @@ fun AnalysisResultScreen(
     onOpenCard: (DiscoveryCard) -> Unit,
     onFeed: () -> Unit,
 ) {
-    val api = graph.api
-    val notices = graph.notices
     var media by remember { mutableStateOf(entry) }
     var currentId by rememberSaveable { mutableStateOf(analysisId) }
     var analysis by remember { mutableStateOf<AnalysisResultResponse?>(null) }
