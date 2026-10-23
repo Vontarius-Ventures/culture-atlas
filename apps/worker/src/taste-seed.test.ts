@@ -34,6 +34,9 @@ const PICK_ARTIST = { id: 'FIXTURE-ARTIST-PICK', name: 'Fixture Pick Artist' };
 const PICK_FOOD = { id: 'urn:tag:cuisine:qloo:fixture_dim_sum', name: 'Dim Sum' };
 
 const RESULTS: Record<string, Reply> = {
+  // Eat's place search (GET /search): Qloo returns a venue without a photo, so it never becomes a card
+  // (pictured venues only) and Eat falls back to cuisine tags.
+  search: ok({ entities: [ent('FIXTURE-PLACE-0001', 'Fixture Dim Sum Hall', 'urn:entity:place')] }),
   'urn:entity:brand': ok({
     entities: [
       ent('FIXTURE-BRAND-0001', 'Fixture Linen House', 'urn:entity:brand', { properties: { short_description: 'Fixture description.' } }),
@@ -79,11 +82,13 @@ function scriptedQloo(reply: (filterType: string, url: URL) => Reply | Promise<R
   const impl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input));
     calls.push(url);
+    // Scripted by filter.type for insights; Eat's place search (GET /search) answers as 'search'.
+    const kind = url.pathname === '/search' ? 'search' : (url.searchParams.get('filter.type') ?? '');
     inflight++;
     state.peak = Math.max(state.peak, inflight);
     try {
       await new Promise((r) => setTimeout(r, 20)); // let concurrent requests overlap
-      const r = await reply(url.searchParams.get('filter.type') ?? '', url);
+      const r = await reply(kind, url);
       if (r === 'timeout') {
         return await new Promise<Response>((_, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
@@ -117,7 +122,9 @@ async function insertPick(accountId: string, input: { kind: string; category: st
 }
 
 /** A new account that finished onboarding with four picks (two style tags, one artist, one Eat chip). */
-async function onboardedAccount(options: { exclusions?: string[]; hide?: string[]; isDemoOwner?: boolean; foodPick?: boolean } = {}) {
+async function onboardedAccount(
+  options: { exclusions?: string[]; hide?: string[]; isDemoOwner?: boolean; foodPick?: boolean; extraFoodPicks?: { id: string; name: string }[] } = {},
+) {
   const db = getTestDb();
   const principal = await insertAccount(db, { isDemoOwner: options.isDemoOwner ?? false });
   const accountId = principal.accountId;
@@ -125,6 +132,7 @@ async function onboardedAccount(options: { exclusions?: string[]; hide?: string[
   await insertPick(accountId, { kind: 'style', category: 'watch', title: PICK_TAGS[1]!.name, qloo: PICK_TAGS[1]!.id });
   await insertPick(accountId, { kind: 'artist', category: 'play', title: PICK_ARTIST.name, qloo: PICK_ARTIST.id });
   if (options.foodPick ?? true) await insertPick(accountId, { kind: 'food', category: 'eat', title: PICK_FOOD.name, qloo: PICK_FOOD.id });
+  for (const pick of options.extraFoodPicks ?? []) await insertPick(accountId, { kind: 'food', category: 'eat', title: pick.name, qloo: pick.id });
   if (options.exclusions) {
     await db.query('UPDATE accounts SET preferences = preferences || $2::jsonb WHERE id = $1', [accountId, JSON.stringify({ food: { exclusions: options.exclusions } })]);
   }
@@ -247,11 +255,15 @@ describe('taste seed job', () => {
       eat: ['ready', 3],
     });
 
-    // ONB-04 request caps, counted at the HTTP level (adapter retries disabled).
-    expect(q.calls.length).toBe(4);
+    // ONB-04 request caps, counted at the HTTP level (adapter retries disabled):
+    // one insights request per category plus one Eat place search from the budget's slack.
+    expect(q.calls.length).toBe(5);
     expect(q.calls.length).toBeLessThanOrEqual(6);
     expect(q.state.peak).toBeLessThanOrEqual(3);
-    for (const url of q.calls) {
+    const searches = q.calls.filter((u) => u.pathname === '/search');
+    expect(searches.map((u) => u.searchParams.get('query'))).toEqual([`${PICK_FOOD.name} restaurant`]);
+    expect(searches[0]!.searchParams.get('types')).toBe('urn:entity:place');
+    for (const url of q.calls.filter((u) => u.pathname !== '/search')) {
       expect(url.pathname).toBe('/v2/insights');
       if (url.searchParams.get('filter.type') === 'urn:tag') continue;
       expect(url.searchParams.get('signal.interests.tags')!.split(',').sort()).toEqual([...PICK_TAGS.map((t) => t.id), PICK_FOOD.id].sort());
@@ -292,6 +304,7 @@ describe('taste seed job', () => {
     expect(titles).not.toContain('Fixture Hidden Brand');
     expect(titles).not.toContain('Shellfish Shack');
     expect(titles).not.toContain('Not A Cuisine');
+    expect(titles).not.toContain('Fixture Dim Sum Hall'); // a place without a photo never becomes a card
     for (const dropped of ['Dim Sums', 'Film Noir Fare', 'Obscure Noodle Hut', 'Hand-Pulled Noodle']) expect(titles).not.toContain(dropped);
     expect(recs.find((r) => r.title === 'Sichuanese')!.display_reason).toBe(`From your picks: ${PICK_FOOD.name}.`);
     expect(recs.find((r) => r.title === 'Fixture Night Trio')!.display_reason).toBe(`Because you picked ${PICK_ARTIST.name}.`);
@@ -431,7 +444,7 @@ describe('taste seed job', () => {
     const jobId = await enqueue(accountId);
 
     await runAttempt(q.providers, jobId);
-    expect(q.calls.length).toBe(4); // one request per category, no inline retry
+    expect(q.calls.length).toBe(5); // one request per category plus Eat's one budgeted place search, no inline retry
     expect(q.state.peak).toBeLessThanOrEqual(3);
     const first = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
     expect(first.state).toBe('retrying');
@@ -443,9 +456,9 @@ describe('taste seed job', () => {
       const made = q.calls.slice(before);
       expect(made.every((u) => u.searchParams.get('filter.type') === 'urn:entity:brand')).toBe(true);
     }
-    // 4 + 1 + 1: the per-job cap ends the retries after the third attempt.
+    // 5 + 1: the request kept back for a retry is spent on attempt 2, then the per-job cap ends the retries.
     expect(q.calls.length).toBe(6);
-    expect(await job(jobId)).toMatchObject({ state: 'partial', attempt: 3 });
+    expect(await job(jobId)).toMatchObject({ state: 'partial', attempt: 2 });
     const last = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
     expect(last.state).toBe('partial');
     expect(last.poll_after_ms).toBeNull();
@@ -456,6 +469,63 @@ describe('taste seed job', () => {
       ['eat', 'ready'],
     ]);
     expect((await seededRecs(accountId)).some((r) => r.category === 'wear')).toBe(false);
+  });
+
+  it('budgets Eat place searches inside the per-job cap of 6 across attempts, counting every HTTP request (ONB-04)', async () => {
+    // Three food picks give three distinct place queries (EAT_PLACE_SEARCHES), more than the budget's slack.
+    const principal = await onboardedAccount({
+      extraFoodPicks: [
+        { id: 'urn:tag:cuisine:qloo:fixture_sichuan', name: 'Sichuan' },
+        { id: 'urn:tag:cuisine:qloo:fixture_ramen', name: 'Ramen' },
+      ],
+    });
+    const { accountId } = principal;
+    const q = scriptedQloo((type) => (type === 'urn:entity:brand' ? 'timeout' : RESULTS[type]!), 100);
+    const jobId = await enqueue(accountId);
+    const searches = () => q.calls.filter((u) => u.pathname === '/search').length;
+
+    await runAttempt(q.providers, jobId);
+    // 6 - 4 categories - 1 kept for a retry = 1 place search; the rest of Eat's queries are never sent.
+    expect(searches()).toBe(1);
+    expect(q.calls.length).toBe(5);
+    expect(q.state.peak).toBeLessThanOrEqual(3);
+
+    for (let attempt = 2; attempt <= 4; attempt++) await runAttempt(q.providers, jobId);
+    // Retries never spend budget on more place searches; the job ends at the cap.
+    expect(searches()).toBe(1);
+    expect(q.calls.length).toBe(6);
+    expect(q.calls.length).toBeLessThanOrEqual(6);
+    const { rows: used } = await getTestDb().query<{ n: number }>('SELECT qloo_requests_used AS n FROM taste_seed_runs WHERE job_id = $1', [jobId]);
+    expect(used[0]!.n).toBe(q.calls.length);
+    expect(await job(jobId)).toMatchObject({ state: 'partial' });
+    const status = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
+    expect(status.categories.find((c) => c.category === 'eat')!.state).toBe('ready');
+  });
+
+  it('counts a failing place search once: no hidden adapter retries past the cap (ONB-04)', async () => {
+    const principal = await onboardedAccount();
+    const { accountId } = principal;
+    // Qloo's search endpoint is down; insights are healthy.
+    const q = scriptedQloo((type) => (type === 'search' ? { status: 503 } : RESULTS[type]!));
+    const jobId = await enqueue(accountId);
+
+    await runAttempt(q.providers, jobId);
+    // One HTTP request for the failed search (the adapter's own retries would have sent 3).
+    expect(q.calls.filter((u) => u.pathname === '/search').length).toBe(1);
+    // A server error is an outage: Eat is not asked again this attempt, and nothing is invented for it.
+    const first = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
+    expect(first.categories.find((c) => c.category === 'eat')!.state).toBe('unavailable');
+    expect((await seededRecs(accountId)).some((r) => r.category === 'eat')).toBe(false);
+
+    for (let attempt = 2; attempt <= 4 && (await job(jobId)).state === 'queued'; attempt++) await runAttempt(q.providers, jobId);
+    expect(q.calls.length).toBeLessThanOrEqual(6);
+    expect(q.state.peak).toBeLessThanOrEqual(3);
+    const { rows: used } = await getTestDb().query<{ n: number }>('SELECT qloo_requests_used AS n FROM taste_seed_runs WHERE job_id = $1', [jobId]);
+    expect(used[0]!.n).toBe(q.calls.length);
+    // The retry has no slack for another search and asks Eat for cuisine tags instead.
+    expect(q.calls.filter((u) => u.pathname === '/search').length).toBe(1);
+    const done = await tasteSeed.getTasteSeedStatus(getTestDb(), accountId);
+    expect(done.categories.find((c) => c.category === 'eat')!.state).toBe('ready');
   });
 
   it('fails without retry and without cards when Qloo is not configured', async () => {
@@ -549,7 +619,7 @@ describe('taste seed job', () => {
     await expect(items.getItem(testContext(other, { providers: q.providers }), { id: itemId, query: {} })).rejects.toMatchObject({ code: 'not_found' });
 
     const trace = await traces.getTrace(testContext(owner, { providers: q.providers }), { job_id: jobId });
-    expect(trace.provider_queries.length).toBe(4);
+    expect(trace.provider_queries.length).toBe(5); // 4 insights + Eat's place search
     expect(trace.recommendations.length).toBe(11); // no hides or exclusions on this account: 3 + 2 + 2 + 4
     expect(trace.recommendations.every((r) => r.origin === 'qloo' && r.provider_query_ids.length === 1)).toBe(true);
   });

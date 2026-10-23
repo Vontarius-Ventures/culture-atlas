@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { TASTE_SEED_MAX_QLOO_REQUESTS } from '../services/taste-seed';
 import { FASHION_BRAND_TAG } from '../compiler/grounding';
-import { eatPlaceSearchQueries, filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, signalsFor, type SeedSignal, type SeedSignals } from './taste-seed';
+import { EAT_PLACE_SEARCHES, eatPlaceSearchQueries, filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, seedPlaceSearchBudget, signalsFor, type SeedSignal, type SeedSignals } from './taste-seed';
 
 /**
  * Taste-seed signal rules (docs/quality-plan.md §6). The tag lists mirror the
@@ -85,5 +86,24 @@ describe('Eat post-filter (S-EAT-POST)', () => {
     const out = filterEatTags(tags, SIGNALS);
     expect(out).toEqual(tags);
     expect(filterEatTags([], SIGNALS)).toEqual([]);
+  });
+});
+
+describe('seedPlaceSearchBudget (ONB-04)', () => {
+  it('only spends the slack left after one request per pending category and one retry', () => {
+    // A first attempt with all four categories pending: 6 - 4 - 1 = 1 place search.
+    expect(seedPlaceSearchBudget(TASTE_SEED_MAX_QLOO_REQUESTS, 4)).toBe(1);
+    // Fewer categories pending leaves more slack, never more than EAT_PLACE_SEARCHES.
+    expect(seedPlaceSearchBudget(TASTE_SEED_MAX_QLOO_REQUESTS, 1)).toBe(Math.min(EAT_PLACE_SEARCHES, 4));
+    // Retries with little budget left make no place searches.
+    expect(seedPlaceSearchBudget(2, 4)).toBe(0);
+    expect(seedPlaceSearchBudget(2, 1)).toBe(0);
+    expect(seedPlaceSearchBudget(0, 0)).toBe(0);
+    // Whatever is pending, categories + place searches + the retry reserve never exceed the cap.
+    for (let left = 0; left <= TASTE_SEED_MAX_QLOO_REQUESTS; left++) {
+      for (let pending = 1; pending <= 4; pending++) {
+        expect(pending + seedPlaceSearchBudget(left, pending)).toBeLessThanOrEqual(Math.max(left, pending));
+      }
+    }
   });
 });

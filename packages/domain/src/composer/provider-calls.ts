@@ -203,7 +203,11 @@ export class QlooSession {
       () =>
         this.qloo.searchEntities(
           { query, types: types?.filter((t): t is Exclude<typeof t, 'urn:tag' | 'urn:demographics'> => t.startsWith('urn:entity:')), take: 3 },
-          { signal: this.options.signal },
+          {
+            signal: this.options.signal,
+            // Like insights: with clientMaxRetries set, every HTTP search is a counted session request.
+            ...(this.options.clientMaxRetries === undefined ? {} : { maxRetries: this.options.clientMaxRetries }),
+          },
         ),
       (d) => ({ results: summarizeEntities(d), empty: d.length === 0 }),
     );
