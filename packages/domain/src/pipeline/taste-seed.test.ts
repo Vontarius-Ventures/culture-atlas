@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TASTE_SEED_MAX_QLOO_REQUESTS } from '../services/taste-seed';
 import { FASHION_BRAND_TAG } from '../compiler/grounding';
-import { EAT_PLACE_SEARCHES, eatPlaceSearchQueries, filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, seedPlaceSearchBudget, signalsFor, type SeedSignal, type SeedSignals, reasonFor } from './taste-seed';
+import { EAT_PLACE_SEARCHES, eatPlaceSearchQueries, filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, seedPlaceSearchBudget, signalsFor, type SeedSignal, type SeedSignals, reasonFor, isGenericVenueName } from './taste-seed';
 
 /**
  * Taste-seed signal rules (docs/quality-plan.md §6). The tag lists mirror the
@@ -54,6 +54,14 @@ describe('food signals (S-EAT-SIGNAL)', () => {
     expect(SEED_CATEGORY_PLAN.eat.filterTagTypes).toEqual(['urn:tag:cuisine:qloo']);
     expect(SEED_CATEGORY_PLAN.play.filterTags).toBeUndefined();
     expect(SEED_CATEGORY_PLAN.watch.filterTags).toBeUndefined();
+  });
+
+  it('drops venues named only after the cuisine', () => {
+    expect(isGenericVenueName('Ramen restaurant', 'Ramen restaurant')).toBe(true);
+    expect(isGenericVenueName('Restaurante de Sichuan', 'Sichuan restaurant')).toBe(true);
+    expect(isGenericVenueName('Sichuan Style Restaurant', 'Sichuan restaurant')).toBe(true);
+    expect(isGenericVenueName('Ichiran Shibuya', 'Ramen restaurant')).toBe(false);
+    expect(isGenericVenueName('Sichuan Restaurant and Karaoke Bar', 'Sichuan restaurant')).toBe(false);
   });
 
   it('searches several pictured place queries, not only the first cuisine name', () => {

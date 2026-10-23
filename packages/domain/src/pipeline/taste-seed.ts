@@ -332,6 +332,22 @@ function textProp(props: Record<string, unknown>, key: string): string | null {
   return typeof v === 'string' && v.trim() ? clipText(v) : null;
 }
 
+const GENERIC_VENUE_WORDS = new Set([
+  'restaurant', 'restaurante', 'ristorante', 'restaurants', 'style', 'food', 'cuisine', 'kitchen', 'house', 'shop',
+  'the', 'a', 'and', 'de', 'del', 'la', 'le', 'el', 'cafe', 'bar', 'noodle', 'noodles', 'place', 'eatery', 'diner',
+]);
+
+/**
+ * "Ramen restaurant" or "Restaurante de Sichuan" names a cuisine, not a
+ * place worth a card: nothing is left once the searched cuisine and generic
+ * venue words are removed.
+ */
+export function isGenericVenueName(title: string, query: string): boolean {
+  const words = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+  const cuisine = new Set(words(query));
+  return words(title).every((w) => cuisine.has(w) || GENERIC_VENUE_WORDS.has(w));
+}
+
 async function eatPlaceCards(
   session: QlooSession,
   signals: SeedSignals,
@@ -342,6 +358,7 @@ async function eatPlaceCards(
 ): Promise<SeedCard[]> {
   const cards: SeedCard[] = [];
   const seen = new Set<string>();
+  const seenTitles = new Set<string>();
   if (maxSearches <= 0) return cards;
   for (const placeQuery of eatPlaceSearchQueries(signals, maxSearches)) {
     try {
@@ -360,6 +377,10 @@ async function eatPlaceCards(
       for (const { e, image } of probed) {
         if (!image) continue;
         if (violatedExclusions({ title: e.name, cuisine: e.name }, foodExclusions).length) continue;
+        // One card per name, and never a venue whose name is just the cuisine.
+        const titleKey = e.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+        if (seenTitles.has(titleKey) || isGenericVenueName(e.name, placeQuery)) continue;
+        seenTitles.add(titleKey);
         const key = canonicalKeyFor({ kind: 'food', title: e.name, qlooId: e.entity_id });
         if (seen.has(key)) continue;
         seen.add(key);

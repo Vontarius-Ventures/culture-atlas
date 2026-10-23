@@ -23,5 +23,13 @@ export const DiscoveriesResponse = z.object({
   is_example_feed: z.boolean(),
   /** Categories that currently have results (render only these filters). */
   available_categories: z.array(Category),
+  /**
+   * New cards are being fetched for this feed (an interest-expand wave or a
+   * Music Mode suggestion run). Poll the first page again after poll_after_ms;
+   * the new cards float into the top of the feed.
+   */
+  expansion: z
+    .object({ state: z.enum(['running', 'idle']), poll_after_ms: z.number().int().positive().nullable() })
+    .optional(),
 });
 export type DiscoveriesResponse = z.infer<typeof DiscoveriesResponse>;

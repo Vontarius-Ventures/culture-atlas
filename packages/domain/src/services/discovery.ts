@@ -136,11 +136,11 @@ interface PoolRow {
 
 /**
  * Candidates connected to explicit saves: recommendations of (a) captures the
- * owner saved as inspirations or saved items from, and (b) for accounts, the
+ * owner saved as inspirations or saved items from, (b) for accounts, the
  * taste seed built from onboarding picks (amendment 2.2): per category, the
- * latest seed run that published that category. Related-discovery jobs stay
- * on the item-detail rail — title-search leftovers (Tesla from a film) must
- * not enter the home feed. Owner-scoped: another user's private captures
+ * latest seed run that published that category, and (c) related discovery
+ * the owner started (Music Mode artists and "Discover more": taste-based Qloo
+ * insights, never a title search or a creative idea). Agent-started runs stay on the item page. Owner-scoped: another user's private captures
  * never enter a feed. Explicit saves (preference events) leave the feed;
  * Interests auto-file does not. Hidden items stay out.
  */
@@ -169,8 +169,11 @@ export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedC
        FROM recommendations r JOIN discovery_items di ON di.id = r.discovery_item_id
       WHERE (r.analysis_id IN (SELECT id FROM ctx_analyses)
              OR (r.taste_seed_run_id, r.category) IN (SELECT run_id, category FROM ctx_seed)
-             -- Music Mode: suggestions from an artist the owner heard (not item-page related results).
-             OR r.discovery_job_id IN (SELECT dj.id FROM discovery_jobs dj WHERE ${own('dj')} AND dj.source = 'music_mode'))
+             -- Music Mode suggestions and the owner's own "Discover more" runs (taste-based
+             -- Qloo insights from the item's entities). Agent-started runs stay on the item page.
+             OR r.discovery_job_id IN (SELECT dj.id FROM discovery_jobs dj WHERE ${own('dj')} AND dj.source = 'music_mode')
+             OR (r.origin IN ('qloo', 'replay')
+                 AND r.discovery_job_id IN (SELECT dj.id FROM discovery_jobs dj WHERE ${own('dj')} AND dj.agent_connection_id IS NULL)))
         AND (di.is_sample OR ${own('di')})
         -- Explicit saves leave the feed; Interests auto-file does not write those events.
         AND di.id NOT IN (
@@ -241,8 +244,39 @@ async function picturedItemIds(db: Queryable, ids: string[]): Promise<Set<string
   return new Set(rows.map((r) => r.id));
 }
 
+/** Whether new cards are on their way (expand wave or Music Mode suggestions), for client polling. */
+async function expansionState(db: Queryable, owner: Owner): Promise<DiscoveriesResponse['expansion']> {
+  if (owner.kind !== 'account') return { state: 'idle', poll_after_ms: null };
+  const { rows } = await db.query(
+    `SELECT 1 FROM jobs WHERE owner_account_id = $1 AND state IN ('queued', 'running')
+        AND (type = 'interest_expand'
+             OR (type = 'discover_related' AND result_id IN (
+                   SELECT id FROM discovery_jobs WHERE owner_account_id = $1 AND source = 'music_mode')))
+      LIMIT 1`,
+    [owner.accountId],
+  );
+  return rows.length ? { state: 'running', poll_after_ms: 4000 } : { state: 'idle', poll_after_ms: null };
+}
+
+/** Moves the given ids (in their order) to after `after` other cards; everything else keeps its place. */
+export function demoteIds(ordered: readonly string[], demote: readonly string[], after: number): string[] {
+  if (!demote.length) return [...ordered];
+  const drop = new Set(demote);
+  const rest = ordered.filter((id) => !drop.has(id));
+  if (rest.length === 0) return [...ordered];
+  const moved = ordered.filter((id) => drop.has(id));
+  const at = Math.min(after, rest.length);
+  return [...rest.slice(0, at), ...moved, ...rest.slice(at)];
+}
+
 /** Build and store a new snapshot from the EXISTING pool (no provider calls, no jobs). */
-async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner, revision: number, category: Category | null): Promise<SnapshotRow> {
+async function createSnapshot(
+  ctx: { db: Queryable; now(): Date },
+  owner: Owner,
+  revision: number,
+  category: Category | null,
+  options: { demote?: readonly string[] } = {},
+): Promise<SnapshotRow> {
   const hidden = await hiddenKeys(ctx.db, owner);
   // The pool is owner-scoped and empty without saves, a taste seed or Music Mode results.
   let pool: FeedCandidate[] = await buildSavedPool(ctx.db, owner);
@@ -281,7 +315,8 @@ async function createSnapshot(ctx: { db: Queryable; now(): Date }, owner: Owner,
   pool = await dropExcluded(pool);
   const available = CATEGORIES.filter((c) => pool.some((p) => p.category === c));
   const filtered = category ? pool.filter((p) => p.category === category) : pool;
-  const ordered = interleaveFeed(filtered, hidden).map((c) => c.id);
+  const interleaved = interleaveFeed(filtered, hidden).map((c) => c.id);
+  const ordered = demoteIds(interleaved, options.demote ?? [], FEED_TOP_UP_MIN);
   const cols = ownerColumns(owner);
   const { rows } = await ctx.db.query<SnapshotRow>(
     // created_at is the wall-clock insert time, not the transaction start, so a
@@ -399,8 +434,13 @@ export async function getDiscoveries(ctx: ServiceContext, query: DiscoveriesQuer
     position = c.p;
   } else {
     const revision = await getTasteRevision(ctx.db, owner);
+    const previous = query.refresh ? await findSnapshot(ctx, owner, { revision, category }) : null;
     snapshot = query.refresh ? null : await findSnapshot(ctx, owner, { revision, category });
-    snapshot ??= await createSnapshot(ctx, owner, revision, category);
+    snapshot ??= await createSnapshot(ctx, owner, revision, category, {
+      // A refresh always changes the top of the feed: cards the previous
+      // first page showed move down, so other cards (and new arrivals) surface.
+      demote: previous ? previous.ordered_item_ids.slice(0, query.limit ?? LIMITS.feedPageDefault) : [],
+    });
     // Living engine: any first-page read (poll or pull) may start the next
     // 15-minute wave. Dedupe occupies the wave, so 8s polls reuse it. The GET
     // itself never calls Qloo.
@@ -410,6 +450,7 @@ export async function getDiscoveries(ctx: ServiceContext, query: DiscoveriesQuer
         now: ctx.now(),
         traceId: ctx.traceId,
         config: ctx.config,
+        refresh: query.refresh,
       });
     }
   }
@@ -442,5 +483,6 @@ export async function getDiscoveries(ctx: ServiceContext, query: DiscoveriesQuer
     feed_revision: snapshot.taste_revision,
     is_example_feed: snapshot.is_example_feed,
     available_categories: snapshot.available_categories,
+    expansion: query.cursor ? undefined : await expansionState(ctx.db, owner),
   };
 }

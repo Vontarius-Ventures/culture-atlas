@@ -99,13 +99,13 @@ describe('related discovery', () => {
     const pool = await buildSavedPool(db, { kind: 'account', accountId: owner.accountId });
     const pooled = await db.query<{ title: string }>('SELECT title FROM discovery_items WHERE id = ANY($1::uuid[])', [pool.map((p) => p.id)]);
     expect(pooled.rows.map((r) => r.title)).toEqual(expect.arrayContaining(['Addis in Dar', 'Fela Kuti']));
-    // Item-page "Discover more" results stay on the item page.
+    // The owner's own "Discover more" results join the feed too (agent-started runs do not).
     const other = await insertItem({ accountId: owner.accountId }, { kind: 'film', category: 'watch', title: 'Tampopo', qloo: 'qloo-tampopo' });
     const plain = await relatedJob(owner.accountId, other, 'item', null);
     await runJob(plain.jobId, { providers });
     const reasons = await db.query<{ display_reason: string }>('SELECT display_reason FROM recommendations WHERE discovery_job_id = $1', [plain.discoveryJobId]);
     expect(reasons.rows.every((r) => r.display_reason === 'Loved by fans of Tampopo.')).toBe(true);
     const after = await buildSavedPool(db, { kind: 'account', accountId: owner.accountId });
-    expect(after.length).toBe(pool.length);
+    expect(after.length).toBeGreaterThan(pool.length);
   });
 });

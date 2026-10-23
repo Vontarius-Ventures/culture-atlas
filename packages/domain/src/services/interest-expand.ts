@@ -4,8 +4,14 @@ import { serviceFeatureState, type ServiceFeatureEnv } from '../flags/feature-fl
 import { interestExpandDedupeKey } from '../jobs/dedupe';
 import { enqueueJob } from '../jobs/queue';
 
-/** Pull-to-refresh inside this window reuses the in-flight or completed wave. */
-export const INTEREST_EXPAND_WINDOW_MS = 15 * 60 * 1000;
+/**
+ * One wave per minute: a pull-to-refresh in a new minute walks the next lane
+ * (categories rotate wave by wave), so refreshing keeps bringing new cards.
+ * Plain first-page reads (8 s polls, app opens) start a wave at most once per
+ * INTEREST_EXPAND_POLL_INTERVAL_MS so an open app does not spend the Qloo budget.
+ */
+export const INTEREST_EXPAND_WINDOW_MS = 60 * 1000;
+export const INTEREST_EXPAND_POLL_INTERVAL_MS = 15 * 60 * 1000;
 export const INTEREST_EXPAND_MAX_QLOO_REQUESTS = 4;
 export const INTEREST_EXPAND_DEADLINE_MS = 45_000;
 export const INTEREST_EXPAND_MAX_ATTEMPTS = 3;
@@ -25,7 +31,7 @@ export function interestExpandCategory(wave: number): Category {
  */
 export async function enqueueInterestExpand(
   db: Queryable,
-  input: { accountId: string; now?: Date; traceId?: string; config: ServiceFeatureEnv },
+  input: { accountId: string; now?: Date; traceId?: string; config: ServiceFeatureEnv; refresh?: boolean },
 ): Promise<{ enqueued: boolean; reused: boolean }> {
   try {
     const now = input.now ?? new Date();
@@ -38,6 +44,13 @@ export async function enqueueInterestExpand(
       [input.accountId],
     );
     if (!seed.rows[0]) return { enqueued: false, reused: false };
+    if (!input.refresh) {
+      const recent = await db.query(
+        `SELECT 1 FROM jobs WHERE owner_account_id = $1 AND type = 'interest_expand' AND created_at > $2 LIMIT 1`,
+        [input.accountId, new Date(now.getTime() - INTEREST_EXPAND_POLL_INTERVAL_MS)],
+      );
+      if (recent.rowCount) return { enqueued: false, reused: true };
+    }
     const owner = { kind: 'account' as const, accountId: input.accountId };
     const wave = interestExpandWave(now);
     const { reused } = await enqueueJob(db, {
