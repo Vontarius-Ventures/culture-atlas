@@ -7,6 +7,10 @@
 import { expect, test } from '@playwright/test';
 import { expectNoHorizontalScroll, isMobile, open, screenshot } from './helpers';
 
+// Clicks cards in the feed; Reduce Motion keeps the floating feed still
+// (the conveyor itself is covered in feed-float.spec.ts).
+test.use({ contextOptions: { reducedMotion: 'reduce' } });
+
 test.describe('reference surfaces', () => {
   test('01/04 discover', async ({ page }, testInfo) => {
     await open(page, '/', { account: true, seedCollections: true });

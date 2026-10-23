@@ -842,6 +842,9 @@ export class MockApi {
         return {
           json: {
             item: this.card(card.id),
+            // Contract fields (sourced copy); the mock has no provider text.
+            description: null,
+            detail: null,
             reason: seed.reason,
             why_this: {
               text: `${seed.reason} It connects to things you looked at, by mood rather than by fact.`,
