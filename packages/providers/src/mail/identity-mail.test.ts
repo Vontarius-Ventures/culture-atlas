@@ -9,6 +9,7 @@ import {
   IdentityMailDeliveryError,
   createFileIdentityMail,
   createIdentityMailFromEnv,
+  createResendIdentityMail,
   createSesIdentityMail,
   renderIdentityMail,
 } from './identity-mail';
@@ -156,7 +157,70 @@ describe('identity mail adapters', () => {
       createIdentityMailFromEnv({ IDENTITY_MAIL_DRIVER: 'file', NODE_ENV: 'production' }),
     ).toThrow();
     expect(() => createIdentityMailFromEnv({ IDENTITY_MAIL_DRIVER: 'smtp' })).toThrow(
-      /ses, file or none/,
+      /resend, ses, file or none/,
     );
+  });
+
+  it('Resend posts one JSON email with a bearer key and never echoes the address on failure', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    let status = 200;
+    const fakeFetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify(status === 200 ? { id: 'e1' } : { message: 'bad person@example.test' }), {
+        status,
+      });
+    }) as unknown as typeof fetch;
+    const mail = createResendIdentityMail({
+      apiKey: 're_test_key',
+      from: 'culture atlas <no-reply@atlas.example.test>',
+      fetch: fakeFetch,
+    });
+    await mail.send({ to: 'person@example.test', purpose: 'sign_in', callback });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://api.resend.com/emails');
+    expect(calls[0]!.init.method).toBe('POST');
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer re_test_key');
+    const sent = JSON.parse(String(calls[0]!.init.body));
+    expect(sent).toMatchObject({
+      from: 'culture atlas <no-reply@atlas.example.test>',
+      to: ['person@example.test'],
+      subject: 'Your culture atlas sign-in link',
+    });
+    expect(sent.text).toContain(callback);
+
+    status = 422;
+    const error = await mail
+      .send({ to: 'person@example.test', purpose: 'sign_in', callback })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(IdentityMailDeliveryError);
+    expect(String((error as Error).message)).not.toContain('person@example.test');
+    expect(JSON.stringify(error)).not.toContain('secret-proof');
+
+    const offline = createResendIdentityMail({
+      apiKey: 're_test_key',
+      from: 'no-reply@atlas.example.test',
+      fetch: (async () => {
+        throw new TypeError('fetch failed for person@example.test');
+      }) as unknown as typeof fetch,
+    });
+    await expect(
+      offline.send({ to: 'person@example.test', purpose: 'recover', callback }),
+    ).rejects.toBeInstanceOf(IdentityMailDeliveryError);
+  });
+
+  it('selects Resend from environment and fails loudly when it is incomplete', () => {
+    expect(() =>
+      createIdentityMailFromEnv({ IDENTITY_MAIL_DRIVER: 'resend', IDENTITY_MAIL_FROM: 'a@b.test' }),
+    ).toThrow(/RESEND_API_KEY/);
+    expect(() =>
+      createIdentityMailFromEnv({ IDENTITY_MAIL_DRIVER: 'resend', RESEND_API_KEY: 're_x' }),
+    ).toThrow(/IDENTITY_MAIL_FROM/);
+    expect(
+      createIdentityMailFromEnv({
+        IDENTITY_MAIL_DRIVER: 'resend',
+        RESEND_API_KEY: 're_x',
+        IDENTITY_MAIL_FROM: 'a@b.test',
+      }),
+    ).toBeDefined();
   });
 });

@@ -115,9 +115,13 @@ struct SignInView: View {
       Text("Keep what catches your eye.").font(.system(.title3, design: .serif))
       Text("Sign in with your email to capture and keep photos, videos and music in your private library.")
         .foregroundStyle(.secondary)
+      #if DEBUG
+      // Debug builds talk to a development server whose mailbox is a local
+      // folder; release builds use the production server, which sends through Resend.
       Text("This test build doesn't send email. After you tap, the sign-in link opens on this phone.")
         .font(.footnote)
         .foregroundStyle(AtlasTheme.muted)
+      #endif
       TextField("Email address", text: $email)
         .textContentType(.emailAddress)
         .keyboardType(.emailAddress)

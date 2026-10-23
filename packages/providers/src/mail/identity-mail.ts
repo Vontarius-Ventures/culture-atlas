@@ -108,6 +108,58 @@ export function createSesIdentityMail(options: SesIdentityMailOptions): Identity
   };
 }
 
+export const RESEND_EMAILS_ENDPOINT = 'https://api.resend.com/emails';
+
+export interface ResendIdentityMailOptions {
+  apiKey: string;
+  /** Sender on a domain verified in Resend, e.g. "culture atlas <no-reply@example.com>". */
+  from: string;
+  endpoint?: string;
+  /** Test seam. */
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/**
+ * Resend delivery over its HTTPS API: the production driver (owner decision;
+ * the on-prem host sends through Resend). No retries here: on failure the
+ * domain invalidates the proof and the user asks for a new link.
+ */
+export function createResendIdentityMail(options: ResendIdentityMailOptions): IdentityMailAdapter {
+  if (!options.apiKey || !options.from)
+    throw new Error('Resend identity mail needs an API key and a sender.');
+  const fetchImpl = options.fetch ?? fetch;
+  const endpoint = options.endpoint ?? RESEND_EMAILS_ENDPOINT;
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  return {
+    async send(message) {
+      const body = renderIdentityMail(message);
+      let response: Response;
+      try {
+        response = await fetchImpl(endpoint, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${options.apiKey}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: options.from,
+            to: [message.to],
+            subject: body.subject,
+            text: body.text,
+            html: body.html,
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch {
+        throw new IdentityMailDeliveryError();
+      }
+      // Never read the error body: it can echo the recipient address.
+      if (!response.ok) throw new IdentityMailDeliveryError();
+    },
+  };
+}
+
 /**
  * Development-only mailbox: each message is written as a 0600 JSON file so a
  * developer can open the link locally. Refuses to run in production.
@@ -141,7 +193,7 @@ export function createFileIdentityMail(
   };
 }
 
-export type IdentityMailDriver = 'ses' | 'file' | 'none';
+export type IdentityMailDriver = 'resend' | 'ses' | 'file' | 'none';
 
 /**
  * Selects the configured adapter. Returns undefined for "none" (or unset), in
@@ -153,6 +205,13 @@ export function createIdentityMailFromEnv(
 ): IdentityMailAdapter | undefined {
   const driver = (env.IDENTITY_MAIL_DRIVER?.trim() || 'none') as IdentityMailDriver;
   if (driver === 'none') return undefined;
+  if (driver === 'resend') {
+    const apiKey = env.RESEND_API_KEY?.trim() || '';
+    const from = env.IDENTITY_MAIL_FROM?.trim() || '';
+    if (!apiKey || !from)
+      throw new Error('IDENTITY_MAIL_DRIVER=resend needs RESEND_API_KEY and IDENTITY_MAIL_FROM.');
+    return createResendIdentityMail({ apiKey, from });
+  }
   if (driver === 'ses') {
     const region = env.IDENTITY_MAIL_SES_REGION?.trim() || env.AWS_REGION?.trim() || '';
     const from = env.IDENTITY_MAIL_FROM?.trim() || '';
@@ -169,5 +228,5 @@ export function createIdentityMailFromEnv(
       env.IDENTITY_MAIL_FILE_DIR?.trim() || '.data/dev-mail',
       env.NODE_ENV ?? 'development',
     );
-  throw new Error('IDENTITY_MAIL_DRIVER must be ses, file or none.');
+  throw new Error('IDENTITY_MAIL_DRIVER must be resend, ses, file or none.');
 }

@@ -159,8 +159,8 @@ describe('on-prem production Compose', () => {
       expect(env('worker')).toHaveProperty(key);
   });
 
-  it('keeps provider keys and SES credentials to the services that use them', () => {
-    for (const key of ['IDENTITY_MAIL_DRIVER', 'IDENTITY_MAIL_FROM', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'APPLE_TEAM_ID', 'ANDROID_ASSETLINKS_SHA256']) {
+  it('keeps provider keys and mail credentials to the services that use them', () => {
+    for (const key of ['IDENTITY_MAIL_DRIVER', 'IDENTITY_MAIL_FROM', 'RESEND_API_KEY', 'APPLE_TEAM_ID', 'ANDROID_ASSETLINKS_SHA256']) {
       expect(env('web')).toHaveProperty(key);
       for (const other of ['worker', 'media-worker', 'migrate', 'storage-init', 'ops']) expect(env(other)).not.toHaveProperty(key);
     }
@@ -168,9 +168,9 @@ describe('on-prem production Compose', () => {
       for (const other of ['media-worker', 'migrate', 'storage-init', 'ops']) expect(env(other)).not.toHaveProperty(key);
   });
 
-  it('pins the production choices: SES mail, private S3 on Garage, Concentrate, no replay', () => {
+  it('pins the production choices: Resend mail, private S3 on Garage, Concentrate, no replay', () => {
     const web = env('web');
-    expect(web.IDENTITY_MAIL_DRIVER).toBe('${IDENTITY_MAIL_DRIVER:-ses}');
+    expect(web.IDENTITY_MAIL_DRIVER).toBe('${IDENTITY_MAIL_DRIVER:-resend}');
     expect(web.NODE_ENV).toBe('production');
     expect(web.STORAGE_DRIVER).toBe('s3');
     expect(web.S3_FORCE_PATH_STYLE).toBe('true');
@@ -267,9 +267,7 @@ describe('on-prem production Compose', () => {
       S3_ACCESS_KEY_ID: 'GK-fake',
       S3_SECRET_ACCESS_KEY: 'fake',
       IDENTITY_MAIL_FROM: 'culture atlas <no-reply@example.org>',
-      IDENTITY_MAIL_SES_REGION: 'us-east-1',
-      AWS_ACCESS_KEY_ID: 'fake',
-      AWS_SECRET_ACCESS_KEY: 'fake',
+      RESEND_API_KEY: 're_fake',
     };
     const resolved = Object.fromEntries(
       Object.entries(env('preflight')).map(([k, v]) => [k, resolveWith(String(v), dotenv)]),

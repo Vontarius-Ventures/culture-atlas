@@ -156,17 +156,11 @@ x-provider-env: &provider-env
   PUSH_FCM_CLIENT_EMAIL: ${PUSH_FCM_CLIENT_EMAIL:-}
   PUSH_FCM_PRIVATE_KEY: ${PUSH_FCM_PRIVATE_KEY:-}
 
-# Web only: identity email (Amazon SES, owner decision), native app links, edge.
+# Web only: identity email (Resend, owner decision), native app links, edge.
 x-web-env: &web-env
-  IDENTITY_MAIL_DRIVER: ${IDENTITY_MAIL_DRIVER:-ses}
+  IDENTITY_MAIL_DRIVER: ${IDENTITY_MAIL_DRIVER:-resend}
   IDENTITY_MAIL_FROM: ${IDENTITY_MAIL_FROM:-}
-  IDENTITY_MAIL_SES_REGION: ${IDENTITY_MAIL_SES_REGION:-}
-  IDENTITY_MAIL_SES_CONFIGURATION_SET: ${IDENTITY_MAIL_SES_CONFIGURATION_SET:-}
-  # On-prem there is no instance role: the AWS SDK default chain reads these
-  # (an IAM user allowed only ses:SendEmail from the verified identity).
-  AWS_REGION: ${AWS_REGION:-}
-  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
   APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
   ANDROID_ASSETLINKS_SHA256: ${ANDROID_ASSETLINKS_SHA256:-}
   # Caddy is one hop that appends to X-Forwarded-For. Add one per extra proxy.
@@ -280,7 +274,7 @@ services:
       retries: 3
 
   # One-shot: refuses unsafe production settings (IDENTITY_MAIL_DRIVER other
-  # than ses, http APP_BASE_URL, missing secrets...). Names only in its output.
+  # than resend, http APP_BASE_URL, missing secrets...). Names only in its output.
   preflight:
     <<: *app
     restart: 'no'

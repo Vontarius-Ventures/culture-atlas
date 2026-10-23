@@ -35,7 +35,7 @@ docker compose exec postgres dropdb -U culture_atlas culture_atlas_drill
 
 Use `local:` objects, not `s3:`: the drill's `s3:` reader uses the AWS default
 endpoint, not Garage. For the manual checks in section 4 start a separate,
-drill-only copy of the stack (another directory with its own `.env`, no SES or
+drill-only copy of the stack (another directory with its own `.env`, no Resend or
 push credentials, another Compose project name) against the drill database;
 never point the production stack at it.
 

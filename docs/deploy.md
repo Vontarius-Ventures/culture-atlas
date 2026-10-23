@@ -9,9 +9,9 @@ with every owner action, is [production-readiness.md](production-readiness.md).
   are Featherless, `FEATHERLESS_API_KEY`).
 - **Not AWS EC2/RDS.** [deploy-aws.md](deploy-aws.md) and `infra/aws/` remain
   as reference only.
-- **Email is Amazon SES.** The on-prem host sends identity mail through SES
-  (`IDENTITY_MAIL_DRIVER=ses`) with an IAM user's keys; see
-  [production-readiness.md §5](production-readiness.md#5-amazon-ses-production-email).
+- **Email is Resend.** The on-prem host sends identity mail through Resend's
+  HTTPS API (`IDENTITY_MAIL_DRIVER=resend`, `RESEND_API_KEY`); see
+  [production-readiness.md §5](production-readiness.md#5-resend-production-email).
 
 ## The stack
 
@@ -28,8 +28,8 @@ analysis) and `media-worker` (ffmpeg verify/prepare) — next to:
 
 Start order: postgres and garage healthy → `preflight` (`pnpm ops:preflight`
 refuses unsafe production settings, e.g. `IDENTITY_MAIL_DRIVER=file`, http
-`APP_BASE_URL`, missing `SESSION_SECRET` / `STORAGE_SIGNING_SECRET` / SES
-credentials) → `storage-init` (`pnpm ops:storage init`: bucket, CORS,
+`APP_BASE_URL`, missing `SESSION_SECRET` / `STORAGE_SIGNING_SECRET` / Resend
+key) → `storage-init` (`pnpm ops:storage init`: bucket, CORS,
 write/read/delete probe) → `migrate` (`pnpm db:migrate`) → web, worker,
 media-worker. Every long-running service has a healthcheck and
 `restart: unless-stopped`. Web and Garage bind to 127.0.0.1; only Caddy
@@ -65,7 +65,7 @@ in the domain and provider config schemas is wired.
 | `STORAGE_SIGNING_SECRET` | yes | `openssl rand -hex 32`, different from `SESSION_SECRET`. |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | yes | The Garage app key. `STORAGE_DRIVER=s3`, `S3_FORCE_PATH_STYLE=true`, `S3_BUCKET` (default `culture-atlas-media`) and `S3_REGION` (default `us-east-1`, equal to `garage.toml`) are set by Compose. |
 | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN` | yes | Garage node secrets (`openssl rand -hex 32`, `openssl rand -base64 32`). |
-| `IDENTITY_MAIL_FROM`, `IDENTITY_MAIL_SES_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | yes | Amazon SES. `IDENTITY_MAIL_DRIVER` defaults to `ses` in Compose; the preflight refuses `file` and `none`. Optional `IDENTITY_MAIL_SES_CONFIGURATION_SET`. Web only. |
+| `IDENTITY_MAIL_FROM`, `RESEND_API_KEY` | yes | Resend. `IDENTITY_MAIL_DRIVER` defaults to `resend` in Compose; the preflight refuses `file`, `ses` and `none`. `IDENTITY_MAIL_FROM` must be on a domain verified in Resend. Web only. |
 | `LLM_PROVIDER` + `CONCENTRATE_API_KEY` + `CONCENTRATE_PROFILE_FILE` / `CONCENTRATE_PROFILES_JSON` + `CONCENTRATE_QUALIFICATION_DIR` + `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` | for analysis | Concentrate is the v2 model gateway. Compose mounts `CONCENTRATE_CONFIG_DIR` (default `./fixtures/concentrate`) read-only at `/etc/culture-atlas/concentrate` and points the profile/qualification settings there. Missing pieces keep that role `unavailable` while capture, library and uploads keep working ([concentrate.md](concentrate.md)). Explicit rollback only: `LLM_PROVIDER=featherless` + `FEATHERLESS_API_KEY` or `anthropic` + `ANTHROPIC_API_KEY`. |
 | `QLOO_API_KEY` + `QLOO_API_URL` | for Qloo discoveries | Hackathon key; default URL `https://hackathon.api.qloo.com`. Without the key every Qloo capability is `unavailable`, never invented. `QLOO_REPLAY_FIXTURES` is forced `false`. |
 | `ELEVENLABS_API_KEY` | for Music Mode | Scribe transcription; absent key keeps it unavailable. |

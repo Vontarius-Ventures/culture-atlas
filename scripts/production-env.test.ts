@@ -12,11 +12,9 @@ function good(): Record<string, string> {
     SESSION_SECRET: SECRET,
     STORAGE_SIGNING_SECRET: SIGNING,
     DATABASE_URL: 'postgres://culture_atlas:not-the-dev-password@postgres:5432/culture_atlas',
-    IDENTITY_MAIL_DRIVER: 'ses',
+    IDENTITY_MAIL_DRIVER: 'resend',
     IDENTITY_MAIL_FROM: 'culture atlas <no-reply@example.org>',
-    IDENTITY_MAIL_SES_REGION: 'us-east-1',
-    AWS_ACCESS_KEY_ID: 'fake-access-key-id',
-    AWS_SECRET_ACCESS_KEY: 'fake-secret',
+    RESEND_API_KEY: 're_fake_sending_key',
     STORAGE_DRIVER: 's3',
     S3_ENDPOINT: 'https://media.example.org',
     S3_BUCKET: 'culture-atlas-media',
@@ -50,15 +48,13 @@ describe('production preflight (on-prem Compose)', () => {
     expect(errorsFor({ NODE_ENV: 'development' })).toMatch(/NODE_ENV must be "production"/);
   });
 
-  it('refuses the file identity mailbox and requires SES', () => {
+  it('refuses the file identity mailbox and requires Resend', () => {
     expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'file' })).toMatch(/IDENTITY_MAIL_DRIVER=file .* refused in production/);
-    expect(errorsFor({ IDENTITY_MAIL_DRIVER: '' })).toMatch(/IDENTITY_MAIL_DRIVER must be ses/);
-    expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'none' })).toMatch(/IDENTITY_MAIL_DRIVER must be ses/);
+    expect(errorsFor({ IDENTITY_MAIL_DRIVER: '' })).toMatch(/IDENTITY_MAIL_DRIVER must be resend/);
+    expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'none' })).toMatch(/IDENTITY_MAIL_DRIVER must be resend/);
+    expect(errorsFor({ IDENTITY_MAIL_DRIVER: 'ses' })).toMatch(/IDENTITY_MAIL_DRIVER must be resend/);
     expect(errorsFor({ IDENTITY_MAIL_FROM: '' })).toMatch(/IDENTITY_MAIL_FROM is required/);
-    expect(errorsFor({ IDENTITY_MAIL_SES_REGION: '' })).toMatch(/IDENTITY_MAIL_SES_REGION/);
-    expect(errorsFor({ IDENTITY_MAIL_SES_REGION: '', AWS_REGION: 'eu-west-1' })).toBe('');
-    expect(errorsFor({ AWS_ACCESS_KEY_ID: '', AWS_SECRET_ACCESS_KEY: '' })).toMatch(/SES credentials are missing/);
-    expect(errorsFor({ AWS_SECRET_ACCESS_KEY: '' })).toMatch(/must be set together/);
+    expect(errorsFor({ RESEND_API_KEY: '' })).toMatch(/RESEND_API_KEY is required/);
   });
 
   it('requires real session and storage signing secrets', () => {
