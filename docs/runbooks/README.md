@@ -1,9 +1,12 @@
 # culture atlas runbooks
 
-Operational procedures for capture platform v2. They assume the AWS shape in
-[deploy-aws.md](../deploy-aws.md) (one EC2 host running Docker Compose), but
-every command also works on any host with the repository and `DATABASE_URL`:
-replace `atlas-ops <command>` with `pnpm <command>`.
+Operational procedures for capture platform v2. Production is the on-prem
+Compose stack ([deploy.md](../deploy.md)): run every `atlas-ops <command>`
+below as `docker compose --profile ops run --rm ops <command>` from the
+directory holding `docker-compose.yml` (the `ops` image has the code and the
+PostgreSQL 16 client tools). `atlas-ops` itself belongs to the AWS reference
+shape in [deploy-aws.md](../deploy-aws.md); any host with the repository and
+`DATABASE_URL` can also use `pnpm <command>`.
 
 `atlas-ops` is installed on the AWS host by `infra/aws/bootstrap.sh`. It runs a
 one-off container from the deployed image with the production environment:

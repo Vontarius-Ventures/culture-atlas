@@ -13,6 +13,32 @@ journal, and verifies every inventoried object by size and SHA-256.
 `pg_restore` on every test run. That local run is development evidence only;
 OPS-01 still needs this drill against the real cloud database and bucket.
 
+## On-prem (Compose)
+
+Production is the on-prem Compose stack. `infra/onprem/atlas-backup.sh` already
+writes each snapshot as `$BACKUP_DIR/capture-XXXXXX/` with `database.dump`,
+`objects.json`, `tombstones.json`, `manifest.json` and an `objects/` mirror of
+the Garage bucket (`objects.sha256` beside it). Drill against the same
+PostgreSQL server in a NEW database, never `culture_atlas`:
+
+```sh
+cd /opt/culture-atlas
+docker compose exec postgres createdb -U culture_atlas culture_atlas_drill
+docker compose --profile ops run --rm \
+  -e RESTORE_DRILL_CONFIRM=isolated \
+  -e RESTORE_TARGET_DATABASE_URL='postgres://culture_atlas:<POSTGRES_PASSWORD>@postgres:5432/culture_atlas_drill' \
+  ops pnpm ops:restore-drill -- --backup /backups/capture-XXXXXX \
+    --objects local:/backups/capture-XXXXXX/objects
+# Record the JSON report (section 5), then:
+docker compose exec postgres dropdb -U culture_atlas culture_atlas_drill
+```
+
+Use `local:` objects, not `s3:`: the drill's `s3:` reader uses the AWS default
+endpoint, not Garage. For the manual checks in section 4 start a separate,
+drill-only copy of the stack (another directory with its own `.env`, no SES or
+push credentials, another Compose project name) against the drill database;
+never point the production stack at it.
+
 ## 0. Prerequisites
 
 - A backup directory from `pnpm ops:backup` (manifest, `database.dump`,

@@ -1,62 +1,212 @@
-# culture atlas self-host (docs/deploy.md). Default for this run: Compose, not Render.
+# culture atlas production: on-prem Compose on the owner's own hardware.
+# This is THE production path (docs/deploy.md, docs/production-readiness.md).
+# render.yaml stays unapplied; AWS (infra/aws) is not the production target.
 #
-# Render background workers have no free plan, so the paid render.yaml blueprint
-# is not applied. This file runs Postgres 16, web, worker and media-worker
-# locally. Secrets come from a gitignored `.env` (copy `.env.example`); nothing
-# secret is committed here.
+#   cp .env.example .env    # fill the names marked REQUIRED; never commit .env
+#   docker compose build
+#   docker compose up -d garage && <one-time Garage layout + key, see the docs>
+#   docker compose up -d    # preflight -> migrate -> web, worker, media-worker
 #
-#   cp .env.example .env   # then set SESSION_SECRET, CONCENTRATE_API_KEY, QLOO_API_KEY
-#   docker compose up --build
+# Values live only in the gitignored `.env` next to this file (Compose reads it
+# for the ${...} references below). Nothing secret is written here, and each
+# service receives only the settings it uses (no blanket env_file).
 #
-# Web binds 0.0.0.0:$PORT inside the container (Dockerfile: next start -H 0.0.0.0).
+# Order: postgres + garage healthy -> preflight (refuses unsafe production
+# settings, e.g. IDENTITY_MAIL_DRIVER=file) -> migrate (forward-only) -> web,
+# worker, media-worker. Caddy terminates TLS for APP_HOST and MEDIA_HOST.
 
 name: culture-atlas
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 20m
+    max-file: '5'
+
+# Settings every app process reads (domain config, storage, capture limits).
+x-base-env: &base-env
+  NODE_ENV: production
+  APP_BASE_URL: ${APP_BASE_URL:?REQUIRED in .env, e.g. https://app.cultureatlas.com}
+  DATABASE_URL: postgres://culture_atlas:${POSTGRES_PASSWORD:?REQUIRED in .env (openssl rand -hex 24)}@postgres:5432/culture_atlas
+  DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-}
+  SESSION_SECRET: ${SESSION_SECRET:?REQUIRED in .env (openssl rand -hex 32)}
+  CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+  COMPILER_VERSION: ${COMPILER_VERSION:-}
+  FEATURE_KILL_SWITCHES: ${FEATURE_KILL_SWITCHES:-}
+  # Object storage: private S3 API served on-prem by Garage. The filesystem
+  # driver is refused in production for v2 media (createMultipartStorage).
+  STORAGE_DRIVER: s3
+  STORAGE_SIGNING_SECRET: ${STORAGE_SIGNING_SECRET:?REQUIRED in .env (openssl rand -hex 32)}
+  SIGNED_URL_TTL_SECONDS: ${SIGNED_URL_TTL_SECONDS:-}
+  S3_ENDPOINT: ${S3_ENDPOINT:?REQUIRED in .env, the public media host, e.g. https://media.cultureatlas.com}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-culture-atlas-media}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:?REQUIRED in .env (Garage app key id)}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:?REQUIRED in .env (Garage app key secret)}
+  S3_FORCE_PATH_STYLE: 'true'
+  # Uploads and capture v2 limits.
+  UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-}
+  UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-}
+  IMAGE_MAX_EDGE: ${IMAGE_MAX_EDGE:-}
+  STORE_ORIGINALS: ${STORE_ORIGINALS:-}
+  CAPTURE_MEDIA_CREATION_ENABLED: ${CAPTURE_MEDIA_CREATION_ENABLED:-}
+  CAPTURE_VIDEO_UPLOAD_ENABLED: ${CAPTURE_VIDEO_UPLOAD_ENABLED:-}
+  CAPTURE_LEGACY_SENSOR_IMPORT_ENABLED: ${CAPTURE_LEGACY_SENSOR_IMPORT_ENABLED:-}
+  ACCOUNT_MEDIA_QUOTA_BYTES: ${ACCOUNT_MEDIA_QUOTA_BYTES:-}
+  MEDIA_PHOTO_MAX_BYTES: ${MEDIA_PHOTO_MAX_BYTES:-}
+  MEDIA_PHOTO_MAX_PIXELS: ${MEDIA_PHOTO_MAX_PIXELS:-}
+  MEDIA_VIDEO_MAX_BYTES: ${MEDIA_VIDEO_MAX_BYTES:-}
+  MEDIA_VIDEO_MAX_DURATION_SECONDS: ${MEDIA_VIDEO_MAX_DURATION_SECONDS:-}
+  CAPTURE_VIDEO_MAX_DURATION_SECONDS: ${CAPTURE_VIDEO_MAX_DURATION_SECONDS:-}
+  # Sessions, quotas and job runtime (domain config; read by every process).
+  ANON_SESSION_TTL_HOURS: ${ANON_SESSION_TTL_HOURS:-}
+  ACCOUNT_SESSION_TTL_DAYS: ${ACCOUNT_SESSION_TTL_DAYS:-}
+  AGENT_TOKEN_DEFAULT_TTL_DAYS: ${AGENT_TOKEN_DEFAULT_TTL_DAYS:-}
+  ANON_DAILY_ANALYSES: ${ANON_DAILY_ANALYSES:-}
+  ANON_DAILY_PLANS: ${ANON_DAILY_PLANS:-}
+  ACCOUNT_DAILY_ANALYSES: ${ACCOUNT_DAILY_ANALYSES:-}
+  ACCOUNT_DAILY_PLANS: ${ACCOUNT_DAILY_PLANS:-}
+  ACCOUNT_DAILY_ONBOARDING_SEARCHES: ${ACCOUNT_DAILY_ONBOARDING_SEARCHES:-}
+  ACCOUNT_DAILY_TASTE_SEEDS: ${ACCOUNT_DAILY_TASTE_SEEDS:-}
+  IP_DAILY_REQUESTS: ${IP_DAILY_REQUESTS:-}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
+  WORKER_POLL_MS: ${WORKER_POLL_MS:-}
+  JOB_LEASE_MS: ${JOB_LEASE_MS:-}
+  JOB_HEARTBEAT_MS: ${JOB_HEARTBEAT_MS:-}
+  JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-}
+  ANALYSIS_DEADLINE_MS: ${ANALYSIS_DEADLINE_MS:-}
+  JOB_MAX_QLOO_REQUESTS: ${JOB_MAX_QLOO_REQUESTS:-}
+  JOB_MAX_RESEARCH_REFS: ${JOB_MAX_RESEARCH_REFS:-}
+  JOB_MAX_PROVIDER_RETRIES: ${JOB_MAX_PROVIDER_RETRIES:-}
+  SENSOR_ALLOWED_ORIGINS: ${SENSOR_ALLOWED_ORIGINS:-}
+  SENSOR_POLL_INTERVAL_MS: ${SENSOR_POLL_INTERVAL_MS:-}
+  SENSOR_MAX_ASSET_BYTES: ${SENSOR_MAX_ASSET_BYTES:-}
+  # Feature switches (raw strings, evaluated by feature-flags.ts).
+  AGENT_API_ENABLED: ${AGENT_API_ENABLED:-}
+  COLLECTION_SHARING_ENABLED: ${COLLECTION_SHARING_ENABLED:-}
+  AGENT_REMOTE_CAPTURE_ENABLED: ${AGENT_REMOTE_CAPTURE_ENABLED:-}
+  AUTOMATIC_ANALYSIS_ENABLED: ${AUTOMATIC_ANALYSIS_ENABLED:-}
+  NATIVE_VIDEO_MODEL_INPUT_ENABLED: ${NATIVE_VIDEO_MODEL_INPUT_ENABLED:-}
+  ONBOARDING_REQUIRED: ${ONBOARDING_REQUIRED:-}
+  TASTE_SEED_ENABLED: ${TASTE_SEED_ENABLED:-}
+  WHILE_WE_LOOK_ENABLED: ${WHILE_WE_LOOK_ENABLED:-}
+  ANALYSIS_VERIFIER_ENABLED: ${ANALYSIS_VERIFIER_ENABLED:-}
+  META_GLASSES_QUALIFIED_BUILDS: ${META_GLASSES_QUALIFIED_BUILDS:-}
+  META_GLASSES_ENTITLED_PLATFORMS: ${META_GLASSES_ENTITLED_PLATFORMS:-}
+  META_GLASSES_ROLLOUT: ${META_GLASSES_ROLLOUT:-}
+  META_GLASSES_ROLLOUT_ACCOUNT_IDS: ${META_GLASSES_ROLLOUT_ACCOUNT_IDS:-}
+  META_GLASSES_AUDIO_QUALIFIED: ${META_GLASSES_AUDIO_QUALIFIED:-}
+  DEMO_INSPECTOR_ACCOUNT_IDS: ${DEMO_INSPECTOR_ACCOUNT_IDS:-}
+
+# Model gateway, Qloo, ElevenLabs, research and push (web + worker only).
+x-provider-env: &provider-env
+  LLM_PROVIDER: ${LLM_PROVIDER:-concentrate}
+  CONCENTRATE_API_KEY: ${CONCENTRATE_API_KEY:-}
+  CONCENTRATE_BASE_URL: ${CONCENTRATE_BASE_URL:-https://api.concentrate.ai/v1}
+  # Profiles + qualification artifacts are mounted read-only from
+  # CONCENTRATE_CONFIG_DIR (default: the repository's factory pins).
+  CONCENTRATE_PROFILE_FILE: ${CONCENTRATE_PROFILE_FILE:-/etc/culture-atlas/concentrate/profiles.json}
+  CONCENTRATE_PROFILES_JSON: ${CONCENTRATE_PROFILES_JSON:-}
+  CONCENTRATE_QUALIFICATION_DIR: ${CONCENTRATE_QUALIFICATION_DIR:-/etc/culture-atlas/concentrate}
+  CONCENTRATE_REQUIRE_ZDR: 'true'
+  CONCENTRATE_ALLOW_CONTENT_LOGGING: 'false'
+  CONCENTRATE_GATEWAY_FALLBACKS_ENABLED: 'false'
+  MODEL_DAILY_SPEND_LIMIT_USD: ${MODEL_DAILY_SPEND_LIMIT_USD:-5}
+  MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: ${MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD:-1}
+  MODEL_MAX_UNKNOWN_SPEND_USD: ${MODEL_MAX_UNKNOWN_SPEND_USD:-1}
+  ACCOUNT_DAILY_MEDIA_ANALYSES: ${ACCOUNT_DAILY_MEDIA_ANALYSES:-}
+  VLM_MODEL: ${VLM_MODEL:-}
+  RESEARCH_MODEL: ${RESEARCH_MODEL:-}
+  COMPOSER_MODEL: ${COMPOSER_MODEL:-}
+  VLM_TIMEOUT_MS: ${VLM_TIMEOUT_MS:-}
+  # Rollback only (LLM_PROVIDER=featherless|anthropic); never an automatic fallback.
+  # The rc_ key is Featherless, not a Render API key.
+  FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+  FEATHERLESS_BASE_URL: ${FEATHERLESS_BASE_URL:-}
+  FEATHERLESS_JSON_MODE: ${FEATHERLESS_JSON_MODE:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+  ANTHROPIC_EFFORT: ${ANTHROPIC_EFFORT:-}
+  ANTHROPIC_REFUSAL_FALLBACK: ${ANTHROPIC_REFUSAL_FALLBACK:-}
+  MODEL_FALLBACK: ${MODEL_FALLBACK:-}
+  ELORIAN_API_KEY: ${ELORIAN_API_KEY:-}
+  ELORIAN_BASE_URL: ${ELORIAN_BASE_URL:-}
+  ELORIAN_MODEL: ${ELORIAN_MODEL:-}
+  ELORIAN_JSON_MODE: ${ELORIAN_JSON_MODE:-}
+  ELORIAN_TIMEOUT_MS: ${ELORIAN_TIMEOUT_MS:-}
+  QLOO_API_KEY: ${QLOO_API_KEY:-}
+  QLOO_API_URL: ${QLOO_API_URL:-https://hackathon.api.qloo.com}
+  QLOO_TIMEOUT_MS: ${QLOO_TIMEOUT_MS:-}
+  QLOO_MAX_CONCURRENCY: ${QLOO_MAX_CONCURRENCY:-}
+  # Production never replays recorded Qloo results.
+  QLOO_REPLAY_FIXTURES: 'false'
+  ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+  ELEVENLABS_TRANSCRIPTION_MODEL: ${ELEVENLABS_TRANSCRIPTION_MODEL:-}
+  ELEVENLABS_REQUIRE_ZERO_RETENTION: ${ELEVENLABS_REQUIRE_ZERO_RETENTION:-}
+  WIKIPEDIA_API_URL: ${WIKIPEDIA_API_URL:-}
+  WIKIPEDIA_ACTION_API_URL: ${WIKIPEDIA_ACTION_API_URL:-}
+  WIKIMEDIA_USER_AGENT: ${WIKIMEDIA_USER_AGENT:-}
+  RESEARCH_TIMEOUT_MS: ${RESEARCH_TIMEOUT_MS:-}
+  PUSH_DRIVER: ${PUSH_DRIVER:-}
+  PUSH_APNS_TEAM_ID: ${PUSH_APNS_TEAM_ID:-}
+  PUSH_APNS_KEY_ID: ${PUSH_APNS_KEY_ID:-}
+  PUSH_APNS_PRIVATE_KEY: ${PUSH_APNS_PRIVATE_KEY:-}
+  PUSH_APNS_TOPIC: ${PUSH_APNS_TOPIC:-}
+  PUSH_FCM_PROJECT_ID: ${PUSH_FCM_PROJECT_ID:-}
+  PUSH_FCM_CLIENT_EMAIL: ${PUSH_FCM_CLIENT_EMAIL:-}
+  PUSH_FCM_PRIVATE_KEY: ${PUSH_FCM_PRIVATE_KEY:-}
+
+# Web only: identity email (Amazon SES, owner decision), native app links, edge.
+x-web-env: &web-env
+  IDENTITY_MAIL_DRIVER: ${IDENTITY_MAIL_DRIVER:-ses}
+  IDENTITY_MAIL_FROM: ${IDENTITY_MAIL_FROM:-}
+  IDENTITY_MAIL_SES_REGION: ${IDENTITY_MAIL_SES_REGION:-}
+  IDENTITY_MAIL_SES_CONFIGURATION_SET: ${IDENTITY_MAIL_SES_CONFIGURATION_SET:-}
+  # On-prem there is no instance role: the AWS SDK default chain reads these
+  # (an IAM user allowed only ses:SendEmail from the verified identity).
+  AWS_REGION: ${AWS_REGION:-}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  APPLE_TEAM_ID: ${APPLE_TEAM_ID:-}
+  ANDROID_ASSETLINKS_SHA256: ${ANDROID_ASSETLINKS_SHA256:-}
+  # Caddy is one hop that appends to X-Forwarded-For. Add one per extra proxy.
+  TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+  CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-}
 
 x-app: &app
   build:
     context: .
     dockerfile: Dockerfile
-  env_file:
-    - path: .env
-      required: false
-  environment:
-    NODE_ENV: production
-    PORT: '3000'
-    APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
-    DATABASE_URL: postgres://culture_atlas:${POSTGRES_PASSWORD:-culture_atlas}@postgres:5432/culture_atlas
-    SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env (openssl rand -hex 32)}
-    STORAGE_DRIVER: local
-    STORAGE_LOCAL_DIR: /data/objects
-    LLM_PROVIDER: concentrate
-    CONCENTRATE_BASE_URL: ${CONCENTRATE_BASE_URL:-https://api.concentrate.ai/v1}
-    CONCENTRATE_API_KEY: ${CONCENTRATE_API_KEY:-}
-    CONCENTRATE_PROFILE_FILE: ${CONCENTRATE_PROFILE_FILE:-/app/fixtures/concentrate/profiles.json}
-    CONCENTRATE_QUALIFICATION_DIR: ${CONCENTRATE_QUALIFICATION_DIR:-/app/fixtures/concentrate}
-    MODEL_DAILY_SPEND_LIMIT_USD: ${MODEL_DAILY_SPEND_LIMIT_USD:-5}
-    MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: ${MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD:-1}
-    MODEL_MAX_UNKNOWN_SPEND_USD: ${MODEL_MAX_UNKNOWN_SPEND_USD:-1}
-    QLOO_API_URL: ${QLOO_API_URL:-https://hackathon.api.qloo.com}
-    QLOO_API_KEY: ${QLOO_API_KEY:-}
-    # Rollback only. The rc_ key is Featherless, not a Render API key.
-    FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
-    TRUSTED_PROXY_HOPS: '1'
-  volumes:
-    - objects:/data/objects
-  depends_on:
-    postgres:
-      condition: service_healthy
-    objects-init:
-      condition: service_completed_successfully
+    target: runtime
+  image: culture-atlas:${ATLAS_RELEASE:-local}
   restart: unless-stopped
   init: true
+  logging: *logging
+  volumes:
+    - ${CONCENTRATE_CONFIG_DIR:-./fixtures/concentrate}:/etc/culture-atlas/concentrate:ro
+
+x-db-check: &db-check
+  # The worker processes have no HTTP port: healthy = the process is up and can
+  # reach PostgreSQL. A dead process exits the container and `restart` brings it back.
+  test:
+    - CMD
+    - node
+    - -e
+    - "const{Client}=require('pg');const c=new Client({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:4000});c.connect().then(()=>c.query('select 1')).then(()=>process.exit(0),()=>process.exit(1))"
+  interval: 30s
+  timeout: 10s
+  start_period: 60s
+  retries: 3
 
 services:
   postgres:
     image: postgres:16.4-bookworm
+    restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_DB: culture_atlas
       POSTGRES_USER: culture_atlas
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-culture_atlas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?REQUIRED in .env (openssl rand -hex 24)}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -64,65 +214,219 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    restart: unless-stopped
+    shm_size: 256m
 
-  # Named volume is root-owned on first create; the image runs as uid 1000 (node).
-  objects-init:
-    image: busybox:1.37
-    user: root
+  # Private S3-compatible object store on this host (all media). One node,
+  # replication 1: the backups below are the copy. One-time layout and key
+  # setup: docs/production-readiness.md "Object store".
+  garage:
+    image: dxflrs/garage:v2.4.1
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?REQUIRED in .env (openssl rand -hex 32)}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?REQUIRED in .env (openssl rand -base64 32)}
     volumes:
-      - objects:/data/objects
-    command: ['chown', '-R', '1000:1000', '/data/objects']
+      - ./infra/onprem/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    ports:
+      # Loopback only: the public path is Caddy (MEDIA_HOST). Set
+      # GARAGE_BIND_ADDRESS only if your own proxy runs on another machine.
+      - '${GARAGE_BIND_ADDRESS:-127.0.0.1}:3900:3900'
+    healthcheck:
+      test: ['CMD', '/garage', 'status']
+      interval: 15s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
+
+  # TLS edge (profile "edge", on by default via COMPOSE_PROFILES=edge in .env).
+  # Leave the profile off only when your existing proxy terminates TLS for both
+  # hosts and forwards to 127.0.0.1:${PORT:-3000} (web) and 127.0.0.1:3900 (media).
+  caddy:
+    image: caddy:2.10.2
+    profiles: [edge]
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    environment:
+      APP_HOST: ${APP_HOST:?REQUIRED in .env, host of APP_BASE_URL}
+      MEDIA_HOST: ${MEDIA_HOST:?REQUIRED in .env, host of S3_ENDPOINT}
+      ACME_EMAIL: ${ACME_EMAIL:?REQUIRED in .env (certificate expiry notices)}
+    volumes:
+      - ./infra/onprem/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      default:
+        # Containers reach https://APP_HOST and https://MEDIA_HOST through Caddy
+        # without hairpin NAT, so presigned URLs work inside and outside.
+        aliases:
+          - ${APP_HOST:?REQUIRED in .env}
+          - ${MEDIA_HOST:?REQUIRED in .env}
+    depends_on:
+      web:
+        condition: service_started
+      garage:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # One-shot: refuses unsafe production settings (IDENTITY_MAIL_DRIVER other
+  # than ses, http APP_BASE_URL, missing secrets...). Names only in its output.
+  preflight:
+    <<: *app
     restart: 'no'
+    command: ['pnpm', '--silent', 'ops:preflight']
+    environment:
+      <<: [*base-env, *provider-env, *web-env]
+    healthcheck:
+      disable: true
+
+  # One-shot: the bucket exists, CORS allows APP_BASE_URL, and the app key can
+  # write/read/delete. Talks to Garage directly (Caddy may not be up yet).
+  storage-init:
+    <<: *app
+    restart: 'no'
+    command: ['pnpm', '--silent', 'ops:storage', 'init']
+    environment:
+      <<: *base-env
+      S3_ENDPOINT: http://garage:3900
+    healthcheck:
+      disable: true
+    depends_on:
+      garage:
+        condition: service_healthy
+      preflight:
+        condition: service_completed_successfully
 
   migrate:
     <<: *app
-    command: ['pnpm', 'db:migrate']
     restart: 'no'
+    command: ['pnpm', 'db:migrate']
+    environment:
+      <<: *base-env
+    healthcheck:
+      disable: true
     depends_on:
       postgres:
         condition: service_healthy
-      objects-init:
+      preflight:
+        condition: service_completed_successfully
+      storage-init:
         condition: service_completed_successfully
 
   web:
     <<: *app
+    environment:
+      <<: [*base-env, *provider-env, *web-env]
+      PORT: '3000'
     ports:
-      - '0.0.0.0:${PORT:-3000}:3000'
+      # Loopback only: clients reach web through Caddy over https. Exposing
+      # plain http publicly would bypass TLS and the proxy hop count.
+      - '${WEB_BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
     depends_on:
       postgres:
         condition: service_healthy
-      objects-init:
-        condition: service_completed_successfully
+      garage:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
   worker:
     <<: *app
     command: ['pnpm', 'worker']
-    healthcheck:
-      disable: true
+    environment:
+      <<: [*base-env, *provider-env]
+      MEDIA_ANALYSIS_WORKER_ENABLED: ${MEDIA_ANALYSIS_WORKER_ENABLED:-}
+      MEDIA_ANALYSIS_PHOTO_CONCURRENCY: ${MEDIA_ANALYSIS_PHOTO_CONCURRENCY:-2}
+      MEDIA_ANALYSIS_VIDEO_CONCURRENCY: ${MEDIA_ANALYSIS_VIDEO_CONCURRENCY:-1}
+    healthcheck: *db-check
     depends_on:
       postgres:
         condition: service_healthy
-      objects-init:
-        condition: service_completed_successfully
+      garage:
+        condition: service_healthy
       migrate:
         condition: service_completed_successfully
 
   media-worker:
     <<: *app
     command: ['pnpm', 'media-worker']
+    environment:
+      <<: *base-env
+      # ffmpeg/ffprobe come from the image (Debian bookworm package).
+      FFMPEG_PATH: ${FFMPEG_PATH:-}
+      FFPROBE_PATH: ${FFPROBE_PATH:-}
+      MEDIA_WORKER_THREADS: ${MEDIA_WORKER_THREADS:-}
+      MEDIA_WORKER_CONCURRENCY: ${MEDIA_WORKER_CONCURRENCY:-}
+      MEDIA_WORKER_SCRATCH_DIR: /tmp/culture-atlas-media
+    healthcheck:
+      <<: *db-check
+      test:
+        - CMD-SHELL
+        - >-
+          ffprobe -version >/dev/null 2>&1 &&
+          node -e "const{Client}=require('pg');const c=new Client({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:4000});c.connect().then(()=>c.query('select 1')).then(()=>process.exit(0),()=>process.exit(1))"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      garage:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Operator commands (profile "ops"): same code + PostgreSQL 16 client tools.
+  #   docker compose --profile ops run --rm ops pnpm ops:backup
+  #   docker compose --profile ops run --rm ops pnpm ops:storage mirror /backups/<dir>
+  # infra/onprem/atlas-backup.sh runs both nightly.
+  ops:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ops
+    image: culture-atlas-ops:${ATLAS_RELEASE:-local}
+    profiles: [ops]
+    restart: 'no'
+    init: true
+    logging: *logging
+    environment:
+      <<: *base-env
+      CAPTURE_BACKUP_DIR: /backups
+      PG_DUMP_BIN: /usr/lib/postgresql/16/bin/pg_dump
+      # Mirror straight from Garage (no dependency on Caddy).
+      S3_ENDPOINT: http://garage:3900
+    volumes:
+      # Host directory outside the repository; copy it off this machine too.
+      - ${BACKUP_DIR:-/var/backups/culture-atlas}:/backups
     healthcheck:
       disable: true
     depends_on:
       postgres:
         condition: service_healthy
-      objects-init:
-        condition: service_completed_successfully
-      migrate:
-        condition: service_completed_successfully
+      garage:
+        condition: service_healthy
 
 volumes:
   pgdata:
-  objects:
+  garage-meta:
+  garage-data:
+  caddy-data:
+  caddy-config:

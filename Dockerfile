@@ -6,7 +6,8 @@
 #   media worker:   docker run <image> pnpm media-worker   (capture v2 verify/prepare/cleanup; uses ffmpeg)
 #   migrations:     docker run <image> pnpm db:migrate   (run before each release)
 #   ops image:      docker build --target ops .  (source + PostgreSQL 16 client tools,
-#                   for pnpm ops:backup / psql; used by infra/aws atlas-ops)
+#                   for pnpm ops:backup / psql; the Compose `ops` service)
+#   production:     docker-compose.yml (on-prem; docs/deploy.md)
 #
 # Workspace packages ship TypeScript source; the worker and scripts run under
 # tsx, so the runtime image keeps the full workspace install.
@@ -37,7 +38,8 @@ COPY packages/agent-gateway/package.json packages/agent-gateway/
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm install --frozen-lockfile
 
 # Operator image (built only with --target ops; the default build target stays
-# `runtime`, which Render and plain `docker build` use). It runs tsx scripts
+# `runtime`, which the on-prem docker-compose.yml and plain `docker build` use).
+# The Compose `ops` service builds this target for backups and drills. It runs tsx scripts
 # (migrations, kill switches, backups, metrics) and adds pg_dump/pg_restore/
 # psql 16 from the PostgreSQL project's Debian repository: bookworm ships 15,
 # which cannot dump a 16 server. Not used to serve traffic.

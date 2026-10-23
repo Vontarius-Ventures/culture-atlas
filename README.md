@@ -157,10 +157,11 @@ The spec requires at least one discovery per live demo path to trace back to a s
 
 ## Deploying
 
-One Docker image runs the web app, the worker and the media worker. There are two ways to deploy it:
+One Docker image runs the web app, the worker and the media worker.
 
-- **Render:** `render.yaml` is a Render blueprint with Postgres ([docs/deploy.md](docs/deploy.md)).
-- **AWS:** see [docs/deploy-aws.md](docs/deploy-aws.md) and `infra/aws/`. The CloudFormation template creates:
+- **Production (on-prem, the owner's hardware):** `docker-compose.yml` runs PostgreSQL 16, Garage (S3-compatible media storage), Caddy (TLS), a preflight that refuses unsafe settings, migrations, web, worker and media worker. Email goes through Amazon SES. See [docs/deploy.md](docs/deploy.md) and the go-live checklist [docs/production-readiness.md](docs/production-readiness.md). It has not been booted yet.
+- **Render (not used):** `render.yaml` is a paid blueprint and stays unapplied.
+- **AWS (reference only, not the production target):** see [docs/deploy-aws.md](docs/deploy-aws.md) and `infra/aws/`. The CloudFormation template creates:
   - one t3.micro with Caddy for HTTPS;
   - PostgreSQL on RDS db.t4g.micro or on the instance;
   - a private S3 bucket;
@@ -196,7 +197,7 @@ These are written and, where possible, unit- or contract-tested, but have not ru
 - [World Sensor](docs/sensor.md): poll and bridge modes, setup, guarantees, verifying the relay
 - [Capability matrix](docs/capability-matrix.md) and [Qloo probes](docs/qloo-probes.md)
 - [Privacy and retention](docs/privacy.md): what is kept, deletion, provider retention TODOs
-- [Deploy](docs/deploy.md) and [Deploy on AWS](docs/deploy-aws.md)
+- [Deploy (on-prem production)](docs/deploy.md), [production readiness checklist](docs/production-readiness.md) and [Deploy on AWS](docs/deploy-aws.md) (reference only)
 - Capture platform v2:
   - [gap report](docs/v2-gap-report.md);
   - [real-stack journey](docs/v2-real-stack.md) and [amendment 2.2 real-stack journeys](docs/v22-real-stack.md);
@@ -216,7 +217,8 @@ apps/web            Next.js: consumer UI, REST /v1 and /v2, MCP /mcp, demo inspe
 apps/worker         DB-backed job worker (v1 jobs, v2 media analysis)
 apps/media-worker   Capture v2 upload verification and ffmpeg preparation
 apps/ios, apps/android  Native capture apps (source only; not compiled here)
-infra/aws           CloudFormation, Compose and Caddy for the AWS shape
+infra/onprem        Caddyfile, Garage config and backup script for the on-prem production stack
+infra/aws           CloudFormation, Compose and Caddy for the AWS shape (reference only)
 apps/demo-agent     Independent MCP client
 apps/sensor-bridge  Outbound World Sensor bridge (runs next to the relay)
 packages/domain     Domain services, schemas, authorization, jobs, World Sensor import
