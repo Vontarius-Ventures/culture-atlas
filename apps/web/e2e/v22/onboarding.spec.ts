@@ -197,7 +197,7 @@ test.describe('Taste onboarding (screen 14)', () => {
     await expect(page).toHaveURL(/\/welcome\/building/);
     // Honest state: nothing fabricated, keep building in the background.
     await expect(page.getByText("We'll keep building in the background.")).toBeVisible();
-    await expect(page.getByText('Until then, Discover shows example results.')).toBeVisible();
+    await expect(page.getByText('Until then, your feed shows example results.')).toBeVisible();
     await expectNoHorizontalScroll(page);
     await page.getByRole('link', { name: 'See my feed' }).click();
     await expect(page).toHaveURL(/\/$/);
