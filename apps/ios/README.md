@@ -66,6 +66,26 @@ target only. Copy `Config/Signing.xcconfig.example` to the gitignored
 
 `AtlasCaptureTests` reads `fixtures/native-contract` from the test bundle.
 
+## Style reading (experimental)
+
+Photo results show the server's **style reading** (aesthetic chips, measured
+palette, era, materials, construction, details, mood) and the rails it drives
+(**More like this** per subject, then Wear / Play / Watch / Eat), per
+`prp/2026-10-23-style-analysis/design.md` section F. The app loads
+`GET /v1/captures/{id}` and polls every 1.5 s until every section and rail is
+terminal (`AtlasCapture/Style/CaptureStyleViewModel.swift`). Every claim's text
+is the server's `display` string; an uncertain claim without one is dropped,
+never shown bare. Readings from unqualified roles carry the `Experimental`
+badge and note (analysis screen, reading header, capture button, rail caption,
+"Why this").
+
+Fixture preview (Debug builds only), for screenshots without a server:
+
+```sh
+SIMCTL_CHILD_ATLAS_STYLE_FIXTURE_IMAGE="$PWD/../web/public/samples/outfit.jpg" \
+  xcrun simctl launch <device> com.aomg.cultureatlas -AtlasStyleFixture [-AtlasStyleFixtureHighlight]
+```
+
 ## Music Mode
 
 Capture → **Music** (screen 19). Audio-only: camera stays off, no

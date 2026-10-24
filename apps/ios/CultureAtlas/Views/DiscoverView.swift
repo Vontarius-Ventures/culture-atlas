@@ -326,11 +326,16 @@ struct FeedCardTile: View {
   let baseURL: URL
   /// Poster tiles already show their title inside the poster; small rails hide the caption.
   var captionForPosters = true
+  /// Capture rails: the server's reason (14 pt secondary, at most 2 lines).
+  var showsReason = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       FeedCardVisual(card: card, baseURL: baseURL)
         .frame(maxWidth: .infinity)
+        // With a reason under it, the picture keeps its full 4:5 size and the
+        // text truncates instead, so every tile on a rail lines up.
+        .layoutPriority(showsReason ? 1 : 0)
         .id(card.id)
       if card.image != nil || captionForPosters {
         Text(card.title)
@@ -340,12 +345,26 @@ struct FeedCardTile: View {
           .multilineTextAlignment(.leading)
           .contentTransition(.identity)
       }
+      if showsReason, let reason = card.reason {
+        Text(reason)
+          .font(.system(size: 14))
+          .foregroundStyle(AtlasTheme.muted)
+          .lineLimit(2)
+          .multilineTextAlignment(.leading)
+      }
       if card.isExample {
         Text("Example result").font(.caption2).foregroundStyle(AtlasTheme.muted)
       }
     }
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(card.isExample ? "\(card.title). Example result" : card.title)
+    .accessibilityLabel(accessibilityText)
+  }
+
+  private var accessibilityText: String {
+    var parts = [card.title]
+    if showsReason, let reason = card.reason { parts.append(reason) }
+    if card.isExample { parts.append("Example result") }
+    return parts.joined(separator: ". ")
   }
 }
 
@@ -372,16 +391,20 @@ struct FeedCardVisual: View {
   }
 
   private var posterFallback: some View {
-    ZStack(alignment: .bottomLeading) {
-      LinearGradient(
-        colors: [posterFill.opacity(0.92), posterFill],
-        startPoint: .topLeading, endPoint: .bottomTrailing)
+    // The gradient sets the size; the oversized symbol and the text are
+    // overlays, so a small tile never grows wider than its frame (which
+    // clipped the title's leading edge on narrow rails).
+    LinearGradient(
+      colors: [posterFill.opacity(0.92), posterFill],
+      startPoint: .topLeading, endPoint: .bottomTrailing)
+    .overlay(alignment: .topTrailing) {
       Image(systemName: categorySymbol)
         .font(.system(size: 120, weight: .ultraLight))
         .foregroundStyle(.white.opacity(0.07))
         .offset(x: 40, y: -40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .accessibilityHidden(true)
+    }
+    .overlay(alignment: .bottomLeading) {
       VStack(alignment: .leading, spacing: 6) {
         if let category = card.category {
           Text(OnboardingCopy.group(category).uppercased())
@@ -400,6 +423,7 @@ struct FeedCardVisual: View {
       }
       .padding(14)
     }
+    .clipped()
   }
 
   private var categorySymbol: String {
@@ -445,9 +469,16 @@ struct FeedCardDetail: View {
   @State private var adding = false
   @State private var savedIn: Set<UUID> = []
   @State private var relatedPulse = 0
+  @State private var styleModel: CaptureStyleViewModel?
+  @State private var styleHighlight: StyleRegion?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   private var shown: DiscoveryCard { detail?.item ?? card }
+
+  private var heroAspect: Double? {
+    guard let w = shown.image?.width, let h = shown.image?.height, w > 0, h > 0 else { return styleModel?.imageAspect }
+    return Double(w) / Double(h)
+  }
   private var isCapture: Bool { card.kind == "capture" }
 
   var body: some View {
@@ -458,8 +489,16 @@ struct FeedCardDetail: View {
           VStack(alignment: .leading, spacing: 16) {
             titleBlock
             actionRow(reader)
-            if let reason = detail?.reason ?? detail?.whyThis?.text {
-              WhyThisCard(text: reason)
+            if isCapture, let styleModel {
+              CaptureStyleSection(
+                model: styleModel, highlight: $styleHighlight, baseURL: controller.api.baseURL,
+                scrollProxy: reader, setCity: { [api = controller.api] city in try await api.setCity(city) })
+            }
+            let why = StylePresentation.whyThis(styleMatch: detail?.styleMatch ?? shown.styleMatch, experimentalLine: detail?.experimentalLine)
+            if let reason = detail?.reason ?? detail?.whyThis?.text ?? shown.reason {
+              WhyThisCard(text: reason, attributes: why.attributes, experimentalLine: why.line)
+            } else if !why.attributes.isEmpty || why.line != nil {
+              WhyThisCard(text: nil, attributes: why.attributes, experimentalLine: why.line)
             }
             if let description = detail?.description {
               Text(description)
@@ -513,6 +552,18 @@ struct FeedCardDetail: View {
       }
     }
     .task { await loadDetail() }
+    .task(id: detail?.captureID) { await loadStyle() }
+  }
+
+  /// The owner's own capture: load its style reading and rails, polling while they finish.
+  private func loadStyle() async {
+    guard isCapture, let captureID = detail?.captureID else { return }
+    let api = controller.api
+    let model = styleModel ?? CaptureStyleViewModel(
+      load: { try await api.capture(captureID) },
+      retry: { try await api.retryStyle(captureID: captureID) })
+    if styleModel == nil { styleModel = model }
+    await model.run()
   }
 
   // MARK: Hero
@@ -530,6 +581,8 @@ struct FeedCardDetail: View {
               .onEnded { _ in withAnimation(AtlasMotion.spring) { scale = 1 } }
           )
           .simultaneousGesture(highlightGesture(in: geo.size), including: focusArmed ? .all : .none)
+        StyleRegionOverlay(region: styleHighlight, imageAspect: heroAspect) { styleHighlight = nil }
+          .frame(width: geo.size.width, height: geo.size.height)
         if let highlight {
           RoundedRectangle(cornerRadius: 6)
             .stroke(AtlasTheme.olive, lineWidth: 2)
@@ -794,9 +847,13 @@ private struct ActionChip: View {
   }
 }
 
-/// "Why this" — the server's reason, set apart as a quiet card.
+/// "Why this" — the server's reason, set apart as a quiet card, with the
+/// style attributes that connected it (non-interactive) and, for a card from
+/// an experimental reading, the experimental line.
 private struct WhyThisCard: View {
-  let text: String
+  let text: String?
+  var attributes: [String] = []
+  var experimentalLine: String?
 
   var body: some View {
     HStack(alignment: .top, spacing: 10) {
@@ -804,9 +861,34 @@ private struct WhyThisCard: View {
         .font(.footnote)
         .foregroundStyle(AtlasTheme.olive)
         .accessibilityHidden(true)
-      VStack(alignment: .leading, spacing: 4) {
+      VStack(alignment: .leading, spacing: 6) {
         Text("Why this").font(.caption.weight(.semibold)).foregroundStyle(AtlasTheme.olive)
-        Text(text).font(.callout).foregroundStyle(AtlasTheme.ink)
+        if let text {
+          Text(text).font(.callout).foregroundStyle(AtlasTheme.ink)
+        }
+        if !attributes.isEmpty {
+          FlowLayout(spacing: 6) {
+            ForEach(attributes, id: \.self) { attribute in
+              Text(attribute)
+                .font(.footnote)
+                .foregroundStyle(AtlasTheme.ink)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(AtlasTheme.ivory))
+                .overlay(Capsule().stroke(AtlasTheme.line))
+            }
+          }
+          .accessibilityElement(children: .combine)
+        }
+        if let experimentalLine {
+          HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(StyleCopy.experimentalBadge)
+              .font(.caption2.weight(.semibold))
+              .foregroundStyle(AtlasTheme.muted)
+            Text(experimentalLine).font(.footnote).foregroundStyle(AtlasTheme.muted)
+          }
+          .accessibilityIdentifier("why.experimental-line")
+        }
       }
     }
     .padding(14)

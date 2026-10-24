@@ -155,6 +155,11 @@ struct CameraView: View {
         Button("Flip camera") { try? camera.flip() }.disabled(camera.isRecording || !camera.isRunning || saving)
         shutter
       }
+      // Photo and video readings run as experimental: the label sits under the capture button.
+      let analysis = CapabilityGate.photoAnalysis(controller.capabilities)
+      if analysis.experimental {
+        ExperimentalBadge(label: analysis.label ?? StyleCopy.experimentalBadge, note: analysis.note ?? StyleCopy.experimentalNote)
+      }
 
       // Remote capture is off until allowed here, on this phone, with the camera open.
       if camera.isRunning {
