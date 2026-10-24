@@ -48,14 +48,49 @@ public struct DiscoveriesResponse: Codable, Sendable, Equatable {
   public var feedRevision: Int
   public var isExampleFeed: Bool
   public var availableCategories: [TasteCategory]
+  /// The server is still adding cards (the taste seed publishing categories
+  /// right after onboarding, an expand wave, Music Mode suggestions).
+  public var expansion: Expansion?
+
+  public struct Expansion: Codable, Sendable, Equatable {
+    public var state: String
+    public var pollAfterMS: Int?
+
+    enum CodingKeys: String, CodingKey {
+      case state
+      case pollAfterMS = "poll_after_ms"
+    }
+  }
 
   enum CodingKeys: String, CodingKey {
-    case items
+    case items, expansion
     case nextCursor = "next_cursor"
     case feedID = "feed_id"
     case feedRevision = "feed_revision"
     case isExampleFeed = "is_example_feed"
     case availableCategories = "available_categories"
+  }
+
+  /// Usual feed poll (spec: every 8 s while the example feed shows).
+  public static let pollSeconds: Double = 8
+
+  /// When to look again: sooner while the server says cards are on their way.
+  public var nextPollSeconds: Double {
+    guard expansion?.state == "running" else { return Self.pollSeconds }
+    let ms = Double(expansion?.pollAfterMS ?? 4000)
+    return min(Self.pollSeconds, max(2, ms / 1000))
+  }
+
+  /// Which of the cards still on screen stay in the pool after this page.
+  /// Once real cards land, examples the server no longer lists leave the pool
+  /// (the conveyor lets them drift off; they never come back), so the real
+  /// ones float in without a reload. Real cards on screen always stay.
+  public func keptOnScreen(_ onScreen: [DiscoveryCard]) -> [DiscoveryCard] {
+    let incoming = Set(items.map(\.id))
+    let landedReal = items.contains { $0.isExample == false }
+    return onScreen.filter { card in
+      !incoming.contains(card.id) && !(landedReal && card.isExample)
+    }
   }
 }
 
@@ -187,6 +222,24 @@ public struct ItemReference: Codable, Sendable, Equatable, Identifiable, Hashabl
     case id, name, type, relation, qualified
     case hasPage = "has_page"
     case readText = "read_text"
+  }
+}
+
+extension ItemReference {
+  /// How a reference reads on screen (same rule as the web and Android):
+  /// `qualified` marks a resemblance or an uncertain match, so it and a
+  /// `resembles` relation read "Resembles …"; only an unqualified depiction
+  /// is the bare name. A text-only reference (a name read in the photo) is
+  /// neither, and shows its name with `attribution`.
+  public var phrase: String {
+    if readText != nil { return name }
+    if qualified || relation == "resembles" { return "Resembles \(name)" }
+    return name
+  }
+
+  /// "Read in the photo: “…”" for a text-only reference, else nil.
+  public var attribution: String? {
+    readText.map { "Read in the photo: “\($0)”" }
   }
 }
 

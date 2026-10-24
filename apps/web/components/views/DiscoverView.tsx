@@ -10,7 +10,7 @@ import { ONBOARDING_PATH } from '@/lib/client/onboarding';
 import { UI_LIMITS } from '@/lib/client/limits';
 import { cardToTarget, useSave } from '@/lib/client/save';
 import { useSession } from '@/lib/client/session';
-import { feedColumns, mergeRefreshed } from '@/lib/client/conveyor';
+import { feedColumns, mergeLanded, mergeRefreshed } from '@/lib/client/conveyor';
 import {
   applyOverrides,
   getFeedCache,
@@ -30,7 +30,13 @@ import { Notice } from '../ui';
 const inflight = new Map<string, Promise<DiscoveriesResponse>>();
 /** While an account's feed is still the example feed (seed building), look again this often. */
 const EXAMPLE_POLL_MS = 8_000;
-const EXAMPLE_POLL_MAX = 15;
+/** Stop looking after this long without the person doing anything (the feed stays as it is). */
+const EXAMPLE_POLL_WINDOW_MS = 3 * 60_000;
+
+/** The server's own hint that more cards are on their way (`expansion`). */
+function pollAfter(res: DiscoveriesResponse): number | null {
+  return res.expansion?.state === 'running' ? (res.expansion.poll_after_ms ?? EXAMPLE_POLL_MS) : null;
+}
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /**
@@ -95,6 +101,7 @@ export function DiscoverView() {
         nextCursor: res.next_cursor,
         availableCategories: res.available_categories,
         isExampleFeed: res.is_example_feed,
+        pollAfterMs: pollAfter(res),
         scrollY: 0,
       };
       setFeedCache(k, entry);
@@ -159,23 +166,30 @@ export function DiscoverView() {
    * the pool. Never empties the grid: an empty response or an error keeps
    * every card already loaded. When an account's example feed turns personal,
    * the personal cards replace the examples.
+   *
+   * `poll` is the background look while the seed is still landing: it reads
+   * the latest snapshot the server rebuilt (no `refresh`, so nothing is
+   * demoted) and real cards push out the examples they replace.
    */
   const refreshFeed = useCallback(
-    async (opts: { quiet?: boolean } = {}) => {
+    async (opts: { quiet?: boolean; poll?: boolean } = {}) => {
       const current = getFeedCache(key);
       if (!current) return;
-      setRefreshing(true);
+      if (!opts.poll) setRefreshing(true);
       try {
         const res = await api.request('getDiscoveries', {
           query: {
             limit: UI_LIMITS.feedPageDefault,
             category: category ?? undefined,
-            refresh: 'true',
+            refresh: opts.poll ? undefined : 'true',
           },
         });
         const latest = getFeedCache(key) ?? current;
         if (res.items.length === 0) {
           if (!opts.quiet) toast.announce('No new discoveries yet');
+          const idle: FeedCacheEntry = { ...latest, pollAfterMs: pollAfter(res) };
+          setFeedCache(key, idle);
+          if (keyRef.current === key) setFeed(idle);
           return;
         }
         const becamePersonal = latest.isExampleFeed && !res.is_example_feed;
@@ -183,9 +197,14 @@ export function DiscoverView() {
         const fresh = res.items.filter((i) => !known.has(i.id)).length;
         const entry: FeedCacheEntry = {
           ...latest,
-          items: becamePersonal ? [...res.items] : mergeRefreshed(res.items, latest.items),
+          items: becamePersonal
+            ? [...res.items]
+            : opts.poll
+              ? mergeLanded(res.items, latest.items)
+              : mergeRefreshed(res.items, latest.items),
           nextCursor: res.next_cursor,
           isExampleFeed: res.is_example_feed,
+          pollAfterMs: pollAfter(res),
           availableCategories: Array.from(
             new Set([...latest.availableCategories, ...res.available_categories]),
           ),
@@ -209,29 +228,33 @@ export function DiscoverView() {
           });
         }
       } finally {
-        setRefreshing(false);
+        if (!opts.poll) setRefreshing(false);
       }
     },
     [key, category, toast],
   );
 
-  // An account whose personal feed is still building sees the example feed:
-  // look again every few seconds (bounded) so seed cards float in when they land.
-  const pollingExample = isAccount && !category && (feed?.isExampleFeed ?? false);
+  // An account whose personal feed is still building sees examples: the whole
+  // example feed, or (right after onboarding, once the first category lands)
+  // a short personal pool topped up with examples while the seed keeps
+  // publishing. Look again every few seconds (bounded) so the real cards float
+  // in as they land; no reload needed.
+  const pollMs = isAccount && !category
+    ? (feed?.pollAfterMs ?? (feed?.isExampleFeed ? EXAMPLE_POLL_MS : null))
+    : null;
   useEffect(() => {
-    if (!pollingExample) return;
-    let polls = 0;
+    if (!pollMs) return;
+    const started = Date.now();
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'visible') return;
-      polls += 1;
-      if (polls > EXAMPLE_POLL_MAX) {
+      if (Date.now() - started > EXAMPLE_POLL_WINDOW_MS) {
         window.clearInterval(timer);
         return;
       }
-      void refreshFeed({ quiet: true });
-    }, EXAMPLE_POLL_MS);
+      void refreshFeed({ quiet: true, poll: true });
+    }, pollMs);
     return () => window.clearInterval(timer);
-  }, [pollingExample, refreshFeed]);
+  }, [pollMs, refreshFeed]);
 
   const categories = (
     allCategories.length ? allCategories : (feed?.availableCategories ?? [])

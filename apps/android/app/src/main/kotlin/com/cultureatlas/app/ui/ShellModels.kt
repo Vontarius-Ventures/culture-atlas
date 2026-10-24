@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.cultureatlas.capture.core.contract.DiscoveriesResponse
 import com.cultureatlas.capture.core.contract.DiscoveryCard
 import com.cultureatlas.capture.core.contract.ItemDetailResponse
 import com.cultureatlas.capture.core.contract.LibraryEntry
@@ -27,6 +28,9 @@ class FeedModel(private val api: AtlasApi) {
         private set
     var exampleFeed by mutableStateOf(false)
         private set
+    /** Until the next background look: sooner while the seed is still landing. */
+    var pollMillis by mutableStateOf(DiscoveriesResponse.FEED_POLL_MILLIS)
+        private set
     var message by mutableStateOf<String?>(null)
         private set
     var loading by mutableStateOf(true)
@@ -49,6 +53,7 @@ class FeedModel(private val api: AtlasApi) {
         runCatching { api.discoveries(refresh) }
             .onSuccess { feed ->
                 exampleFeed = feed.isExampleFeed
+                pollMillis = feed.nextPollMillis
                 if (feed.items.isEmpty()) {
                     message = if (pool.isEmpty()) {
                         "Still looking for things that match your interests. Pull to try again."
@@ -56,11 +61,11 @@ class FeedModel(private val api: AtlasApi) {
                         "Nothing new yet. Still showing what you had."
                     }
                 } else {
-                    val incomingIds = feed.items.map { it.id }.toSet()
                     val keepOnScreen = conveyor.onScreenIds()
                     // Posters stay in the pool (as on iOS): the conveyor takes pictured cards first and
                     // never passes a waiting photo for a poster. New cards join; nothing on screen resets.
-                    pool = feed.items + pool.filter { it.id in keepOnScreen && it.id !in incomingIds }
+                    // Examples the server replaced with real cards (the seed landing) drift off instead.
+                    pool = feed.items + feed.keptOnScreen(pool.filter { it.id in keepOnScreen })
                     message = null
                 }
             }

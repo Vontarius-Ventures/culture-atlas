@@ -21,6 +21,13 @@ extension AtlasAPI {
     try await get("/v2/media/\(mediaID.uuidString.lowercased())/analysis/\(analysisID.uuidString.lowercased())")
   }
 
+  /// `GET /v1/captures/{id}` through the native owner bridge: the compiled
+  /// result's sourced references and the Qloo-backed recommendations made
+  /// from them. Read-only, and only the signed-in account's own captures.
+  public func captureResult(_ captureID: UUID) async throws -> CaptureResultResponse {
+    try await get("/v1/captures/\(captureID.uuidString.lowercased())")
+  }
+
   /// Re-requesting the same photo exploration returns the existing analysis
   /// (`reused: true`, no allowance used), so this finds the analysis of a
   /// capture explored on another device.
@@ -201,4 +208,39 @@ extension AtlasClientError {
     if let urlError = error as? URLError, urlError.code == .cancelled { return true }
     return (error as? AtlasClientError)?.isCancellation == true
   }
+}
+
+/// `GET /v1/captures/{id}`, decoded leniently: only what the native result
+/// screen shows. A field that fails to decode leaves it empty rather than
+/// hiding the whole result.
+public struct CaptureResultResponse: Decodable, Sendable, Equatable {
+  public struct Analysis: Decodable, Sendable, Equatable {
+    public var title: String?
+    public var interpretation: String?
+  }
+
+  public var id: UUID
+  public var status: String?
+  public var analysis: Analysis?
+  public var references: [ItemReference]
+  public var recommendations: [DiscoveryCard]
+  public var jobID: UUID?
+
+  enum CodingKeys: String, CodingKey {
+    case id, status, analysis, references, recommendations
+    case jobID = "job_id"
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(UUID.self, forKey: .id)
+    status = try? c.decodeIfPresent(String.self, forKey: .status)
+    analysis = try? c.decodeIfPresent(Analysis.self, forKey: .analysis)
+    references = (try? c.decodeIfPresent([ItemReference].self, forKey: .references)) ?? []
+    recommendations = (try? c.decodeIfPresent([DiscoveryCard].self, forKey: .recommendations)) ?? []
+    jobID = try? c.decodeIfPresent(UUID.self, forKey: .jobID)
+  }
+
+  /// Done compiling: recommendations are in, or no job is left to add them.
+  public var settled: Bool { recommendations.isEmpty == false || jobID == nil }
 }

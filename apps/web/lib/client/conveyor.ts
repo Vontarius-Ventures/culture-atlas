@@ -259,6 +259,24 @@ export function mergeRefreshed<T extends { id: string }>(
   return out;
 }
 
+/**
+ * A background poll while the seed is landing: incoming cards first, then the
+ * known ones, except that once the server sends real cards, examples it no
+ * longer includes leave the pool (they float out as the real cards float in).
+ * Real cards already known always stay. Never empties a non-empty pool.
+ */
+export function mergeLanded<T extends { id: string; is_example: boolean }>(
+  incoming: readonly T[],
+  existing: readonly T[],
+): T[] {
+  if (!incoming.some((c) => !c.is_example)) return mergeRefreshed(incoming, existing);
+  const still = new Set(incoming.map((c) => c.id));
+  return mergeRefreshed(
+    incoming,
+    existing.filter((c) => !c.is_example || still.has(c.id)),
+  );
+}
+
 /** Feed columns by viewport width: 2 on phones, up to 4 on wide screens. */
 export function feedColumns(width: number): number {
   if (width < 600) return 2;

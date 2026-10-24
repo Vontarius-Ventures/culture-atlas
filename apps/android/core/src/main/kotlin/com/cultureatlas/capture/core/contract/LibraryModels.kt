@@ -47,6 +47,42 @@ data class DiscoveriesResponse(
     @SerialName("feed_revision") val feedRevision: Int,
     @SerialName("is_example_feed") val isExampleFeed: Boolean,
     @SerialName("available_categories") val availableCategories: List<TasteCategory>,
+    /**
+     * The server is still adding cards (the taste seed publishing categories
+     * right after onboarding, an expand wave, Music Mode suggestions).
+     */
+    val expansion: FeedExpansion? = null,
+) {
+    /** When to look again: sooner while the server says cards are on their way. */
+    val nextPollMillis: Long
+        get() = if (expansion?.state == "running") {
+            (expansion.pollAfterMs ?: 4_000L).coerceIn(2_000L, FEED_POLL_MILLIS)
+        } else {
+            FEED_POLL_MILLIS
+        }
+
+    /**
+     * Which cards still on screen stay in the pool after this page. Once real
+     * cards land, examples the server no longer lists leave the pool (the
+     * conveyor lets them drift off; they never come back), so the real ones
+     * float in without a reload. Real cards on screen always stay.
+     */
+    fun keptOnScreen(onScreen: List<DiscoveryCard>): List<DiscoveryCard> {
+        val incoming = items.map { it.id }.toSet()
+        val landedReal = items.any { !it.isExample }
+        return onScreen.filter { it.id !in incoming && !(landedReal && it.isExample) }
+    }
+
+    companion object {
+        /** Usual feed poll (spec: every 8 s while the example feed shows). */
+        const val FEED_POLL_MILLIS = 8_000L
+    }
+}
+
+@Serializable
+data class FeedExpansion(
+    val state: String,
+    @SerialName("poll_after_ms") val pollAfterMs: Long? = null,
 )
 
 @Serializable

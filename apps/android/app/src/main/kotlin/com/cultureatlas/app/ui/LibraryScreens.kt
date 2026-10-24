@@ -137,8 +137,9 @@ fun FeedScreen(feed: FeedModel, notices: ReadyNoticeCenter, onOpen: (DiscoveryCa
     // The pool lives in [feed]: coming back to this tab resumes the drift, it never starts empty.
     LaunchedEffect(Unit) {
         if (!feed.loadedOnce || feed.pool.isEmpty()) feed.load()
+        // Right after onboarding this is how the seed's real cards replace the examples (no reload).
         while (true) {
-            delay(8_000)
+            delay(feed.pollMillis)
             feed.load(refresh = false)
         }
     }

@@ -24,7 +24,8 @@ export const DiscoveriesResponse = z.object({
   /** Categories that currently have results (render only these filters). */
   available_categories: z.array(Category),
   /**
-   * New cards are being fetched for this feed (an interest-expand wave or a
+   * New cards are being fetched for this feed (the taste seed still
+   * publishing categories after onboarding, an interest-expand wave or a
    * Music Mode suggestion run). Poll the first page again after poll_after_ms;
    * the new cards float into the top of the feed.
    */

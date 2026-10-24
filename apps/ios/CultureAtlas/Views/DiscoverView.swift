@@ -35,6 +35,8 @@ struct FeedView: View {
   @State private var refreshing = false
   @State private var refreshSpin = 0.0
   @State private var opened: DiscoveryCard?
+  /// Seconds until the next background look (sooner while the seed is landing).
+  @State private var pollSeconds = DiscoveriesResponse.pollSeconds
   @Namespace private var zoom
 
   private static let staticCount = 6
@@ -95,9 +97,10 @@ struct FeedView: View {
         controller.openFeedDetail = false
       }
       while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 8_000_000_000)
+        try? await Task.sleep(nanoseconds: UInt64(pollSeconds * 1_000_000_000))
         // Pull new cards into the pool; never rebuild. The conveyor (or the
-        // Reduce Motion rotation) floats them in from there.
+        // Reduce Motion rotation) floats them in from there. Right after
+        // onboarding this is how the seed's real cards replace the examples.
         await load(refresh: false)
       }
     }
@@ -209,6 +212,7 @@ struct FeedView: View {
 
   private func apply(_ feed: DiscoveriesResponse, refresh: Bool) {
     exampleFeed = feed.isExampleFeed
+    pollSeconds = feed.nextPollSeconds
     if feed.items.isEmpty {
       if pool.isEmpty {
         emptyMessage = "Still looking for things that match your interests. Pull to try again."
@@ -226,12 +230,12 @@ struct FeedView: View {
     }
     let incomingIDs = Set(feed.items.map(\.id))
     freshIDs = incomingIDs
-    let keepOnScreen = Set(onScreen.map(\.id))
     // Keep the latest page plus whatever is on screen. Stale off-screen cards
     // buried new Qloo results in a 50-item shuffle. Posters stay in the pool
     // so a short picture supply never leaves holes; the conveyor still takes
     // pictured cards first and never passes a waiting photo for a poster.
-    pool = feed.items + pool.filter { keepOnScreen.contains($0.id) && !incomingIDs.contains($0.id) }
+    // Examples the server replaced with real cards drift off instead.
+    pool = feed.items + feed.keptOnScreen(onScreen)
     activeDriver.setPool(pool, fresh: freshIDs)
     if reduceMotion { fillStatic() }
     if refresh, !known.isEmpty {
@@ -468,7 +472,7 @@ struct FeedCardDetail: View {
                 Text("References").font(.footnote.weight(.semibold)).foregroundStyle(AtlasTheme.muted)
                 FlowLayout(spacing: 6) {
                   ForEach(refs) { ref in
-                    Text(ref.qualified ? ref.name : "Resembles \(ref.name)")
+                    Text(ref.phrase)
                       .font(.footnote)
                       .padding(.horizontal, 10)
                       .padding(.vertical, 6)

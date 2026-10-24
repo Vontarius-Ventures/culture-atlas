@@ -94,6 +94,11 @@ export interface FeedCacheEntry {
   nextCursor: string | null;
   availableCategories: string[];
   isExampleFeed: boolean;
+  /**
+   * The server is still adding cards (taste seed publishing after onboarding,
+   * an expand wave): poll the first page after this many ms. Null when idle.
+   */
+  pollAfterMs?: number | null;
   scrollY: number;
 }
 

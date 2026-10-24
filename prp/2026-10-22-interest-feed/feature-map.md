@@ -77,7 +77,7 @@ POST /v1/items/{id}/discoveries  →  discover_related job  →  poll GET item
 - Keep `pool` (all known cards) and `shown` (visible window, ~12).
 - `load(refresh:)` merges incoming ids in front; empty/error does not clear `pool`/`shown`.
 - Pull-to-refresh calls `discoveries(refresh: true)`.
-- While `is_example_feed`, poll every 8s with refresh so Qloo seed cards replace examples when they land.
+- While `is_example_feed` or `expansion.state == running` (the taste seed still publishing after onboarding: the first snapshot is a few seed cards topped up with examples), poll the first page (no `refresh`, so nothing is demoted) every `expansion.poll_after_ms` (else 8s), bounded; real cards float in and the examples they replace float out. Never needs a reload.
 - Every 6s swap one shown card with one waiting in the pool (float in/out). Identity-based animation.
 - Visible tiles also drift on a sine (Reduce Motion off). Related rail uses the same motion.
 - Visual: `https` (or `/samples`) image, else typographic poster by category.

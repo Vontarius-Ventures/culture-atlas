@@ -112,7 +112,7 @@ class ScreensTest {
                  "candidates":[{"name":"Eames Lounge Chair","type":"work","relation":"depicted","cited_frames":[]},
                                {"name":"Mid-century modern","type":"style","relation":"resembles","cited_frames":[]}]}}"""
         }
-        // Not bridged for phones yet: the screen shows what /v2 returned and points to the Feed.
+        // An older server refuses the phone: the screen shows what /v2 returned and points to the Feed.
         backend.on("GET /v1/captures/${TestBackend.CAPTURE}", status = 403) { """{"code":"scope_denied","message":"Not allowed."}""" }
         var openedFeed = false
         rule.mainClock.autoAdvance = false
@@ -132,6 +132,43 @@ class ScreensTest {
         // Nothing left the app.
         assertNull(shadowOf(app).nextStartedActivity)
         assertTrue(!openedFeed)
+    }
+
+    @Test
+    fun resultScreenShowsBridgedReferencesAndRecommendations() {
+        val media = """{"media":{"schema_version":1,"id":"${TestBackend.MEDIA}","kind":"photo","source":"phone_camera","status":"ready",
+            "analysis_status":"complete","created_at":"2026-10-22T10:00:00Z"},"generation":1,"revision":1,
+            "links":{"original":null,"playback":null,"poster":null,"analysis":null},"error_code":null,"frames":[]}"""
+        backend.on("GET /v2/media/${TestBackend.MEDIA}") { media }
+        backend.on("GET /v2/media/${TestBackend.MEDIA}/analysis/${TestBackend.ANALYSIS}") {
+            """{"analysis_id":"${TestBackend.ANALYSIS}","job_id":"j","state":"complete","reused":true,
+               "result_url":"/captures/${TestBackend.CAPTURE}","capture_id":"${TestBackend.CAPTURE}",
+               "result":{"mode":"photo","note":null,"frames":[{"frame_id":null,"timestamp_ms":null,"state":"complete"}],
+                 "candidates":[{"name":"Eames Lounge Chair","type":"work","relation":"depicted","cited_frames":[]}]}}"""
+        }
+        // GET /v1/captures/{id} through the native owner bridge: sourced references and Qloo cards.
+        backend.on("GET /v1/captures/${TestBackend.CAPTURE}") {
+            """{"id":"${TestBackend.CAPTURE}","status":"ready","job_id":null,"discovery_item_id":null,
+               "analysis":{"title":"A lounge chair","interpretation":"A moulded plywood lounge chair."},
+               "references":[{"id":"r1","name":"Charles and Ray Eames","type":"creator","relation":"depicted","qualified":false,"has_page":true},
+                             {"id":"r2","name":"Scandinavian design","type":"style","relation":"resembles","qualified":true,"has_page":false}],
+               "recommendations":[{"id":"q1","kind":"qloo_entity","category":"play","title":"Nina Simone","subtitle":"Artist","image":null,
+                 "is_example":false,"saved":false,"saved_item_id":null,"recommendation_id":null,"evidence_available":true}]}"""
+        }
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            AnalysisResultScreen(
+                api = backend.api, notices = notices, mediaId = TestBackend.MEDIA, analysisId = TestBackend.ANALYSIS,
+                entry = null, library = LibraryModel(backend.api), onBack = {}, onOpenCard = {}, onFeed = {},
+            )
+        }
+        rule.waitUntil(5_000) { backend.requests.any { it.startsWith("GET /v1/captures/") } }
+        settle(2_000)
+        rule.onNodeWithText("References").performScrollTo().assertExists()
+        rule.onNodeWithText("Charles and Ray Eames").assertExists()
+        rule.onNodeWithText("Resembles Scandinavian design").assertExists()
+        rule.onNodeWithText("Nina Simone").assertExists()
+        assertEquals(1, backend.requests.count { it.startsWith("GET /v1/captures/") })
     }
 
     @Test

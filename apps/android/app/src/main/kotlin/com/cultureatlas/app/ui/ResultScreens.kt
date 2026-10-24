@@ -159,7 +159,7 @@ fun AnalysisResultScreen(
                         if (it.recommendations.isNotEmpty() || it.jobId == null) return@LaunchedEffect
                     }
                     c.onFailure { error ->
-                        // Not readable from a phone yet (native owner bridge): show what /v2 returned.
+                        // Refused (an older server without the bridged read, or not found): show what /v2 returned.
                         if (error is AtlasClientException.Server) return@LaunchedEffect
                     }
                     delay(3_000)

@@ -419,6 +419,9 @@ struct AnalysisResultView: View {
   @State private var media: MediaLibraryItem?
   @State private var failed = false
   @State private var revealed = false
+  /// The compiled capture (`GET /v1/captures/{id}`): references + Qloo cards.
+  @State private var capture: CaptureResultResponse?
+  @State private var openedCard: DiscoveryCard?
 
   private var isAudio: Bool { route.kind == .audio }
 
@@ -440,6 +443,7 @@ struct AnalysisResultView: View {
             musicResult(result.result ?? AnalysisResult())
           } else {
             photoResult(result.result ?? AnalysisResult())
+            if let capture { captureSuggestions(capture) }
           }
           if result.finished {
             nextSteps
@@ -456,8 +460,10 @@ struct AnalysisResultView: View {
       }
       .padding(20)
       .animation(AtlasMotion.spring, value: result)
+      .animation(AtlasMotion.spring, value: capture)
     }
     .background(AtlasTheme.ivory.ignoresSafeArea())
+    .navigationDestination(item: $openedCard) { card in FeedCardDetail(card: card) }
     .navigationTitle(isAudio ? "Your music" : "Your photo")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
@@ -529,6 +535,44 @@ struct AnalysisResultView: View {
     .onAppear { revealed = true }
   }
 
+  /// Sourced references and the recommendations made from them, exactly as
+  /// the server compiled them (never filled in on the phone).
+  @ViewBuilder private func captureSuggestions(_ capture: CaptureResultResponse) -> some View {
+    if capture.references.isEmpty == false {
+      VStack(alignment: .leading, spacing: 8) {
+        Text("References").font(.footnote.weight(.semibold)).foregroundStyle(AtlasTheme.muted)
+        FlowLayout(spacing: 6) {
+          ForEach(capture.references) { ref in
+            Text(ref.phrase)
+              .font(.footnote)
+              .padding(.horizontal, 10)
+              .padding(.vertical, 6)
+              .background(Capsule().fill(AtlasTheme.quiet))
+              .accessibilityHint(ref.attribution ?? "")
+          }
+        }
+      }
+      .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+    if capture.recommendations.isEmpty == false {
+      VStack(alignment: .leading, spacing: 10) {
+        Text("Suggestions from this photo").font(.system(.title3, design: .serif))
+        ScrollView(.horizontal, showsIndicators: false) {
+          LazyHStack(alignment: .top, spacing: 12) {
+            ForEach(capture.recommendations) { card in
+              Button { openedCard = card } label: {
+                FeedCardTile(card: card, baseURL: controller.api.baseURL)
+                  .frame(width: 140)
+              }
+              .buttonStyle(.plain)
+            }
+          }
+        }
+      }
+      .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+  }
+
   private func musicResult(_ reading: AnalysisResult) -> some View {
     VStack(alignment: .leading, spacing: 12) {
       if reading.seeds.isEmpty {
@@ -597,13 +641,35 @@ struct AnalysisResultView: View {
         let loaded = try await controller.api.analysisResult(mediaID: route.mediaID, analysisID: analysisID)
         result = loaded
         failed = false
-        if !loaded.stillWorking { return }
+        if !loaded.stillWorking {
+          if loaded.finished, !isAudio, let captureID = loaded.captureID { await loadCapture(captureID) }
+          return
+        }
       } catch where AtlasClientError.isCancellation(error) {
         return
       } catch {
         if result == nil { failed = true }
       }
       try? await Task.sleep(nanoseconds: UInt64(min(5, 2 + attempt / 4) * 1_000_000_000))
+    }
+  }
+}
+
+extension AnalysisResultView {
+  /// References and recommendations compile after the vision read, so poll
+  /// briefly. A refusal (an older server without the bridged read) keeps
+  /// what `/v2` already showed.
+  fileprivate func loadCapture(_ captureID: UUID) async {
+    for _ in 0..<8 {
+      guard !Task.isCancelled else { return }
+      do {
+        let loaded = try await controller.api.captureResult(captureID)
+        capture = loaded
+        if loaded.settled { return }
+      } catch {
+        return
+      }
+      try? await Task.sleep(nanoseconds: 3_000_000_000)
     }
   }
 }

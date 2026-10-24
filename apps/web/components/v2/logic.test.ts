@@ -20,6 +20,10 @@ describe('media format', () => {
   it('formats durations and sizes like the mockups', () => {
     expect(formatDuration(42_000)).toBe('0:42');
     expect(formatDuration(125_400)).toBe('2:05');
+    // Same count as the <audio> player beside it: a 1.6 s recording is 0:01, not 0:02.
+    expect(formatDuration(1_600)).toBe('0:01');
+    expect(formatDuration(1_999)).toBe('0:01');
+    expect(formatDuration(59_999)).toBe('0:59');
     expect(formatBytes(3 * 1024 * 1024)).toBe('3 MB');
     expect(formatBytes(5_242_880)).toBe('5 MB');
     expect(formatBytes(1_288_490_189)).toBe('1.2 GB');
