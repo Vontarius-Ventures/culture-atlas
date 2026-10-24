@@ -49,11 +49,11 @@ export function useItemOverrides(): ReadonlyMap<string, ItemOverride> {
 }
 
 /** Applies local saved/hidden overrides to cards and drops hidden ones. */
-export function applyOverrides(
-  cards: readonly DiscoveryCard[],
+export function applyOverrides<T extends DiscoveryCard>(
+  cards: readonly T[],
   map: ReadonlyMap<string, ItemOverride>,
-): DiscoveryCard[] {
-  const out: DiscoveryCard[] = [];
+): T[] {
+  const out: T[] = [];
   for (const card of cards) {
     const o = map.get(card.id);
     if (o?.hidden) continue;

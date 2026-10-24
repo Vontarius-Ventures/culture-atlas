@@ -6,6 +6,8 @@ import './globals.css';
 import '@/components/v2/v2.css';
 // Spec amendment 2.2 screens 14-18 (taste onboarding, While we look, ready notice).
 import '@/components/onboarding/onboarding.css';
+// Style reading + style rails (prp/2026-10-23-style-analysis).
+import '@/components/style/style.css';
 
 export const metadata: Metadata = {
   title: { default: 'culture atlas', template: '%s · culture atlas' },

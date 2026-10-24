@@ -32,7 +32,15 @@ import {
   SOURCE_LABELS,
   statusLabel,
 } from './media-format';
-import { CollectionPicker, ConfirmDelete, FlowHeader, SignInPanel, V2Notice } from './parts';
+import {
+  CollectionPicker,
+  ConfirmDelete,
+  ExperimentalBadge,
+  FlowHeader,
+  SignInPanel,
+  V2Notice,
+} from './parts';
+import { analysisExperimental, type ExperimentalLabel } from '@/lib/client/style';
 import { EXPLORE_WAITING, exploreFailureMessage, exploreState } from './explore-state';
 import { loadCapabilities } from './uploads-client';
 import { V2Icon } from './V2Icon';
@@ -55,6 +63,8 @@ export function MediaDetailView({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [analysisReady, setAnalysisReady] = useState<boolean | null>(null);
+  // D.3/D.4: photo and video readings run unqualified in production and say so.
+  const [experimental, setExperimental] = useState<ExperimentalLabel | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [exploring, setExploring] = useState(false);
@@ -98,7 +108,10 @@ export function MediaDetailView({ id }: { id: string }) {
     }
     void Promise.resolve().then(fetchItem);
     loadCapabilities()
-      .then((c) => setAnalysisReady(c.availability.analysis?.available ?? false))
+      .then((c) => {
+        setAnalysisReady(c.availability.analysis?.available ?? false);
+        setExperimental(analysisExperimental(c.availability.analysis));
+      })
       .catch(() => setAnalysisReady(null));
   }, [session, isAccount, fetchItem]);
 
@@ -357,6 +370,14 @@ export function MediaDetailView({ id }: { id: string }) {
               Save to collection
             </button>
           </div>
+          {(analysis?.experimental ?? experimental) && (
+            <div className="detail__experimental">
+              <ExperimentalBadge
+                label={(analysis?.experimental ?? experimental)!.label}
+                note={(analysis?.experimental ?? experimental)!.note}
+              />
+            </div>
+          )}
           <div id="explore-why" className="detail-status" aria-live="polite">
             {m.status !== 'ready' && (
               <p className="muted">Exploring is available once this {m.kind} is ready.</p>
