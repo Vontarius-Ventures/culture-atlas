@@ -36,7 +36,7 @@ export function CitySheet({
           setBusy(true);
           setError(null);
           try {
-            await api.send('PUT', '/v1/me/city', {
+            await api.request('setCity', {
               body: { city: value },
               idempotencyKey: newIdempotencyKey(),
             });

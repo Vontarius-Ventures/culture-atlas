@@ -44,6 +44,13 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(view.analysis).toMatchObject({ version: 1, title: 'Vintage racing references', interpretation: WITH_FOOD, warnings: [] });
     expect(view.analysis!.sections).toMatchObject({ observations: 'complete', references: 'complete', research: 'complete', wear: 'complete', play: 'complete', watch: 'complete', eat: 'complete' });
     expect(view.job_id).toBeNull();
+    expect(view.rails).toBeDefined();
+    // An analysis from before the style stage (no style section): no rails, so clients render
+    // `recommendations` as before and never poll for sections that will not arrive.
+    await ctx.db.query(`UPDATE analyses SET section_statuses = section_statuses - 'style' WHERE id = $1`, [view.analysis!.id]);
+    const legacy = await captures.getCapture(ctx, { id: capture_id });
+    expect(legacy.rails).toBeUndefined();
+    expect(legacy.recommendations.length).toBe(view.recommendations.length);
 
     // Guardrails (quality plan §4): this single full reading has no stage 2, so the brand it read
     // (a held claim in a two-stage reading) is dropped before resolution, never published.

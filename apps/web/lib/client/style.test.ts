@@ -133,12 +133,14 @@ describe('StyledCaptureResponse (E.2 additive fields)', () => {
       'nylon shell',
     ]);
     expect(parsed.style.experimental?.label).toBe('Experimental');
-    // New statuses are mapped for the base contract so old fields still validate.
+    // The shared contract carries the E.2 statuses now, so they pass through unchanged
+    // (`style` itself is lifted into `parsed.style.status`).
     expect(parsed.analysis?.sections).toEqual({
       observations: 'complete',
-      wear: 'complete',
-      eat: 'complete',
+      wear: 'ready',
+      eat: 'empty',
     });
+    expect(parsed.style.status).toBe('ready');
   });
 
   it('a malformed claim is dropped alone; a malformed reading never breaks the page', () => {

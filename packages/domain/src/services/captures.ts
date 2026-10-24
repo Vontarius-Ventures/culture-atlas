@@ -663,7 +663,10 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
       }
       const byCategory = new Map<Category, DiscoveryCard[]>();
       for (const c of recommendations) if (c.category) byCategory.set(c.category, [...(byCategory.get(c.category) ?? []), c]);
-      rails = buildRails({ stored, sections: a.section_statuses ?? {}, moreLikeThis: bySubject, crossDomain: byCategory, experimental: a.experimental });
+      // An analysis made before the style stage existed has no `style` section: no rails, so
+      // clients keep rendering `recommendations` (and never poll sections that will not arrive).
+      const styleEra = a.section_statuses?.style !== undefined || mlt.length > 0;
+      if (styleEra) rails = buildRails({ stored, sections: a.section_statuses ?? {}, moreLikeThis: bySubject, crossDomain: byCategory, experimental: a.experimental });
     }
   }
 

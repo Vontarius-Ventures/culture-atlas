@@ -237,7 +237,8 @@ fun AnalysisResultScreen(
                         }
                         .onFailure { error ->
                             haptics.reject()
-                            retryNote = if ((error as? AtlasClientException.Server)?.code == "retry_used") StyleCopy.RETRY_USED
+                            // The server answers 409 `conflict` (details.reason `retry_used` / `not_failed`): no second try.
+                            retryNote = if ((error as? AtlasClientException.Server)?.let { it.status == 409 || it.code == "retry_used" } == true) StyleCopy.RETRY_USED
                             else "Couldn't try again right now."
                         }
                     retrying = false

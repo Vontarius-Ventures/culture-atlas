@@ -181,21 +181,31 @@ export const StyleReading = z.object({
 });
 export type StyleReading = z.infer<typeof StyleReading>;
 
-export const StyleMatch = z.object({
+const StyleMatchLenient = z.object({
   subject_id: z.string().nullable().optional().catch(null),
   attributes: lenientArray(z.string().trim().min(1).max(80), 4),
   palette: lenientArray(z.string().trim().min(1).max(40), 3),
   via: z.string().nullable().optional().catch(null),
   experimental: z.boolean().optional().catch(false),
 });
-export type StyleMatch = z.infer<typeof StyleMatch>;
+/** Card style match, normalized to the shared contract's shape (every field present). */
+export type StyleMatch = NonNullable<DiscoveryCard['style_match']>;
+export const StyleMatch = StyleMatchLenient.transform(
+  (m): StyleMatch => ({
+    subject_id: m.subject_id ?? null,
+    attributes: m.attributes,
+    palette: m.palette,
+    via: m.via ?? null,
+    experimental: m.experimental ?? false,
+  }),
+);
 
-/** DiscoveryCard plus the two optional E.2 fields. */
+/** DiscoveryCard plus the two optional E.2 fields, typed as the shared DiscoveryCard. */
 export const StyledCard = DiscoveryCard.extend({
   reason: z.string().trim().min(1).max(140).nullable().optional().catch(null),
   style_match: lenientObject(StyleMatch).optional(),
-});
-export type StyledCard = z.infer<typeof StyledCard>;
+}).transform((c): DiscoveryCard => c);
+export type StyledCard = DiscoveryCard;
 
 export const Rail = z.object({
   key: z.string().min(1).max(64),

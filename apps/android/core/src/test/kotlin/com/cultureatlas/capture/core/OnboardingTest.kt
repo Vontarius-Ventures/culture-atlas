@@ -276,10 +276,9 @@ class OnboardingTest {
             "GET /v1/collections", "POST /v1/collections",
             "GET /v1/collections/{id}", "PUT /v1/collections/{id}/items/{item_id}",
         )
-        // The style contract (design E.4) adds STYLE_OPERATIONS to the shared fixture; until that
-        // fixture lands on this branch they may be missing there, but nothing else may differ.
-        assertEquals(operations - AtlasApi.STYLE_OPERATIONS, called.toSet())
-        assertEquals(called.toSet() + AtlasApi.STYLE_OPERATIONS, AtlasApi.ONBOARDING_OPERATIONS)
+        // The style contract (design E.4) adds STYLE_OPERATIONS; the shared fixture lists them all.
+        assertEquals(called.toSet() + AtlasApi.STYLE_OPERATIONS, operations)
+        assertEquals(operations, AtlasApi.ONBOARDING_OPERATIONS)
     }
 }
 

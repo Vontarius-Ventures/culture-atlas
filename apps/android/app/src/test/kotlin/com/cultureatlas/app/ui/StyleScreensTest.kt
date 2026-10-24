@@ -203,7 +203,7 @@ class StyleScreensTest {
         val retries = CopyOnWriteArrayList<String>()
         backend.on("POST /v1/captures/${TestBackend.CAPTURE}/style/retry", status = 409) {
             retries += it.getHeader("Idempotency-Key").orEmpty()
-            """{"code":"retry_used","message":"Already retried.","retryable":false,"request_id":"r"}"""
+            """{"code":"conflict","message":"This style reading was already retried.","retryable":false,"request_id":"r","details":{"reason":"retry_used"}}"""
         }
         showResult()
         rule.onNodeWithText(StyleCopy.FAILED).assertExists()

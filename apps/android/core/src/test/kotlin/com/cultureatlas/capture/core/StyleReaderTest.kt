@@ -284,7 +284,7 @@ class StyleReaderTest {
     fun retryAndCityUseTheBodyAndAnIdempotencyKey() = runBlocking {
         val server = MockWebServer()
         server.enqueue(MockResponse().setResponseCode(202).setBody("""{"sections":{"style":"running"}}"""))
-        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"code":"retry_used","message":"Already retried.","retryable":false,"request_id":"req_1"}"""))
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"code":"conflict","message":"This style reading was already retried.","retryable":false,"request_id":"req_1","details":{"reason":"retry_used"}}"""))
         server.enqueue(MockResponse().setResponseCode(204))
         server.start()
         try {
@@ -305,7 +305,8 @@ class StyleReaderTest {
             assertEquals("/v1/captures/$CAPTURE/style/retry", first.path)
             assertNotNull(first.getHeader("Idempotency-Key"))
             val used = assertThrows<AtlasClientException.Server> { runBlocking { api.retryStyle(CAPTURE) } }
-            assertEquals("retry_used", used.code)
+            assertEquals(409, used.status)
+            assertEquals("conflict", used.code)
             server.takeRequest()
 
             api.setCity("  Los Angeles, CA  ")

@@ -275,7 +275,8 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
   const retryStyle = async () => {
     setStyleRetrying(true);
     try {
-      await api.send('POST', `/v1/captures/${encodeURIComponent(captureId)}/style/retry`, {
+      await api.request('retryStyle', {
+        params: { id: captureId },
         idempotencyKey: newIdempotencyKey(),
       });
       setStyleRetryUsed(true);
