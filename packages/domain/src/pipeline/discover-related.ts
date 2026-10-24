@@ -22,8 +22,8 @@ import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { loadItemAnchors } from '../library/anchors';
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
-import { destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, readDisplayMetadata, type DisplayImage } from '../services/display';
-import { interleaveFeed } from '../services/discovery';
+import { clipText, destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, readDisplayMetadata, type DisplayImage } from '../services/display';
+import { interleaveFeed, rebuildFeedSnapshots } from '../services/discovery';
 
 /**
  * Explicit "Discover more" for one item: anchors = item's canonical entities
@@ -50,7 +50,7 @@ const SEARCH_TYPES: Partial<Record<ItemKind, QlooEntityType>> = {
 
 function textProp(properties: Record<string, unknown> | undefined, key: string): string | null {
   const v = properties?.[key];
-  return typeof v === 'string' && v.trim() ? v.trim().slice(0, 280) : null;
+  return typeof v === 'string' && v.trim() ? clipText(v) : null;
 }
 
 /** Interest-feed cards already sourced from Qloo for this owner — not a title search. */
@@ -113,6 +113,26 @@ async function seedRelatedPicks(
   return out;
 }
 
+/** "Mulatu's Bar" for Mulatu Astatke, or the origin itself in another script, is not a discovery. */
+export function sameAsOrigin(candidate: string, origin: string): boolean {
+  const a = normalizeLabel(candidate);
+  const b = normalizeLabel(origin);
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  const first = b.split('-')[0] ?? '';
+  return first.length >= 4 && a.split('-').some((w) => w.replace(/s$/, '') === first);
+}
+
+/** Qloo lists localized names (e.g. 細野晴臣 for Haruomi Hosono): the same person is not "related". */
+function namesOrigin(entity: QlooEntity, origin: string): boolean {
+  const alt = entity.properties?.['alternative_names'] ?? entity.properties?.['akas'];
+  const names = Array.isArray(alt) ? alt : [];
+  return names.some((n) => {
+    const value = typeof n === 'string' ? n : n && typeof n === 'object' ? (n as { value?: unknown }).value : null;
+    return typeof value === 'string' && normalizeLabel(value) !== '' && normalizeLabel(value) === normalizeLabel(origin);
+  });
+}
+
 interface Pick {
   key: string;
   kind: ItemKind;
@@ -130,8 +150,14 @@ interface Pick {
 
 export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
   const { discovery_job_id, origin_item_id } = ctx.payload;
-  const dj = await ctx.db.query<{ owner_account_id: string | null; owner_session_id: string | null; category: Category | null }>(
-    'SELECT owner_account_id, owner_session_id, category FROM discovery_jobs WHERE id = $1',
+  const dj = await ctx.db.query<{
+    owner_account_id: string | null;
+    owner_session_id: string | null;
+    category: Category | null;
+    source: 'item' | 'music_mode';
+    source_label: string | null;
+  }>(
+    'SELECT owner_account_id, owner_session_id, category, source, source_label FROM discovery_jobs WHERE id = $1',
     [discovery_job_id],
   );
   const item = await ctx.db.query<{
@@ -149,6 +175,11 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
   const owner: Owner = job.owner_account_id
     ? { kind: 'account', accountId: job.owner_account_id }
     : { kind: 'session', sessionId: job.owner_session_id! };
+  // Music Mode: the reason names what the user heard; results join the feed.
+  const fromMusic = job.source === 'music_mode';
+  const connectedReason = fromMusic
+    ? `Because you heard ${job.source_label ?? origin.title}.`
+    : `Loved by fans of ${origin.title}.`;
   await ctx.db.query(`UPDATE discovery_jobs SET status = 'running' WHERE id = $1`, [discovery_job_id]);
 
   const anchors = (await loadItemAnchors(ctx.db, [origin.id])).get(origin.id) ?? [];
@@ -199,7 +230,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
       const map = QLOO_KIND[filterType]!;
       const toPicks = (entities: QlooEntity[], queryId: string, isReplay: boolean): Pick[] =>
         entities
-          .filter((e) => !signals.ids.includes(e.entity_id))
+          .filter((e) => !signals.ids.includes(e.entity_id) && !namesOrigin(e, origin.title))
           .map((e) => ({
             key: canonicalKeyFor({ kind: map.kind, title: e.name, qlooId: e.entity_id }),
             kind: map.kind,
@@ -212,9 +243,9 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
             destination_url: destinationFromQlooProperties(e.properties),
             origin: isReplay ? ('replay' as const) : ('qloo' as const),
             provider_query_ids: [queryId],
-            reason: `Connected to ${origin.title}.`,
+            reason: connectedReason,
           }))
-          .filter((p) => !hidden.has(p.key) && p.key !== origin.canonical_key);
+          .filter((p) => !hidden.has(p.key) && p.key !== origin.canonical_key && !sameAsOrigin(p.title, origin.title));
 
       if (session.insightsUsable() && signals.ids.length > 0) {
         try {
@@ -253,18 +284,33 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
     if (seededEat.length) {
       picks.push(...seededEat);
       statuses.eat = 'complete';
-    } else if (session.searchUsable()) {
+    } else if (
+      (signals.ids.length > 0 && session.insightsUsable()) ||
+      (origin.kind === 'food' && session.searchUsable())
+    ) {
       const out = await ctx.runStage('eat:places', async () => {
         const before = session.recorded.length;
         try {
-          const { response, queryId } = await session.search(origin.title, ['urn:entity:place'], {
-            purpose: 'related_discovery',
-            category: 'eat',
-          });
+          // Taste-based: places Qloo connects to the origin's own entities. A
+          // name search ("Babette's Feast" -> a venue called Babette's Feast)
+          // is only right when the origin is itself a dish or a place.
+          const tasteBased = signals.ids.length > 0 && session.insightsUsable();
+          const { response, queryId } = tasteBased
+            ? await (async () => {
+                const r = await session.insights(
+                  { filterType: 'urn:entity:place', signalEntities: signals.ids.slice(0, 10), explainability: true, take: 15 },
+                  { purpose: 'related_discovery', category: 'eat' },
+                );
+                return { response: { data: r.response.data.entities, is_replay: r.response.is_replay }, queryId: r.queryId };
+              })()
+            : await session.search(origin.title, ['urn:entity:place'], {
+                purpose: 'related_discovery',
+                category: 'eat',
+              });
           const map = QLOO_KIND['urn:entity:place']!;
           const candidates = await Promise.all(
             response.data
-              .filter((e) => !signals.ids.includes(e.entity_id))
+              .filter((e) => !signals.ids.includes(e.entity_id) && !(tasteBased && sameAsOrigin(e.name, origin.title)))
               .map(async (e): Promise<Pick | null> => {
                 const image = await qlooImageIfRenderable(imageFromQlooProperties(e.properties, e.name));
                 if (!image) return null;
@@ -280,7 +326,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
                   destination_url: destinationFromQlooProperties(e.properties),
                   origin: response.is_replay ? ('replay' as const) : ('qloo' as const),
                   provider_query_ids: [queryId],
-                  reason: `Connected to ${origin.title}.`,
+                  reason: tasteBased ? connectedReason : `Shares a name with ${origin.title}.`,
                 };
               }),
           );
@@ -429,6 +475,8 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
     }
     await insertRecommendations(tx, parent, recs);
     await tx.query('UPDATE discovery_jobs SET status = $2 WHERE id = $1', [discovery_job_id, state]);
+    // Music Mode suggestions float into the interest feed right away.
+    if (fromMusic && owner.kind === 'account' && recs.length) await rebuildFeedSnapshots(tx, owner);
   });
   return { state, resultType: 'discovery_job', resultId: discovery_job_id };
 };

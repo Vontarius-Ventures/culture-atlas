@@ -16,7 +16,7 @@ import {
   musicModePermissionRequest,
 } from './music-mode';
 import { AUDIO_CAPABILITIES } from './limits';
-import { queriesFromTranscript } from './qloo-seeds';
+import { artistSeedsFromQlooEntities, queriesFromTranscript } from './qloo-seeds';
 import {
   ELEVENLABS_TRANSCRIPTION,
   ElevenLabsScribeTranscription,
@@ -45,10 +45,38 @@ describe('AUD01 camera-off Music Mode', () => {
   });
 
   it('extracts artist queries from a transcript and never invents names', () => {
-    expect(queriesFromTranscript('That was Feeling Good by Nina Simone.')).toEqual(['Nina Simone']);
-    expect(queriesFromTranscript('"Redbone" by Childish Gambino')).toEqual(['Redbone', 'Childish Gambino']);
+    expect(queriesFromTranscript('That was Feeling Good by Nina Simone.')).toEqual(['Nina Simone', 'Feeling Good']);
+    expect(queriesFromTranscript('"Redbone" by Childish Gambino')).toEqual(['Childish Gambino', 'Redbone']);
     expect(queriesFromTranscript('')).toEqual([]);
     expect(queriesFromTranscript('   ')).toEqual([]);
+    // DJ patterns, no sentence-crossing, apostrophes are not quotes.
+    expect(
+      queriesFromTranscript(
+        "You're listening to Fleetwood Mac. That was Dreams from the album Rumors. Up next, more Fleetwood Mac",
+      )[0],
+    ).toBe('Fleetwood Mac');
+    expect(queriesFromTranscript('This one is Dreams by Fleetwood Mac, a classic from 1977')[0]).toBe('Fleetwood Mac');
+    expect(queriesFromTranscript('Daft Punk - Get Lucky')).toEqual(['Daft Punk', 'Get Lucky']);
+    // Ordinary speech is never sent to Qloo as an "artist".
+    expect(queriesFromTranscript('Okay, so I think we should pick up groceries later and then go to the park.')).toEqual([]);
+  });
+
+  it('resolves only an artist whose full name was heard; fuzzy neighbours never win', () => {
+    const artist = (name: string, popularity: number) => ({
+      entity_id: `id-${name}`, name, types: ['urn:entity:artist'], properties: {}, tags: [], popularity,
+    });
+    const search = [artist('Fleetwood Mac', 0.9995), artist('G Tom Mac', 0.5), artist('TobyMac', 0.8), artist('Tokyo Machine', 0.4)];
+    expect(artistSeedsFromQlooEntities(search, "You're listening to Fleetwood Mac.")).toMatchObject({
+      status: 'resolved', seeds: [{ entity_id: 'id-Fleetwood Mac', name: 'Fleetwood Mac' }],
+    });
+    // A short name inside the longer heard name does not compete.
+    expect(artistSeedsFromQlooEntities([artist('Mac', 0.3), ...search], 'more Fleetwood Mac').seeds[0]?.name).toBe('Fleetwood Mac');
+    // "The" and punctuation are ignored; same-named artists resolve to the most popular.
+    expect(artistSeedsFromQlooEntities([artist('The Beatles', 0.99), { ...artist('Beatles', 0.2), entity_id: 'tribute' }], 'that was beatles').seeds[0]?.entity_id)
+      .toBe('id-The Beatles');
+    // Two different heard names stay ambiguous; nothing heard is unresolved.
+    expect(artistSeedsFromQlooEntities([artist('Daft Punk', 0.9), artist('Pharrell Williams', 0.9)], 'Daft Punk with Pharrell Williams').status).toBe('ambiguous');
+    expect(artistSeedsFromQlooEntities(search, 'pick up groceries later').status).toBe('unresolved');
   });
 
   it('parses Scribe v2 JSON without sending live audio', async () => {

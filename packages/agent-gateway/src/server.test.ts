@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { agentConnections, collections } from '@culture-atlas/domain';
+import { SCOPES, agentConnections, agentPlatform, collections } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, insertAccount, insertAgentConnection } from '@culture-atlas/domain/testing';
 import { ConnectionRefusedError } from '../../../apps/demo-agent/src/client';
 import { SPEC_TOOL_NAMES } from './tools';
+import { errorDetailText } from './server';
 import { buildLibrary, connect, mcpClient, rawMcp } from './test-helpers';
 
 const db = getTestDb();
@@ -19,13 +20,53 @@ const INIT = {
 describe('MCP transport and bearer auth', () => {
   it('lists exactly the spec tools with JSON input schemas', async () => {
     const lib = await buildLibrary();
-    const { credential } = await connect(lib);
+    const { credential } = await connect(lib, { scopes: [...SCOPES], library_access: 'all' });
     const client = await mcpClient(credential);
     try {
       expect((await client.listTools()).sort()).toEqual([...SPEC_TOOL_NAMES].sort());
     } finally {
       await client.close();
     }
+  });
+
+  it('lists only the tools a narrower connection can call', async () => {
+    const lib = await buildLibrary();
+    const { credential } = await connect(lib);
+    const client = await mcpClient(credential);
+    try {
+      const names = await client.listTools();
+      expect(names).toEqual(expect.arrayContaining(['get_item', 'list_captures', 'get_discoveries', 'list_plans', 'get_plan']));
+      for (const hidden of ['begin_upload', 'request_capture', 'update_preferences', 'create_collection', 'record_preference'])
+        expect(names).not.toContain(hidden);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('records v1 mutations in the owner’s agent activity with readable targets', async () => {
+    const lib = await buildLibrary();
+    const { credential } = await connect(lib, { scopes: [...SCOPES], library_access: 'all' });
+    const client = await mcpClient(credential);
+    try {
+      const created = await client.callTool<{ id: string }>('create_collection', { name: 'Dinner party' });
+      expect(created.ok).toBe(true);
+      const id = created.ok ? created.data.id : '';
+      expect((await client.callTool('add_collection_item', { collection_id: id, item_id: lib.film })).ok).toBe(true);
+      const recent = await client.callTool<{ items: { title: string | null; recommendation_item_ids: string[] }[] }>('list_captures', {});
+      expect(recent.ok && recent.data.items[0]?.title).toBe('Café table');
+    } finally {
+      await client.close();
+    }
+    const activity = await agentPlatform.getActivity(lib.ownerCtx);
+    const actions = activity.items.map((i) => [i.action, i.target_label]);
+    expect(actions).toEqual(expect.arrayContaining([['collections.create', 'Dinner party'], ['collections.add_item', 'Dinner party']]));
+  });
+
+  it('puts invalid fields and missing scopes into the error text models read', () => {
+    expect(errorDetailText({ issues: [{ path: 'target_id', message: 'Required' }, { path: '', message: 'Unrecognized key: "item_id"' }] }))
+      .toBe('target_id: Required; Unrecognized key: "item_id"');
+    expect(errorDetailText({ missing_scopes: ['collections:write'] })).toBe('needs collections:write');
+    expect(errorDetailText(undefined, ['taste:write'])).toBe('needs taste:write');
   });
 
   it('refuses missing, unknown, revoked and expired tokens at the HTTP layer with REST codes', async () => {

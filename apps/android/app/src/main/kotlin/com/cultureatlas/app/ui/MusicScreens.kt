@@ -1,6 +1,7 @@
 package com.cultureatlas.app.ui
 
 import android.Manifest
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -68,6 +69,8 @@ fun MusicScreen(graph: AppGraph, onBack: () -> Unit) {
     var kept by remember { mutableStateOf<DraftRecord?>(null) }
     val scope = rememberCoroutineScope()
     val clock = remember { ClipClock(limitSeconds = AudioPolicy.MAX_SECONDS) }
+    // System Back matches the Back button: a recording in progress is never abandoned by a swipe.
+    BackHandler { if (!recording) onBack() }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             audio.refreshRoutes()

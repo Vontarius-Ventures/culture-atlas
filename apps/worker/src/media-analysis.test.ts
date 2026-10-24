@@ -772,7 +772,7 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
     expect(error).toBeInstanceOf(AppError);
     expect(error).toMatchObject({
       code: 'service_unavailable',
-      message: 'Exploration is temporarily unavailable.',
+      message: 'Exploration is not available on this server yet.',
     });
     expect(
       (

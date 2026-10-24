@@ -3,9 +3,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { SAMPLE_ITEMS } from '../feed/samples';
 import { accountCtx, anonCtx, ctxFor, insertCaptureWithAnalysis, insertItem, saveDirect } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAgentConnection } from '../testing';
-import { FEED_TOP_UP_MIN, getDiscoveries, interleaveFeed, longestCategoryRun, weaveRecentIntoFront } from './discovery';
+import { demoteIds, FEED_TOP_UP_MIN, getDiscoveries, interleaveFeed, longestCategoryRun, weaveRecentIntoFront } from './discovery';
 import { getItem, startRelatedDiscovery } from './items';
 import { recordPreference } from './preferences';
+import { enqueueJob } from '../jobs/queue';
 
 const db = getTestDb();
 afterAll(closeTestDb);
@@ -190,7 +191,7 @@ describe('discovery feed', () => {
     expect(feed.feed_revision).toBeGreaterThan(0);
   });
 
-  it('does not put related-discovery results on the home feed', async () => {
+  it('does not put creative (non-Qloo) related-discovery results on the home feed', async () => {
     const { principal, ctx } = await accountCtx();
     const owner = { accountId: principal.accountId };
     const film = await insertItem(owner, { kind: 'film', title: 'Playtime' });
@@ -210,6 +211,55 @@ describe('discovery feed', () => {
     const feed = await getDiscoveries(ctx, { limit: 24, refresh: true });
     expect(feed.items.map((c) => c.id)).toContain(film);
     expect(feed.items.map((c) => c.id)).not.toContain(junk);
+  });
+
+  it('demotes the previous first page on refresh without dropping a card', () => {
+    const ids = Array.from({ length: 30 }, (_, i) => `c${i}`);
+    const out = demoteIds(ids, ids.slice(0, 6), 24);
+    expect(out.slice(0, 6)).toEqual(['c6', 'c7', 'c8', 'c9', 'c10', 'c11']);
+    expect(out.slice(24, 30)).toEqual(ids.slice(0, 6));
+    expect([...out].sort()).toEqual([...ids].sort());
+    // A short feed keeps every card, just reordered.
+    expect(demoteIds(['a', 'b', 'c'], ['a'], 24)).toEqual(['b', 'c', 'a']);
+    expect(demoteIds(['a'], ['a'], 24)).toEqual(['a']);
+  });
+
+  it('a refresh changes the top of the feed and never empties it', async () => {
+    const { principal, ctx } = await accountCtx();
+    const owner = { accountId: principal.accountId };
+    const ids: string[] = [];
+    for (let i = 0; i < 30; i++) ids.push(await insertItem(owner, { kind: 'film', category: 'watch', title: `Film ${i}` }));
+    const cap = await insertCaptureWithAnalysis(owner, { recommendItemIds: ids });
+    await recordPreference(ctx, { action: 'save', target_type: 'capture', target_id: cap.captureId });
+    const first = await getDiscoveries(ctx, { limit: 6, refresh: false });
+    const second = await getDiscoveries(ctx, { limit: 6, refresh: true });
+    expect(second.items.length).toBe(6);
+    const before = new Set(first.items.map((c) => c.id));
+    expect(second.items.some((c) => !before.has(c.id))).toBe(true);
+    expect(first.expansion).toEqual({ state: 'idle', poll_after_ms: null });
+  });
+
+  it('reports expansion running while the taste seed is still publishing, idle once it finishes', async () => {
+    const { principal, ctx } = await accountCtx();
+    const owner = { kind: 'account' as const, accountId: principal.accountId };
+    const { job } = await enqueueJob(db, {
+      type: 'taste_seed',
+      owner,
+      payload: { taste_revision: 1, catalog_version: 'test', categories: ['play', 'watch'] },
+    });
+    // One category landed: a short personal pool topped up with labeled examples.
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) ids.push(await insertItem(owner, { kind: 'film', category: 'watch', title: `Seed film ${i}` }));
+    const cap = await insertCaptureWithAnalysis(owner, { recommendItemIds: ids });
+    await recordPreference(ctx, { action: 'save', target_type: 'capture', target_id: cap.captureId });
+    const partial = await getDiscoveries(ctx, { limit: 24, refresh: false });
+    expect(partial.is_example_feed).toBe(false);
+    expect(partial.items.some((c) => c.is_example)).toBe(true);
+    // Clients keep polling (and float the rest in) because the seed is still running.
+    expect(partial.expansion).toEqual({ state: 'running', poll_after_ms: 4000 });
+    await db.query(`UPDATE jobs SET state = 'complete' WHERE id = $1`, [job.id]);
+    const done = await getDiscoveries(ctx, { limit: 24, refresh: false });
+    expect(done.expansion).toEqual({ state: 'idle', poll_after_ms: null });
   });
 
   it('selected-collection agents cannot read the global feed', async () => {

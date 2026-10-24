@@ -22,10 +22,23 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
     let id: UUID
     let resultPath: String?
     let title: String
+    var mediaID: UUID? = nil
+    var kind: MediaKind? = nil
+  }
+
+  /// A finished analysis to show natively (sheet over whatever tab is open).
+  struct ResultRoute: Equatable, Identifiable {
+    let mediaID: UUID
+    let analysisID: UUID?
+    let kind: MediaKind?
+    /// Web path, used only as a last resort when the native result can't load.
+    let webPath: String?
+    var id: String { "\(mediaID)-\(analysisID?.uuidString ?? "latest")" }
   }
 
   @Published private(set) var toast: Toast?
   @Published private(set) var exploring: Set<UUID> = []
+  @Published var presented: ResultRoute?
 
   private let api: AtlasAPI
   private let sessions: SessionStore
@@ -75,6 +88,21 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
     if let account = await sessions.currentAccountID { await store.clear(account: account) }
   }
 
+  // MARK: Last analysis per item (ids only; lets the library reopen a result)
+
+  private static let lastAnalysisKey = "atlas.last-analysis"
+
+  func rememberAnalysis(_ analysisID: UUID, for mediaID: UUID) {
+    var map = UserDefaults.standard.dictionary(forKey: Self.lastAnalysisKey) as? [String: String] ?? [:]
+    map[mediaID.uuidString.lowercased()] = analysisID.uuidString.lowercased()
+    UserDefaults.standard.set(map, forKey: Self.lastAnalysisKey)
+  }
+
+  func lastAnalysis(for mediaID: UUID) -> UUID? {
+    let map = UserDefaults.standard.dictionary(forKey: Self.lastAnalysisKey) as? [String: String]
+    return map?[mediaID.uuidString.lowercased()].flatMap(UUID.init(uuidString:))
+  }
+
   // MARK: Starting an analysis ("Explore this photo")
 
   func explore(assetID: UUID) async -> Bool {
@@ -83,6 +111,7 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
     do {
       let media = try await api.media(assetID)
       let status = try await api.startAnalysis(mediaID: assetID, generation: media.generation)
+      rememberAnalysis(status.analysisID, for: assetID)
       await store.watch(
         WatchedAnalysis(mediaID: assetID, analysisID: status.analysisID, startedAt: Date(), kind: .photo),
         account: account)
@@ -104,6 +133,7 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
       let media = try await api.media(assetID)
       let status = try await api.startMusicAnalysis(
         mediaID: assetID, generation: media.generation, startMS: startMS, endMS: endMS)
+      rememberAnalysis(status.analysisID, for: assetID)
       await store.watch(
         WatchedAnalysis(mediaID: assetID, analysisID: status.analysisID, startedAt: Date(), kind: .audio),
         account: account)
@@ -140,7 +170,9 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
       switch decision.notice {
       case .notification: await postNotification(for: watch, resultPath: resultPath, title: title)
       case .toast:
-        toast = Toast(id: watch.analysisID, resultPath: resultPath, title: title)
+        withAnimation(AtlasMotion.spring) {
+          toast = Toast(id: watch.analysisID, resultPath: resultPath, title: title, mediaID: watch.mediaID, kind: watch.kind)
+        }
         AccessibilityNotification.Announcement(title).post()
       case .none: break
       }
@@ -158,7 +190,13 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
     content.title = title
     content.categoryIdentifier = ReadyNoticePolicy.notificationCategory
     content.sound = .default
-    if let resultPath { content.userInfo = ["result_path": resultPath] }
+    var info: [String: String] = [
+      "media_id": watch.mediaID.uuidString.lowercased(),
+      "analysis_id": watch.analysisID.uuidString.lowercased(),
+      "kind": (watch.kind ?? .photo).rawValue,
+    ]
+    if let resultPath { info["result_path"] = resultPath }
+    content.userInfo = info
     let request = UNNotificationRequest(
       identifier: watch.analysisID.uuidString.lowercased(), content: content, trigger: nil)
     try? await UNUserNotificationCenter.current().add(request)
@@ -195,13 +233,30 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
 
   // MARK: Open / Dismiss
 
-  func dismissToast() { toast = nil }
+  func dismissToast() {
+    withAnimation(AtlasMotion.spring) { toast = nil }
+  }
 
-  func open(resultPath: String?) {
-    toast = nil
-    // The result page lives in the web app; the path comes from our own API.
-    guard let resultPath, resultPath.hasPrefix("/"),
-      let url = URL(string: resultPath, relativeTo: api.baseURL)?.absoluteURL
+  /// Opens the native result screen. The web page is only a fallback offered
+  /// inside that screen (the phone's session is not a browser cookie).
+  func open(_ toast: Toast) {
+    dismissToast()
+    guard let mediaID = toast.mediaID else {
+      openWeb(path: toast.resultPath)
+      return
+    }
+    presented = ResultRoute(mediaID: mediaID, analysisID: toast.id, kind: toast.kind, webPath: toast.resultPath)
+  }
+
+  func open(mediaID: UUID, analysisID: UUID?, kind: MediaKind?, webPath: String? = nil) {
+    dismissToast()
+    presented = ResultRoute(mediaID: mediaID, analysisID: analysisID, kind: kind, webPath: webPath)
+  }
+
+  /// Last resort: the web result page (photo results only; never an API path).
+  func openWeb(path: String?) {
+    guard let path, path.hasPrefix("/"), !path.hasPrefix("/v2/"),
+      let url = URL(string: path, relativeTo: api.baseURL)?.absoluteURL
     else { return }
     UIApplication.shared.open(url)
   }
@@ -218,37 +273,70 @@ extension ReadyNoticeCenter: UNUserNotificationCenterDelegate {
   nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
   ) async {
-    let path = response.notification.request.content.userInfo["result_path"] as? String
+    let info = response.notification.request.content.userInfo
+    let path = info["result_path"] as? String
+    let mediaID = (info["media_id"] as? String).flatMap(UUID.init(uuidString:))
+    let analysisID = (info["analysis_id"] as? String).flatMap(UUID.init(uuidString:))
+    let kind = (info["kind"] as? String).flatMap(MediaKind.init(rawValue:))
     guard response.actionIdentifier == ReadyNoticePolicy.openAction
       || response.actionIdentifier == UNNotificationDefaultActionIdentifier
     else { return }
-    await MainActor.run { self.open(resultPath: path) }
+    await MainActor.run {
+      if let mediaID {
+        self.open(mediaID: mediaID, analysisID: analysisID, kind: kind, webPath: path)
+      } else {
+        self.openWeb(path: path)
+      }
+    }
   }
 }
 
-/// Polite toast: "Your photo is ready" with Open and Dismiss.
+/// Polite toast: "Your photo is ready" with Open and Dismiss. Slides up from
+/// the bottom and can be swiped away.
 struct ReadyToast: View {
   @EnvironmentObject private var notices: ReadyNoticeCenter
 
   var body: some View {
-    if let toast = notices.toast {
-      HStack(spacing: 12) {
-        Text(toast.title).font(.callout.weight(.medium))
-        Spacer()
-        Button(ReadyNoticeCopy.open) { notices.open(resultPath: toast.resultPath) }
-          .buttonStyle(.borderedProminent)
-        Button {
-          notices.dismissToast()
-        } label: {
-          Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
+    ZStack {
+      if let toast = notices.toast {
+        HStack(spacing: 12) {
+          Image(systemName: toast.kind == .audio ? "music.note" : "sparkles")
+            .font(.title3)
+            .foregroundStyle(AtlasTheme.olive)
+            .symbolEffect(.bounce, value: toast.id)
+            .accessibilityHidden(true)
+          Text(toast.title)
+            .font(.system(.callout, design: .serif).weight(.semibold))
+            .foregroundStyle(AtlasTheme.ink)
+          Spacer()
+          Button(ReadyNoticeCopy.open) { notices.open(toast) }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("ready.open")
+          Button {
+            notices.dismissToast()
+          } label: {
+            Image(systemName: "xmark").frame(minWidth: 44, minHeight: 44)
+          }
+          .foregroundStyle(AtlasTheme.muted)
+          .accessibilityLabel(ReadyNoticeCopy.dismiss)
         }
-        .accessibilityLabel(ReadyNoticeCopy.dismiss)
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .background(
+          RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(AtlasTheme.ivory)
+            .shadow(color: .black.opacity(0.14), radius: 18, y: 8))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(AtlasTheme.line))
+        .padding(.horizontal, 16)
+        .gesture(DragGesture(minimumDistance: 10).onEnded { value in
+          if value.translation.height > 12 { notices.dismissToast() }
+        })
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+        .sensoryFeedback(.success, trigger: toast.id)
+        .accessibilityElement(children: .contain)
       }
-      .padding(.horizontal, 16)
-      .padding(.vertical, 8)
-      .background(RoundedRectangle(cornerRadius: 14).fill(AtlasTheme.ivory).shadow(radius: 4))
-      .padding(.horizontal, 16)
-      .accessibilityElement(children: .contain)
     }
+    .animation(AtlasMotion.spring, value: notices.toast)
   }
 }

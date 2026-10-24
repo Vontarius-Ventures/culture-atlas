@@ -51,6 +51,17 @@ function message(err: unknown, fallback: string) {
  * Desktop is one page; below 768 px the same sections are three steps.
  * Every pick is saved as it is made, so leaving mid-way keeps them.
  */
+/**
+ * Project-owned onboarding photos ship a 400 px variant beside the 800 px
+ * original (public/samples/onboarding/400): tiles show at about 190 px, so
+ * phones and 1x screens never download the large file.
+ */
+export function responsiveSrcSet(url: string, width: number | null | undefined): string | undefined {
+  const m = /^\/samples\/onboarding\/([^/]+\.jpg)$/.exec(url);
+  if (!m) return undefined;
+  return `/samples/onboarding/400/${m[1]} 400w, ${url} ${width ?? 800}w`;
+}
+
 export function TastePicksView() {
   const router = useRouter();
   const toast = useToast();
@@ -132,35 +143,55 @@ export function TastePicksView() {
       return next;
     });
 
-  const toggleCatalog = async (entry: OnboardingCatalogEntry) => {
-    if (inflight.current.has(entry.id)) return;
-    inflight.current.add(entry.id);
-    const on = !catalogPicked(entry);
-    setPendingFor(entry.id, on);
+  /**
+   * Tiles toggle instantly on every click, however fast; the server catches up
+   * behind them. Each tile keeps one desired state and one request loop, so a
+   * quick second click never races the first (no stray POST + DELETE pair).
+   */
+  const desired = useRef(new Map<string, boolean>());
+  const picksRef = useRef(picks);
+  useEffect(() => {
+    picksRef.current = picks;
+  }, [picks]);
+
+  const syncCatalog = async (id: string) => {
+    if (inflight.current.has(id)) return; // the running loop reads the newest desire
+    inflight.current.add(id);
     setError(null);
     try {
-      if (on) {
-        const res = await api.request('createOnboardingPick', {
-          body: { source: 'catalog', catalog_item_id: entry.id },
-          idempotencyKey: newIdempotencyKey(),
-        });
-        setPicks((prev) => [...prev.filter((p) => p.id !== res.pick.id), res.pick]);
-      } else {
-        const pick = picks.find((p) => p.catalog_item_id === entry.id);
-        if (pick) {
+      for (;;) {
+        const want = desired.current.get(id);
+        const pick = picksRef.current.find((p) => p.catalog_item_id === id);
+        if (want === undefined || want === Boolean(pick)) break;
+        if (want) {
+          const res = await api.request('createOnboardingPick', {
+            body: { source: 'catalog', catalog_item_id: id },
+            idempotencyKey: newIdempotencyKey(),
+          });
+          picksRef.current = [...picksRef.current.filter((p) => p.id !== res.pick.id), res.pick];
+        } else if (pick) {
           await api.request('deleteOnboardingPick', {
             params: { id: pick.id },
             idempotencyKey: newIdempotencyKey(),
           });
-          setPicks((prev) => prev.filter((p) => p.id !== pick.id));
+          picksRef.current = picksRef.current.filter((p) => p.id !== pick.id);
         }
+        setPicks(picksRef.current);
       }
     } catch (err) {
       setError(message(err, 'That pick could not be saved. Try again.'));
     } finally {
-      inflight.current.delete(entry.id);
-      setPendingFor(entry.id, null);
+      inflight.current.delete(id);
+      desired.current.delete(id);
+      setPendingFor(id, null);
     }
+  };
+
+  const toggleCatalog = (entry: OnboardingCatalogEntry) => {
+    const on = !catalogPicked(entry);
+    desired.current.set(entry.id, on);
+    setPendingFor(entry.id, on);
+    void syncCatalog(entry.id);
   };
 
   const searchAdded = (r: OnboardingSearchResult) => {
@@ -242,6 +273,9 @@ export function TastePicksView() {
     setBuilding(true);
     setError(null);
     try {
+      // Let tile toggles still on their way to the server land first (bounded).
+      for (let i = 0; i < 50 && inflight.current.size > 0; i++)
+        await new Promise((r) => window.setTimeout(r, 100));
       await saveExclusions();
       await api.request('completeOnboarding', { body: {}, idempotencyKey: newIdempotencyKey() });
       clearFeedCache();
@@ -339,22 +373,26 @@ export function TastePicksView() {
             </div>
           </div>
           <ul className="pick-grid">
-            {catalog.images.map((entry) => (
+            {catalog.images.map((entry, index) => (
               <li key={entry.id}>
                 <button
                   type="button"
                   className="pick-tile"
                   aria-pressed={catalogPicked(entry)}
-                  onClick={() => void toggleCatalog(entry)}
+                  onClick={() => toggleCatalog(entry)}
                 >
                   <span className="pick-tile__media">
                     {entry.image && (
                       <img
                         src={entry.image.url}
+                        srcSet={responsiveSrcSet(entry.image.url, entry.image.width)}
+                        sizes="(max-width: 767px) 46vw, 220px"
                         alt=""
                         width={entry.image.width}
                         height={entry.image.height}
                         decoding="async"
+                        fetchPriority={index < 4 ? 'high' : 'auto'}
+                        loading={index < 8 ? 'eager' : 'lazy'}
                       />
                     )}
                     <span className="pick-tile__mark" aria-hidden="true">
@@ -393,7 +431,7 @@ export function TastePicksView() {
                       <PickPill
                         key={entry.id}
                         pressed={catalogPicked(entry)}
-                        onToggle={() => void toggleCatalog(entry)}
+                        onToggle={() => toggleCatalog(entry)}
                       >
                         {entry.label}
                       </PickPill>

@@ -16,8 +16,8 @@ test.describe('Discover', () => {
       page.getByText('Photos you submit are analyzed by AI services to find related discoveries.'),
     ).toBeVisible();
     await expect(page.getByText('Example result').first()).toBeVisible();
-    // No sign-in prerequisite and no questionnaire.
-    await expect(page.getByText(/sign in/i)).toHaveCount(0);
+    // No sign-in prerequisite and no questionnaire (the header's optional Sign in entry aside).
+    await expect(page.getByRole('main').getByText(/sign in/i)).toHaveCount(0);
     await expectNoHorizontalScroll(page);
   });
 

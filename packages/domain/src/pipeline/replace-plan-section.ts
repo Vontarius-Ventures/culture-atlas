@@ -1,5 +1,5 @@
 import { composeEnvFor } from '../composer/env';
-import { composeMovieNight, fallbackProse, inputContributions } from '../composer/movie-night';
+import { composeMovieNight, composeProse, inputContributions } from '../composer/movie-night';
 import { persistPlanSections, planStateFrom } from '../composer/persist-plan';
 import { PlanSnapshot, StoredFilm, StoredFood, StoredMusic, type ComposedPick, type StoredPick } from '../composer/plan-types';
 import type { PlanSection, SectionStatus } from '../enums';
@@ -90,6 +90,23 @@ export const replacePlanSection: JobHandler<'replace_plan_section'> = async (ctx
     (section === 'music' && output.music && output.music.status !== 'unavailable') ||
     (section === 'food' && output.food && output.food.status !== 'unavailable');
 
+  // Title, summary and rationale describe the WHOLE new version: replacing the
+  // film must not leave a summary that still names the old one.
+  let prose: Awaited<ReturnType<typeof composeProse>> | null = null;
+  if (produced) {
+    const kept = (s: 'film' | 'music' | 'food') => picksOf(s, current[s]).map((p) => asComposed(p, null));
+    const film =
+      section === 'film'
+        ? (output.film?.value.feature ?? null)
+        : featureStored
+          ? asComposed(featureStored, featureQloo)
+          : null;
+    const artists = section === 'music' && output.music ? [...output.music.value.before, ...output.music.value.after] : kept('music');
+    const dishes = section === 'food' && output.food ? output.food.value.dishes : kept('food');
+    const fresh = [...(film ? [film] : []), ...(section === 'film' && output.film ? output.film.value.alternates : []), ...artists, ...dishes];
+    prose = await composeProse(env, snapshot, { film, dishes, artists }, inputContributions(snapshot, fresh));
+  }
+
   await ctx.ensureActive();
   const state = await ctx.db.transaction(async (tx) => {
     const exists = await tx.query('SELECT 1 FROM plans WHERE id = $1 FOR UPDATE', [plan_id]);
@@ -129,13 +146,12 @@ export const replacePlanSection: JobHandler<'replace_plan_section'> = async (ctx
       traceId: ctx.job.trace_id,
       contributions,
     });
-    const film = output.film?.value.feature ?? (featureStored ? asComposed(featureStored, null) : null);
-    const rationale = fallbackProse(snapshot, film, contributions).rationale;
-    await tx.query('UPDATE plan_versions SET rationale = COALESCE($3, rationale) WHERE plan_id = $1 AND version = $2', [
-      plan_id,
-      version,
-      rationale,
-    ]);
+    if (prose) {
+      await tx.query(
+        'UPDATE plan_versions SET title = $3, summary = $4, rationale = $5 WHERE plan_id = $1 AND version = $2',
+        [plan_id, version, prose.title, prose.summary, prose.rationale],
+      );
+    }
     const s = planStateFrom(statuses);
     await tx.query('UPDATE plans SET status = $2, updated_at = now() WHERE id = $1', [plan_id, s]);
     return s;

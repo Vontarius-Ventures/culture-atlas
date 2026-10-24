@@ -1,6 +1,25 @@
 package com.cultureatlas.app.ui
 
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +30,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +44,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,6 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -42,6 +68,10 @@ import com.cultureatlas.app.AppGraph
 import com.cultureatlas.app.BuildConfig
 import com.cultureatlas.app.notify.AtlasMessagingService
 import com.cultureatlas.app.onboarding.OnboardingController
+import com.cultureatlas.capture.core.contract.CollectionSummary
+import com.cultureatlas.capture.core.contract.DiscoveryCard
+import com.cultureatlas.capture.core.contract.LibraryEntry
+import com.cultureatlas.capture.core.nav.BackStack
 import com.cultureatlas.capture.core.notify.ReadyNoticeCopy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -84,6 +114,8 @@ fun AtlasApp(graph: AppGraph, activity: ComponentActivity) {
                 AtlasMessagingService.registerCurrentToken(graph.app, graph.notices)
             } else {
                 graph.onboarding.reset()
+                // Nothing of the previous account's private pictures stays in memory.
+                graph.imageLoader.memoryCache?.clear()
             }
         }
         LaunchedEffect(sessionEnded) { if (sessionEnded) controller.signOut(deleteDrafts = false) }
@@ -108,11 +140,19 @@ fun AtlasApp(graph: AppGraph, activity: ComponentActivity) {
                 else -> SignInScreen(controller)
             }
             val toast by graph.notices.toast.collectAsState()
-            toast?.let { t ->
-                Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 72.dp)) {
+            // Keeps the last toast while it slides away.
+            var shownToast by remember { mutableStateOf(toast) }
+            if (toast != null) shownToast = toast
+            AnimatedVisibility(
+                visible = toast != null,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 72.dp),
+                enter = slideInVertically(spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(),
+                exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(180)),
+            ) {
+                shownToast?.let { t ->
                     ReadyToastBar(
                         ReadyNoticeCopy.TITLE, ReadyNoticeCopy.OPEN, ReadyNoticeCopy.DISMISS,
-                        onOpen = { graph.notices.open(t.resultPath) },
+                        onOpen = { graph.notices.open(t) },
                         onDismiss = { graph.notices.dismissToast() },
                     )
                 }
@@ -136,47 +176,251 @@ fun AtlasApp(graph: AppGraph, activity: ComponentActivity) {
     }
 }
 
+/** A screen pushed above the tab roots. Back pops one; Similar cards stack. */
+sealed interface Screen {
+    data object Camera : Screen
+    data object Music : Screen
+    data object Glasses : Screen
+    data object Taste : Screen
+    data object Boards : Screen
+    data class Board(val board: CollectionSummary) : Screen
+    data class Card(val card: DiscoveryCard) : Screen
+    /** The native analysis result. [entry] is set when opened from a Library tile. */
+    data class Result(val mediaId: String, val analysisId: String?, val entry: LibraryEntry? = null) : Screen
+}
+
+/** Camera, music and glasses are full-bleed; a card or a result reads best without the bar too. */
+private fun Screen?.showsTabBar(): Boolean = this == null || this is Screen.Boards || this is Screen.Board || this is Screen.Taste
+
+private fun Screen.stateKey(depth: Int): String = "$depth:" + when (this) {
+    is Screen.Card -> "card:${card.id}"
+    is Screen.Board -> "board:${board.id}"
+    is Screen.Result -> "result:$mediaId:${analysisId.orEmpty()}"
+    else -> toString()
+}
+
+internal data class NavFrame<R>(val tab: Tab, val screen: R?, val depth: Int)
+
+private val Tab.label: String
+    get() = when (this) {
+        Tab.FEED -> "Feed"
+        Tab.CAPTURE -> "Capture"
+        Tab.LIBRARY -> "Library"
+        Tab.SETTINGS -> "Settings"
+    }
+
+private val Tab.icon: ImageVector
+    get() = when (this) {
+        Tab.FEED -> AtlasIcons.Feed
+        Tab.CAPTURE -> AtlasIcons.Camera
+        Tab.LIBRARY -> AtlasIcons.Library
+        Tab.SETTINGS -> AtlasIcons.Settings
+    }
+
+/**
+ * Push slides in from the trailing edge over a gently receding screen; Back
+ * reverses it with the leaving screen on top; a tab switch is a soft crossfade.
+ */
+private fun shellTransition(direction: BackStack.Direction): ContentTransform {
+    val ease = FastOutSlowInEasing
+    return when (direction) {
+        BackStack.Direction.FORWARD -> ContentTransform(
+            targetContentEnter = slideInHorizontally(tween(380, easing = ease)) { it / 4 } + fadeIn(tween(260, delayMillis = 40)),
+            initialContentExit = slideOutHorizontally(tween(380, easing = ease)) { -it / 12 } + fadeOut(tween(200)),
+            sizeTransform = SizeTransform(clip = false),
+        )
+        BackStack.Direction.BACK -> ContentTransform(
+            targetContentEnter = slideInHorizontally(tween(340, easing = ease)) { -it / 12 } + fadeIn(tween(240)),
+            initialContentExit = slideOutHorizontally(tween(340, easing = ease)) { it / 4 } + fadeOut(tween(220, delayMillis = 60)),
+            targetContentZIndex = -1f,
+            sizeTransform = SizeTransform(clip = false),
+        )
+        BackStack.Direction.NONE -> ContentTransform(
+            targetContentEnter = fadeIn(tween(240, delayMillis = 60)) + scaleIn(tween(320, easing = ease), initialScale = 0.985f),
+            initialContentExit = fadeOut(tween(140)),
+            sizeTransform = SizeTransform(clip = false),
+        )
+    }
+}
+
+/** Feed, Capture, Library, Settings with Material Symbols icons; the selected icon lifts with a spring. */
+@Composable
+internal fun AtlasTabBar(selected: Tab, onSelect: (Tab) -> Unit) {
+    NavigationBar(containerColor = AtlasColors.quiet) {
+        Tab.entries.forEach { t ->
+            val isSelected = selected == t
+            val lift by animateFloatAsState(
+                targetValue = if (isSelected) 1.12f else 1f,
+                animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+                label = "tab-icon",
+            )
+            NavigationBarItem(
+                selected = isSelected,
+                onClick = { onSelect(t) },
+                icon = {
+                    Icon(
+                        t.icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp).graphicsLayer { scaleX = lift; scaleY = lift },
+                    )
+                },
+                label = { Text(t.label) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AtlasColors.ink,
+                    selectedTextColor = AtlasColors.ink,
+                    indicatorColor = AtlasColors.paper,
+                    unselectedIconColor = AtlasColors.muted,
+                    unselectedTextColor = AtlasColors.muted,
+                ),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun SignedInShell(graph: AppGraph, activity: ComponentActivity) {
-    var tab by remember { mutableStateOf(Tab.FEED) }
-    var subScreen by remember { mutableStateOf<String?>(null) }
+    var nav by remember { mutableStateOf(BackStack<Tab, Screen>(tab = Tab.FEED, home = Tab.FEED)) }
+    var direction by remember { mutableStateOf(BackStack.Direction.NONE) }
+    fun go(step: BackStack.Step<Tab, Screen>) {
+        if (step.stack == nav) return
+        direction = step.direction
+        nav = step.stack
+    }
+    val haptics = rememberHaptics()
+    // Feed and Library state outlive their tabs: switching back resumes, never reloads from empty.
+    val feed = remember(graph) { FeedModel(graph.api) }
+    val library = remember(graph) { LibraryModel(graph.api) }
+    val openRequest by graph.notices.openRequest.collectAsState()
+    LaunchedEffect(openRequest) {
+        val route = openRequest ?: return@LaunchedEffect
+        go(nav.push(Screen.Result(route.mediaId, route.analysisId)))
+        graph.notices.consumeOpenRequest()
+    }
     val armed by graph.controller.armed.collectAsState()
     Scaffold(
+        containerColor = AtlasColors.paper,
         topBar = { armed?.let { RemoteArmBanner(graph.controller, it) } },
         bottomBar = {
-            // Camera screens suppress the bottom bar (SCREEN-CONTRACT).
-            if (subScreen == null) {
-                NavigationBar(containerColor = AtlasColors.quiet) {
-                    NavigationBarItem(selected = tab == Tab.FEED, onClick = { tab = Tab.FEED }, icon = {}, label = { Text("Feed") })
-                    NavigationBarItem(selected = tab == Tab.CAPTURE, onClick = { tab = Tab.CAPTURE }, icon = {}, label = { Text("Capture") })
-                    NavigationBarItem(selected = tab == Tab.LIBRARY, onClick = { tab = Tab.LIBRARY }, icon = {}, label = { Text("Library") })
-                    NavigationBarItem(selected = tab == Tab.SETTINGS, onClick = { tab = Tab.SETTINGS }, icon = {}, label = { Text("Settings") })
+            AnimatedVisibility(
+                visible = nav.top.showsTabBar(),
+                enter = slideInVertically(tween(280)) { it } + fadeIn(tween(200)),
+                exit = slideOutVertically(tween(240)) { it } + fadeOut(tween(160)),
+            ) {
+                AtlasTabBar(selected = nav.tab) { t ->
+                    haptics.tick()
+                    go(nav.selectTab(t))
                 }
             }
         },
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().background(AtlasColors.paper)) {
-            when (subScreen) {
-                "camera" -> CameraScreen(graph, activity, onBack = { subScreen = null })
-                "music" -> MusicScreen(graph, onBack = { subScreen = null })
-                "glasses" -> GlassesScreen(graph, activity, onBack = { subScreen = null }, onUseCamera = { subScreen = "camera" })
-                "taste" -> TasteSettingsScreen(graph.onboarding, onBack = { subScreen = null })
-                "boards" -> BoardsScreen(graph.api, graph.notices, onBack = { subScreen = null })
-                else -> when (tab) {
-                    Tab.FEED -> FeedScreen(graph.api, graph.notices)
-                    Tab.LIBRARY -> LibraryScreen(
-                        graph.controller,
-                        graph.notices,
-                        graph.api,
-                        onBoards = { subScreen = "boards" },
-                    )
-                    Tab.CAPTURE -> CaptureSourceScreen(
-                        graph.controller,
-                        onCamera = { subScreen = "camera" },
-                        onMusic = { subScreen = "music" },
-                        onGlasses = { subScreen = "glasses" },
-                    )
-                    Tab.SETTINGS -> SettingsScreen(graph.controller, onGlasses = { subScreen = "glasses" }, onTaste = { subScreen = "taste" })
+        AtlasNavHost(
+            nav = nav,
+            direction = direction,
+            onBack = { go(nav.back()) },
+            stateKey = { screen, depth -> screen.stateKey(depth) },
+            modifier = Modifier.padding(padding).fillMaxSize().background(AtlasColors.paper),
+        ) { frame ->
+                        val screen = frame.screen
+                        if (screen == null) {
+                            run {
+                                when (frame.tab) {
+                                    Tab.FEED -> FeedScreen(feed, graph.notices, onOpen = { go(nav.push(Screen.Card(it))) })
+                                    Tab.LIBRARY -> LibraryScreen(
+                                        graph.controller,
+                                        graph.notices,
+                                        graph.api,
+                                        library,
+                                        onBoards = { go(nav.push(Screen.Boards)) },
+                                        onBoard = { go(nav.push(Screen.Board(it))) },
+                                        onOpenMedia = { entry -> go(nav.push(Screen.Result(entry.media.id, null, entry))) },
+                                        onCapture = { go(nav.selectTab(Tab.CAPTURE)) },
+                                    )
+                                    Tab.CAPTURE -> CaptureSourceScreen(
+                                        graph.controller,
+                                        onCamera = { go(nav.push(Screen.Camera)) },
+                                        onMusic = { go(nav.push(Screen.Music)) },
+                                        onGlasses = { go(nav.push(Screen.Glasses)) },
+                                    )
+                                    Tab.SETTINGS -> SettingsScreen(
+                                        graph.controller,
+                                        onGlasses = { go(nav.push(Screen.Glasses)) },
+                                        onTaste = { go(nav.push(Screen.Taste)) },
+                                    )
+                                }
+                            }
+                        } else {
+                            val back = { go(nav.back()) }
+                            run {
+                                when (screen) {
+                                    Screen.Camera -> CameraScreen(graph, activity, onBack = back)
+                                    Screen.Music -> MusicScreen(graph, onBack = back)
+                                    Screen.Glasses -> GlassesScreen(graph, activity, onBack = back, onUseCamera = { go(nav.replaceTop(Screen.Camera)) })
+                                    Screen.Taste -> TasteSettingsScreen(graph.onboarding, onBack = back)
+                                    Screen.Boards -> BoardsScreen(graph.api, onBack = back, onOpenBoard = { go(nav.push(Screen.Board(it))) })
+                                    is Screen.Board -> BoardDetailScreen(
+                                        graph.api,
+                                        screen.board,
+                                        onBack = back,
+                                        onOpenCard = { go(nav.push(Screen.Card(it))) },
+                                    )
+                                    is Screen.Card -> FeedCardDetail(
+                                        api = graph.api,
+                                        card = screen.card,
+                                        notices = graph.notices,
+                                        feed = feed,
+                                        onBack = back,
+                                        onOpenRelated = { go(nav.push(Screen.Card(it))) },
+                                    )
+                                    is Screen.Result -> AnalysisResultScreen(
+                                        api = graph.api,
+                                        notices = graph.notices,
+                                        mediaId = screen.mediaId,
+                                        analysisId = screen.analysisId,
+                                        entry = screen.entry,
+                                        library = library,
+                                        onBack = back,
+                                        onOpenCard = { go(nav.push(Screen.Card(it))) },
+                                        onFeed = { go(nav.selectTab(Tab.FEED)) },
+                                    )
+                                }
+                            }
+                        }
+        }
+    }
+}
+
+/**
+ * The shell's screen host: system Back pops [nav] (via [onBack]) while it has
+ * somewhere to go, screens change with [shellTransition], card pictures morph
+ * through the shared scope, and each tab root / stack entry keeps its own
+ * saveable state (scroll position) so Back lands exactly where you were.
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+internal fun <R : Any> AtlasNavHost(
+    nav: BackStack<Tab, R>,
+    direction: BackStack.Direction,
+    onBack: () -> Unit,
+    stateKey: (R, Int) -> String,
+    modifier: Modifier = Modifier,
+    content: @Composable (NavFrame<R>) -> Unit,
+) {
+    val states = rememberSaveableStateHolder()
+    BackHandler(enabled = nav.handlesBack, onBack = onBack)
+    SharedTransitionLayout(modifier) {
+        AnimatedContent(
+            targetState = NavFrame(nav.tab, nav.top, nav.depth),
+            transitionSpec = { shellTransition(direction) },
+            label = "shell",
+        ) { frame ->
+            CompositionLocalProvider(
+                LocalSharedScope provides this@SharedTransitionLayout,
+                LocalNavVisibility provides this@AnimatedContent,
+            ) {
+                Box(Modifier.fillMaxSize().background(AtlasColors.paper)) {
+                    val key = frame.screen?.let { stateKey(it, frame.depth) } ?: frame.tab.name
+                    states.SaveableStateProvider(key) { content(frame) }
                 }
             }
         }

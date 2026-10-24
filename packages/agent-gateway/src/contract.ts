@@ -1,10 +1,11 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { ROUTES } from '../../domain/src/schemas/routes';
 import { OAuthExchange } from '../../domain/src/schemas/agent-platform';
 import type { RouteContract } from '../../domain/src/schemas/routes';
 import { TOOLS } from './tools';
+import { SCOPES, type Scope } from '../../domain/src/enums';
 import { CaptureCommandResponse, CommandAck, NativeCommandBatch } from '../../domain/src/schemas/agent-commands';
 import * as Shares from '../../domain/src/schemas/collection-shares';
 import * as Platform from '../../domain/src/schemas/agent-platform';
@@ -12,7 +13,7 @@ import { AgentConnectionDto } from '../../domain/src/schemas/agent-connections';
 import { AgentAnalysisResponse, AgentOperationResponse } from '../../domain/src/schemas/agent-media';
 
 /** Tool catalog version: bump on any tool addition or input change. */
-export const TOOL_CATALOG_VERSION = '2.1.1';
+export const TOOL_CATALOG_VERSION = '2.2.0';
 
 /** Named JSON Schemas published under docs/api/schemas/ (and in components.schemas). */
 export const NAMED_SCHEMAS: Record<string, z.ZodType> = {
@@ -126,8 +127,70 @@ export function buildAgentContractFiles(): Record<string, string> {
   return files;
 }
 
+/** Plain-language meaning of every grantable scope (docs/agents.md reference). */
+export const SCOPE_DESCRIPTIONS: Record<Scope, string> = {
+  'captures:read': 'Read photo captures, their interpretation, references and recommendations.',
+  'captures:write': 'Upload photos (`POST /v1/uploads`) and start photo analysis (`analyze_capture`).',
+  'collections:read': 'List and read granted collections (boards) and their items.',
+  'collections:write': 'Add or remove items in granted collections; with whole-library access, create collections.',
+  'taste:read': 'Read the explicit interest summary (selected-collection grants must pass `collection_id`).',
+  'taste:write': 'Save, unsave, hide or unhide items when the user explicitly asks.',
+  'plans:read': 'Read plans and their sections.',
+  'plans:write': 'Create plans and replace one plan section.',
+  'setup:read': 'Read safe device capabilities and aliases. Never grants OS permissions.',
+  'preferences:read': 'Read ordinary preferences (theme, language, exploration, food exclusions). Not taste.',
+  'preferences:write': 'Change ordinary preferences. Cannot enable capture, microphones, sharing or automatic analysis.',
+  'media:read': 'List and view permitted media and its preview links (absolute URLs).',
+  'media:download': 'Download originals of permitted media.',
+  'media:write': 'Begin and complete signed media uploads into a granted destination.',
+  'media:analyze': 'Explicitly request analysis of permitted media (never automatic).',
+  'devices:command': 'Request capture on an explicitly granted, locally armed phone.',
+};
+
+export const AGENTS_REFERENCE_START = '<!-- generated:agent-reference:start (pnpm exec tsx scripts/generate-agent-contract.ts) -->';
+export const AGENTS_REFERENCE_END = '<!-- generated:agent-reference:end -->';
+
+const cell = (text: string) => text.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+
+/** The generated scope and tool reference embedded in docs/agents.md. */
+export function buildAgentsReference(): string {
+  const lines: string[] = [
+    AGENTS_REFERENCE_START,
+    '',
+    `### Scopes (${SCOPES.length})`,
+    '',
+    'Every scope below is accepted by `POST /v2/agent-connections` and the OAuth consent, and is listed in `/.well-known/oauth-protected-resource/mcp`.',
+    '',
+    '| Scope | What it allows |',
+    '| --- | --- |',
+    ...SCOPES.map((scope) => `| \`${scope}\` | ${cell(SCOPE_DESCRIPTIONS[scope])} |`),
+    '',
+    `### MCP tools (${TOOLS.length}, catalog ${TOOL_CATALOG_VERSION})`,
+    '',
+    '| Tool | Scopes | Returns | What it does |',
+    '| --- | --- | --- | --- |',
+    ...TOOLS.map((t) => {
+      const scopes = t.scopes.length ? t.scopes.map((x) => `\`${x}\``).join(', ') : 'none (grant-checked)';
+      return `| \`${t.name}\` | ${scopes} | ${t.startsJob ? 'job_id (poll `get_job`)' : 'result'} | ${cell(t.description)} |`;
+    }),
+    '',
+    AGENTS_REFERENCE_END,
+  ];
+  return lines.join('\n');
+}
+
+/** docs/agents.md with its generated reference block replaced by the current one. */
+export function withAgentsReference(markdown: string): string {
+  const start = markdown.indexOf(AGENTS_REFERENCE_START);
+  const end = markdown.indexOf(AGENTS_REFERENCE_END);
+  if (start < 0 || end < start) throw new Error('docs/agents.md is missing the generated reference markers');
+  return `${markdown.slice(0, start)}${buildAgentsReference()}${markdown.slice(end + AGENTS_REFERENCE_END.length)}`;
+}
+
 export async function generateAgentContract(root: string) {
   const output = resolve(root, 'docs/api');
   await mkdir(resolve(output, 'schemas'), { recursive: true });
   for (const [path, body] of Object.entries(buildAgentContractFiles())) await writeFile(resolve(output, path), body);
+  const agentsDoc = resolve(root, 'docs/agents.md');
+  await writeFile(agentsDoc, withAgentsReference(await readFile(agentsDoc, 'utf8')));
 }

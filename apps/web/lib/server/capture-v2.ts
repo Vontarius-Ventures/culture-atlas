@@ -346,10 +346,22 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         ),
         evaluation,
       );
+      const readiness = await (runtime.analysisReadiness ?? photoAnalysisReadiness)();
       result = {
         ...caps,
         availability: {
           ...caps.availability,
+          // Demo override (CONCENTRATE_DEMO_ALLOW_ROLES, never production): the
+          // reading runs on an unqualified profile and clients label it.
+          ...(readiness.experimental && caps.availability.analysis.available
+            ? {
+                analysis: {
+                  ...caps.availability.analysis,
+                  experimental: true,
+                  label: 'Experimental reading',
+                },
+              }
+            : {}),
           music_match: musicMatchAvailability({
             ELEVENLABS_API_KEY: getDomainConfig().ELEVENLABS_API_KEY,
             QLOO_API_KEY: process.env.QLOO_API_KEY,
@@ -384,7 +396,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
     else if (path === '/v2/media/batch-delete' && method === 'POST') {
       result = await intake.batchDelete(body, key);
     } else if (
-      (match = /^\/v2\/media\/([^/]+)(?:\/(analysis|content|preparation)(?:\/([^/]+))?)?$/.exec(
+      (match = /^\/v2\/media\/([^/]+)(?:\/(analysis|content|preparation|tracks|evidence|transcript)(?:\/([^/]+))?)?$/.exec(
         path,
       ))
     ) {
@@ -418,7 +430,19 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
           },
         });
       }
-      if (match[2] === 'analysis' && method === 'POST' && !match[3]) {
+      if (
+        (match[2] === 'tracks' || match[2] === 'evidence' || match[2] === 'transcript') &&
+        method === 'GET' &&
+        !match[3]
+      ) {
+        if (kind !== 'audio') throw new AppError('not_found');
+        result =
+          match[2] === 'tracks'
+            ? await audioAnalysis.tracks(id)
+            : match[2] === 'evidence'
+              ? await audioAnalysis.evidence(id)
+              : await audioAnalysis.transcript(id);
+      } else if (match[2] === 'analysis' && method === 'POST' && !match[3]) {
         result =
           kind === 'audio'
             ? await audioAnalysis.request(id, body, key)

@@ -138,6 +138,111 @@ export const MUSIC_SERVER = {
     'Audio identification is not configured on this server yet. Recordings stay in your library without a match.',
 } as const;
 
+/** A Qloo artist on the Music Mode result screen. `image` is only an https URL Qloo returned. */
+export interface MusicMatchArtist {
+  entity_id: string;
+  name: string;
+  image: { url: string; alt: string; attribution?: string } | null;
+}
+
+export interface MusicMatch {
+  /** Recording title and album the recognizer returned (null when it did not). */
+  title: string | null;
+  album_title: string | null;
+  artist: MusicMatchArtist;
+  related: MusicMatchArtist[];
+}
+
+function asArtist(raw: unknown): MusicMatchArtist | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.entity_id !== 'string' || !r.entity_id) return null;
+  if (typeof r.name !== 'string' || !r.name.trim()) return null;
+  let image: MusicMatchArtist['image'] = null;
+  const img = r.image as Record<string, unknown> | null | undefined;
+  if (img && typeof img.url === 'string' && /^https:\/\//i.test(img.url)) {
+    image = {
+      url: img.url,
+      alt: typeof img.alt === 'string' ? img.alt : r.name,
+      ...(typeof img.attribution === 'string' && img.attribution ? { attribution: img.attribution } : {}),
+    };
+  }
+  return { entity_id: r.entity_id, name: r.name.trim(), image };
+}
+
+/**
+ * The match to show after Explore, read from the analysis result. Prefers the
+ * server's `match` display block (artist, Qloo image, related artists) and
+ * falls back to the resolved Qloo seed name. Null unless a real Qloo artist
+ * id came back with a recognition: nothing is invented client-side.
+ */
+export function exploreMatch(analysis: { state: string; result?: unknown }): MusicMatch | null {
+  const result = analysis.result as
+    | {
+        recognition_id?: string | null;
+        qloo_seeds?: Array<{ entity_id?: string | null; name?: string | null }>;
+        match?: {
+          title?: unknown;
+          album_title?: unknown;
+          artist?: unknown;
+          related?: unknown;
+        } | null;
+      }
+    | null
+    | undefined;
+  if (!result?.recognition_id) return null;
+  const seed = (result.qloo_seeds ?? []).find((s) => typeof s?.entity_id === 'string' && s.entity_id);
+  if (!seed) return null;
+  const m = result.match ?? null;
+  const artist =
+    asArtist(m?.artist) ?? asArtist({ entity_id: seed.entity_id, name: seed.name, image: null });
+  if (!artist) return null;
+  const related = Array.isArray(m?.related)
+    ? (m.related as unknown[])
+        .map(asArtist)
+        .filter((a): a is MusicMatchArtist => a !== null && a.entity_id !== artist.entity_id)
+        .slice(0, 6)
+    : [];
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  return { title: text(m?.title), album_title: text(m?.album_title), artist, related };
+}
+
+/**
+ * Duration of a PCM WAV from its header (`fmt ` byte rate and `data` size).
+ * Null when the bytes are not a RIFF/WAVE file the server could read.
+ */
+export function wavDurationMs(buffer: ArrayBuffer): number | null {
+  if (buffer.byteLength < 12) return null;
+  const view = new DataView(buffer);
+  const ascii = (offset: number) =>
+    String.fromCharCode(
+      view.getUint8(offset),
+      view.getUint8(offset + 1),
+      view.getUint8(offset + 2),
+      view.getUint8(offset + 3),
+    );
+  if (ascii(0) !== 'RIFF' || ascii(8) !== 'WAVE') return null;
+  let byteRate = 0;
+  let dataSize: number | null = null;
+  let offset = 12;
+  while (offset + 8 <= buffer.byteLength) {
+    const id = ascii(offset);
+    const size = view.getUint32(offset + 4, true);
+    const body = offset + 8;
+    if (id === 'fmt ' && body + 12 <= buffer.byteLength) {
+      byteRate = view.getUint32(body + 8, true);
+    } else if (id === 'data') {
+      // Streaming writers leave 0 or 0xFFFFFFFF: fall back to the bytes present.
+      const present = buffer.byteLength - body;
+      dataSize = size === 0 || size === 0xffffffff || size > present ? present : size;
+      break;
+    }
+    offset = body + size + (size % 2);
+  }
+  if (!byteRate || dataSize === null) return null;
+  return Math.max(1, Math.round((dataSize / byteRate) * 1000));
+}
+
 export function exploreNotice(analysis: {
   state: string;
   error_code?: string | null;
@@ -165,9 +270,10 @@ export function exploreNotice(analysis: {
   if (match?.state === 'no_result' || analysis.state === 'complete') {
     const seeds = result?.qloo_seeds ?? [];
     if (!seeds.length || !result?.recognition_id) {
-      return 'No reliable match. Culture atlas did not invent a catalog id.';
+      return 'No reliable match. Nothing was invented: culture atlas only shows catalog ids Qloo returned.';
     }
-    return 'Match found.';
+    const found = exploreMatch(analysis);
+    return found ? `It sounds like ${found.artist.name}.` : 'Match found.';
   }
   if (analysis.state === 'failed') {
     return 'Explore could not finish. The recording is still in your library.';

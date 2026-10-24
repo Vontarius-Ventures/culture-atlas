@@ -61,39 +61,50 @@ export async function photoAnalysisReady(): Promise<boolean> {
 /**
  * Readiness input for the server-side feature flags (identity-ops flag
  * evaluation). Read-only: derived from the same gateway readiness as above.
- * A credit/throttle pause keeps the provider "ready" (work queues and resumes)
- * but reports the budget as unavailable, so the capability stays off.
+ * Each flag input has exactly one cause, so an unqualified role reports only
+ * model_unqualified: budget comes from the spend ledger (credit/cost pause),
+ * provider readiness from gateway health (circuit, auth, configuration).
  */
-export async function photoAnalysisReadiness(): Promise<{
+export async function photoAnalysisReadiness(
+  gateway: ModelGateway | undefined = getProviders().modelGateway,
+  hasFallback: boolean = !!getProviders().fallbackVlm,
+): Promise<{
   budgetAvailable: boolean;
   providerReady: boolean;
   qualityQualified: boolean;
   enrichReady: boolean;
   verifyReady: boolean;
+  experimental: boolean;
 }> {
-  const availability = await roleAvailability('vision_photo');
   // Stage-2 enrichment (fast_analysis_two_stage) never falls back to Elorian.
-  const enrich = await roleAvailability('vision_photo_enrich', getProviders().modelGateway, false);
+  const enrich = await roleAvailability('vision_photo_enrich', gateway, false);
   // Neither does the verifier (analysis_verifier_enabled).
-  const verify = await roleAvailability('vision_verify', getProviders().modelGateway, false);
-  return {
-    providerReady: availability !== 'unavailable',
-    budgetAvailable: availability === 'available',
-    qualityQualified: await visionPhotoQualityQualified(),
-    enrichReady: enrich === 'available',
-    verifyReady: verify === 'available',
-  };
-}
-
-/** Catalog-compatible / not_qualified must not be reported as a budget pause. */
-async function visionPhotoQualityQualified(
-  gateway: ModelGateway | undefined = getProviders().modelGateway,
-): Promise<boolean> {
-  if (!gateway) return true;
+  const verify = await roleAvailability('vision_verify', gateway, false);
+  const base = { enrichReady: enrich === 'available', verifyReady: verify === 'available' };
+  let detail: Awaited<ReturnType<ModelGateway['readiness']>>['vision_photo'] | undefined;
   try {
-    const detail = (await gateway.readiness()).vision_photo;
-    return detail.reason !== 'not_qualified';
+    detail = gateway ? (await gateway.readiness()).vision_photo : undefined;
   } catch {
-    return true;
+    detail = undefined;
   }
+  const primaryReady = !!detail && (detail.state === 'qualified' || detail.state === 'available');
+  if (hasFallback && !primaryReady)
+    return { ...base, budgetAvailable: true, providerReady: true, qualityQualified: true, experimental: false };
+  if (!detail)
+    return { ...base, budgetAvailable: true, providerReady: false, qualityQualified: true, experimental: false };
+  const budgetPaused = detail.reason === 'credits' || detail.reason === 'cost_overrun';
+  const qualityQualified = detail.reason !== 'not_qualified';
+  const providerReady =
+    primaryReady ||
+    detail.state === 'degraded' ||
+    budgetPaused ||
+    // An unqualified role is a quality gate, not a provider outage.
+    !qualityQualified;
+  return {
+    ...base,
+    budgetAvailable: !budgetPaused,
+    providerReady,
+    qualityQualified,
+    experimental: detail.experimental === true,
+  };
 }

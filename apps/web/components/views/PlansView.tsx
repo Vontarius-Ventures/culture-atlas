@@ -8,7 +8,6 @@ import { useAsyncEffect } from '@/lib/client/hooks';
 import { formatDate } from '@/lib/client/format';
 import { useSession } from '@/lib/client/session';
 import { AccountPrompt } from '../AccountPrompt';
-import { SkeletonGrid } from '../DiscoveryCard';
 import { EmptyState, PageError } from '../ui';
 
 const STATUS_TEXT: Partial<Record<PlansListResponse['plans'][number]['status'], string>> = {
@@ -52,7 +51,17 @@ export function PlansView() {
         </div>
       )}
       {isAccount && error && <PageError message={error} onRetry={() => void load()} />}
-      {isAccount && !plans && !error && <SkeletonGrid count={4} />}
+      {/* Most people have no plans yet: hold a quiet block, not a grid that collapses into the empty state. */}
+      {isAccount && !plans && !error && (
+        <div className="plans-pending" aria-busy="true">
+          <div className="skeleton skeleton--line" style={{ width: 200, height: 28 }} />
+          <div className="skeleton skeleton--line" style={{ width: '70%' }} />
+          <div className="skeleton skeleton--line" style={{ width: 220, height: 44 }} />
+          <p className="visually-hidden" role="status">
+            Loading your plans…
+          </p>
+        </div>
+      )}
       {plans && plans.length === 0 && (
         <EmptyState
           title="No plans yet"

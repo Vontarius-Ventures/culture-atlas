@@ -7,6 +7,8 @@ import {
   auth,
   createServiceContext,
   enforceAgentAccess,
+  enforceAgentRate,
+  recordAgentMutation,
   enforceIpLimit,
   getDb,
   getDomainConfig,
@@ -207,6 +209,12 @@ export function apiRoute<C extends RouteContract>(
       const ctx = createServiceContext(principal, { requestId, db, config, surface: 'rest' });
       // agent_api_enabled (and its kill switch) applies to v1 and v2 agent calls alike.
       await enforceAgentAccess(ctx);
+      // v1 agent calls share the per-connection budget with MCP (10 mutations,
+      // 60 reads a minute). A related-discovery job (POST, paid Qloo calls)
+      // counts as a mutation even for a read-only grant. v2 agent routes
+      // (agentRoute) apply the same budget themselves.
+      if (contract.path.startsWith('/v1/') && principal.kind === 'agent' && principal.purpose === 'agent')
+        await enforceAgentRate(ctx, isMutation);
       const setSession = (token: string, expiresAt: Date) => {
         newSession = { token, expiresAt };
       };
@@ -230,6 +238,7 @@ export function apiRoute<C extends RouteContract>(
         contract.idempotent && idemKey
           ? await withIdempotency(db, { principal, route: `${contract.method} ${contract.path}`, key: idemKey, request: { params, query, digest }, secretFields: contract.oneTimeSecrets }, run)
           : { ...(await run()), replayed: false };
+      if (isMutation && !result.replayed) await recordAgentMutation(ctx, contract, { params, body }, result.body);
 
       const response =
         result.status === 204 ? new NextResponse(null, { status: 204 }) : NextResponse.json(result.body, { status: result.status });

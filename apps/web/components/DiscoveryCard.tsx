@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import type { ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import type { DiscoveryCard as Card } from '@culture-atlas/domain/schemas';
 import { KIND_LABELS } from '@/lib/client/format';
 import { Icon } from './Icon';
@@ -25,13 +25,70 @@ export interface DiscoveryCardProps {
 }
 
 /** Attractive text treatment when no licensed image is available. */
-export function TextArt({ card }: { card: Pick<Card, 'title' | 'kind' | 'subtitle'> }) {
+export function TextArt({
+  card,
+  inCard,
+}: {
+  card: Pick<Card, 'title' | 'kind' | 'subtitle'>;
+  /** Inside a DiscoveryCard the kind is already printed under the tile: never say it twice. */
+  inCard?: boolean;
+}) {
+  const kind = KIND_LABELS[card.kind];
+  const norm = (v: string) => v.trim().toLowerCase();
+  const subtitle =
+    card.subtitle && norm(card.subtitle) !== norm(card.title) && norm(card.subtitle) !== norm(kind)
+      ? card.subtitle
+      : null;
   return (
     <div className={`text-art text-art--${card.kind}`} aria-hidden="true">
-      <span className="text-art__kind">{KIND_LABELS[card.kind]}</span>
+      {!inCard && <span className="text-art__kind">{kind}</span>}
       <span className="text-art__title">{card.title}</span>
-      {card.subtitle && <span className="text-art__subtitle">{card.subtitle}</span>}
+      {subtitle && <span className="text-art__subtitle">{subtitle}</span>}
     </div>
+  );
+}
+
+/**
+ * A card picture that never sits blank: a category-tinted poster (kind and a
+ * soft sheen) holds the space while the image downloads, then the image fades
+ * in. A failed image falls back to the text treatment. Brand pictures are
+ * mostly logos and wordmarks, so they sit padded on a light tile instead of
+ * being cropped edge to edge. Reduce Motion: no sheen, no fade.
+ */
+export function CardImage({
+  card,
+  priority,
+}: {
+  card: Pick<Card, 'title' | 'kind' | 'subtitle' | 'image'>;
+  priority?: boolean;
+}) {
+  const [state, setState] = useState<'loading' | 'loaded' | 'failed'>('loading');
+  // An image served from cache can finish before React attaches onLoad.
+  const ref = useCallback((img: HTMLImageElement | null) => {
+    if (img?.complete && img.naturalWidth > 0) setState('loaded');
+  }, []);
+  if (!card.image || state === 'failed') return <TextArt card={card} inCard />;
+  const logo = card.kind === 'brand';
+  return (
+    <>
+      {state !== 'loaded' && (
+        <div className={`card-poster card-poster--${card.kind}`} aria-hidden="true">
+          <span className="card-poster__kind">{KIND_LABELS[card.kind]}</span>
+        </div>
+      )}
+      <img
+        ref={ref}
+        src={card.image.url}
+        alt=""
+        width={card.image.width ?? undefined}
+        height={card.image.height ?? undefined}
+        loading={priority ? 'eager' : 'lazy'}
+        decoding="async"
+        className={`card-img${logo ? ' card-img--logo' : ''}${state === 'loaded' ? ' is-loaded' : ''}`}
+        onLoad={() => setState('loaded')}
+        onError={() => setState('failed')}
+      />
+    </>
   );
 }
 
@@ -57,18 +114,7 @@ export function DiscoveryCard({
   return (
     <article className={`card${selected ? ' card--selected' : ''}`}>
       <div className={`card__media card__media--${aspect}`}>
-        {card.image ? (
-          <img
-            src={card.image.url}
-            alt=""
-            width={card.image.width ?? undefined}
-            height={card.image.height ?? undefined}
-            loading={priority ? 'eager' : 'lazy'}
-            decoding="async"
-          />
-        ) : (
-          <TextArt card={card} />
-        )}
+        <CardImage card={card} priority={priority} />
         {selected && <span className="card__selected-ring" aria-hidden="true" />}
       </div>
       <div className="card__meta">
@@ -79,8 +125,11 @@ export function DiscoveryCard({
         </Heading>
         {menu && <div className="card__menu">{menu}</div>}
       </div>
-      {meta && <p className="card__sub">{meta}</p>}
-      {card.is_example && <p className="card__example">Example result</p>}
+      {/* Every card names its type, so photos, posters and logos read as one feed. */}
+      <p className="card__sub">
+        <span>{meta ?? KIND_LABELS[card.kind]}</span>
+        {card.is_example && <span className="card__example">Example result</span>}
+      </p>
       {onSave && (
         <button
           type="button"

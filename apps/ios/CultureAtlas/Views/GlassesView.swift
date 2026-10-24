@@ -103,10 +103,11 @@ struct GlassesView: View {
         }
       }
     }
+    .atlasListSurface()
     .navigationTitle("Meta glasses")
     .disabled(busy)
     .sheet(item: $review) { draft in ReviewSheet(draft: draft) }
-    .sheet(isPresented: $showArming) { RemoteArmSheet(source: .metaGlasses) }
+    .sheet(isPresented: $showArming) { RemoteArmSheet(source: .metaGlasses).tint(AtlasTheme.olive) }
   }
 
   private func run(_ work: @escaping () async throws -> Void) {

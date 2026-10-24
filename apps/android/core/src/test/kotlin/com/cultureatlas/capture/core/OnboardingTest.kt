@@ -272,6 +272,7 @@ class OnboardingTest {
             "DELETE /v1/onboarding/picks/{id}", "PUT /v1/onboarding/exclusions", "POST /v1/onboarding/complete",
             "GET /v1/onboarding/seed", "GET /v1/taste/picks", "POST /v1/taste/picks", "DELETE /v1/taste/picks/{id}",
             "GET /v1/discoveries", "GET /v1/items/{id}", "POST /v1/items/{id}/discoveries",
+            "GET /v1/captures/{id}",
             "GET /v1/collections", "POST /v1/collections",
             "GET /v1/collections/{id}", "PUT /v1/collections/{id}/items/{item_id}",
         )

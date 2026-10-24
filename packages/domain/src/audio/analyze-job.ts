@@ -1,8 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import type { QlooEntity } from '@culture-atlas/providers';
+import {
+  createMultipartStorage,
+  loadProviderConfig,
+  type MultipartStorage,
+  type QlooEntity,
+} from '@culture-atlas/providers';
+import { canonicalKeyFor, upsertDiscoveryItem } from '../composer/store';
 import { AppError } from '../errors';
 import { JobCancelledError, type JobHandler } from '../jobs/handler';
+import { relatedDiscoveryDedupeKey } from '../jobs/dedupe';
+import { enqueueJob } from '../jobs/queue';
 import type { Queryable } from '../db/pool';
+import { clipText, destinationFromQlooProperties, imageFromQlooProperties } from '../services/display';
+import { getTasteRevision } from '../services/taste';
+import { audioMatchDisplay, type AudioMatchDisplay } from './match-display';
 import { artistSeedsFromQlooEntities, queriesFromTranscript, searchQueryForHit } from './qloo-seeds';
 import {
   musicRecognitionFromConfig,
@@ -12,9 +23,44 @@ import {
 } from './recognition';
 import { elevenLabsFromConfig, type AudioTranscription } from './transcription';
 
+/** Reads capture-v2 originals (the namespace POST /v2/media/audio writes). */
+export type AudioOriginalReader = Pick<MultipartStorage, 'read'>;
+
 export interface AnalyzeAudioOptions {
   recognition?: MusicRecognition;
   transcription?: AudioTranscription;
+  originals?: AudioOriginalReader;
+}
+
+let registeredOriginals: AudioOriginalReader | undefined;
+/** The worker registers the same multipart storage the web API and media worker use. */
+export function setAudioOriginalStorage(reader: AudioOriginalReader | undefined): void {
+  registeredOriginals = reader;
+}
+function defaultOriginals(signingSecret: string): AudioOriginalReader {
+  registeredOriginals ??= createMultipartStorage(loadProviderConfig(), {
+    production: process.env.NODE_ENV === 'production',
+    fallbackSigningSecret: signingSecret,
+  });
+  return registeredOriginals;
+}
+
+/** Whole original as bytes; null only when the object does not exist. */
+async function readOriginal(
+  reader: AudioOriginalReader,
+  key: string,
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  let object;
+  try {
+    object = await reader.read(key);
+  } catch (err) {
+    const code = (err as { code?: string; name?: string } | null)?.code ?? (err as { name?: string } | null)?.name;
+    if (code === 'ENOENT' || code === 'NoSuchKey' || code === 'NotFound') return null;
+    throw err;
+  }
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of object.body) chunks.push(chunk);
+  return { bytes: Buffer.concat(chunks), contentType: object.contentType };
 }
 
 interface AudioWork {
@@ -67,6 +113,102 @@ function evidenceStatus(result: MusicRecognitionResult): 'matched' | 'ambiguous'
   return 'unavailable';
 }
 
+/** Fails the analysis honestly when the recording cannot be read (never a provider outage). */
+async function failUnreadable(
+  ctx: Parameters<JobHandler<'analyze_audio'>>[0],
+  work: AudioWork,
+  accountId: string,
+): Promise<never> {
+  await ctx.db.query(
+    `UPDATE audio_analysis_components SET state='failed', reason='storage_unavailable', updated_at=now()
+      WHERE account_id=$1 AND analysis_id=$2 AND component='music_match'`,
+    [accountId, work.analysisId],
+  );
+  await ctx.db.query(
+    `UPDATE audio_analysis_requests SET state='failed', error_code='storage_unavailable', completed_at=now()
+      WHERE account_id=$1 AND id=$2`,
+    [accountId, work.analysisId],
+  );
+  await ctx.db.query(`UPDATE media_assets SET analysis_status='failed' WHERE account_id=$1 AND id=$2`, [
+    accountId,
+    work.assetId,
+  ]);
+  throw new AppError('service_unavailable', {
+    message: 'We couldn’t read this recording. It is still in your library.',
+    retryable: false,
+    details: { reason: 'storage_unavailable' },
+  });
+}
+
+/**
+ * A resolved Music Mode artist becomes a library item and starts one related
+ * discovery (Qloo insights from the artist across Watch, Play, Wear and Eat).
+ * Its results join the interest feed as "Because you heard <artist>."
+ */
+async function startArtistDiscovery(
+  ctx: Parameters<JobHandler<'analyze_audio'>>[0],
+  accountId: string,
+  seed: { entity_id: string; name: string },
+  entity: QlooEntity | undefined,
+): Promise<{ itemId: string; discoveryJobId: string; jobId: string; imageUrl: string | null }> {
+  const owner = { kind: 'account' as const, accountId };
+  const image = imageFromQlooProperties(entity?.properties, seed.name);
+  const description = entity?.properties?.['short_description'] ?? entity?.properties?.['description'];
+  const itemId = await upsertDiscoveryItem(ctx.db, owner, {
+    kind: 'artist',
+    category: 'play',
+    canonical_key: canonicalKeyFor({ kind: 'artist', title: seed.name, qlooId: seed.entity_id }),
+    title: seed.name,
+    display_metadata: {
+      subtitle: 'Heard in Music Mode',
+      description: typeof description === 'string' ? clipText(description) : null,
+      image,
+      destination_url: destinationFromQlooProperties(entity?.properties),
+    },
+    external_ids: { qloo: seed.entity_id },
+  });
+  const tasteRevision = await getTasteRevision(ctx.db, owner);
+  return ctx.db.transaction(async (tx) => {
+    const dedupeKey = relatedDiscoveryDedupeKey({
+      owner,
+      originItemId: itemId,
+      category: null,
+      tasteRevision,
+      grantContext: 'music_mode',
+    });
+    const existing = await tx.query<{ id: string; payload: { discovery_job_id: string } }>(
+      `SELECT id, payload FROM jobs WHERE dedupe_key = $1 AND state NOT IN ('failed', 'cancelled')`,
+      [dedupeKey],
+    );
+    if (existing.rows[0])
+      return {
+        itemId,
+        discoveryJobId: existing.rows[0].payload.discovery_job_id,
+        jobId: existing.rows[0].id,
+        imageUrl: image?.url ?? null,
+      };
+    const dj = await tx.query<{ id: string }>(
+      `INSERT INTO discovery_jobs (owner_account_id, origin_item_id, category, taste_revision, source, source_label)
+       VALUES ($1, $2, NULL, $3, 'music_mode', $4) RETURNING id`,
+      [accountId, itemId, tasteRevision, seed.name.slice(0, 200)],
+    );
+    const discoveryJobId = dj.rows[0]!.id;
+    const { job } = await enqueueJob(tx, {
+      type: 'discover_related',
+      owner,
+      payload: { discovery_job_id: discoveryJobId, origin_item_id: itemId, taste_revision: tasteRevision },
+      dedupeKey,
+      maxAttempts: ctx.config.JOB_MAX_ATTEMPTS,
+      budget: { qloo_requests: ctx.config.JOB_MAX_QLOO_REQUESTS, provider_retries: ctx.config.JOB_MAX_PROVIDER_RETRIES },
+      traceId: ctx.job.trace_id ?? undefined,
+      resultType: 'discovery_job',
+      resultId: discoveryJobId,
+    });
+    await tx.query('UPDATE discovery_jobs SET job_id = $2 WHERE id = $1', [discoveryJobId, job.id]);
+    return { itemId, discoveryJobId, jobId: job.id, imageUrl: image?.url ?? null };
+  });
+}
+
 async function searchArtists(
   ctx: Parameters<JobHandler<'analyze_audio'>>[0],
   query: string,
@@ -115,12 +257,20 @@ export async function runAnalyzeAudio(
   const window = work.windows[0] ?? { start_ms: 0, end_ms: Math.min(work.durationMs, 15_000) };
   let bytes = new Uint8Array();
   let mediaType = work.contentType ?? undefined;
-  if (work.originalKey) {
-    const stored = await ctx.providers.storage.get(work.originalKey).catch(() => null);
-    if (stored) {
-      bytes = Uint8Array.from(stored.body);
-      mediaType = stored.contentType || mediaType;
+  if (!work.originalKey) return failUnreadable(ctx, work, accountId);
+  {
+    // Audio originals live in the capture-v2 namespace (POST /v2/media/audio),
+    // not in the legacy object store. A miss fails the analysis honestly.
+    const reader = options.originals ?? registeredOriginals ?? defaultOriginals(ctx.config.SESSION_SECRET);
+    let stored: Awaited<ReturnType<typeof readOriginal>>;
+    try {
+      stored = await readOriginal(reader, work.originalKey);
+    } catch {
+      stored = null;
     }
+    if (!stored || stored.bytes.length === 0) return failUnreadable(ctx, work, accountId);
+    bytes = Uint8Array.from(stored.bytes);
+    mediaType = stored.contentType || mediaType;
   }
   const identified = await ctx.runStage('recognize', () =>
     recognition.identify({
@@ -141,12 +291,15 @@ export async function runAnalyzeAudio(
   let method: 'fingerprint' | 'transcript' = 'fingerprint';
   let transcriptText: string | null = null;
   let transcriptReason: string | null = null;
+  let seedEntity: QlooEntity | undefined;
   if (identified.status === 'matched' && hit) {
     const query = searchQueryForHit(hit);
     if (query) {
-      const mapped = artistSeedsFromQlooEntities(await searchArtists(ctx, query));
+      const found = await searchArtists(ctx, query);
+      const mapped = artistSeedsFromQlooEntities(found, query);
       seeds = mapped.seeds;
       resolution = mapped.status;
+      seedEntity = found.find((e) => e.entity_id === seeds[0]?.entity_id);
     } else {
       resolution = 'unresolved';
     }
@@ -160,18 +313,24 @@ export async function runAnalyzeAudio(
       transcriptText = spoken.text;
       const queries = queriesFromTranscript(spoken.text);
       if (!queries.length) transcriptReason = 'no_extractable_query';
+      let sawAmbiguous = false;
       for (const query of queries) {
         if (resolution === 'resolved') break;
-        const mapped = artistSeedsFromQlooEntities(await searchArtists(ctx, query));
+        const found = await searchArtists(ctx, query);
+        // Resolved only when the artist's full name was actually spoken.
+        const mapped = artistSeedsFromQlooEntities(found, spoken.text);
+        method = 'transcript';
         if (mapped.status === 'resolved' && mapped.seeds.length) {
           seeds = mapped.seeds;
-          resolution = mapped.status;
-          method = 'transcript';
+          resolution = 'resolved';
+          seedEntity = found.find((e) => e.entity_id === seeds[0]?.entity_id);
         } else {
-          resolution = mapped.status;
-          method = 'transcript';
+          sawAmbiguous ||= mapped.status === 'ambiguous';
+          resolution = sawAmbiguous ? 'ambiguous' : 'unresolved';
         }
       }
+      if (queries.length && resolution !== 'resolved')
+        transcriptReason = resolution === 'ambiguous' ? 'ambiguous_artist' : 'no_matching_artist';
     } catch {
       transcriptReason = 'transcript_unavailable';
     }
@@ -182,9 +341,13 @@ export async function runAnalyzeAudio(
   const qlooId = seeds[0]?.entity_id ?? null;
   const evidenceState = resolved
     ? 'matched'
-    : method === 'transcript' && resolution === 'unresolved'
-      ? 'no_match'
-      : evidenceStatus(identified);
+    : method === 'transcript'
+      ? resolution === 'ambiguous'
+        ? 'ambiguous'
+        : 'no_match'
+      : resolution === 'ambiguous'
+        ? 'ambiguous'
+        : evidenceStatus(identified);
   const evidenceId = randomUUID();
   await ctx.db.query(
     `INSERT INTO media_evidence(id,account_id,asset_id,generation,analysis_id,track_id,modality,relationship,start_ms,end_ms,method,status,qloo_entity_id,vendor_evidence)
@@ -318,15 +481,54 @@ export async function runAnalyzeAudio(
     : publicMusicState(
         method === 'transcript' && identified.status === 'unavailable' ? 'no_match' : identified.status,
       );
+  // Fingerprinting and the transcript are separate signals: report each one's
+  // own reason (a missing recognizer is not why the transcript found nothing).
+  const componentReason = resolved ? null : method === 'transcript' ? transcriptReason : (identified.reason ?? transcriptReason);
+  let artist: {
+    name: string;
+    entity_id: string;
+    item_id: string;
+    image_url: string | null;
+    discovery_job_id: string;
+    related_job_id: string;
+  } | null = null;
+  if (resolved && seeds[0]) {
+    try {
+      const started = await startArtistDiscovery(ctx, accountId, seeds[0], seedEntity);
+      artist = {
+        name: seeds[0].name,
+        entity_id: seeds[0].entity_id,
+        item_id: started.itemId,
+        image_url: started.imageUrl,
+        discovery_job_id: started.discoveryJobId,
+        related_job_id: started.jobId,
+      };
+    } catch (err) {
+      // The identification stands even if suggestions cannot start now.
+      ctx.log('music mode related discovery not started', { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  // What the result screen shows for a match: Qloo artist (name + Qloo image)
+  // and related artists from Qloo Insights. Absent unless resolved.
+  let match: AudioMatchDisplay | null = null;
+  if (resolved && seedEntity) {
+    match = await audioMatchDisplay(ctx, seedEntity, method === 'fingerprint' ? hit : null).catch(() => null);
+    await ctx.ensureActive();
+  }
   const result = {
     music,
     components: {
       music_match: {
         state: componentState,
-        reason: identified.reason ?? transcriptReason,
+        reason: componentReason,
+        fingerprint_reason: identified.reason ?? null,
+        transcript_reason: transcriptReason,
       },
       speech_references: { state: 'not_requested', reason: 'music_mode_default_off' },
     },
+    /** The artist that was heard, as a library item; related suggestions arrive from related_job_id. */
+    artist,
+    match,
     evidence_id: evidenceId,
     recognition_id: recognitionId,
     qloo_seeds: seeds,
@@ -337,7 +539,7 @@ export async function runAnalyzeAudio(
   await ctx.db.query(
     `UPDATE audio_analysis_components SET state=$4, reason=$5, updated_at=now()
       WHERE account_id=$1 AND analysis_id=$2 AND component=$3`,
-    [accountId, work.analysisId, 'music_match', componentState, identified.reason ?? transcriptReason],
+    [accountId, work.analysisId, 'music_match', componentState, componentReason],
   );
   await ctx.db.query(
     `UPDATE audio_analysis_requests SET state=$3, result=$4::jsonb, completed_at=now() WHERE account_id=$1 AND id=$2`,

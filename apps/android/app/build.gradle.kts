@@ -92,7 +92,21 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric renders Compose on the JVM (navigation and screenshot tests).
+        unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.systemProperty("robolectric.graphicsMode", "NATIVE")
+            // Screenshots are written to build/outputs/roborazzi for review; they are not golden files.
+            it.systemProperty("roborazzi.test.record", "true")
+        }
     }
+}
+
+// The Compose test activity (ui-test-manifest) is debug-only so it never ships,
+// so the Robolectric UI tests can only run against debug variants. Release unit
+// tests would just repeat them and fail to resolve that activity.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { it.enableUnitTest = false }
 }
 
 dependencies {
@@ -113,6 +127,16 @@ dependencies {
     implementation(libs.androidx.work.runtime)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.firebase.messaging)
+    implementation(libs.coil.compose)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.roborazzi)
+    testImplementation(libs.roborazzi.compose)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.okhttp.mockwebserver)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     "experimentalImplementation"(libs.meta.wearables.core)
     "experimentalImplementation"(libs.meta.wearables.camera)

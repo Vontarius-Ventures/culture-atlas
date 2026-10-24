@@ -335,6 +335,12 @@ describe('movie-night composition', () => {
     const after = [v2.film!.feature!, ...v2.film!.alternates].map((f) => f.item_id);
     expect(after.some((id) => before.includes(id))).toBe(false);
     expect(v2.sections.film).toBe('complete');
+    // Prose is rewritten for the new version: no film that left the plan is named.
+    const gone = [v1.film!.feature!, ...v1.film!.alternates].map((f) => f.title).filter((t) => !after.length || ![v2.film!.feature!, ...v2.film!.alternates].some((f) => f.title === t));
+    for (const title of gone) {
+      expect(v2.summary ?? '').not.toContain(title);
+      expect(v2.title ?? '').not.toContain(title);
+    }
     // Version 1 is retained unchanged.
     const old = await db.query<{ film: { feature: { item_id: string } } }>('SELECT film FROM plan_versions WHERE plan_id = $1 AND version = 1', [res.plan_id]);
     expect(old.rows[0]!.film.feature.item_id).toBe(v1.film!.feature!.item_id);

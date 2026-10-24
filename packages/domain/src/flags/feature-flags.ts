@@ -305,6 +305,8 @@ export interface AnalysisReadiness {
   enrichReady?: boolean;
   /** Verifier role (vision_verify) is qualified and ready (absent: not ready). */
   verifyReady?: boolean;
+  /** vision_photo dispatches under the non-production demo override (unqualified). */
+  experimental?: boolean;
 }
 
 /**
@@ -349,6 +351,15 @@ export async function resolveFeatureFlags(
     now.getTime() - device.last_seen_at.getTime() <= 30_000;
   const rollout = env.META_GLASSES_ROLLOUT ?? 'none';
   const deviceCaps = device?.capabilities ?? {};
+  // Native apps enroll with `meta_glasses_sdk` (true only in the experimental
+  // DAT build); `meta_wearables_sdk` is the spec name. Either proves the SDK.
+  // The DAT SDK only loads on an OS it supports, so an SDK build implies a
+  // supported OS unless the app explicitly reports meta_wearables_supported_os=false
+  // (fixtures/native-contract/capability-gate.json "device_capability_keys").
+  const sdkPresent = deviceCaps.meta_wearables_sdk === true || deviceCaps.meta_glasses_sdk === true;
+  const supportedOs =
+    deviceCaps.meta_wearables_supported_os === true ||
+    (sdkPresent && deviceCaps.meta_wearables_supported_os !== false);
   const wearableCaps = device?.wearable_capabilities ?? {};
   const analysisReadiness = input.analysisReadiness ?? {
     budgetAvailable: false,
@@ -364,7 +375,7 @@ export async function resolveFeatureFlags(
       // Operator-qualified builds that contain the real SDK, e.g. "ios@1.4.0".
       buildSupported:
         !!device &&
-        deviceCaps.meta_wearables_sdk === true &&
+        sdkPresent &&
         list(env.META_GLASSES_QUALIFIED_BUILDS).includes(
           `${device.platform}@${device.app_version}`,
         ),
@@ -380,7 +391,7 @@ export async function resolveFeatureFlags(
         (rollout === 'allowlist' &&
           list(env.META_GLASSES_ROLLOUT_ACCOUNT_IDS).includes(input.accountId)),
       deviceCompatible:
-        deviceCaps.meta_wearables_supported_os === true &&
+        supportedOs &&
         (wearableCaps.photo === true || wearableCaps.video === true),
       permissionGranted: !!device?.permission_granted,
       locallyReady: fresh,
@@ -400,10 +411,10 @@ export async function resolveFeatureFlags(
         ((env.LLM_PROVIDER === undefined || env.LLM_PROVIDER === 'concentrate') &&
           !!env.CONCENTRATE_API_KEY) ||
         elorianFallback,
+      // VLM_MODEL is an optional assertion against the profile, never required:
+      // the profile file alone pins the route (gateway.ts).
       profileQualified:
-        !!env.CONCENTRATE_PROFILES_JSON ||
-        (!!env.VLM_MODEL && !!env.CONCENTRATE_PROFILE_FILE) ||
-        elorianFallback,
+        !!env.CONCENTRATE_PROFILES_JSON || !!env.CONCENTRATE_PROFILE_FILE || elorianFallback,
       qualityQualified: analysisReadiness.qualityQualified !== false,
       // Spec defaults are the safe values (require ZDR, no content logging).
       privacyVerified:

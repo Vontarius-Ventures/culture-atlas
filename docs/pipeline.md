@@ -63,6 +63,41 @@ Every provider call writes a `provider_queries` row: sanitized request (no keys,
 
 `deleteCapture` runs in one transaction under the capture lock. It cancels jobs and releases their dedupe keys, deletes dependent plans, the capture item (with its saves and memberships), preference links, analyses (cascading to private reference links, provider queries and recommendations), and items that only this capture's recommendations supported. It then marks the capture deleted with `purge_after = now() + 24h`. Media is deleted right after commit, and signed links stop working because the object is gone. The worker enqueues `purge_deleted` hourly (dedupe key per hour). It physically removes deleted captures, expired anonymous sessions with everything they own, expired uploads and their media, expired idempotency keys and feed snapshots.
 
+## Music Mode (`packages/domain/src/audio/analyze-job.ts`)
+
+- The recording is read from the capture-v2 namespace that `POST /v2/media/audio`
+  wrote (the worker registers the shared multipart storage). A missing object
+  fails the analysis with `storage_unavailable`; it is never reported as a
+  provider outage.
+- Fingerprinting (when a recognizer is configured) and the ElevenLabs Scribe
+  transcript each propose artist names. Transcript queries come from "by X",
+  DJ cues ("listening to X", "this is X") and capitalized runs, never from an
+  arbitrary sentence. An artist resolves only when its full normalized name was
+  heard; same-named hits go to the most popular, two different heard names
+  stay ambiguous. Each signal keeps its own reason in the result.
+- A resolved artist becomes a library item (Qloo id, https Qloo image) and
+  starts one related discovery (`discovery_jobs.source = 'music_mode'`): Qloo
+  insights from the artist across Watch, Play, Wear and Eat. Its cards join the
+  interest feed with "Because you heard <artist>." and the analysis result
+  (`GET /v2/media/{id}/analysis/{analysisId}`) returns `artist` plus live
+  `related` cards and `related_state`.
+- `GET /v2/media/{id}/tracks`, `/evidence` and `/transcript` read the stored
+  track, evidence and transcript (transcripts are owner-only).
+- Live check (2026-10-23, a 6 s spoken WAV): transcribed and identified
+  Fleetwood Mac in about 1 s; related discovery finished in 7.5 s with Stevie
+  Nicks, Electric Light Orchestra, Lost in Translation, Levi Strauss & Co.,
+  Timberland and Strawberry Fields, all with Qloo images.
+
+## Feed growth
+
+- Pull-to-refresh starts an interest-expand wave each minute (categories
+  rotate); plain polls start one at most every 15 minutes. A refresh moves the
+  previous first page down so the top changes, and never drops a card.
+- The pool takes capture recommendations, the taste seed, Music Mode
+  suggestions and the owner's own taste-based "Discover more" results (Qloo
+  only). `GET /v1/discoveries` reports `expansion {state, poll_after_ms}` while
+  new cards are being fetched.
+
 ## Known gaps
 
 - Targeted retry of individual sections (`payload.sections`) is accepted but not yet used: retries rerun the job, reusing completed stages.

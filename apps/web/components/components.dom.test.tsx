@@ -24,7 +24,9 @@ import { initialDestination, recentFirst } from './SavePicker';
 import { ToastProvider, useToast } from './Toast';
 import { deriveCaptureState, readTextAttribution, referencePhrase } from './views/CaptureResultView';
 import { defaultSelection, moveMembership } from './views/CollectionDetailView';
-import { backTarget } from './views/ItemView';
+import { backTarget, dedupeWhy } from './views/ItemView';
+import { responsiveSrcSet } from './onboarding/TastePicksView';
+import { fromLibrary } from './v2/MediaDetailView';
 import { addExclusions } from './views/PlanFormView';
 import { accessSummary, sensorStatus } from './views/SettingsView';
 
@@ -222,6 +224,11 @@ describe('view logic', () => {
     expect(sectionFor('/collections/later')).toBe('collections');
     expect(sectionFor('/plans/1')).toBe('plans');
     expect(sectionFor('/settings')).toBeNull();
+    // A photo opened from the library keeps Library lit through its result and items.
+    expect(sectionFor('/captures/1', 'library')).toBe('library');
+    expect(sectionFor('/items/1', 'library')).toBe('library');
+    expect(sectionFor('/items/1', 'later')).toBe('collections');
+    expect(sectionFor('/items/1', 'discover')).toBe('discover');
     expect(chromeFor('/capture/camera')).toBe('immersive');
     expect(chromeFor('/capture/music')).toBe('immersive');
     expect(chromeFor('/capture')).toBe('flow');
@@ -324,13 +331,38 @@ describe('view logic', () => {
   it('builds Back targets from where the item was opened', () => {
     expect(backTarget(new URLSearchParams('from=capture&capture=c1'))).toEqual({
       href: '/captures/c1',
-      label: 'Your photo',
+      label: 'Back to photo',
     });
+    // Opened from a library photo: Back keeps the library origin.
+    expect(
+      backTarget(new URLSearchParams('from=capture&capture=c1&via=library&media=m1')),
+    ).toEqual({ href: '/captures/c1?from=library&media=m1', label: 'Back to photo' });
     expect(backTarget(new URLSearchParams('from=collection&collection=k'))).toEqual({
       href: '/collections/k',
       label: 'Collection',
     });
     expect(backTarget(new URLSearchParams(''))).toEqual({ href: '/', label: 'Discover' });
+  });
+
+  it('never repeats the reason inside "Why this?"', () => {
+    const src = { id: 's', url: 'https://example.org/a', title: 'A', publisher: null, retrieved_at: '2026-10-01T00:00:00Z' };
+    expect(dedupeWhy({ text: 'Because you picked X.', sources: [] }, 'Because you picked X')).toBeNull();
+    expect(dedupeWhy({ text: 'Because you picked X.', sources: [src] }, 'Because you picked X.')).toEqual({
+      text: null,
+      sources: [src],
+    });
+    expect(dedupeWhy({ text: 'Shares the tag noir.', sources: [] }, 'Because you picked X.')?.text).toBe(
+      'Shares the tag noir.',
+    );
+    expect(dedupeWhy(null, 'x')).toBeNull();
+  });
+
+  it('serves the small onboarding variant and keeps library origin on results', () => {
+    expect(responsiveSrcSet('/samples/onboarding/tea.jpg', 800)).toBe(
+      '/samples/onboarding/400/tea.jpg 400w, /samples/onboarding/tea.jpg 800w',
+    );
+    expect(responsiveSrcSet('https://cdn.example/x.jpg', 800)).toBeUndefined();
+    expect(fromLibrary('/captures/c1?job=j', 'm1')).toBe('/captures/c1?job=j&from=library&media=m1');
   });
 
   it('bounds and dedupes dietary exclusions', () => {

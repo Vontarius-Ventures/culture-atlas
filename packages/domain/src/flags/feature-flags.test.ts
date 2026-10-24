@@ -240,7 +240,10 @@ describe('amendment 2.2 flags', () => {
 
 describe('resolveFeatureFlags (server state)', () => {
   const now = new Date();
-  async function phone(accountId: string, over: { lastSeen?: Date; build?: string } = {}) {
+  async function phone(
+    accountId: string,
+    over: { lastSeen?: Date; build?: string; caps?: Record<string, boolean> } = {},
+  ) {
     const { rows } = await db.query<{ id: string }>(
       `INSERT INTO mobile_installations(account_id,installation_public_id,platform,app_version,capabilities,readiness,app_state,last_seen_at)
        VALUES($1,$2,'ios',$3,$4,'ready','foreground',$5) RETURNING id`,
@@ -248,11 +251,13 @@ describe('resolveFeatureFlags (server state)', () => {
         accountId,
         randomUUID(),
         over.build ?? '1.4.0',
-        JSON.stringify({
-          meta_wearables_sdk: true,
-          meta_wearables_supported_os: true,
-          photo: true,
-        }),
+        JSON.stringify(
+          over.caps ?? {
+            meta_wearables_sdk: true,
+            meta_wearables_supported_os: true,
+            photo: true,
+          },
+        ),
         over.lastSeen ?? now,
       ],
     );
@@ -321,6 +326,24 @@ describe('resolveFeatureFlags (server state)', () => {
       [installationId, new Date(now.getTime() + 60_000)],
     );
     expect((await resolve()).flags.remote_glasses_capture_enabled).toBe(true);
+  });
+
+  it('accepts the native apps’ meta_glasses_sdk key (capability-gate.json)', async () => {
+    const account = await insertAccount();
+    const resolve = async (caps: Record<string, boolean>) =>
+      resolveFeatureFlags(db, {
+        accountId: account.accountId,
+        installationId: await phone(account.accountId, { caps }),
+        env,
+        now,
+        videoDecoderQualified: false,
+      });
+    const native = await resolve({ photo: true, video: true, microphone: true, meta_glasses_sdk: true });
+    expect(native.flags.meta_glasses_capture_enabled).toBe(true);
+    const publicBuild = await resolve({ photo: true, meta_glasses_sdk: false });
+    expect(publicBuild.reasons.meta_glasses_capture_enabled).toEqual(['build_unsupported', 'device_unsupported']);
+    const unsupportedOs = await resolve({ meta_glasses_sdk: true, meta_wearables_supported_os: false });
+    expect(unsupportedOs.reasons.meta_glasses_capture_enabled).toEqual(['device_unsupported']);
   });
 
   it('stale heartbeat or another account’s installation id yields no glasses authority', async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TASTE_SEED_MAX_QLOO_REQUESTS } from '../services/taste-seed';
 import { FASHION_BRAND_TAG } from '../compiler/grounding';
-import { EAT_PLACE_SEARCHES, eatPlaceSearchQueries, filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, seedPlaceSearchBudget, signalsFor, type SeedSignal, type SeedSignals } from './taste-seed';
+import { EAT_PLACE_SEARCHES, eatPlaceSearchQueries, filterEatTags, isFoodSignal, SEED_CATEGORY_PLAN, SEED_EAT_MIN_POPULARITY, seedPlaceSearchBudget, signalsFor, type SeedSignal, type SeedSignals, reasonFor, isGenericVenueName } from './taste-seed';
 
 /**
  * Taste-seed signal rules (docs/quality-plan.md §6). The tag lists mirror the
@@ -33,10 +33,19 @@ describe('food signals (S-EAT-SIGNAL)', () => {
     expect(isFoodSignal({ id: 'FIXTURE-MOVIE-0001', kind: 'film', category: 'watch' })).toBe(false);
   });
 
-  it('Eat is asked with food signals only; the other categories with every signal', () => {
+  it('Eat is asked with food signals only; the other categories with their own picks, else every non-food signal', () => {
     expect(signalsFor('eat', SIGNALS)).toEqual({ tags: [SIGNALS.tags[0]], entities: [] });
-    for (const c of ['wear', 'play', 'watch'] as const) expect(signalsFor(c, SIGNALS)).toBe(SIGNALS);
+    const nonFood = { tags: SIGNALS.tags.slice(1), entities: SIGNALS.entities };
+    for (const c of ['wear', 'play', 'watch'] as const) expect(signalsFor(c, SIGNALS)).toEqual(nonFood);
     expect(signalsFor('eat', { tags: [SIGNALS.tags[1]!], entities: [] })).toEqual({ tags: [], entities: [] });
+    // A pick made under Watch steers Watch; a food pick never reaches a film, artist or brand.
+    const cinema = { ...other('urn:tag:genre:qloo:film_noir', 'Film-noir'), pickLabel: 'Late-night cinema', pickCategory: 'watch' as const };
+    const noodles = { ...food('urn:tag:cuisine:qloo:sichuan', 'Sichuan'), pickLabel: 'Sesame noodles', pickCategory: 'eat' as const };
+    const picked = { tags: [noodles, cinema], entities: [] };
+    expect(signalsFor('watch', picked)).toEqual({ tags: [cinema], entities: [] });
+    expect(signalsFor('play', picked)).toEqual({ tags: [cinema], entities: [] });
+    expect(reasonFor([cinema])).toBe('Because you picked Late-night cinema.');
+    expect(reasonFor([{ id: 'qloo-tous', name: 'Tous', food: false, pickLabel: null }])).toBe('Related to Tous in your feed.');
   });
 
   it('Wear asks Qloo for fashion brands only (S-WEAR-FILTER); Eat for cuisine tags, then places with photos', () => {
@@ -45,6 +54,14 @@ describe('food signals (S-EAT-SIGNAL)', () => {
     expect(SEED_CATEGORY_PLAN.eat.filterTagTypes).toEqual(['urn:tag:cuisine:qloo']);
     expect(SEED_CATEGORY_PLAN.play.filterTags).toBeUndefined();
     expect(SEED_CATEGORY_PLAN.watch.filterTags).toBeUndefined();
+  });
+
+  it('drops venues named only after the cuisine', () => {
+    expect(isGenericVenueName('Ramen restaurant', 'Ramen restaurant')).toBe(true);
+    expect(isGenericVenueName('Restaurante de Sichuan', 'Sichuan restaurant')).toBe(true);
+    expect(isGenericVenueName('Sichuan Style Restaurant', 'Sichuan restaurant')).toBe(true);
+    expect(isGenericVenueName('Ichiran Shibuya', 'Ramen restaurant')).toBe(false);
+    expect(isGenericVenueName('Sichuan Restaurant and Karaoke Bar', 'Sichuan restaurant')).toBe(false);
   });
 
   it('searches several pictured place queries, not only the first cuisine name', () => {

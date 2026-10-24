@@ -26,9 +26,25 @@ final class CaptureController: ObservableObject {
   @Published var openGlasses = false
   @Published var openFeedDetail = false
   @Published private(set) var recordingDraftID: UUID?
+  /// Short confirmation banner ("Added to Audit board · View").
+  @Published private(set) var flash: Flash?
+  /// Bumped to pop a tab back to its root (deep links, "View" on a flash).
+  @Published private(set) var stackResets: [RootTab: Int] = [:]
+  /// A board to push on the Boards tab (from a flash or a deep link).
+  @Published var openBoard: CollectionSummaryRoute?
+  /// A library item to push on the Library tab (`cultureatlas://library/media/{id}`).
+  @Published var openMediaID: UUID?
+  /// The signed-in address, shown in Settings. Kept on this phone only.
+  @Published private(set) var signedInEmail: String?
+  private var flashTask: Task<Void, Never>?
 
   enum RootTab: Hashable {
-    case feed, capture, library, settings
+    case feed, boards, capture, library, settings
+  }
+
+  struct CollectionSummaryRoute: Hashable, Identifiable {
+    let id: UUID
+    let name: String
   }
 
   let api: AtlasAPI
@@ -93,52 +109,112 @@ final class CaptureController: ObservableObject {
     }
   }
 
+  /// Success is shown inline by the sign-in screen (no alert). A Keychain
+  /// failure is not a network problem and says so.
   func sendLink(email: String) async {
     do {
       try await accounts.startSignIn(email: email)
       phase = .awaitingEmail(email)
-      message = "Check your email for a sign-in link. Open it on this phone."
+    } catch is KeychainStore.KeychainError {
+      message = "This phone couldn't store your sign-in. Reinstall the app and try again."
     } catch {
       message = "We couldn't send the link. Check your connection and try again."
     }
   }
 
+  func useDifferentEmail() {
+    if case .awaitingEmail = phase { phase = .signedOut }
+  }
+
+  // MARK: Navigation
+
+  func showFlash(_ flash: Flash) {
+    flashTask?.cancel()
+    withAnimation(AtlasMotion.spring) { self.flash = flash }
+    flashTask = Task { [weak self] in
+      try? await Task.sleep(nanoseconds: 3_200_000_000)
+      guard !Task.isCancelled else { return }
+      self?.dismissFlash()
+    }
+  }
+
+  func dismissFlash() {
+    flashTask?.cancel()
+    withAnimation(AtlasMotion.spring) { flash = nil }
+  }
+
+  func perform(_ action: Flash.Action) {
+    dismissFlash()
+    switch action {
+    case .openBoard(let id, let name):
+      popToRoot(.boards)
+      rootTab = .boards
+      openBoard = CollectionSummaryRoute(id: id, name: name)
+    }
+  }
+
+  func popToRoot(_ tab: RootTab) {
+    stackResets[tab, default: 0] += 1
+  }
+
   func handle(url: URL) async {
     if await wearables.handleURL(url) { return }
     if url.scheme == "cultureatlas" {
+      let parts = url.pathComponents.filter { $0 != "/" }.map { $0.lowercased() }
       switch url.host {
       case "feed":
+        popToRoot(.feed)
         rootTab = .feed
-        openFeedDetail = url.path.lowercased().contains("detail")
+        openFeedDetail = parts.contains("detail")
+        return
+      case "boards":
+        popToRoot(.boards)
+        rootTab = .boards
         return
       case "library":
+        popToRoot(.library)
         rootTab = .library
+        // cultureatlas://library/media/{id}
+        if parts.first == "media", parts.count > 1, let id = UUID(uuidString: parts[1]) {
+          openMediaID = id
+        }
         return
       case "settings":
+        popToRoot(.settings)
         rootTab = .settings
-        openGlasses = url.path.lowercased().contains("glasses")
+        openGlasses = parts.contains("glasses")
         return
       case "capture":
+        popToRoot(.capture)
         rootTab = .capture
-        openCamera = url.path.lowercased().contains("camera")
-        openMusic = url.path.lowercased().contains("music")
-        openGlasses = url.path.lowercased().contains("glasses")
+        openCamera = parts.contains("camera")
+        openMusic = parts.contains("music")
+        openGlasses = parts.contains("glasses")
         return
       default:
         break
       }
     }
     guard AccountService.parseCallback(url) != nil else { return }
+    let pendingEmail: String? = if case .awaitingEmail(let address) = phase { address } else { nil }
     do {
       let account = try await accounts.completeSignIn(callback: url)
+      if let pendingEmail { rememberEmail(pendingEmail, for: account) }
       await becomeSignedIn(account)
     } catch {
       message = "That sign-in link didn't work. Request a new one."
     }
   }
 
+  private func emailKey(_ account: UUID) -> String { "atlas.account-email.\(account.uuidString.lowercased())" }
+
+  private func rememberEmail(_ email: String, for account: UUID) {
+    try? KeychainStore().set(Data(email.utf8), for: emailKey(account))
+  }
+
   private func becomeSignedIn(_ account: UUID) async {
     phase = .signedIn(account)
+    signedInEmail = KeychainStore().data(for: emailKey(account)).flatMap { String(data: $0, encoding: .utf8) }
     await uploads.setSignedInAccount(account)
     // Drafts that wait for this account (and only this account) resume.
     await uploads.unlockAll(owner: account)
@@ -194,6 +270,7 @@ final class CaptureController: ObservableObject {
     await beforeSignOut?()
     await accounts.signOut()
     await uploads.setSignedInAccount(nil)
+    signedInEmail = nil
     phase = .signedOut
     reloadDrafts()
   }
@@ -303,6 +380,7 @@ final class CaptureController: ObservableObject {
       reloadDrafts()
       return draft
     } catch {
+      NSLog("[atlas] music recording failed: %@", String(describing: error))
       try? draftStore.delete(draft)
       message = (error as? LocalizedError)?.errorDescription ?? "Recording could not be saved."
       return nil

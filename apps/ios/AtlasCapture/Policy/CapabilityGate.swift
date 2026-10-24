@@ -130,20 +130,16 @@ public enum CapabilityGate {
     return PhotoAnalysis(available: true, message: "")
   }
 
+  /// User-facing copy. Never mentions models, providers or qualification:
+  /// the person only needs to know their photo is safe and what happens next.
   public static func photoAnalysisMessage(reasons: [String]) -> String {
-    if reasons.contains("model_unqualified") {
-      return "Photo analysis isn't available yet. The vision model isn't qualified for this build. Your photos stay in this private library."
+    // The server also reports budget_exhausted when the provider is simply
+    // unavailable; only a budget-only pause is described as "for today".
+    let blocking: Set<String> = ["model_unqualified", "provider_unconfigured", "privacy_unverified"]
+    if reasons.contains("budget_exhausted"), blocking.isDisjoint(with: reasons) {
+      return "Exploring photos is paused for today. Your photo is saved privately and you can explore it later."
     }
-    if reasons.contains("provider_unconfigured") {
-      return "Photo analysis isn't configured. Your photos stay in this private library."
-    }
-    if reasons.contains("budget_exhausted") {
-      return "Photo analysis is paused. Your photos stay in this private library."
-    }
-    if reasons.contains("privacy_unverified") {
-      return "Photo analysis is waiting on a privacy confirmation. Your photos stay in this private library."
-    }
-    return "Photo analysis isn't available yet. Your photos stay in this private library."
+    return "We can't look at photos right now. Your photo is saved privately and you can explore it later."
   }
 
   /// Music Mode Explore: server `availability.music_match`. Recording still works when this is off.
@@ -164,9 +160,9 @@ public enum CapabilityGate {
   public static func musicMatchMessage(reasons: [String]) -> String {
     if reasons.contains("transcript_unconfigured") || reasons.contains("qloo_unconfigured")
       || reasons.contains("fingerprint_unavailable") {
-      return "Song catalog matching isn't available yet. Your recording stays in this private library. Nothing was invented."
+      return "We can't match songs right now. Your recording is saved privately, and we never guess a match."
     }
-    return "Music identification isn't available. Your recording stays in this private library. Nothing was invented."
+    return "We can't listen for matches right now. Your recording is saved privately, and we never guess a match."
   }
 
   /// Music Mode is core capture. A missing flag does not hide it; only an

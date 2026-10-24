@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   ACCEPT_AUDIO,
   assertAudioOnlyStream,
   BROWSER_MICROPHONE_LABEL,
   concatPcm,
   encodePcmWav,
+  exploreMatch,
   exploreNotice,
   glassesMicrophoneAvailability,
   isAudioOnlyGetUserMedia,
@@ -21,7 +22,10 @@ import {
   MUSIC_SERVER,
   musicFileName,
   musicLimitText,
+  wavDurationMs,
   type MicProblem,
+  type MusicMatch,
+  type MusicMatchArtist,
 } from './music-mode';
 import { formatDuration } from './media-format';
 import { isSignedOutError, mediaApi, mediaErrorMessage } from './media-api';
@@ -66,6 +70,8 @@ export function MusicView() {
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState('');
   const [exploreNoticeText, setExploreNoticeText] = useState<string | null>(null);
+  const [match, setMatch] = useState<MusicMatch | null>(null);
+  const [exploring, setExploring] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const stream = useRef<MediaStream | null>(null);
@@ -165,6 +171,7 @@ export function MusicView() {
     });
     setKept(null);
     setExploreNoticeText(null);
+    setMatch(null);
     setPhase('review');
   };
 
@@ -226,10 +233,15 @@ export function MusicView() {
   };
 
   const discard = () => {
-    if (draft) URL.revokeObjectURL(draft.url);
+    // Revoke only after <audio> has let go of the blob URL (no ERR_FILE_NOT_FOUND).
+    if (draft) {
+      const url = draft.url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     setDraft(null);
     setKept(null);
     setExploreNoticeText(null);
+    setMatch(null);
     setPhase(stream.current ? 'live' : 'idle');
     queueMicrotask(() => shutter.current?.focus());
   };
@@ -253,8 +265,9 @@ export function MusicView() {
         generation: saved.generation,
         duration_ms: saved.media.duration_ms,
       });
-      setAnnounce('Saved to your library');
-      setNotice('Saved to your library. Explore is optional and does not change taste.');
+      setAnnounce('Recording kept privately on your account');
+      // The kept status line sits above the actions.
+      setNotice('Exploring is optional; it doesn’t change your picks.');
     } catch (err) {
       if (isSignedOutError(err)) {
         setNotice('Sign in to keep this recording in your library. You can still save it on this device.');
@@ -269,6 +282,8 @@ export function MusicView() {
   const explore = async () => {
     if (!kept || busy) return;
     setBusy(true);
+    setExploring(true);
+    setAnnounce('Listening for a match');
     try {
       const end = Math.max(1, Math.min(kept.duration_ms, 15_000));
       const requested = await mediaApi.analyzeAudio(
@@ -282,17 +297,27 @@ export function MusicView() {
         newIdempotencyKey(),
       );
       let latest = await mediaApi.audioAnalysis(kept.asset_id, requested.analysis_id);
-      for (let i = 0; i < 8 && (latest.state === 'queued' || latest.state === 'running'); i++) {
-        await new Promise((resolve) => setTimeout(resolve, 400));
+      // Recognition, Qloo lookup and related artists usually finish in ~2 s;
+      // allow up to ~20 s with a gentle backoff before showing "still looking".
+      for (
+        let i = 0, wait = 400;
+        i < 24 && (latest.state === 'queued' || latest.state === 'running');
+        i++, wait = Math.min(1200, Math.round(wait * 1.25))
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, wait));
         latest = await mediaApi.audioAnalysis(kept.asset_id, requested.analysis_id);
       }
+      const found = exploreMatch(latest);
+      setMatch(found);
       setExploreNoticeText(exploreNotice(latest));
+      setAnnounce(found ? `It sounds like ${found.artist.name}` : 'Explore finished');
       setPhase('explored');
     } catch (err) {
       setExploreNoticeText(mediaErrorMessage(err, MUSIC_SERVER.reason));
       setPhase('explored');
     } finally {
       setBusy(false);
+      setExploring(false);
     }
   };
 
@@ -307,20 +332,36 @@ export function MusicView() {
   const limit = musicLimitText(elapsed, MUSIC_CAPTURE_LIMIT_MS, recording);
   const glasses = glassesMicrophoneAvailability();
 
-  const onPickedFile = (file: File | undefined) => {
+  const onPickedFile = async (file: File | undefined) => {
     if (!file) return;
     if (!isQualifiedWavFile(file)) {
       setNotice('Use a WAV file. Other audio containers are not qualified yet.');
       return;
     }
+    let durationMs: number | null;
+    try {
+      durationMs = wavDurationMs(await file.arrayBuffer());
+    } catch {
+      durationMs = null;
+    }
+    if (durationMs === null) {
+      setNotice('This file is not a readable WAV recording. Choose another WAV file.');
+      return;
+    }
+    setNotice(null);
+    if (draft) {
+      const url = draft.url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     setDraft({
       blob: file,
       url: URL.createObjectURL(file),
-      durationMs: 15_000,
+      durationMs,
       interrupted: false,
     });
     setKept(null);
     setExploreNoticeText(null);
+    setMatch(null);
     setPhase('review');
   };
 
@@ -355,7 +396,7 @@ export function MusicView() {
         </select>
       </label>
 
-      <div className="camera__stage music__stage">
+      <div className={`camera__stage music__stage${match || draft ? ' music__stage--compact' : ''}`}>
         <div
           className={`music__wave${recording ? ' music__wave--live' : ''}`}
           role="img"
@@ -415,9 +456,24 @@ export function MusicView() {
             </div>
           </div>
         )}
-        {phase === 'review' && draft && (
+        {(phase === 'review' || phase === 'explored') && draft && (
           <div className="music__review">
+            <span className="music__length" data-testid="music-length">
+              {/* Whole seconds, floored, the way the player counts them. */}
+              {formatDuration(Math.floor(draft.durationMs / 1000) * 1000)} recording
+            </span>
             <audio src={draft.url} controls playsInline aria-label="Your recording" />
+            {exploring && (
+              <span className="music__listening" role="status">
+                <span className="music__eq" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                  <span />
+                </span>
+                Listening for a match…
+              </span>
+            )}
           </div>
         )}
         <input
@@ -429,7 +485,7 @@ export function MusicView() {
           aria-hidden="true"
           data-testid="music-file-input"
           onChange={(e) => {
-            onPickedFile(e.target.files?.[0]);
+            void onPickedFile(e.target.files?.[0]);
             e.target.value = '';
           }}
         />
@@ -502,25 +558,33 @@ export function MusicView() {
           ) : (
             <>
               <p className="camera__status" role="status">
-                Saved to your library.
+                Kept privately on your account.
               </p>
-              {exploreNoticeText && (
+              {exploreNoticeText && !match && (
                 <p className="camera__status" role="status">
                   {exploreNoticeText}
                 </p>
               )}
+              {match && <MusicMatchCard match={match} />}
               <div className="camera__review-actions">
                 <button type="button" className="button button--outline v2-button" onClick={discard}>
                   Record another
                 </button>
-                <button
-                  type="button"
-                  className="button button--primary v2-button"
-                  onClick={() => void explore()}
-                  disabled={phase === 'explored' || busy}
-                >
-                  Explore music
-                </button>
+                {phase === 'explored' ? (
+                  <Link href="/" className="button button--primary v2-button">
+                    See your feed
+                  </Link>
+                ) : (
+                  <button
+                    type="button"
+                    className="button button--primary v2-button"
+                    onClick={() => void explore()}
+                    disabled={busy}
+                    aria-busy={exploring}
+                  >
+                    {exploring ? 'Listening…' : 'Explore music'}
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -551,7 +615,68 @@ export function MusicView() {
         {announce}
         {limit.soon ? ` ${limit.text}` : ''}
       </p>
-      <p className="camera__note">Speech transcription is off. Review before keeping.</p>
+      <p className="camera__note">Nothing is analyzed until you choose Explore. Review before keeping.</p>
     </div>
+  );
+}
+
+function ArtistArt({ artist, size }: { artist: MusicMatchArtist; size: 'hero' | 'tile' }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className={`music-match__art music-match__art--${size}`}>
+      {artist.image && !failed ? (
+        // Only an https picture Qloo returned; otherwise a typographic poster.
+        <img
+          src={artist.image.url}
+          alt={artist.image.alt || artist.name}
+          loading={size === 'hero' ? 'eager' : 'lazy'}
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <div className="text-art text-art--artist music-match__poster" aria-hidden="true">
+          <span className="text-art__kind">Artist</span>
+          <span className="text-art__title">{artist.name}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Music Mode match: the Qloo artist, what the recognizer heard, and related Qloo artists. */
+function MusicMatchCard({ match }: { match: MusicMatch }) {
+  const heard = [match.title, match.album_title].filter(Boolean).join(' · ');
+  return (
+    <section className="music-match" aria-label="Music match" data-testid="music-match">
+      <div className="music-match__hero">
+        <ArtistArt artist={match.artist} size="hero" />
+        <div className="music-match__text">
+          <p className="music-match__eyebrow">It sounds like</p>
+          <h2 className="music-match__name">{match.artist.name}</h2>
+          {heard && <p className="music-match__heard">{heard}</p>}
+          {match.artist.image?.attribution && (
+            <p className="music-match__credit">Image: {match.artist.image.attribution}</p>
+          )}
+        </div>
+      </div>
+      {match.related.length > 0 && (
+        <>
+          <h3 className="music-match__related-title">If you like {match.artist.name}</h3>
+          <ul className="music-match__related" aria-label={`Artists related to ${match.artist.name}`}>
+            {match.related.map((artist, i) => (
+              <li
+                key={artist.entity_id}
+                className="music-match__tile"
+                style={{ ['--i' as string]: i } as CSSProperties}
+              >
+                <ArtistArt artist={artist} size="tile" />
+                <span className="music-match__tile-name">{artist.name}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
   );
 }

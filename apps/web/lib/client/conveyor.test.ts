@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  countFresh,
+  dedupeByTitle,
   canFlow,
   createConveyor,
   feedColumns,
   laneSpeed,
+  mergeLanded,
   mergeRefreshed,
   pickNext,
   reconcile,
@@ -205,5 +208,41 @@ describe('feed conveyor model', () => {
     expect(feedColumns(358)).toBe(2);
     expect(feedColumns(704)).toBe(3);
     expect(feedColumns(1344)).toBe(4);
+  });
+});
+
+describe('refresh honesty', () => {
+  const c = (id: string, title: string, kind = 'film') => ({ id, title, kind });
+  it('counts only cards new by id and by kind+title', () => {
+    const existing = [c('1', 'Tetsubin', 'style'), c('2', 'Rich Kids')];
+    const incoming = [c('9', 'Tetsubin', 'style'), c('2', 'Rich Kids'), c('3', 'Aristocrazy', 'brand')];
+    expect(countFresh(incoming, existing)).toBe(1);
+    expect(countFresh([c('4', 'A'), c('5', ' a ')], [])).toBe(1);
+  });
+  it('drops later repeats of the same kind and title, keeping order', () => {
+    expect(dedupeByTitle([c('1', 'A'), c('2', 'B'), c('3', 'a'), c('4', 'A', 'brand')]).map((x) => x.id)).toEqual([
+      '1',
+      '2',
+      '4',
+    ]);
+  });
+});
+
+describe('mergeLanded (seed landing after onboarding)', () => {
+  const ex = (id: string) => ({ id, is_example: true });
+  const real = (id: string) => ({ id, is_example: false });
+
+  it('real cards push out the examples the server dropped; known real cards stay', () => {
+    const shown = [real('q1'), ex('s1'), ex('s2'), ex('s3')];
+    const polled = [real('q2'), real('q1'), ex('s3')];
+    expect(mergeLanded(polled, shown).map((c) => c.id)).toEqual(['q2', 'q1', 's3']);
+    // A real card the newest page no longer lists is kept.
+    expect(mergeLanded([real('q3')], [real('q1'), ex('s1')]).map((c) => c.id)).toEqual(['q3', 'q1']);
+  });
+
+  it('an examples-only answer changes nothing it would lose, and never empties the pool', () => {
+    const shown = [ex('s1'), ex('s2')];
+    expect(mergeLanded([ex('s2')], shown).map((c) => c.id)).toEqual(['s2', 's1']);
+    expect(mergeLanded([], shown)).toEqual(shown);
   });
 });

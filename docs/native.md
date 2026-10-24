@@ -32,7 +32,9 @@ and `ready-notice.json`; wire examples are the `onboarding_*`,
   (`not_found`/`scope_denied`) never blocks the app.
 - **Native owner bridge (server, additive).** `/v1` refuses installation
   tokens. `packages/domain/src/authz/native-owner.ts` lists the onboarding,
-  taste, Discover, and board operations (`NATIVE_OWNER_OPERATIONS`) on which
+  taste, Discover, item detail, capture result (`GET /v1/captures/{id}`,
+  read-only: references and Qloo recommendations of the owner's own capture),
+  and board operations (`NATIVE_OWNER_OPERATIONS`) on which
   `apiRoute` (`apps/web/lib/server/http.ts`) converts a live installation
   session into its account owner (`sessionId: null`). It rechecks that the
   installation is neither revoked nor ended on every call and requires
@@ -176,21 +178,28 @@ Requirements: Xcode 16+, XcodeGen, iOS 17.2+ device for camera/glasses work.
 
 ```sh
 cd apps/ios
+cp Config/Signing.xcconfig.example Config/Signing.xcconfig   # edit: DEVELOPMENT_TEAM = U9XG3X374H
 xcodegen generate
-# Public build (no Meta SDK) and its unit tests:
+# Public build (no Meta SDK) and its unit tests, on the simulator:
 xcodebuild -project CultureAtlas.xcodeproj -scheme CultureAtlas \
-  -destination 'platform=iOS Simulator,name=iPhone 16' test
-# Experimental build (links the SDK through Swift Package Manager):
-xcodebuild -project CultureAtlas.xcodeproj -scheme CultureAtlasExperimental \
-  -destination 'generic/platform=iOS' build
+  -destination 'platform=iOS Simulator,name=iPhone 17e' test
+# Debug build on your iPhone: open CultureAtlas.xcodeproj, choose the
+# CultureAtlas scheme, Debug, your iPhone, then Run (docs/hands-on-test-guide.md B.1).
+# Experimental build (links the Meta SDK through Swift Package Manager). The
+# experimental store id is not available to team U9XG3X374H, so override it:
+xcodebuild -project CultureAtlas.xcodeproj -scheme CultureAtlasExperimental -configuration Debug \
+  -destination 'platform=iOS,id=<UDID>' -allowProvisioningUpdates \
+  DEVELOPMENT_TEAM=U9XG3X374H PRODUCT_BUNDLE_IDENTIFIER=com.aomg.cultureatlas.experimental \
+  META_APP_ID=<id or empty> CLIENT_TOKEN=<token or empty> build
 ```
 
 `AtlasCaptureTests` reads `fixtures/native-contract` from the test bundle.
-Signing: put `DEVELOPMENT_TEAM = …` in the untracked
+Signing: `DEVELOPMENT_TEAM` lives in the untracked
 `apps/ios/Config/Signing.xcconfig`. The API host is `ATLAS_API_HOST` in
-`Config/Base.xcconfig` (override per environment in CI). `META_APP_ID` and
-`CLIENT_TOKEN` are injected by CI for the experimental target; empty means
-Meta Developer Mode.
+`Config/Base.xcconfig`; for a local stack put `ATLAS_API_SCHEME` and
+`ATLAS_API_HOST` in the untracked `Config/LocalAPI.xcconfig`
+(docs/hands-on-test-guide.md B.1). `META_APP_ID` and `CLIENT_TOKEN` are
+injected by CI for the experimental target; empty means Meta Developer Mode.
 
 ### Android
 
@@ -237,10 +246,28 @@ does.
 | Android `store` flavor | Google Play production | No | Entry visible, explains unavailability |
 | Android `experimental` flavor | Play internal testing / closed testing, or Meta's tester channel | Yes | Only if server capabilities allow it |
 
-Server policy stays authoritative: `GET /v2/capabilities` currently reports
-`meta_glasses_capture_enabled: false` with every distribution reason (the
-route hard-codes the glasses gates off), so even experimental builds show the
-unavailable state until the server evaluates real gates.
+Server policy stays authoritative. The gate reads the capability keys the
+apps send at enrollment and in every `PUT /v2/device/status` heartbeat
+(heartbeats merge keys, so a heartbeat that omits one keeps its last value):
+`meta_glasses_sdk` (or the spec's `meta_wearables_sdk`) proves the SDK build,
+and `meta_wearables_supported_os` is assumed true for an SDK build unless the
+app sends `false` (`fixtures/native-contract/capability-gate.json`,
+`device_capability_keys`).
+
+Owner checklist for a glasses hand test:
+
+1. Build the `CultureAtlasExperimental` scheme (or the Android `experimental`
+   flavor) with `ATLAS_META_DAT` and the MWDAT MetaAppID/ClientToken, or Meta
+   Developer Mode.
+2. `META_GLASSES_QUALIFIED_BUILDS='ios@<CFBundleShortVersionString> (<CFBundleVersion>)'`
+   exactly as the app reports its version, `META_GLASSES_ENTITLED_PLATFORMS=ios`,
+   and `META_GLASSES_ROLLOUT=all` (or `allowlist` with
+   `META_GLASSES_ROLLOUT_ACCOUNT_IDS`).
+3. Register the glasses in the Meta AI app and grant camera permission; the
+   phone reports the wearable with `POST /v2/device/wearables`.
+4. Glasses audio additionally needs `META_GLASSES_AUDIO_QUALIFIED=true`, the
+   wearable's `audio` capability and the phone's `microphone_permission` and
+   `glasses_microphone_selected` keys.
 
 Gate checklist. Record evidence, owner and next check date for each row
 before submitting (BUILD-AND-ACCEPTANCE "Platform release gates"); a runtime

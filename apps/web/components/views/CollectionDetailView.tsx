@@ -255,9 +255,12 @@ export function CollectionDetailView({ collectionId }: { collectionId: string })
       <BackLink href="/collections" label="Collections" />
       <div className="page-head">
         <div>
-          <h1 className="display">{collection.name}</h1>
+          <h1 className="display display--medium">{collection.name}</h1>
           {collection.description && (
-            <p className="page-head__description">{collection.description}</p>
+            <p className="page-head__description">
+              {/* The navigation calls the feed "Discover". */}
+              {collection.description.replace(/\bfrom Feed\b/g, 'from Discover')}
+            </p>
           )}
         </div>
         <div className="page-head__actions">

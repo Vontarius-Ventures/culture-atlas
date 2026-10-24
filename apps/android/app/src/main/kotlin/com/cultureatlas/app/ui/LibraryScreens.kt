@@ -2,16 +2,22 @@ package com.cultureatlas.app.ui
 
 import android.Manifest
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -30,7 +36,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +46,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -90,11 +100,9 @@ import com.cultureatlas.capture.core.contract.CollectionMember
 import com.cultureatlas.capture.core.contract.CollectionSummary
 import com.cultureatlas.capture.core.contract.CreateCollectionRequest
 import com.cultureatlas.capture.core.contract.DiscoveryCard
-import com.cultureatlas.capture.core.contract.ItemDetailResponse
 import com.cultureatlas.capture.core.contract.TasteCategory
 import com.cultureatlas.capture.core.feed.FeedConveyor
 import com.cultureatlas.capture.core.net.AtlasApi
-import com.cultureatlas.capture.core.net.AtlasClientException
 import com.cultureatlas.capture.core.net.addCollectionItem
 import com.cultureatlas.capture.core.net.collection
 import com.cultureatlas.capture.core.net.collections
@@ -103,6 +111,7 @@ import com.cultureatlas.capture.core.net.discoverRelated
 import com.cultureatlas.capture.core.net.discoveries
 import com.cultureatlas.capture.core.net.item
 import com.cultureatlas.capture.core.onboarding.OnboardingCopy
+import com.cultureatlas.capture.core.result.ReferenceCopy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -120,80 +129,26 @@ import kotlin.math.roundToInt
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
-    var pool by remember { mutableStateOf<List<DiscoveryCard>>(emptyList()) }
-    val conveyor = remember { feedConveyor() }
-    var exampleFeed by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
-    var loading by remember { mutableStateOf(true) }
-    var refreshing by remember { mutableStateOf(false) }
-    var adding by remember { mutableStateOf<DiscoveryCard?>(null) }
-    var opened by remember { mutableStateOf<DiscoveryCard?>(null) }
+fun FeedScreen(feed: FeedModel, notices: ReadyNoticeCenter, onOpen: (DiscoveryCard) -> Unit) {
     val exploring by notices.exploring.collectAsState()
     val toast by notices.toast.collectAsState()
     val scope = rememberCoroutineScope()
-    suspend fun load(refresh: Boolean = false) {
-        runCatching { api.discoveries(refresh) }
-            .onSuccess { feed ->
-                exampleFeed = feed.isExampleFeed
-                if (feed.items.isEmpty()) {
-                    message = if (pool.isEmpty()) {
-                        "Still looking for things that match your interests. Pull to try again."
-                    } else {
-                        "Nothing new yet. Still showing what you had."
-                    }
-                } else {
-                    val incomingIds = feed.items.map { it.id }.toSet()
-                    val keepOnScreen = conveyor.onScreenIds()
-                    // Posters stay in the pool (as on iOS): the conveyor already takes pictured cards
-                    // first and never passes a waiting photo for a poster. Dropping them left too few
-                    // cards to fill both columns, so the feed drifted into empty gaps.
-                    val next = feed.items + pool.filter { it.id in keepOnScreen && it.id !in incomingIds }
-                    // New cards join the conveyor; nothing on screen is reset or removed.
-                    pool = next
-                    message = null
-                }
-            }
-            .onFailure {
-                if (it is AtlasClientException.Server && it.code == "onboarding_required") {
-                    pool = emptyList()
-                    conveyor.clear()
-                    message = "Finish picking your interests to see suggestions."
-                } else if (pool.isEmpty()) {
-                    message = "Suggestions aren't available right now. Pull to try again."
-                } else {
-                    message = "Couldn't refresh. Still showing what you had."
-                }
-            }
-        loading = false
-        refreshing = false
-    }
-    LaunchedEffect(Unit) { load() }
+    val haptics = rememberHaptics()
+    // The pool lives in [feed]: coming back to this tab resumes the drift, it never starts empty.
     LaunchedEffect(Unit) {
+        if (!feed.loadedOnce || feed.pool.isEmpty()) feed.load()
+        // Right after onboarding this is how the seed's real cards replace the examples (no reload).
         while (true) {
-            delay(8_000)
-            load(refresh = false)
+            delay(feed.pollMillis)
+            feed.load(refresh = false)
         }
-    }
-    if (opened != null) {
-        FeedCardDetail(
-            api = api,
-            card = opened!!,
-            notices = notices,
-            onBack = { opened = null },
-            onAddToBoard = { adding = opened },
-            onOpenRelated = { opened = it },
-        )
-        adding?.let { card ->
-            AddToBoardDialog(api = api, card = card, onDismiss = { adding = null }, onAdded = { adding = null })
-        }
-        return
     }
     PullToRefreshBox(
-        isRefreshing = refreshing,
+        isRefreshing = feed.refreshing,
         onRefresh = {
-            refreshing = true
-            scope.launch { load(refresh = true) }
+            haptics.tick()
+            feed.refreshing = true
+            scope.launch { feed.load(refresh = true) }
         },
     ) {
         // A scrollable that consumes nothing: a pull anywhere (header, empty state, or back past
@@ -204,38 +159,65 @@ fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
                 .scrollable(rememberScrollableState { 0f }, Orientation.Vertical)
                 .padding(horizontal = 16.dp),
         ) {
-            Column(Modifier.padding(top = 16.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier.padding(top = 16.dp, bottom = 12.dp).animateContentSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text("Feed", Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
                 Text("A feed of what you're into. Pull down for more.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-                if (exampleFeed) {
+                AnimatedVisibility(visible = feed.exampleFeed, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                     Text("These are example results until your personal feed is ready.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
                 }
-                if (exploring.isNotEmpty()) {
-                    AnalysisLookingBanner()
-                } else if (toast != null) {
-                    AnalysisReadyBanner()
+                AnimatedVisibility(visible = exploring.isNotEmpty() || toast != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                    if (exploring.isNotEmpty()) AnalysisLookingBanner() else AnalysisReadyBanner()
                 }
-                if (loading && pool.isEmpty()) Text("Loading…", color = AtlasColors.muted)
-                message?.let { Text(it, color = AtlasColors.muted) }
-                if (!loading && pool.isEmpty() && message == null) {
+                feed.message?.let { Text(it, color = AtlasColors.muted) }
+                if (!feed.loading && feed.pool.isEmpty() && feed.message == null) {
                     Text("No suggestions yet", style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
                     Text("Finish picking your interests, then pull to refresh.", color = AtlasColors.muted)
                 }
             }
-            DriftingCards(
-                conveyor = conveyor,
-                cards = pool,
-                orientation = Orientation.Vertical,
-                lanes = 2,
-                speeds = FEED_LANE_SPEEDS,
-                rotateWhenStill = true,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                onOpen = { opened = it },
-            )
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                DriftingCards(
+                    conveyor = feed.conveyor,
+                    cards = feed.pool,
+                    orientation = Orientation.Vertical,
+                    lanes = 2,
+                    speeds = FEED_LANE_SPEEDS,
+                    rotateWhenStill = true,
+                    modifier = Modifier.fillMaxSize(),
+                    onOpen = onOpen,
+                )
+                // First load: two columns of soft placeholders instead of a word.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = feed.loading && feed.pool.isEmpty(),
+                    enter = fadeIn(),
+                    exit = fadeOut(tween(420)),
+                ) {
+                    FeedSkeleton()
+                }
+            }
         }
     }
-    adding?.let { card ->
-        AddToBoardDialog(api = api, card = card, onDismiss = { adding = null }, onAdded = { adding = null })
+}
+
+@Composable
+private fun FeedSkeleton() {
+    BoxWithConstraints(Modifier.fillMaxSize().semantics { contentDescription = "Loading suggestions" }) {
+        val laneWidth = (maxWidth - TILE_GAP) / 2
+        Row(horizontalArrangement = Arrangement.spacedBy(TILE_GAP)) {
+            repeat(2) { lane ->
+                Column(
+                    Modifier.width(laneWidth).offset(y = if (lane == 1) 48.dp else 0.dp),
+                    verticalArrangement = Arrangement.spacedBy(TILE_GAP),
+                ) {
+                    repeat(3) {
+                        Shimmer(Modifier.fillMaxWidth().aspectRatio(4f / 5f).clip(RoundedCornerShape(14.dp)))
+                        Shimmer(Modifier.width(laneWidth * 0.7f).height(14.dp).clip(RoundedCornerShape(7.dp)))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -391,18 +373,24 @@ private fun prefersReducedMotion(): Boolean {
 
 /** A fixed-height tile: 4:5 picture (or poster) plus a fixed caption area, so tiles never overlap. */
 @Composable
-private fun FeedCardTile(card: DiscoveryCard, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+internal fun FeedCardTile(card: DiscoveryCard, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     Column(
         modifier
             .fillMaxWidth()
-            .clipToBounds()
-            .clickable(onClick = onOpen)
+            .tappable(onClick = onOpen)
             .semantics(mergeDescendants = true) {
                 contentDescription = if (card.isExample) "${card.title}. Example result" else card.title
             },
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        FeedCardVisual(card, Modifier.fillMaxWidth().aspectRatio(4f / 5f).clip(RoundedCornerShape(14.dp)))
+        FeedCardVisual(
+            card,
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(4f / 5f)
+                .sharedCard(card.id)
+                .clip(RoundedCornerShape(14.dp)),
+        )
         Column(Modifier.height(tileCaptionHeight()).clipToBounds()) {
             Text(card.title, style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif), maxLines = 2, overflow = TextOverflow.Ellipsis)
             if (card.isExample) Text("Example result", color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
@@ -410,20 +398,35 @@ private fun FeedCardTile(card: DiscoveryCard, onOpen: () -> Unit, modifier: Modi
     }
 }
 
+/**
+ * Licensed picture crossfading in over the card's typographic poster: the
+ * poster shows while the picture loads and stays if it fails. A card without
+ * a picture is only the poster — never a stand-in portrait.
+ */
 @Composable
-private fun FeedCardVisual(card: DiscoveryCard, modifier: Modifier) {
+internal fun FeedCardVisual(card: DiscoveryCard, modifier: Modifier) {
     val imageUrl = card.image?.resolved(AtlasApiBase)
-    if (imageUrl != null) {
-        RemoteImage(imageUrl, modifier, contentDescription = card.image?.alt ?: card.title)
-    } else {
-        Box(modifier.background(posterFill(card.category)), contentAlignment = Alignment.BottomStart) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                card.category?.let {
-                    Text(OnboardingCopy.group(it), color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
-                }
-                Text(card.title, color = Color.White, style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif), maxLines = 4)
-                card.subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall, maxLines = 2) }
+    AtlasImage(
+        url = imageUrl,
+        modifier = modifier,
+        contentDescription = card.image?.alt ?: card.title,
+        placeholder = { CardPoster(card, Modifier.fillMaxSize(), quiet = imageUrl != null) },
+    )
+}
+
+@Composable
+private fun CardPoster(card: DiscoveryCard, modifier: Modifier, quiet: Boolean) {
+    Box(modifier.background(posterFill(card.category)), contentAlignment = Alignment.BottomStart) {
+        // While a picture is on its way the poster's words stay soft, so the crossfade reads as one image.
+        Column(
+            Modifier.padding(14.dp).graphicsLayer { alpha = if (quiet) 0.55f else 1f },
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            card.category?.let {
+                Text(OnboardingCopy.group(it), color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
             }
+            Text(card.title, color = Color.White, style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif), maxLines = 4)
+            card.subtitle?.let { Text(it, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall, maxLines = 2) }
         }
     }
 }
@@ -436,14 +439,40 @@ private fun posterFill(category: TasteCategory?): Color = when (category) {
     null -> AtlasColors.ink
 }
 
-/** Pinch to zoom. Focus is a separate tool: arm it, drag a box, then confirm. Analysis runs only on the owner's own captures — suggestion cards fail closed. */
+/** Back affordance for pushed screens: an arrow plus the screen's name, fading in as you scroll. */
 @Composable
-private fun FeedCardDetail(
+internal fun AtlasTopBar(title: String?, onBack: () -> Unit, titleAlpha: Float = 1f) {
+    Row(
+        Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onBack, modifier = Modifier.semantics { contentDescription = "Back" }) {
+            Icon(AtlasIcons.Back, contentDescription = null, tint = AtlasColors.ink)
+        }
+        if (title != null) {
+            Text(
+                title,
+                Modifier.weight(1f).graphicsLayer { alpha = titleAlpha },
+                style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * Pinch to zoom. Focus is a separate tool: arm it, drag a box, then confirm. Analysis runs only on
+ * the owner's own captures — suggestion cards fail closed. Order matches iOS: details, references,
+ * Similar, then the focus tool and Add to a board. Back with focus armed leaves focus first.
+ */
+@Composable
+fun FeedCardDetail(
     api: AtlasApi,
     card: DiscoveryCard,
     notices: ReadyNoticeCenter,
+    feed: FeedModel,
     onBack: () -> Unit,
-    onAddToBoard: () -> Unit,
     onOpenRelated: (DiscoveryCard) -> Unit,
 ) {
     var scale by remember { mutableFloatStateOf(1f) }
@@ -452,17 +481,26 @@ private fun FeedCardDetail(
     var showFocusHint by remember { mutableStateOf(false) }
     var looking by remember { mutableStateOf(false) }
     var analysisNote by remember { mutableStateOf<String?>(null) }
-    var detail by remember { mutableStateOf<ItemDetailResponse?>(null) }
+    val cached = remember(card.id) { feed.cachedDetail(card.id) }
+    var detail by remember { mutableStateOf(cached) }
     var detailNote by remember { mutableStateOf<String?>(null) }
-    var related by remember { mutableStateOf<List<DiscoveryCard>>(emptyList()) }
-    var relatedState by remember { mutableStateOf("none") }
+    var related by remember { mutableStateOf(cached?.related.orEmpty()) }
+    var relatedState by remember { mutableStateOf(cached?.relatedState ?: "none") }
+    var adding by remember { mutableStateOf(false) }
     val exploring by notices.exploring.collectAsState()
     val toast by notices.toast.collectAsState()
     val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
     val uriHandler = LocalUriHandler.current
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val inFlight = looking || card.id.lowercase() in exploring
     val shownCard = detail?.item ?: card
+    val scroll = rememberScrollState()
+    BackHandler(enabled = focusArmed) {
+        focusArmed = false
+        highlight = null
+        showFocusHint = false
+    }
     LaunchedEffect(card.id) {
         runCatching { api.item(card.id) }
             .onSuccess {
@@ -470,6 +508,7 @@ private fun FeedCardDetail(
                 related = it.related
                 relatedState = it.relatedState
                 detailNote = null
+                feed.rememberDetail(it)
                 if (it.relatedState == "none") {
                     runCatching { api.discoverRelated(card.id) }
                         .onSuccess { relatedState = "pending" }
@@ -485,185 +524,213 @@ private fun FeedCardDetail(
                 detail = loaded
                 related = loaded.related
                 relatedState = loaded.relatedState
+                feed.rememberDetail(loaded)
                 if (loaded.relatedState != "pending") return@LaunchedEffect
             }
             if (related.isEmpty()) relatedState = "none"
         }
     }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        TextButton(onClick = onBack) { Text("Back") }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(4f / 5f)
-                .clip(RoundedCornerShape(16.dp))
-                .graphicsLayer { scaleX = scale; scaleY = scale }
-                .pointerInput(focusArmed) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        var start = down.position
-                        var twoFinger = false
-                        do {
-                            val event = awaitPointerEvent()
-                            event.changes.forEach { it.consume() }
-                            val pressed = event.changes.filter { it.pressed }
-                            if (pressed.size >= 2) {
-                                twoFinger = true
-                                scale = (scale * event.calculateZoom()).coerceIn(1f, 4f)
-                            } else if (focusArmed && !twoFinger && pressed.size == 1) {
-                                val current = pressed.first().position
-                                val originX = min(start.x, current.x)
-                                val originY = min(start.y, current.y)
-                                val width = abs(current.x - start.x).coerceAtLeast(24f)
-                                val height = abs(current.y - start.y).coerceAtLeast(24f)
-                                val bounds = Size(size.width.toFloat(), size.height.toFloat())
-                                val rect = Rect(originX, originY, originX + width, originY + height)
-                                    .intersect(Rect(Offset.Zero, bounds))
-                                if (!rect.isEmpty) highlight = rect
-                            }
-                        } while (event.changes.any { it.pressed })
-                        if (scale < 1.05f) scale = 1f
-                    }
-                }
-                .drawWithContent {
-                    drawContent()
-                    highlight?.let { rect ->
-                        drawRect(
-                            color = AtlasColors.olive.copy(alpha = 0.18f),
-                            topLeft = Offset(rect.left, rect.top),
-                            size = Size(rect.width, rect.height),
-                        )
-                        drawRect(
-                            color = AtlasColors.olive,
-                            topLeft = Offset(rect.left, rect.top),
-                            size = Size(rect.width, rect.height),
-                            style = Stroke(width = 2.dp.toPx()),
-                        )
-                    }
-                },
+    Column(Modifier.fillMaxSize()) {
+        // The title joins the bar once the big title has scrolled away.
+        val titleAlpha = ((scroll.value - 420f) / 160f).coerceIn(0f, 1f)
+        AtlasTopBar(shownCard.title, onBack, titleAlpha)
+        Column(
+            Modifier.fillMaxSize().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            FeedCardVisual(shownCard, Modifier.fillMaxSize())
-        }
-        Text(shownCard.title, style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif))
-        shownCard.subtitle?.let { Text(it, color = AtlasColors.muted) }
-        detail?.detail?.let { Text(it, color = AtlasColors.muted) }
-        if (shownCard.isExample) Text("Example result", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-        detail?.description?.let { Text(it) }
-        (detail?.reason ?: detail?.whyThis?.text)?.let {
-            Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-        }
-        detail?.destinationUrl?.let { url ->
-            TextButton(onClick = { uriHandler.openUri(url) }) { Text("Open source") }
-        }
-        if (!detail?.references.isNullOrEmpty()) {
-            Text("References", style = MaterialTheme.typography.labelLarge)
-            detail!!.references.forEach { ref ->
-                Text(
-                    if (ref.qualified) ref.name else "Resembles ${ref.name}",
-                    color = AtlasColors.muted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-        if (inFlight) {
-            AnalysisLookingBanner()
-        } else if (toast != null) {
-            AnalysisReadyBanner()
-        }
-        analysisNote?.let { Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall) }
-        detailNote?.let { Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall) }
-        if (focusArmed) {
-            Text("Focus is on. Drag a box on the picture, then confirm. Pinch still zooms.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(
-                onClick = {
-                    focusArmed = false
-                    highlight = null
-                    showFocusHint = false
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Cancel focus") }
-            if (highlight != null) {
-                Button(
-                    onClick = {
-                        looking = true
-                        analysisNote = null
-                        scope.launch {
-                            if (card.kind != "capture") {
-                                delay(900)
-                                looking = false
-                                analysisNote = "Analysis looks at photos you capture. This card is a suggestion, so nothing was sent."
-                                focusArmed = false
-                                return@launch
-                            }
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                                askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                            looking = false
-                            val started = notices.explore(card.id)
-                            looking = started
-                            if (!started) {
-                                analysisNote = "Exploring isn't available right now. The picture is still on this phone."
-                            }
-                            focusArmed = false
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(4f / 5f)
+                    .sharedCard(card.id)
+                    .clip(RoundedCornerShape(16.dp))
+                    .graphicsLayer { scaleX = scale; scaleY = scale }
+                    .pointerInput(focusArmed) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val start = down.position
+                            var twoFinger = false
+                            do {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { it.consume() }
+                                val pressed = event.changes.filter { it.pressed }
+                                if (pressed.size >= 2) {
+                                    twoFinger = true
+                                    scale = (scale * event.calculateZoom()).coerceIn(1f, 4f)
+                                } else if (focusArmed && !twoFinger && pressed.size == 1) {
+                                    val current = pressed.first().position
+                                    val originX = min(start.x, current.x)
+                                    val originY = min(start.y, current.y)
+                                    val width = abs(current.x - start.x).coerceAtLeast(24f)
+                                    val height = abs(current.y - start.y).coerceAtLeast(24f)
+                                    val bounds = Size(size.width.toFloat(), size.height.toFloat())
+                                    val rect = Rect(originX, originY, originX + width, originY + height)
+                                        .intersect(Rect(Offset.Zero, bounds))
+                                    if (!rect.isEmpty) highlight = rect
+                                }
+                            } while (event.changes.any { it.pressed })
+                            if (scale < 1.05f) scale = 1f
+                        }
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        highlight?.let { rect ->
+                            drawRect(
+                                color = AtlasColors.olive.copy(alpha = 0.18f),
+                                topLeft = Offset(rect.left, rect.top),
+                                size = Size(rect.width, rect.height),
+                            )
+                            drawRect(
+                                color = AtlasColors.olive,
+                                topLeft = Offset(rect.left, rect.top),
+                                size = Size(rect.width, rect.height),
+                                style = Stroke(width = 2.dp.toPx()),
+                            )
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Look at this area") }
+            ) {
+                FeedCardVisual(shownCard, Modifier.fillMaxSize())
             }
-        } else {
-            OutlinedButton(
-                onClick = {
-                    focusArmed = true
-                    showFocusHint = true
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Focus on an area") }
-            Text(
-                if (showFocusHint) {
-                    "This looks at a region of a photo you captured. Suggestion cards are not analyzed."
-                } else {
-                    "Pinch to zoom. Use Focus on an area when you want to look at part of a picture."
-                },
-                color = AtlasColors.muted,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Button(onClick = onAddToBoard, modifier = Modifier.fillMaxWidth()) { Text("Add to a board") }
-        Text("Similar", style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
-        when {
-            relatedState == "pending" && related.isEmpty() -> {
-                AnalysisLookingBanner()
-                Text("Looking for similar suggestions.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-            }
-            related.isEmpty() -> Text("No similar suggestions yet.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-            else -> {
-                if (relatedState == "pending") {
-                    Text("Looking for more like this.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+            Text(shownCard.title, style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Serif))
+            // Sourced detail arrives after the card: it fades in rather than popping the layout.
+            Column(Modifier.animateContentSize(tween(320)), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                shownCard.subtitle?.let { Text(it, color = AtlasColors.muted) }
+                detail?.detail?.let { Text(it, color = AtlasColors.muted) }
+                if (shownCard.isExample) Text("Example result", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                detail?.description?.let { Text(it) }
+                (detail?.reason ?: detail?.whyThis?.text)?.let {
+                    Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
                 }
-                // Same conveyor as the feed: one horizontal lane drifting left through the cached related cards.
-                val rail = related.filter { it.image != null }.ifEmpty { related }
-                val railConveyor = remember(card.id) { feedConveyor() }
-                DriftingCards(
-                    conveyor = railConveyor,
-                    cards = rail,
-                    orientation = Orientation.Horizontal,
-                    lanes = 1,
-                    speeds = RAIL_SPEED,
-                    rotateWhenStill = false,
-                    tileWidth = RAIL_TILE_WIDTH,
-                    modifier = Modifier.fillMaxWidth().height(tileHeight(RAIL_TILE_WIDTH)),
-                    onOpen = onOpenRelated,
-                )
+                detail?.destinationUrl?.let { url ->
+                    TextButton(onClick = { uriHandler.openUri(url) }) { Text("Open source") }
+                }
+                if (!detail?.references.isNullOrEmpty()) {
+                    Text("References", style = MaterialTheme.typography.labelLarge)
+                    detail!!.references.forEach { ref ->
+                        // Qualified means a resemblance (same phrasing as the web result page).
+                        Text(ReferenceCopy.phrase(ref), color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                        ReferenceCopy.attribution(ref)?.let {
+                            Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
             }
+            Text("Similar", style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
+            Crossfade(targetState = relatedState == "pending" && related.isEmpty(), label = "similar") { waiting ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when {
+                        waiting -> {
+                            AnalysisLookingBanner()
+                            Text("Looking for similar suggestions.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        related.isEmpty() -> Text("No similar suggestions yet.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                        else -> {
+                            if (relatedState == "pending") {
+                                Text("Looking for more like this.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                            }
+                            // Same conveyor as the feed: one horizontal lane drifting left through the cached related cards.
+                            val rail = related.filter { it.image != null }.ifEmpty { related }
+                            val railConveyor = remember(card.id) { feedConveyor() }
+                            DriftingCards(
+                                conveyor = railConveyor,
+                                cards = rail,
+                                orientation = Orientation.Horizontal,
+                                lanes = 1,
+                                speeds = RAIL_SPEED,
+                                rotateWhenStill = false,
+                                tileWidth = RAIL_TILE_WIDTH,
+                                modifier = Modifier.fillMaxWidth().height(tileHeight(RAIL_TILE_WIDTH)),
+                                onOpen = onOpenRelated,
+                            )
+                        }
+                    }
+                }
+            }
+            AnimatedVisibility(visible = inFlight || toast != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                if (inFlight) AnalysisLookingBanner() else AnalysisReadyBanner()
+            }
+            analysisNote?.let { Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall) }
+            detailNote?.let { Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall) }
+            Column(Modifier.animateContentSize(tween(260)), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (focusArmed) {
+                    Text("Focus is on. Drag a box on the picture, then confirm. Pinch still zooms.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                haptics.tick()
+                                focusArmed = false
+                                highlight = null
+                                showFocusHint = false
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Cancel focus") }
+                        if (highlight != null) {
+                            Button(
+                                onClick = {
+                                    haptics.press()
+                                    looking = true
+                                    analysisNote = null
+                                    scope.launch {
+                                        if (card.kind != "capture") {
+                                            delay(900)
+                                            looking = false
+                                            analysisNote = "Analysis looks at photos you capture. This card is a suggestion, so nothing was sent."
+                                            focusArmed = false
+                                            return@launch
+                                        }
+                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        }
+                                        looking = false
+                                        val started = notices.explore(card.id)
+                                        looking = started
+                                        if (started) haptics.confirm() else haptics.reject()
+                                        if (!started) {
+                                            analysisNote = "Exploring isn't available right now. The picture is still on this phone."
+                                        }
+                                        focusArmed = false
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Look at this area") }
+                        }
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = {
+                            haptics.tick()
+                            focusArmed = true
+                            showFocusHint = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Focus on an area") }
+                    Text(
+                        if (showFocusHint) {
+                            "This looks at a region of a photo you captured. Suggestion cards are not analyzed."
+                        } else {
+                            "Pinch to zoom. Use Focus on an area when you want to look at part of a picture."
+                        },
+                        color = AtlasColors.muted,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Button(
+                onClick = {
+                    haptics.press()
+                    adding = true
+                },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text("Add to a board") }
         }
+    }
+    if (adding) {
+        AddToBoardDialog(api = api, card = card, onDismiss = { adding = false }, onAdded = { adding = false })
     }
 }
 
 @Composable
-private fun AnalysisLookingBanner() {
+internal fun AnalysisLookingBanner() {
     val infinite = rememberInfiniteTransition(label = "looking")
     val pulse by infinite.animateFloat(
         initialValue = 0.55f,
@@ -687,7 +754,7 @@ private fun AnalysisLookingBanner() {
 }
 
 @Composable
-private fun AnalysisReadyBanner() {
+internal fun AnalysisReadyBanner() {
     Row(
         Modifier
             .fillMaxWidth()
@@ -708,127 +775,169 @@ private fun AddToBoardDialog(api: AtlasApi, card: DiscoveryCard, onDismiss: () -
     var boards by remember { mutableStateOf<List<CollectionSummary>>(emptyList()) }
     var newName by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
+    var savedTo by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
     LaunchedEffect(Unit) {
         boards = runCatching { api.collections() }.getOrNull()?.collections.orEmpty()
+    }
+    // A short, visible "Added" beat before the dialog closes.
+    LaunchedEffect(savedTo) {
+        if (savedTo != null) {
+            delay(650)
+            onAdded()
+        }
+    }
+    fun saved(name: String) {
+        haptics.confirm()
+        savedTo = name
+    }
+    fun failed() {
+        haptics.reject()
+        error = "Couldn't add that to a board. Try again."
     }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add to a board") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = newName, onValueChange = { newName = it }, label = { Text("New board name") })
-                error?.let { Text(it, color = AtlasColors.muted) }
-                boards.forEach { board ->
-                    TextButton(onClick = {
-                        scope.launch {
-                            runCatching { api.addCollectionItem(board.id, card.id) }
-                                .onSuccess { onAdded() }
-                                .onFailure { error = "Couldn't add that to a board. Try again." }
+            Crossfade(targetState = savedTo, label = "board-saved") { name ->
+                if (name != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("✓", color = AtlasColors.olive, fontWeight = FontWeight.Bold)
+                        Text("Added to $name", style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif))
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(value = newName, onValueChange = { newName = it }, label = { Text("New board name") })
+                        error?.let { Text(it, color = AtlasColors.muted) }
+                        boards.forEach { board ->
+                            TextButton(onClick = {
+                                scope.launch {
+                                    runCatching { api.addCollectionItem(board.id, card.id) }
+                                        .onSuccess { saved(board.name) }
+                                        .onFailure { failed() }
+                                }
+                            }) { Text(board.name) }
                         }
-                    }) { Text(board.name) }
+                    }
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    val trimmed = newName.trim()
-                    if (trimmed.isEmpty()) return@Button
-                    scope.launch {
-                        runCatching {
-                            val created = api.createCollection(CreateCollectionRequest(trimmed))
-                            api.addCollectionItem(created.id, card.id)
-                        }.onSuccess { onAdded() }
-                            .onFailure { error = "Couldn't add that to a board. Try again." }
-                    }
-                },
-                enabled = newName.trim().isNotEmpty(),
-            ) { Text("Create and add") }
+            if (savedTo == null) {
+                Button(
+                    onClick = {
+                        val trimmed = newName.trim()
+                        if (trimmed.isEmpty()) return@Button
+                        scope.launch {
+                            runCatching {
+                                val created = api.createCollection(CreateCollectionRequest(trimmed))
+                                api.addCollectionItem(created.id, card.id)
+                            }.onSuccess { saved(trimmed) }
+                                .onFailure { failed() }
+                        }
+                    },
+                    enabled = newName.trim().isNotEmpty(),
+                ) { Text("Create and add") }
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { if (savedTo == null) TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
 @Composable
-fun BoardsScreen(api: AtlasApi, notices: ReadyNoticeCenter, onBack: () -> Unit) {
+fun BoardsScreen(api: AtlasApi, onBack: () -> Unit, onOpenBoard: (CollectionSummary) -> Unit) {
     var collections by remember { mutableStateOf<List<CollectionSummary>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var newName by remember { mutableStateOf("") }
-    var openId by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    suspend fun load() {
+    val haptics = rememberHaptics()
+    LaunchedEffect(Unit) {
         runCatching { api.collections() }
             .onSuccess {
                 collections = it.collections
                 message = null
             }
-            .onFailure {
-                collections = emptyList()
-                message = "Boards aren't available right now. Try again."
-            }
+            .onFailure { if (collections.isEmpty()) message = "Boards aren't available right now. Try again." }
+        loaded = true
     }
-    LaunchedEffect(Unit) { load() }
-    val open = collections.find { it.id == openId }
-    if (open != null) {
-        BoardDetailScreen(api = api, notices = notices, board = open, onBack = { openId = null })
-        return
-    }
-    Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) { Text("Back") }
-        Text("Boards", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
-        Text("Boards are private collections you build from suggestions and captures.", color = AtlasColors.muted)
-        OutlinedTextField(value = newName, onValueChange = { newName = it }, label = { Text("Board name") }, modifier = Modifier.fillMaxWidth())
-        Button(
-            onClick = {
-                val trimmed = newName.trim()
-                if (trimmed.isEmpty()) return@Button
-                scope.launch {
-                    runCatching { api.createCollection(CreateCollectionRequest(trimmed)) }
-                        .onSuccess {
-                            newName = ""
-                            collections = listOf(it) + collections
-                        }
-                        .onFailure { message = "Couldn't create that board. Try a different name." }
-                }
-            },
-            enabled = newName.trim().isNotEmpty(),
-        ) { Text("Create board") }
-        message?.let { Text(it, color = AtlasColors.muted) }
-        if (collections.isEmpty() && message == null) {
-            Text("No boards yet. Create a board, then add suggestions from Feed.", color = AtlasColors.muted)
-        }
-        collections.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { board ->
-                    Column(
-                        Modifier.weight(1f).clickable { openId = board.id },
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        BoardCover(board)
-                        Text(board.name, style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif), maxLines = 2)
-                        Text("${board.itemCount} ${if (board.itemCount == 1) "item" else "items"}", color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall)
+    Column(Modifier.fillMaxSize()) {
+        AtlasTopBar(null, onBack)
+        Column(
+            Modifier.padding(horizontal = 16.dp).verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Boards", style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
+            Text("Boards are private collections you build from suggestions and captures.", color = AtlasColors.muted)
+            OutlinedTextField(value = newName, onValueChange = { newName = it }, label = { Text("Board name") }, modifier = Modifier.fillMaxWidth())
+            Button(
+                onClick = {
+                    val trimmed = newName.trim()
+                    if (trimmed.isEmpty()) return@Button
+                    scope.launch {
+                        runCatching { api.createCollection(CreateCollectionRequest(trimmed)) }
+                            .onSuccess {
+                                haptics.confirm()
+                                newName = ""
+                                collections = listOf(it) + collections
+                            }
+                            .onFailure {
+                                haptics.reject()
+                                message = "Couldn't create that board. Try a different name."
+                            }
                     }
+                },
+                enabled = newName.trim().isNotEmpty(),
+            ) { Text("Create board") }
+            message?.let { Text(it, color = AtlasColors.muted) }
+            if (loaded && collections.isEmpty() && message == null) {
+                Text("No boards yet. Create a board, then add suggestions from Feed.", color = AtlasColors.muted)
+            }
+            if (!loaded) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    repeat(2) { Shimmer(Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(14.dp))) }
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+            collections.chunked(2).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { board ->
+                        key(board.id) {
+                            Column(
+                                Modifier.weight(1f).tappable { onOpenBoard(board) },
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                BoardCover(board)
+                                Text(board.name, style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif), maxLines = 2)
+                                Text("${board.itemCount} ${if (board.itemCount == 1) "item" else "items"}", color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
             }
         }
     }
 }
 
 @Composable
-internal fun BoardCover(board: CollectionSummary) {
+internal fun BoardCover(board: CollectionSummary, modifier: Modifier = Modifier) {
     val urls = board.cover.mapNotNull { it.resolved(AtlasApiBase) }.take(4)
-    Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(AtlasColors.quiet)) {
+    Box(modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(14.dp)).background(AtlasColors.quiet)) {
         when {
-            urls.isEmpty() -> {}
-            urls.size == 1 -> RemoteImage(urls[0], Modifier.fillMaxSize(), contentDescription = board.name)
+            urls.isEmpty() -> Text(
+                board.name.take(1).uppercase(),
+                Modifier.align(Alignment.Center),
+                color = AtlasColors.muted,
+                style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif),
+            )
+            urls.size == 1 -> AtlasImage(urls[0], Modifier.fillMaxSize(), contentDescription = board.name)
             else -> {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     urls.chunked(2).forEach { pair ->
-                        Row(Modifier.weight(1f)) {
+                        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                             pair.forEach { url ->
-                                RemoteImage(url, Modifier.weight(1f).fillMaxSize(), contentDescription = null)
+                                AtlasImage(url, Modifier.weight(1f).fillMaxSize(), contentDescription = null)
                             }
                             if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
@@ -840,11 +949,10 @@ internal fun BoardCover(board: CollectionSummary) {
 }
 
 @Composable
-private fun BoardDetailScreen(api: AtlasApi, notices: ReadyNoticeCenter, board: CollectionSummary, onBack: () -> Unit) {
+fun BoardDetailScreen(api: AtlasApi, board: CollectionSummary, onBack: () -> Unit, onOpenCard: (DiscoveryCard) -> Unit) {
     var members by remember { mutableStateOf<List<CollectionMember>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    var opened by remember { mutableStateOf<DiscoveryCard?>(null) }
-    var adding by remember { mutableStateOf<DiscoveryCard?>(null) }
     LaunchedEffect(board.id) {
         runCatching { api.collection(board.id) }
             .onSuccess {
@@ -852,36 +960,35 @@ private fun BoardDetailScreen(api: AtlasApi, notices: ReadyNoticeCenter, board: 
                 message = null
             }
             .onFailure { message = "This board isn't available right now." }
+        loaded = true
     }
-    opened?.let { card ->
-        FeedCardDetail(
-            api = api,
-            card = card,
-            notices = notices,
-            onBack = { opened = null },
-            onAddToBoard = { adding = card },
-            onOpenRelated = { opened = it },
-        )
-        adding?.let { addCard ->
-            AddToBoardDialog(api = api, card = addCard, onDismiss = { adding = null }, onAdded = { adding = null })
-        }
-        return
-    }
-    Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) { Text("Back") }
-        Text(board.name, style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
-        message?.let { Text(it, color = AtlasColors.muted) }
-        if (members.isEmpty() && message == null) {
-            Text("Nothing on this board yet. Add suggestions from Feed.", color = AtlasColors.muted)
-        }
-        members.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { member ->
-                    Box(Modifier.weight(1f)) {
-                        FeedCardTile(card = member.item, onOpen = { opened = member.item })
-                    }
+    Column(Modifier.fillMaxSize()) {
+        AtlasTopBar(null, onBack)
+        Column(
+            Modifier.padding(horizontal = 16.dp).verticalScroll(rememberScrollState()).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(board.name, style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
+            message?.let { Text(it, color = AtlasColors.muted) }
+            if (loaded && members.isEmpty() && message == null) {
+                Text("Nothing on this board yet. Add suggestions from Feed.", color = AtlasColors.muted)
+            }
+            if (!loaded) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    repeat(2) { Shimmer(Modifier.weight(1f).aspectRatio(4f / 5f).clip(RoundedCornerShape(14.dp))) }
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+            members.chunked(2).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { member ->
+                        key(member.membershipId) {
+                            Box(Modifier.weight(1f)) {
+                                FeedCardTile(card = member.item, onOpen = { onOpenCard(member.item) })
+                            }
+                        }
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
             }
         }
     }

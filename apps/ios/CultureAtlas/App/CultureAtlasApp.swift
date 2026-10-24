@@ -52,6 +52,9 @@ struct CultureAtlasApp: App {
         .environmentObject(controller)
         .environmentObject(onboarding)
         .environmentObject(notices)
+        // Designed on warm paper only (Android uses lightColorScheme too):
+        // pinning light keeps ink text on ivory in system dark mode.
+        .preferredColorScheme(.light)
         .task { await controller.launch() }
         // Email sign-in callback and Meta AI registration return both arrive here.
         .onOpenURL { url in Task { await controller.handle(url: url) } }

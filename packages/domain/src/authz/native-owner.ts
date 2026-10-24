@@ -14,6 +14,9 @@ import { operationKey, type OperationPolicy } from './operations';
  *  - the onboarding questionnaire (screen 14/15) and Settings → Taste (18);
  *  - Discover (`GET /v1/discoveries`), item detail (`GET /v1/items/{id}`),
  *    related (`POST /v1/items/{id}/discoveries`), and boards (`/v1/collections*`);
+ *  - a capture's compiled result (`GET /v1/captures/{id}`: sourced references
+ *    and the Qloo-backed recommendations), read-only and scoped to the
+ *    owner's own captures (another account's id is `not_found`);
  *  - every other `/v1` route still refuses installations with `scope_denied`,
  *    and agents are unaffected.
  *
@@ -39,6 +42,7 @@ export const NATIVE_OWNER_OPERATIONS: ReadonlySet<string> = new Set([
   'GET /v1/discoveries',
   'GET /v1/items/{id}',
   'POST /v1/items/{id}/discoveries',
+  'GET /v1/captures/{id}',
   'GET /v1/collections',
   'POST /v1/collections',
   'GET /v1/collections/{id}',

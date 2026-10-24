@@ -6,8 +6,10 @@ qualified on physical devices, are in [docs/native.md](../../docs/native.md).
 
 **This machine can generate and compile the public app.** App Store submission,
 TestFlight, and physical-device qualification have **not** happened. A missing
-Apple Development Team does not block a simulator build
-(`CODE_SIGNING_ALLOWED=NO`). Put `DEVELOPMENT_TEAM = …` in the untracked
+Apple Development Team does not block a simulator build: sign ad hoc
+(`CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES`). Do not use
+`CODE_SIGNING_ALLOWED=NO`: it strips the Keychain entitlement, so sign-in
+fails with errSecMissingEntitlement (-34018). Put `DEVELOPMENT_TEAM = …` in the untracked
 `Config/Signing.xcconfig` only when you need a device or store-signed binary.
 
 | Path | Contents |
@@ -34,13 +36,13 @@ xcodegen generate
 # Public app (no Meta SDK). Prefer a simulator when no Development Team is set:
 xcodebuild -project CultureAtlas.xcodeproj -scheme CultureAtlas \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES \
   build
 
 # Unit tests (same destination):
 xcodebuild -project CultureAtlas.xcodeproj -scheme CultureAtlas \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
-  CODE_SIGNING_ALLOWED=NO \
+  CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES \
   test
 
 # Experimental app (links the SDK). Needs a team for a device; not for the store:
@@ -52,8 +54,8 @@ List simulators with `xcrun simctl list devices available`. If `iPhone 17` is
 missing, substitute another iOS 17.2+ simulator name.
 
 Signing: `Config/Signing.xcconfig` is gitignored. Without `DEVELOPMENT_TEAM`,
-device installs and store archives fail; simulator builds with
-`CODE_SIGNING_ALLOWED=NO` still work.
+device installs and store archives fail; ad-hoc signed simulator builds
+(`CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES`) still work.
 
 API host: `ATLAS_API_SCHEME` + `ATLAS_API_HOST` in `Config/Base.xcconfig`
 (Release: `https://app.cultureatlas.com`). Debug builds use

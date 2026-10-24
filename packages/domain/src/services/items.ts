@@ -28,7 +28,7 @@ import type {
 } from '../schemas/items';
 import { iso } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
-import { preferPicturedCards, readDisplayMetadata } from './display';
+import { clipText, preferPicturedCards, readDisplayMetadata } from './display';
 import { getTasteRevision } from './taste';
 
 /**
@@ -238,7 +238,7 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   const [card] = await loadCards(ctx, [item.id], { recommendations: recContext });
   if (!card) throw new AppError('not_found');
 
-  const description = meta.description?.trim() || null;
+  const description = clipText(meta.description);
   const detail = meta.detail?.trim() || null;
   const reason = rec?.display_reason ?? null;
   const sources = rec ? await loadSources(ctx.db, rec.source_ids) : [];

@@ -2,7 +2,7 @@ import XCTest
 
 /// Physical-phone proof: Take photo then Keep must create a draft and start upload.
 final class CameraKeepTests: XCTestCase {
-  func testTakePhotoAndKeepOnThisPhone() {
+  func testTakePhotoAndKeepOnThisPhone() throws {
     let app = XCUIApplication()
     app.launch()
     addUIInterruptionMonitor(withDescription: "Camera permission") { alert in
@@ -24,6 +24,10 @@ final class CameraKeepTests: XCTestCase {
     XCTAssertTrue(thisCamera.waitForExistence(timeout: 10), "This camera should be offered")
     thisCamera.tap()
 
+    // No camera (simulator): the screen offers Choose from Photos instead.
+    if app.buttons["camera.choose-photos"].waitForExistence(timeout: 8) {
+      throw XCTSkip("No camera on this device; the no-camera state offered Choose from Photos")
+    }
     let take = app.buttons["capture.take-photo"]
     XCTAssertTrue(take.waitForExistence(timeout: 20), "Camera preview should start")
     // Permission alerts steal first taps.

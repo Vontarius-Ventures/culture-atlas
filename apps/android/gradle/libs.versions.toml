@@ -12,6 +12,12 @@ lifecycle = "2.8.7"
 camerax = "1.4.1"
 work = "2.10.0"
 junitJupiter = "5.11.4"
+# Image loading: crossfade, memory/disk cache, request sizing (Maven Central).
+coil = "2.7.0"
+# JVM UI tests for :app (Robolectric + Roborazzi screenshots; Maven Central).
+junit4 = "4.13.2"
+robolectric = "4.14.1"
+roborazzi = "1.33.0"
 # Ready-notice push (FCM, data-only messages). Google's Maven repository is not
 # reachable from this repository's environment: confirm the artifact resolves
 # before the first build with push enabled.
@@ -44,6 +50,13 @@ androidx-camera-video = { module = "androidx.camera:camera-video", version.ref =
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 androidx-work-runtime = { module = "androidx.work:work-runtime-ktx", version.ref = "work" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging", version.ref = "firebaseMessaging" }
+junit4 = { module = "junit:junit", version.ref = "junit4" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+roborazzi = { module = "io.github.takahirom.roborazzi:roborazzi", version.ref = "roborazzi" }
+roborazzi-compose = { module = "io.github.takahirom.roborazzi:roborazzi-compose", version.ref = "roborazzi" }
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+androidx-compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junitJupiter" }
 meta-wearables-core = { module = "com.meta.wearable:mwdat-core", version.ref = "metaWearables" }
 meta-wearables-camera = { module = "com.meta.wearable:mwdat-camera", version.ref = "metaWearables" }

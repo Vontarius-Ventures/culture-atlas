@@ -14,7 +14,7 @@ import type { JobRecord } from '../jobs/types';
 import { JobCancelledError } from '../jobs/handler';
 import { AudioLibrary } from './assets';
 import { AudioAnalysis } from './analysis';
-import { createAnalyzeAudioHandler, runAnalyzeAudio } from './analyze-job';
+import { createAnalyzeAudioHandler, runAnalyzeAudio, setAudioOriginalStorage } from './analyze-job';
 import { pcmWavBytes } from './wav';
 import { UnavailableMusicRecognition, type MusicRecognition } from './recognition';
 import { artistSeedsFromQlooEntities, seedIfQlooReturned } from './qloo-seeds';
@@ -53,6 +53,8 @@ async function fixture(overrides: Partial<CaptureV2Context> = {}) {
   const account = await insertAccount();
   const storage = new LocalMultipartStorage(join(root, randomUUID()), 'http://127.0.0.1:3301', 'local-test-signing-key');
   const ctx = createCaptureV2Context({ db, authority: account, storage, identity, ...overrides });
+  // The analysis worker reads originals from the same capture-v2 storage the recording was kept in.
+  setAudioOriginalStorage(storage);
   return { ctx, account, storage, audio: new AudioLibrary(ctx), analysis: new AudioAnalysis(ctx), intake: new MediaIntake(ctx) };
 }
 
@@ -211,6 +213,7 @@ describe('Explore authorizes analysis', () => {
     const result = got.result as { music: string; qloo_seeds: unknown[]; components: { music_match: { state: string } } };
     expect(result.music).toBe('provider_unavailable');
     expect(result.qloo_seeds).toEqual([]);
+    expect((got.result as { match: unknown }).match).toBeNull();
     expect(result.components.music_match.state).toBe('unavailable');
     const recordings = await db.query(`SELECT id FROM recognized_recordings WHERE analysis_id=$1`, [
       requested.analysis_id,
@@ -245,6 +248,21 @@ describe('Explore authorizes analysis', () => {
                 },
               ]
             : [],
+        insights: (req) => ({
+          entities: [
+            { entity_id: 'qloo-artist-nina', name: 'Nina Simone', types: ['urn:entity:artist'], properties: {}, tags: [] },
+            { entity_id: 'qloo-artist-billie', name: 'Billie Holiday', types: ['urn:entity:artist'], properties: {}, tags: [] },
+            { entity_id: 'qloo-movie-x', name: 'Not an artist', types: ['urn:entity:movie'], properties: {}, tags: [] },
+            {
+              entity_id: 'qloo-artist-etta',
+              name: 'Etta James',
+              types: ['urn:entity:artist'],
+              properties: { image: 'http://insecure.example/etta.jpg' },
+              tags: [],
+            },
+          ].filter(() => req.signalEntities?.[0] === 'qloo-artist-nina'),
+          tags: [],
+        }),
       },
       { live: true },
     );
@@ -293,11 +311,114 @@ describe('Explore authorizes analysis', () => {
       },
     ]);
     expect(result.components.speech_references.state).toBe('not_requested');
+    // The result screen gets the Qloo artist and related Qloo artists, nothing invented:
+    // the seed itself and non-artists are dropped; a non-https image is never kept.
+    const match = (got.result as { match: unknown }).match;
+    expect(match).toEqual({
+      title: null,
+      album_title: null,
+      artist: { entity_id: 'qloo-artist-nina', name: 'Nina Simone', image: null },
+      related: [
+        { entity_id: 'qloo-artist-billie', name: 'Billie Holiday', image: null },
+        { entity_id: 'qloo-artist-etta', name: 'Etta James', image: null },
+      ],
+    });
     const evidence = await db.query<{ method: string; qloo_entity_id: string }>(
       `SELECT method, qloo_entity_id FROM media_evidence WHERE analysis_id=$1`,
       [requested.analysis_id],
     );
     expect(evidence.rows).toEqual([{ method: 'transcript', qloo_entity_id: 'qloo-artist-nina' }]);
+    // The heard artist is stored and starts related discovery that feeds suggestions.
+    const artist = (got.result as { artist: { name: string; item_id: string; discovery_job_id: string; related_job_id: string } }).artist;
+    expect(artist).toMatchObject({ name: 'Nina Simone' });
+    const item = await db.query<{ title: string; kind: string; owner_account_id: string }>(
+      'SELECT title, kind, owner_account_id FROM discovery_items WHERE id = $1',
+      [artist.item_id],
+    );
+    expect(item.rows[0]).toEqual({ title: 'Nina Simone', kind: 'artist', owner_account_id: f.account.accountId });
+    const dj = await db.query<{ source: string; source_label: string }>(
+      'SELECT source, source_label FROM discovery_jobs WHERE id = $1',
+      [artist.discovery_job_id],
+    );
+    expect(dj.rows[0]).toEqual({ source: 'music_mode', source_label: 'Nina Simone' });
+    const related = await db.query<{ type: string }>('SELECT type FROM jobs WHERE id = $1', [artist.related_job_id]);
+    expect(related.rows[0]?.type).toBe('discover_related');
+    expect((got.result as { related_state: string }).related_state).toBe('pending');
+  });
+
+  it('reads the recording from capture-v2 storage and fails honestly when it is missing', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const requested = await f.analysis.request(
+      kept.asset_id,
+      {
+        contract_version: 2,
+        expected_generation: 1,
+        requested_components: ['music_match'],
+        selection: { start_ms: 0, end_ms: 15_000 },
+      },
+      randomUUID(),
+    );
+    const claimed = requireAudioJob(
+      (await claimJobs(db, { workerId: 'audio-test', limit: 1, leaseMs: 30_000, ids: [requested.job_id] }))[0],
+    );
+    const original = await db.query<{ original_key: string }>('SELECT original_key FROM media_assets WHERE id=$1', [kept.asset_id]);
+    await f.storage.delete(original.rows[0]!.original_key);
+    let transcribed = false;
+    await expect(
+      runAnalyzeAudio(jobCtx(f, claimed), {
+        recognition: new UnavailableMusicRecognition('not_configured'),
+        transcription: {
+          enabled: true,
+          reason: 'configured',
+          async transcribe() {
+            transcribed = true;
+            return { text: '', words: [] };
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'service_unavailable', retryable: false, details: { reason: 'storage_unavailable' } });
+    expect(transcribed).toBe(false);
+    const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
+    expect(got.state).toBe('failed');
+    expect(got.error_code).toBe('storage_unavailable');
+  });
+
+  it('reads the kept recording from the capture-v2 media namespace (local storage driver)', async () => {
+    const dir = join(root, randomUUID());
+    const storage = new LocalMultipartStorage(join(dir, 'capture-v2'), 'http://127.0.0.1:3301', 'local-test-signing-key');
+    const f = await fixture({ storage });
+    const kept = await keep(f);
+    const requested = await f.analysis.request(
+      kept.asset_id,
+      {
+        contract_version: 2,
+        expected_generation: 1,
+        requested_components: ['music_match'],
+        selection: { start_ms: 0, end_ms: 15_000 },
+      },
+      randomUUID(),
+    );
+    const claimed = requireAudioJob(
+      (await claimJobs(db, { workerId: 'audio-test', limit: 1, leaseMs: 30_000, ids: [requested.job_id] }))[0],
+    );
+    const ctx = jobCtx(f, claimed);
+    const providers = { ...ctx.providers, config: { ...ctx.providers.config, STORAGE_DRIVER: 'local' as const, STORAGE_LOCAL_DIR: dir } };
+    let heardBytes = 0;
+    await runAnalyzeAudio({ ...ctx, providers } as typeof ctx, {
+      originals: storage,
+      recognition: new UnavailableMusicRecognition('not_configured'),
+      transcription: {
+        enabled: true,
+        reason: 'configured',
+        async transcribe(input) {
+          heardBytes = input.bytes.byteLength;
+          return { text: '', words: [] };
+        },
+      },
+    });
+    // The 15 s WAV the web API kept, not an empty buffer.
+    expect(heardBytes).toBe(wav().byteLength);
   });
 
   it('stores a Qloo artist seed only from a real returned catalog id', async () => {
@@ -386,6 +507,24 @@ describe('Explore authorizes analysis', () => {
         { entity_id: 'album-1', name: 'An Album', types: ['urn:entity:album'], properties: {}, tags: [] },
       ]).seeds,
     ).toEqual([]);
+    const several = [
+      { entity_id: 'qloo-nina', name: 'Nina Simone', types: ['urn:entity:artist'], properties: {}, tags: [] },
+      { entity_id: 'qloo-tribute', name: 'Nina Simone Tribute Band', types: ['urn:entity:artist'], properties: {}, tags: [] },
+    ];
+    // Several returned artists, one named exactly what was heard: resolved to that Qloo id.
+    expect(artistSeedsFromQlooEntities(several, 'nina simone')).toMatchObject({
+      status: 'resolved',
+      seeds: [{ entity_id: 'qloo-nina', name: 'Nina Simone' }],
+    });
+    // Without the heard text it stays ambiguous.
+    expect(artistSeedsFromQlooEntities(several).status).toBe('ambiguous');
+    // Same-named artists resolve to the most popular Qloo id (never an invented one).
+    expect(
+      artistSeedsFromQlooEntities(
+        [{ ...several[0]!, popularity: 0.2 }, { ...several[0]!, entity_id: 'qloo-nina-2', popularity: 0.9 }],
+        'Nina Simone',
+      ),
+    ).toMatchObject({ status: 'resolved', seeds: [{ entity_id: 'qloo-nina-2' }] });
   });
 
   it('does not publish after cancellation or deletion', async () => {

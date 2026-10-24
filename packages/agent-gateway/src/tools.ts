@@ -6,6 +6,7 @@ import {
   agentMedia,
   agentOperations,
   collections,
+  discovery,
   items,
   jobs,
   plans,
@@ -77,7 +78,7 @@ export const TOOLS = [
   }),
   define({
     name: 'request_capture', title: 'Request locally authorized capture',
-    description: 'Request capture on an explicitly selected phone and fresh locally armed session. Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request.',
+    description: 'Request capture on an explicitly selected phone and fresh locally armed session. Take installation_id from get_setup installations[].id and command.session_id / command.generation from that installation\'s armed_session (present only while the owner has armed the phone for this connection). Cannot arm a phone. Check the returned command through get_operation. Uncertain or expired capture must not be retried as a new request.',
     scopes: ['devices:command'], startsJob: false,
     input: z.strictObject({ installation_id: Uuid, idempotency_key: Uuid, command: schemas.CaptureCommandRequest }),
     run: (ctx, input) => agentCommands.requestCapture(ctx, input.installation_id, input.command, input.idempotency_key),
@@ -127,6 +128,54 @@ export const TOOLS = [
     input: z.strictObject({ capture_id: Uuid }),
     startsJob: false,
     run: (ctx, input) => captures.getCapture(ctx, { id: input.capture_id }),
+  }),
+  define({
+    name: 'list_captures',
+    title: 'List recent captures',
+    description:
+      'List the newest captures this connection can see, newest first: compiled analysis title, detected references and recommended discovery item ids (open them with get_item). Use this for "things like my last capture". No photos or private reasoning.',
+    scopes: ['captures:read'],
+    input: z.strictObject({ limit: z.number().int().min(1).max(50).optional() }),
+    startsJob: false,
+    run: (ctx, input) => captures.listCaptures(ctx, schemas.CapturesQuery.parse({ limit: input.limit })),
+  }),
+  define({
+    name: 'get_item',
+    title: 'Get an item and its related discoveries',
+    description:
+      'Read one discovery item (film, music, place, dish, style...) with its related items (related[] and related_state). Call this after discover_related completes to see what it found. Selected-collection connections pass the collection_id containing the item.',
+    scopes: [],
+    input: z.strictObject({ item_id: Uuid, collection_id: Uuid.optional() }),
+    startsJob: false,
+    run: (ctx, input) => items.getItem(ctx, { id: input.item_id, query: { collection_id: input.collection_id } }),
+  }),
+  define({
+    name: 'get_discoveries',
+    title: 'Read the interest feed',
+    description:
+      'Read the user’s personal discovery feed (cards with title, category, image and why_this), optionally for one category. Cursor-paginated; pass next_cursor to continue.',
+    scopes: ['taste:read'],
+    input: z.strictObject({
+      category: schemas.DiscoveriesQuery.shape.category,
+      cursor: schemas.Cursor.optional(),
+      limit: z.number().int().min(1).max(24).optional(),
+    }),
+    startsJob: false,
+    run: (ctx, input) =>
+      discovery.getDiscoveries(ctx, schemas.DiscoveriesQuery.parse({ category: input.category, cursor: input.cursor, limit: input.limit })),
+  }),
+  define({
+    name: 'list_saved',
+    title: 'List saved items',
+    description: 'List items the user explicitly saved, newest first (cursor-paginated). filter "unfiled" returns saved items in no collection.',
+    scopes: ['taste:read'],
+    input: z.strictObject({
+      cursor: schemas.Cursor.optional(),
+      limit: z.number().int().min(1).max(24).optional(),
+      filter: z.enum(['all', 'unfiled']).optional(),
+    }),
+    startsJob: false,
+    run: (ctx, input) => preferences.listSaved(ctx, schemas.SavedQuery.parse({ cursor: input.cursor, limit: input.limit, filter: input.filter })),
   }),
   define({
     name: 'explore_reference',
@@ -228,7 +277,7 @@ export const TOOLS = [
     name: 'create_plan',
     title: 'Create a movie night',
     description:
-      'Create a movie-night plan from 2-5 items of one collection (include expected_revision). Returns immediately; poll get_job, then get_plan.',
+      'Create a movie-night plan (film, food and music; the only plan template) from 2-5 items of one collection (include expected_revision). Returns immediately; poll get_job, then get_plan. For any other board (a dinner party, a trip, a mood board), use create_collection and add_collection_item instead.',
     scopes: ['plans:write', 'collections:read'],
     input: schemas.CreatePlanRequest,
     startsJob: true,
@@ -242,6 +291,15 @@ export const TOOLS = [
     input: z.strictObject({ plan_id: Uuid }),
     startsJob: false,
     run: (ctx, input) => plans.getPlan(ctx, { id: input.plan_id }),
+  }),
+  define({
+    name: 'list_plans',
+    title: 'List plans',
+    description: 'List the user’s movie-night plans, newest first (cursor-paginated). Open one with get_plan.',
+    scopes: ['plans:read'],
+    input: z.strictObject({ cursor: schemas.Cursor.optional(), limit: z.number().int().min(1).max(24).optional() }),
+    startsJob: false,
+    run: (ctx, input) => plans.listPlans(ctx, schemas.PlansQuery.parse({ cursor: input.cursor, limit: input.limit })),
   }),
   define({
     name: 'replace_plan_section',
@@ -264,7 +322,11 @@ export interface ToolAnnotations {
   openWorldHint: boolean;
 }
 
-const READ_ONLY = new Set<string>(['get_setup', 'get_preferences', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'list_collections', 'get_collection', 'get_plan']);
+const READ_ONLY = new Set<string>([
+  'list_media', 'get_media', 'get_operation', 'get_setup', 'get_preferences', 'get_job', 'get_capture', 'list_captures',
+  'get_item', 'get_discoveries', 'list_saved', 'explore_reference', 'get_taste', 'list_collections', 'get_collection',
+  'get_plan', 'list_plans',
+]);
 const DESTRUCTIVE = new Set<string>(['record_preference', 'remove_collection_item', 'replace_plan_section']);
 const IDEMPOTENT = new Set<string>([...READ_ONLY, 'add_collection_item', 'remove_collection_item']);
 
@@ -298,7 +360,8 @@ export const SPEC_TOOL_NAMES = [
   'request_capture',
   'get_setup',
   'get_preferences', 'update_preferences',
-  'analyze_capture', 'get_job', 'get_capture', 'explore_reference', 'get_taste', 'record_preference',
+  'analyze_capture', 'get_job', 'get_capture', 'list_captures', 'get_item', 'get_discoveries', 'list_saved',
+  'explore_reference', 'get_taste', 'record_preference',
   'list_collections', 'get_collection', 'create_collection', 'add_collection_item', 'remove_collection_item',
-  'discover_related', 'create_plan', 'get_plan', 'replace_plan_section',
+  'discover_related', 'create_plan', 'get_plan', 'list_plans', 'replace_plan_section',
 ] as const;

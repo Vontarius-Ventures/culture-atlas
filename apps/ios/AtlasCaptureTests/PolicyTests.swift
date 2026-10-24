@@ -216,7 +216,20 @@ final class CapabilityGateTests: XCTestCase {
       ])
     let analysis = CapabilityGate.photoAnalysis(caps)
     XCTAssertFalse(analysis.available)
-    XCTAssertTrue(analysis.message.contains("isn't qualified"))
+    XCTAssertTrue(analysis.message.contains("saved privately"))
+    // An unavailable provider also reports budget_exhausted; that is not "paused for today".
+    XCTAssertTrue(
+      CapabilityGate.photoAnalysisMessage(reasons: ["model_unqualified", "budget_exhausted"])
+        .hasPrefix("We can't look at photos right now"))
+    XCTAssertTrue(CapabilityGate.photoAnalysisMessage(reasons: ["budget_exhausted"]).contains("paused for today"))
+    // Never developer copy: no model, provider or qualification wording.
+    for reason in ["model_unqualified", "provider_unconfigured", "privacy_unverified", "budget_exhausted", "x"] {
+      let copy = CapabilityGate.photoAnalysisMessage(reasons: [reason]).lowercased()
+      XCTAssertFalse(copy.contains("model"))
+      XCTAssertFalse(copy.contains("qualif"))
+      XCTAssertFalse(copy.contains("provider"))
+      XCTAssertFalse(copy.contains("configur"))
+    }
     XCTAssertTrue(CapabilityGate.phoneCamera(caps).photo)
   }
 
@@ -242,7 +255,7 @@ final class CapabilityGateTests: XCTestCase {
       ])
     let match = CapabilityGate.musicMatch(caps)
     XCTAssertFalse(match.available)
-    XCTAssertTrue(match.message.contains("Nothing was invented"))
+    XCTAssertTrue(match.message.contains("never guess a match"))
   }
 }
 

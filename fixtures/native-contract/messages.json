@@ -1234,7 +1234,12 @@
         "feed_id": "a4b5c6d7-e8f9-4a0b-9c1d-2e3f40516273",
         "feed_revision": 1,
         "is_example_feed": true,
-        "available_categories": ["wear", "play", "watch", "eat"]
+        "available_categories": [
+          "wear",
+          "play",
+          "watch",
+          "eat"
+        ]
       }
     },
     "collections_list_response": {
@@ -1300,7 +1305,13 @@
         },
         "items": [],
         "next_cursor": null,
-        "available_filters": ["photos", "music", "films", "food", "style"]
+        "available_filters": [
+          "photos",
+          "music",
+          "films",
+          "food",
+          "style"
+        ]
       }
     },
     "collection_add_item_request": {
@@ -1370,6 +1381,83 @@
         "job_id": "a4b5c6d7-e8f9-4a0b-9c1d-2e3f40516273",
         "discovery_job_id": "b5c6d7e8-f90a-4b1c-8d2e-3f4051627384",
         "reused": false
+      }
+    },
+    "capture_detail_response": {
+      "direction": "response",
+      "route": "GET /v1/captures/{id}",
+      "schema": "schemas.CaptureResponse",
+      "body": {
+        "id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+        "source": "upload",
+        "status": "ready",
+        "received_at": "2026-10-22T10:00:02Z",
+        "captured_at": "2026-10-22T10:00:00Z",
+        "image": {
+          "url": "/v1/captures/c6d7e8f9-0a1b-4c2d-9e3f-405162738495/image",
+          "width": 1600,
+          "height": 1200,
+          "alt": "Your photo"
+        },
+        "focus": {
+          "kind": "whole"
+        },
+        "is_example": true,
+        "discovery_item_id": "d7e8f90a-1b2c-4d3e-8f40-516273849506",
+        "saved": false,
+        "analysis": {
+          "id": "e8f90a1b-2c3d-4e4f-9051-627384950617",
+          "version": 1,
+          "title": "A lounge chair by a window",
+          "interpretation": "A moulded plywood lounge chair with a leather seat.",
+          "sections": {
+            "observations": "complete",
+            "references": "complete",
+            "play": "complete"
+          },
+          "question": null,
+          "warnings": [],
+          "created_at": "2026-10-22T10:00:20Z"
+        },
+        "references": [
+          {
+            "id": "f90a1b2c-3d4e-4f50-8162-738495061728",
+            "name": "Eames Lounge Chair",
+            "type": "work",
+            "relation": "depicted",
+            "qualified": false,
+            "has_page": true,
+            "read_text": null
+          },
+          {
+            "id": "0a1b2c3d-4e5f-4061-9273-849506172839",
+            "name": "Mid-century modern",
+            "type": "style",
+            "relation": "resembles",
+            "qualified": true,
+            "has_page": false,
+            "read_text": null
+          }
+        ],
+        "recommendations": [
+          {
+            "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+            "kind": "artist",
+            "category": "play",
+            "title": "Nina Simone",
+            "subtitle": "Artist",
+            "image": null,
+            "is_example": true,
+            "saved": false,
+            "saved_item_id": null,
+            "recommendation_id": null,
+            "evidence_available": false
+          }
+        ],
+        "available_categories": [
+          "play"
+        ],
+        "job_id": null
       }
     }
   }
