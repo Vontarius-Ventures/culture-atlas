@@ -244,12 +244,17 @@ async function picturedItemIds(db: Queryable, ids: string[]): Promise<Set<string
   return new Set(rows.map((r) => r.id));
 }
 
-/** Whether new cards are on their way (expand wave or Music Mode suggestions), for client polling. */
+/**
+ * Whether new cards are on their way, for client polling: the taste seed
+ * (right after onboarding, categories publish one by one and the first
+ * snapshot is mostly labeled examples topping up a short pool), an
+ * interest-expand wave, or Music Mode suggestions.
+ */
 async function expansionState(db: Queryable, owner: Owner): Promise<DiscoveriesResponse['expansion']> {
   if (owner.kind !== 'account') return { state: 'idle', poll_after_ms: null };
   const { rows } = await db.query(
     `SELECT 1 FROM jobs WHERE owner_account_id = $1 AND state IN ('queued', 'running')
-        AND (type = 'interest_expand'
+        AND (type IN ('interest_expand', 'taste_seed')
              OR (type = 'discover_related' AND result_id IN (
                    SELECT id FROM discovery_jobs WHERE owner_account_id = $1 AND source = 'music_mode')))
       LIMIT 1`,

@@ -44,6 +44,63 @@ final class LibraryResultTests: XCTestCase {
     XCTAssertTrue(result.seeds.isEmpty)
   }
 
+  /// Right after onboarding the first page is a few seed cards topped up with
+  /// examples; the poll speeds up while the seed lands and real cards push
+  /// the replaced examples out (no reload).
+  func testSeedLandingPollsSoonerAndRetiresReplacedExamples() throws {
+    func card(_ id: String, example: Bool) -> String {
+      #"{"id":"\#(id)","kind":"film","category":"watch","title":"T","subtitle":null,"image":null,"is_example":\#(example),"saved":false,"saved_item_id":null,"recommendation_id":null,"evidence_available":false}"#
+    }
+    let real1 = "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f31", real2 = "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f32"
+    let ex1 = "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f41", ex2 = "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f42"
+    func page(_ cards: [String], expansion: String) throws -> DiscoveriesResponse {
+      try decode(DiscoveriesResponse.self, """
+        {"items":[\(cards.joined(separator: ","))],"next_cursor":null,"feed_id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f50",
+        "feed_revision":1,"is_example_feed":false,"available_categories":["watch"]\(expansion)}
+        """)
+    }
+    let first = try page([card(real1, example: false), card(ex1, example: true), card(ex2, example: true)],
+                         expansion: #","expansion":{"state":"running","poll_after_ms":4000}"#)
+    XCTAssertEqual(first.nextPollSeconds, 4)
+    let later = try page([card(real2, example: false), card(real1, example: false), card(ex2, example: true)],
+                         expansion: #","expansion":{"state":"idle","poll_after_ms":null}"#)
+    XCTAssertEqual(later.nextPollSeconds, DiscoveriesResponse.pollSeconds)
+    // On screen: real1 and both examples. real1/ex2 come back in the page; ex1 was replaced, so it leaves.
+    XCTAssertEqual(later.keptOnScreen(first.items), [])
+    // An examples-only page (older server, no expansion) keeps everything on screen.
+    let examplesOnly = try page([card(ex2, example: true)], expansion: "")
+    XCTAssertNil(examplesOnly.expansion)
+    XCTAssertEqual(examplesOnly.keptOnScreen(first.items).map { $0.id.uuidString.lowercased() }, [real1, ex1])
+  }
+
+  /// Qualified references are resemblances (feature map: qualified vs "Resembles …").
+  func testReferencePhraseMatchesWebAndAndroid() {
+    func ref(qualified: Bool, relation: String?, readText: String? = nil) -> ItemReference {
+      ItemReference(id: UUID(), name: "Bauhaus", type: "style", relation: relation, qualified: qualified,
+                    hasPage: false, readText: readText)
+    }
+    XCTAssertEqual(ref(qualified: false, relation: "depicted").phrase, "Bauhaus")
+    XCTAssertEqual(ref(qualified: false, relation: nil).phrase, "Bauhaus")
+    XCTAssertEqual(ref(qualified: true, relation: "depicted").phrase, "Resembles Bauhaus")
+    XCTAssertEqual(ref(qualified: true, relation: "resembles").phrase, "Resembles Bauhaus")
+    XCTAssertEqual(ref(qualified: false, relation: "resembles").phrase, "Resembles Bauhaus")
+    let read = ref(qualified: true, relation: "depicted", readText: "BAUHAUS")
+    XCTAssertEqual(read.phrase, "Bauhaus")
+    XCTAssertEqual(read.attribution, "Read in the photo: “BAUHAUS”")
+    XCTAssertNil(ref(qualified: false, relation: "depicted").attribution)
+  }
+
+  /// The bridged `GET /v1/captures/{id}` example decodes with its references and Qloo cards.
+  func testCaptureResultDecodesTheBridgedFixture() throws {
+    let capture = try AtlasJSON.decoder().decode(
+      CaptureResultResponse.self, from: Fixtures.message("capture_detail_response"))
+    XCTAssertEqual(capture.references.map(\.phrase), ["Eames Lounge Chair", "Resembles Mid-century modern"])
+    XCTAssertEqual(capture.recommendations.map(\.title), ["Nina Simone"])
+    XCTAssertEqual(capture.analysis?.title, "A lounge chair by a window")
+    XCTAssertNil(capture.jobID)
+    XCTAssertTrue(capture.settled)
+  }
+
   func testMusicResultReadsMatchStateAndSeeds() throws {
     let response = try decode(AnalysisResultResponse.self, """
       {"analysis_id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f21","job_id":null,"state":"complete","reused":true,

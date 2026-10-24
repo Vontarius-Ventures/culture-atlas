@@ -1,6 +1,6 @@
 {
   "fixture_version": 1,
-  "note": "Native owner bridge for apps/ios and apps/android: taste onboarding (spec amendment 2.2, screens 14, 15 and 18) plus Discover, item detail, related discoveries, and boards. Wire bodies are in messages.json. The TS test checks routes against ROUTES and the native owner bridge, copy against design/copy.json, limits against the server schemas, and every decision table against its reference implementation.",
+  "note": "Native owner bridge for apps/ios and apps/android: taste onboarding (spec amendment 2.2, screens 14, 15 and 18) plus Discover, item detail, related discoveries, a capture's compiled result (references and recommendations), and boards. Wire bodies are in messages.json. The TS test checks routes against ROUTES and the native owner bridge, copy against design/copy.json, limits against the server schemas, and every decision table against its reference implementation.",
   "auth": {
     "bearer": "native access token (cna_), the same session the app uses for /v2",
     "operations": [
@@ -18,6 +18,7 @@
       "GET /v1/discoveries",
       "GET /v1/items/{id}",
       "POST /v1/items/{id}/discoveries",
+      "GET /v1/captures/{id}",
       "GET /v1/collections",
       "POST /v1/collections",
       "GET /v1/collections/{id}",
@@ -87,6 +88,10 @@
     "discover_related": {
       "route": "POST /v1/items/{id}/discoveries",
       "operation": "discoverRelated"
+    },
+    "capture": {
+      "route": "GET /v1/captures/{id}",
+      "operation": "getCapture"
     },
     "list_collections": {
       "route": "GET /v1/collections",

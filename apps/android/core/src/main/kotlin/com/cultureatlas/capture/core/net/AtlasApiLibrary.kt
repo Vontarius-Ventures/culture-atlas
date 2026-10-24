@@ -7,10 +7,11 @@ import com.cultureatlas.capture.core.contract.MediaLibraryResponse
 
 /*
  * Library grid and the in-app result screen. `/v2` routes accept the enrolled
- * phone directly. `GET /v1/captures/{id}` (references + recommendations) is
- * only answered once the server lists it in the native owner bridge
- * (packages/domain/src/authz/native-owner.ts); until then it fails with
- * `scope_denied` and the result screen shows what `/v2` already returned.
+ * phone directly. `GET /v1/captures/{id}` (references + recommendations) goes
+ * through the native owner bridge (packages/domain/src/authz/native-owner.ts),
+ * read-only and limited to the signed-in account's own captures. An older
+ * server answers `scope_denied`; the result screen then shows what `/v2`
+ * already returned.
  */
 
 /** Newest first. [cursor] is the previous page's `next_cursor`. */

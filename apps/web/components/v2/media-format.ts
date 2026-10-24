@@ -84,9 +84,13 @@ export function statusLabel(status: MediaStatus, kind: MediaKind): string {
   }
 }
 
-/** 42_000 → "0:42"; 125_000 → "2:05". */
+/**
+ * 42_000 → "0:42"; 125_000 → "2:05". Whole seconds are floored, the way
+ * browser media players and running clocks count, so a 1.6 s recording reads
+ * "0:01" next to its own `<audio>` player (never "0:02" beside "0:01").
+ */
 export function formatDuration(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
+  const total = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${String(s).padStart(2, '0')}`;

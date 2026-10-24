@@ -6,6 +6,7 @@ import {
   createConveyor,
   feedColumns,
   laneSpeed,
+  mergeLanded,
   mergeRefreshed,
   pickNext,
   reconcile,
@@ -224,5 +225,24 @@ describe('refresh honesty', () => {
       '2',
       '4',
     ]);
+  });
+});
+
+describe('mergeLanded (seed landing after onboarding)', () => {
+  const ex = (id: string) => ({ id, is_example: true });
+  const real = (id: string) => ({ id, is_example: false });
+
+  it('real cards push out the examples the server dropped; known real cards stay', () => {
+    const shown = [real('q1'), ex('s1'), ex('s2'), ex('s3')];
+    const polled = [real('q2'), real('q1'), ex('s3')];
+    expect(mergeLanded(polled, shown).map((c) => c.id)).toEqual(['q2', 'q1', 's3']);
+    // A real card the newest page no longer lists is kept.
+    expect(mergeLanded([real('q3')], [real('q1'), ex('s1')]).map((c) => c.id)).toEqual(['q3', 'q1']);
+  });
+
+  it('an examples-only answer changes nothing it would lose, and never empties the pool', () => {
+    const shown = [ex('s1'), ex('s2')];
+    expect(mergeLanded([ex('s2')], shown).map((c) => c.id)).toEqual(['s2', 's1']);
+    expect(mergeLanded([], shown)).toEqual(shown);
   });
 });

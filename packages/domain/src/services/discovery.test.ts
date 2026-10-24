@@ -6,6 +6,7 @@ import { closeTestDb, getTestDb, insertAgentConnection } from '../testing';
 import { demoteIds, FEED_TOP_UP_MIN, getDiscoveries, interleaveFeed, longestCategoryRun, weaveRecentIntoFront } from './discovery';
 import { getItem, startRelatedDiscovery } from './items';
 import { recordPreference } from './preferences';
+import { enqueueJob } from '../jobs/queue';
 
 const db = getTestDb();
 afterAll(closeTestDb);
@@ -236,6 +237,29 @@ describe('discovery feed', () => {
     const before = new Set(first.items.map((c) => c.id));
     expect(second.items.some((c) => !before.has(c.id))).toBe(true);
     expect(first.expansion).toEqual({ state: 'idle', poll_after_ms: null });
+  });
+
+  it('reports expansion running while the taste seed is still publishing, idle once it finishes', async () => {
+    const { principal, ctx } = await accountCtx();
+    const owner = { kind: 'account' as const, accountId: principal.accountId };
+    const { job } = await enqueueJob(db, {
+      type: 'taste_seed',
+      owner,
+      payload: { taste_revision: 1, catalog_version: 'test', categories: ['play', 'watch'] },
+    });
+    // One category landed: a short personal pool topped up with labeled examples.
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) ids.push(await insertItem(owner, { kind: 'film', category: 'watch', title: `Seed film ${i}` }));
+    const cap = await insertCaptureWithAnalysis(owner, { recommendItemIds: ids });
+    await recordPreference(ctx, { action: 'save', target_type: 'capture', target_id: cap.captureId });
+    const partial = await getDiscoveries(ctx, { limit: 24, refresh: false });
+    expect(partial.is_example_feed).toBe(false);
+    expect(partial.items.some((c) => c.is_example)).toBe(true);
+    // Clients keep polling (and float the rest in) because the seed is still running.
+    expect(partial.expansion).toEqual({ state: 'running', poll_after_ms: 4000 });
+    await db.query(`UPDATE jobs SET state = 'complete' WHERE id = $1`, [job.id]);
+    const done = await getDiscoveries(ctx, { limit: 24, refresh: false });
+    expect(done.expansion).toEqual({ state: 'idle', poll_after_ms: null });
   });
 
   it('selected-collection agents cannot read the global feed', async () => {
