@@ -44,6 +44,16 @@ type Load =
   | { state: 'signed-out' };
 
 /** Video/photo detail (reference 07). */
+/** A result opened from a library item remembers it (Back to photo, Library tab stays lit). */
+export function fromLibrary(url: string, assetId: string): string {
+  if (!url.startsWith('/')) return url;
+  const [path, query = ''] = url.split('?');
+  const params = new URLSearchParams(query);
+  params.set('from', 'library');
+  params.set('media', assetId);
+  return `${path}?${params.toString()}`;
+}
+
 export function MediaDetailView({ id }: { id: string }) {
   const router = useRouter();
   const toast = useToast();
@@ -117,7 +127,7 @@ export function MediaDetailView({ id }: { id: string }) {
     if (!exploring || !analysis) return;
     const next = exploreState(analysis, { kind: mediaKind });
     if (next.kind === 'result') {
-      router.push(next.url);
+      router.push(fromLibrary(next.url, id));
       return;
     }
     if (next.kind === 'failed' || next.kind === 'cancelled') {
@@ -362,7 +372,18 @@ export function MediaDetailView({ id }: { id: string }) {
               <p className="muted">Exploring is available once this {m.kind} is ready.</p>
             )}
             {m.status === 'ready' && analysisReady === false && (
-              <p className="muted">{exploreFailureMessage('analysis_unavailable', { kind: m.kind })}</p>
+              <div className="detail-unavailable">
+                <p className="muted">{exploreFailureMessage('analysis_unavailable', { kind: m.kind })}</p>
+                <p className="muted">
+                  The model that reads {m.kind === 'video' ? 'videos' : 'photos'} is switched off
+                  on this server until it passes its quality checks, so nothing is guessed in the
+                  meantime. You can still add this {m.kind} to a collection, and your feed keeps
+                  growing from your picks.
+                </p>
+                <Link href="/" className="text-button">
+                  Go to your feed
+                </Link>
+              </div>
             )}
             {exploring && (
               <p>
@@ -388,7 +409,7 @@ export function MediaDetailView({ id }: { id: string }) {
             {analysisError && <V2Notice tone="error">{analysisError}</V2Notice>}
             {exploring && <WhileWeLook collapsed={false} from="discover" />}
             {item.links.analysis && !exploring && (
-              <Link href={item.links.analysis} className="text-button">
+              <Link href={fromLibrary(item.links.analysis, id)} className="text-button">
                 See what we found earlier
               </Link>
             )}

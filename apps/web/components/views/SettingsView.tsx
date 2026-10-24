@@ -84,21 +84,24 @@ export function AccountSection() {
     try {
       await api.request('signOut', { body: {} });
       await api.refreshSession();
-      window.location.assign('/');
+      window.location.assign('/?signed_out=1');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong.');
       setBusy(false);
     }
   };
   const signOut = async () => {
+    setBusy(true);
     let pending: UploadEntry[] = [];
     try {
       pending = pendingLocalDrafts(await defaultUploadStore().all(), accountId);
     } catch {
       // Local storage unavailable: nothing can be kept or deleted here.
     }
-    if (pending.length) setDrafts(pending);
-    else await finishSignOut();
+    if (pending.length) {
+      setBusy(false);
+      setDrafts(pending);
+    } else await finishSignOut();
   };
   const deleteDrafts = async () => {
     setBusy(true);
@@ -113,7 +116,7 @@ export function AccountSection() {
     await finishSignOut();
   };
   return (
-    <section className="settings__section" aria-labelledby="settings-account">
+    <section className="settings__section" id="account" aria-labelledby="settings-account">
       <h2 id="settings-account" className="section-title section-title--display">
         Your account
       </h2>
@@ -161,16 +164,38 @@ export function SettingsView() {
   const { session, isAccount } = useSession();
   return (
     <div className="page page--narrow settings">
-      <h1 className="display display--medium">Settings</h1>
-      {session && !isAccount ? (
-        <section className="settings__section">
-          <h2 className="section-title section-title--display">Your account</h2>
+      <h1 className="display">Settings</h1>
+      {!session ? (
+        // Same footprint as the account section, so nothing jumps when the session lands.
+        <div className="settings-skeleton" aria-busy="true">
+          <div className="skeleton skeleton--line" style={{ width: 220, height: 30 }} />
+          <div className="skeleton" style={{ height: 120 }} />
+          <div className="skeleton skeleton--line" style={{ width: 160, height: 30 }} />
+          <div className="skeleton" style={{ height: 80 }} />
+          <p className="visually-hidden" role="status">
+            Loading your settings…
+          </p>
+        </div>
+      ) : !isAccount ? (
+        <section className="settings__section" id="account">
+          <h2 className="section-title section-title--display">Sign in or create an account</h2>
+          {/* The one sign-in path everywhere (header, Library, Capture): an email link. */}
+          <div className="settings__signin">
+            <p>
+              Sign in with a link sent to your email. It keeps your library, uploads and devices in
+              sync.
+            </p>
+            <Link href="/identity" className="button button--primary">
+              Sign in with email
+            </Link>
+          </div>
+          <p className="muted settings__or">Or use a password on this browser:</p>
           <AccountPrompt
             lead="Create an account to keep saves, build collections and connect an agent."
             onCreated={() => undefined}
           />
         </section>
-      ) : isAccount ? (
+      ) : (
         <>
           <AccountSection />
           <TasteEntry />
@@ -189,7 +214,7 @@ export function SettingsView() {
             </p>
           </section>
         </>
-      ) : null}
+      )}
     </div>
   );
 }

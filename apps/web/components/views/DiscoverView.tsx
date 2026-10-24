@@ -10,7 +10,7 @@ import { ONBOARDING_PATH } from '@/lib/client/onboarding';
 import { UI_LIMITS } from '@/lib/client/limits';
 import { cardToTarget, useSave } from '@/lib/client/save';
 import { useSession } from '@/lib/client/session';
-import { feedColumns, mergeRefreshed } from '@/lib/client/conveyor';
+import { countFresh, dedupeByTitle, feedColumns, mergeRefreshed } from '@/lib/client/conveyor';
 import {
   applyOverrides,
   getFeedCache,
@@ -31,6 +31,15 @@ const inflight = new Map<string, Promise<DiscoveriesResponse>>();
 /** While an account's feed is still the example feed (seed building), look again this often. */
 const EXAMPLE_POLL_MS = 8_000;
 const EXAMPLE_POLL_MAX = 15;
+/**
+ * The floating feed keeps this many cards in its pool, fetching the next page
+ * in the background while the drift runs, so the same few cards never loop.
+ */
+const POOL_TARGET = 48;
+/** Once the server has no further page, look for a fresh snapshot this often (visible tab only). */
+const TOP_UP_MS = 45_000;
+/** Examples step aside once this many personal cards exist. */
+const PERSONAL_ENOUGH = 12;
 const useIsoLayoutEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /**
@@ -127,7 +136,7 @@ export function DiscoverView() {
     return () => window.removeEventListener('scroll', onScroll);
   }, [key]);
 
-  const loadMore = async () => {
+  const loadMore = async (opts: { quiet?: boolean } = {}) => {
     if (!feed?.nextCursor) return;
     setLoadingMore(true);
     try {
@@ -145,10 +154,12 @@ export function DiscoverView() {
         nextCursor: res.next_cursor,
       };
       setFeedCache(key, entry);
-      setFeed(entry);
-      toast.announce(`${res.items.length} more discoveries loaded`);
+      if (keyRef.current === key) setFeed(entry);
+      if (!opts.quiet) toast.announce(`${res.items.length} more discoveries loaded`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'More discoveries could not be loaded.');
+      // Background top-ups fail silently; the cards already shown stay.
+      if (!opts.quiet)
+        setError(err instanceof ApiError ? err.message : 'More discoveries could not be loaded.');
     } finally {
       setLoadingMore(false);
     }
@@ -179,8 +190,8 @@ export function DiscoverView() {
           return;
         }
         const becamePersonal = latest.isExampleFeed && !res.is_example_feed;
-        const known = new Set(latest.items.map((i) => i.id));
-        const fresh = res.items.filter((i) => !known.has(i.id)).length;
+        // Count what the person will actually see as new (same title = same card).
+        const fresh = countFresh(res.items, becamePersonal ? [] : latest.items);
         const entry: FeedCacheEntry = {
           ...latest,
           items: becamePersonal ? [...res.items] : mergeRefreshed(res.items, latest.items),
@@ -194,18 +205,35 @@ export function DiscoverView() {
         if (!category) setAllCategories(entry.availableCategories);
         if (keyRef.current !== key) return;
         setFeed(entry);
-        if (!opts.quiet || fresh > 0) {
-          toast.announce(fresh > 0 ? `${fresh} new discoveries` : 'No new discoveries yet');
+        if (becamePersonal) {
+          toast.announce('Your personal feed is ready');
+        } else if (!opts.quiet) {
+          // Asked for: a visible answer.
+          toast.show({
+            message:
+              fresh === 0
+                ? 'No new discoveries yet'
+                : `${fresh} new ${fresh === 1 ? 'discovery' : 'discoveries'}`,
+            duration: 3500,
+          });
+        } else if (fresh > 0) {
+          toast.announce(`${fresh} new ${fresh === 1 ? 'discovery' : 'discoveries'}`);
         }
       } catch (err) {
         if (err instanceof ApiError && err.code === 'onboarding_required') {
           window.location.replace(ONBOARDING_PATH);
           return;
         }
-        // Keep the grid; say so only when the person asked.
+        // Keep the grid; say so only when the person asked, and offer to try again.
         if (!opts.quiet) {
           toast.show({
             message: err instanceof ApiError ? err.message : 'Discoveries could not be refreshed.',
+            action: {
+              label: 'Retry',
+              // Same path as pressing Refresh again.
+              onAction: () =>
+                document.querySelector<HTMLButtonElement>('.feed-toolbar__refresh')?.click(),
+            },
           });
         }
       } finally {
@@ -214,6 +242,36 @@ export function DiscoverView() {
     },
     [key, category, toast],
   );
+
+  // Landing here right after Settings -> Sign out: confirm it, then tidy the URL.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('signed_out') !== '1') return;
+    toast.show({ message: 'You’re signed out. Your account stays private.', duration: 4000 });
+    url.searchParams.delete('signed_out');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search);
+  }, [toast]);
+
+  // A feed that never runs out: while the pool is shallow, fetch the next page
+  // in the background; once the server has no further page, quietly look for a
+  // fresh snapshot now and then. Neither ever removes a card already shown.
+  const poolSize = feed?.items.length ?? 0;
+  const nextCursor = feed?.nextCursor ?? null;
+  useEffect(() => {
+    if (!nextCursor || loadingMore || refreshing || poolSize >= POOL_TARGET) return;
+    const t = window.setTimeout(() => void loadMore({ quiet: true }), 1200);
+    return () => window.clearTimeout(t);
+    // loadMore reads the current feed; re-arm only when the pool or cursor changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextCursor, poolSize, loadingMore, refreshing]);
+  const topUp = Boolean(feed) && !nextCursor && poolSize < POOL_TARGET && !feed?.isExampleFeed;
+  useEffect(() => {
+    if (!topUp) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshFeed({ quiet: true });
+    }, TOP_UP_MS);
+    return () => window.clearInterval(timer);
+  }, [topUp, refreshFeed]);
 
   // An account whose personal feed is still building sees the example feed:
   // look again every few seconds (bounded) so seed cards float in when they land.
@@ -240,7 +298,16 @@ export function DiscoverView() {
     value: c,
     label: CATEGORY_LABELS[c],
   }));
-  const items: Card[] = feed ? applyOverrides(feed.items, overrides) : [];
+  const pool: Card[] = feed ? dedupeByTitle(applyOverrides(feed.items, overrides)) : [];
+  // Once the personal feed has enough of its own, example cards step aside.
+  const personal = pool.filter((c) => !c.is_example);
+  // Until then, personal cards still lead and examples only fill in behind them.
+  const items: Card[] =
+    feed && !feed.isExampleFeed
+      ? personal.length >= PERSONAL_ENOUGH
+        ? personal
+        : [...personal, ...pool.filter((c) => c.is_example)]
+      : pool;
   const firstVisit = getFeedCache('all')?.isExampleFeed ?? feed?.isExampleFeed ?? false;
 
   return (

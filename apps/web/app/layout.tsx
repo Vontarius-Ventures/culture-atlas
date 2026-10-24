@@ -6,6 +6,8 @@ import './globals.css';
 import '@/components/v2/v2.css';
 // Spec amendment 2.2 screens 14-18 (taste onboarding, While we look, ready notice).
 import '@/components/onboarding/onboarding.css';
+// Cross-route consistency (one container, one H1 scale) and motion polish; loaded last.
+import './polish.css';
 
 export const metadata: Metadata = {
   title: { default: 'culture atlas', template: '%s · culture atlas' },

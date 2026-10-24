@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  countFresh,
+  dedupeByTitle,
   canFlow,
   createConveyor,
   feedColumns,
@@ -205,5 +207,22 @@ describe('feed conveyor model', () => {
     expect(feedColumns(358)).toBe(2);
     expect(feedColumns(704)).toBe(3);
     expect(feedColumns(1344)).toBe(4);
+  });
+});
+
+describe('refresh honesty', () => {
+  const c = (id: string, title: string, kind = 'film') => ({ id, title, kind });
+  it('counts only cards new by id and by kind+title', () => {
+    const existing = [c('1', 'Tetsubin', 'style'), c('2', 'Rich Kids')];
+    const incoming = [c('9', 'Tetsubin', 'style'), c('2', 'Rich Kids'), c('3', 'Aristocrazy', 'brand')];
+    expect(countFresh(incoming, existing)).toBe(1);
+    expect(countFresh([c('4', 'A'), c('5', ' a ')], [])).toBe(1);
+  });
+  it('drops later repeats of the same kind and title, keeping order', () => {
+    expect(dedupeByTitle([c('1', 'A'), c('2', 'B'), c('3', 'a'), c('4', 'A', 'brand')]).map((x) => x.id)).toEqual([
+      '1',
+      '2',
+      '4',
+    ]);
   });
 });

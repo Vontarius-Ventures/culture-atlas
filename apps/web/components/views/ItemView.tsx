@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { DiscoveryCard as Card, ItemDetailResponse } from '@culture-atlas/domain/schemas';
 import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
 import { useAsyncEffect } from '@/lib/client/hooks';
@@ -14,18 +14,41 @@ import { Conveyor } from '../Conveyor';
 import { CardGrid, DiscoveryCard, SkeletonGrid, TextArt } from '../DiscoveryCard';
 import { Icon } from '../Icon';
 import { useToast } from '../Toast';
-import { BackLink, Disclosure, MoreMenu, Notice, PageError } from '../ui';
+import { BackLink, Disclosure, MoreMenu, Notice, PageError, UnavailableState } from '../ui';
 import { referencePhrase } from './CaptureResultView';
 
 function relatedHref(card: Card): string {
   return `/items/${card.id}?from=item${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`;
 }
 
+/**
+ * "Why this?" must add something: when its text only repeats the reason
+ * already printed under the title, keep just the sources; with no sources
+ * either, there is nothing to disclose.
+ */
+export function dedupeWhy(
+  why: ItemDetailResponse['why_this'],
+  reason: string | null,
+): { text: string | null; sources: NonNullable<ItemDetailResponse['why_this']>['sources'] } | null {
+  if (!why) return null;
+  const same = (a: string, b: string) =>
+    a.trim().replace(/[.\s]+$/, '').toLowerCase() === b.trim().replace(/[.\s]+$/, '').toLowerCase();
+  const repeats = reason !== null && same(why.text, reason);
+  if (repeats && why.sources.length === 0) return null;
+  return { text: repeats ? null : why.text, sources: why.sources };
+}
+
 /** Where "Back" goes, from the `from` query the opener set. */
 export function backTarget(params: URLSearchParams): { href: string; label: string } {
   const from = params.get('from');
-  if (from === 'capture' && params.get('capture'))
-    return { href: `/captures/${params.get('capture')}`, label: 'Your photo' };
+  if (from === 'capture' && params.get('capture')) {
+    // A photo opened from the library keeps that origin on the way back.
+    const lib =
+      params.get('via') === 'library'
+        ? `?from=library${params.get('media') ? `&media=${params.get('media')}` : ''}`
+        : '';
+    return { href: `/captures/${params.get('capture')}${lib}`, label: 'Back to photo' };
+  }
   if (from === 'collection' && params.get('collection'))
     return { href: `/collections/${params.get('collection')}`, label: 'Collection' };
   if (from === 'later') return { href: '/collections/later', label: 'Saved for later' };
@@ -74,6 +97,12 @@ export function ItemView({ itemId }: { itemId: string }) {
 
   useAsyncEffect(load, [load]);
 
+  // The tab names the thing, not just "Discovery".
+  const docTitle = data?.item.title;
+  useEffect(() => {
+    if (docTitle) document.title = `${docTitle} · culture atlas`;
+  }, [docTitle]);
+
   const related = useJob(relatedJob, (job) => {
     if (job.state !== 'queued' && job.state !== 'running') {
       void load().then(() => toast.announce('Related discoveries updated'));
@@ -81,13 +110,22 @@ export function ItemView({ itemId }: { itemId: string }) {
   });
 
   if (error && !data) {
+    if (error.status === 404 || error.code === 'not_found') {
+      return (
+        <div className="page">
+          <UnavailableState
+            title="This discovery isn’t here anymore."
+            body="It may have been hidden, removed from the catalog, or the link is old. Your feed has plenty more."
+            primary={{ href: '/', label: 'Back to Discover' }}
+            secondary={back.href !== '/' ? { href: back.href, label: back.label } : undefined}
+          />
+        </div>
+      );
+    }
     return (
       <div className="page">
         <BackLink href={back.href} label={back.label} />
-        <PageError
-          message={error.status === 404 ? 'This item isn’t available.' : error.message}
-          onRetry={error.status === 404 ? undefined : () => void load()}
-        />
+        <PageError message={error.message} onRetry={() => void load()} />
       </div>
     );
   }
@@ -107,6 +145,7 @@ export function ItemView({ itemId }: { itemId: string }) {
   }
 
   const item = applyOverrides([data.item], overrides)[0] ?? { ...data.item };
+  const whyThis = dedupeWhy(data.why_this, data.reason);
   const relatedCards = applyOverrides(data.related, overrides);
   const pending = related.active || data.related_state === 'pending';
 
@@ -159,11 +198,10 @@ export function ItemView({ itemId }: { itemId: string }) {
           )}
         </div>
         <div className="item-detail__body">
-          <h1 className="display">{item.title}</h1>
+          <h1 className="display display--medium">{item.title}</h1>
           {item.subtitle && <p className="item-detail__subtitle">{item.subtitle}</p>}
           {data.detail && <p className="item-detail__subtitle">{data.detail}</p>}
-          {data.description && <p className="lede">{data.description}</p>}
-          {data.reason && <p className="item-detail__subtitle">{data.reason}</p>}
+          {data.reason && <p className="item-detail__reason">{data.reason}</p>}
           <div className="item-detail__actions">
             {/* Mockup 06: a plain "Save" button; the label itself says "Saved" afterwards. */}
             <button
@@ -187,6 +225,13 @@ export function ItemView({ itemId }: { itemId: string }) {
             <MoreMenu label={`More options for ${item.title}`} items={menuItems} />
             {item.is_example && <p className="example-label">Example result</p>}
           </div>
+          {data.description && (
+            <figure className="item-detail__about">
+              <p className="lede">{data.description}</p>
+              {/* Provenance: this text is the catalog's, not ours. */}
+              <figcaption className="item-detail__provenance">Catalog description</figcaption>
+            </figure>
+          )}
           {data.capture_id && (
             <p>
               <Link href={`/captures/${data.capture_id}`} className="text-link">
@@ -213,12 +258,16 @@ export function ItemView({ itemId }: { itemId: string }) {
                 </ul>
               </Disclosure>
             )}
-            {data.why_this && (
+            {whyThis && (
               <Disclosure label="Why this?">
-                <p>{data.why_this.text}</p>
-                {data.why_this.sources.length > 0 && (
+                {whyThis.text ? (
+                  <p>{whyThis.text}</p>
+                ) : (
+                  <p className="muted">Where this comes from:</p>
+                )}
+                {whyThis.sources.length > 0 && (
                   <ul className="source-list">
-                    {data.why_this.sources.map((s) => (
+                    {whyThis.sources.map((s) => (
                       <li key={s.id}>
                         <a
                           href={s.url}

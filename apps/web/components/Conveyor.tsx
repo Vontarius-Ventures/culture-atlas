@@ -395,6 +395,10 @@ export function Conveyor({
         onPointerEnter={(e) => {
           if (e.pointerType === 'mouse') pause('hover');
         }}
+        onPointerMove={(e) => {
+          // A cursor already resting over the feed when it loaded never fires pointerenter.
+          if (e.pointerType === 'mouse' && !pausesRef.current.has('hover')) pause('hover');
+        }}
         onPointerLeave={(e) => {
           if (e.pointerType === 'mouse') resume('hover', 400);
         }}

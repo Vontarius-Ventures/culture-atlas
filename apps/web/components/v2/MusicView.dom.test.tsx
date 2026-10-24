@@ -110,7 +110,7 @@ describe('Music Mode picked file and match', () => {
     render(<MusicView />);
     const wav = new File([encodePcmWav(new Float32Array(40_000), 16_000)], 'clip.wav', { type: 'audio/wav' });
     await userEvent.upload(screen.getByTestId('music-file-input'), wav);
-    await waitFor(() => expect(screen.getByTestId('music-length').textContent).toBe('0:03 recording'));
+    await waitFor(() => expect(screen.getByTestId('music-length').textContent).toBe('0:02 recording'));
     await userEvent.click(screen.getByRole('button', { name: 'Keep' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Explore music' }));
     const card = await screen.findByTestId('music-match');

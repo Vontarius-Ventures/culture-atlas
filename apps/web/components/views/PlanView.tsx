@@ -169,7 +169,7 @@ export function PlanView({ planId }: { planId: string }) {
       <BackLink href={back.href} label={back.label} />
       <div className="page-head">
         <div>
-          <h1 className="display">
+          <h1 className="display display--medium">
             {processing
               ? 'Putting your movie night together…'
               : (version?.title ?? 'Your movie night')}
