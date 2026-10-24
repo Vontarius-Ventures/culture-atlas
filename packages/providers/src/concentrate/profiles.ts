@@ -19,6 +19,8 @@ export const MODEL_ROLE_VALUES = [
    * binding checks before publication at stage 1 and stage 2; off by default.
    */
   'vision_verify',
+  /** Style reading (style design §B.2): parallel to stage 1, its own prompt, schema and image size. */
+  'vision_style',
 ] as const satisfies readonly ModelRole[];
 
 /**
@@ -330,6 +332,8 @@ export const QUALIFICATION_MINIMUM_FIXTURES: Record<ModelRole, number> = {
   vision_photo_enrich: 10,
   // The verifier is held to the photo roles' bar.
   vision_verify: 10,
+  // Style design §B.2: the style reading qualifies on >= 10 photos (eval set style-v1).
+  vision_style: 10,
 };
 
 function findString(value: unknown, needle: string): boolean {

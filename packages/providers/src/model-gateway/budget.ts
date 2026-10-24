@@ -91,6 +91,13 @@ export interface SpendLimits {
   accountDailyMicros: number;
   maxUnknownMicros: number;
   accountDailyAnalyses: number;
+  /**
+   * Style design §D.1: a bucket for roles that dispatch unqualified
+   * (ANALYSIS_EXPERIMENTAL_ROLES / demo override), inside the limits above:
+   * at most `dailyMicros` across every account per UTC day, and at most
+   * `accountDailyAnalyses` jobs per account per day that use such a role.
+   */
+  experimental?: { dailyMicros: number; accountDailyAnalyses: number };
 }
 export interface FinishDetails {
   pause?: SpendPause;
@@ -103,12 +110,15 @@ function utcDay(ms: number): string {
 }
 
 export class ModelSpendLedger {
+  /** Roles charged to the experimental bucket; set by the gateway once it knows which roles run unqualified. */
+  experimentalRoles: ReadonlySet<ModelRole> = new Set();
   constructor(
     readonly store: SpendStore,
     readonly limits: SpendLimits,
     readonly now = Date.now,
   ) {
-    for (const value of Object.values(limits))
+    const { experimental, ...base } = limits;
+    for (const value of [...Object.values(base), ...(experimental ? Object.values(experimental) : [])])
       if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid spend limits');
   }
   private async control(): Promise<SpendControl> {
@@ -130,6 +140,8 @@ export class ModelSpendLedger {
     day: string,
     identity: Pick<ModelIdentity, 'accountId' | 'jobId'>,
     micros: number,
+    /** Micro-USD of `micros` that belongs to experimental roles. */
+    experimentalMicros = 0,
   ): boolean {
     const outstanding = s.attempts.filter((a) => a.state !== 'settled');
     const counted = s.attempts.filter((a) => a.day === day || a.state !== 'settled');
@@ -143,12 +155,25 @@ export class ModelSpendLedger {
         .filter((a) => a.day === day && a.identity.accountId === identity.accountId)
         .map((a) => a.identity.jobId),
     );
-    return !(
+    if (
       sum(counted) + micros > this.limits.dailyMicros ||
       sum(owned) + micros > this.limits.accountDailyMicros ||
       sum(outstanding) + micros > this.limits.maxUnknownMicros ||
       (!analyses.has(identity.jobId) && analyses.size >= this.limits.accountDailyAnalyses)
-    );
+    )
+      return false;
+    const exp = this.limits.experimental;
+    if (exp && experimentalMicros > 0) {
+      const expCounted = counted.filter((a) => this.experimentalRoles.has(a.role));
+      const expJobs = new Set(
+        s.attempts
+          .filter((a) => a.day === day && a.identity.accountId === identity.accountId && this.experimentalRoles.has(a.role))
+          .map((a) => a.identity.jobId),
+      );
+      if (sum(expCounted) + experimentalMicros > exp.dailyMicros) return false;
+      if (!expJobs.has(identity.jobId) && expJobs.size >= exp.accountDailyAnalyses) return false;
+    }
+    return true;
   }
 
   /**
@@ -175,6 +200,7 @@ export class ModelSpendLedger {
           day,
           identity,
           profiles.reduce((n, p) => n + p.reservationMicros, 0),
+          profiles.filter((p) => this.experimentalRoles.has(p.role)).reduce((n, p) => n + p.reservationMicros, 0),
         );
       },
       { day },
@@ -225,7 +251,7 @@ export class ModelSpendLedger {
             'Attempt already reserved; reconcile rather than dispatch twice',
           );
         }
-        if (!this.fits(s, day, identity, profile.reservationMicros)) {
+        if (!this.fits(s, day, identity, profile.reservationMicros, this.experimentalRoles.has(profile.role) ? profile.reservationMicros : 0)) {
           throw new ProviderError(
             'model-gateway',
             'budget_exhausted',

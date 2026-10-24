@@ -12,6 +12,7 @@ import type {
   VlmResult,
 } from '../vlm/types';
 import type { VlmVerifier, VlmVerifyInput, VlmVerifyResult } from '../vlm/verify';
+import type { VlmStyleInput, VlmStyleReader, VlmStyleResult } from '../vlm/style';
 import type { ModelIdentity } from './types';
 
 /**
@@ -91,6 +92,22 @@ class BoundVlmVerifier implements VlmVerifier {
   }
 }
 
+class BoundVlmStyleReader implements VlmStyleReader {
+  constructor(
+    private readonly inner: VlmStyleReader,
+    private readonly next: NextIdentity,
+  ) {}
+  get id() {
+    return this.inner.id;
+  }
+  capability() {
+    return this.inner.capability();
+  }
+  readStyle(input: VlmStyleInput, options?: CallOptions): Promise<VlmStyleResult> {
+    return this.inner.readStyle(input, withIdentity(options, this.next, 'vlm_style'));
+  }
+}
+
 class BoundText implements TextModelProvider {
   constructor(
     private readonly inner: TextModelProvider,
@@ -135,6 +152,7 @@ export function bindModelIdentity(
     vlm: new BoundVlm(registry.vlm, next),
     vlmEnrich: new BoundVlmEnricher(registry.vlmEnrich, next),
     vlmVerify: new BoundVlmVerifier(registry.vlmVerify, next),
+    vlmStyle: new BoundVlmStyleReader(registry.vlmStyle, next),
     text: new BoundText(registry.text, next),
     composer: new BoundText(registry.composer, next),
     research,

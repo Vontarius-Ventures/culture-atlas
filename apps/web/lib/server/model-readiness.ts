@@ -75,12 +75,18 @@ export async function photoAnalysisReadiness(
   enrichReady: boolean;
   verifyReady: boolean;
   experimental: boolean;
+  /** How vision_photo got its runner (style design §D.1): experimental_production, demo_override, qualified... */
+  access?: string;
+  /** Style design §D.3: the style reading's own availability (photo analysis stays available without it). */
+  styleReady?: boolean;
 }> {
   // Stage-2 enrichment (fast_analysis_two_stage) never falls back to Elorian.
   const enrich = await roleAvailability('vision_photo_enrich', gateway, false);
   // Neither does the verifier (analysis_verifier_enabled).
   const verify = await roleAvailability('vision_verify', gateway, false);
-  const base = { enrichReady: enrich === 'available', verifyReady: verify === 'available' };
+  // The style reading never falls back either; without it photo analysis still runs (style "failed: unavailable").
+  const style = await roleAvailability('vision_style', gateway, false);
+  const base = { enrichReady: enrich === 'available', verifyReady: verify === 'available', styleReady: style === 'available' };
   let detail: Awaited<ReturnType<ModelGateway['readiness']>>['vision_photo'] | undefined;
   try {
     detail = gateway ? (await gateway.readiness()).vision_photo : undefined;
@@ -106,5 +112,6 @@ export async function photoAnalysisReadiness(
     providerReady,
     qualityQualified,
     experimental: detail.experimental === true,
+    ...(detail.access ? { access: detail.access } : {}),
   };
 }

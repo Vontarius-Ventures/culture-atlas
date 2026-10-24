@@ -2201,6 +2201,663 @@
           }
         }
       }
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "slug": "claude-sonnet-5-5",
+      "aliases": [
+        "claude-sonnet5.5",
+        "sonnet-5.5",
+        "sonnet5.5",
+        "sonnet-5-5",
+        "claude-5-5-sonnet"
+      ],
+      "name": "Claude Sonnet 5.5",
+      "description": "Anthropic's Claude 5.5 Sonnet: 30%+ faster output than Sonnet 5 at up to 30% lower cost per task, with strong agentic coding, tool use, computer use and vision; thinking cannot be disabled and forced tool_choice is not supported.",
+      "release_date": 1790553600000,
+      "author": {
+        "slug": "anthropic",
+        "display_name": "Anthropic"
+      },
+      "providers": {
+        "anthropic": {
+          "provider_slug": "anthropic",
+          "release_date": 1790553600000,
+          "pricing": [
+            {
+              "tokens": {
+                "input": {
+                  "price": {
+                    "USD": 2
+                  },
+                  "units": 1000000
+                },
+                "output": {
+                  "price": {
+                    "USD": 10
+                  },
+                  "units": 1000000
+                },
+                "cache": {
+                  "read": {
+                    "price": {
+                      "USD": 0.1
+                    },
+                    "units": 1000000
+                  },
+                  "write": {
+                    "ephemeral_5m_input_tokens": {
+                      "price": {
+                        "USD": 2.5
+                      },
+                      "units": 1000000
+                    },
+                    "ephemeral_1h_input_tokens": {
+                      "price": {
+                        "USD": 4
+                      },
+                      "units": 1000000
+                    }
+                  }
+                }
+              },
+              "tool_calls": {
+                "web_search": {
+                  "price": {
+                    "USD": 10
+                  },
+                  "units": 1000
+                }
+              }
+            }
+          ],
+          "context_window": 1000000,
+          "max_output_tokens": 128000,
+          "zdr": {
+            "policy_url": "https://platform.claude.com/docs/en/build-with-claude/zero-data-retention",
+            "certificate_url": "https://concentrate.ai/legal/anthropic-zdr-certificate-2026-03-03.pdf"
+          },
+          "baa": true,
+          "certifications": [
+            "soc2_type1",
+            "soc2_type2",
+            "iso27001",
+            "iso42001"
+          ],
+          "supports": {
+            "background": false,
+            "context_management": false,
+            "conversation": false,
+            "include": {
+              "file_search_call.results": false,
+              "web_search_call.results": true,
+              "web_search_call.action.sources": true,
+              "message.input_image.image_url": false,
+              "computer_call_output.output.image_url": false,
+              "code_interpreter_call.outputs": false,
+              "reasoning.encrypted_content": false,
+              "message.output_text.logprobs": false
+            },
+            "input": {
+              "additional_tools": false,
+              "agent_message": false,
+              "text": true,
+              "image": {
+                "png": true,
+                "jpg": true,
+                "webp": true,
+                "gif": true
+              },
+              "file": {
+                "pdf": true
+              }
+            },
+            "instructions": true,
+            "max_output_tokens": true,
+            "max_tool_calls": false,
+            "metadata": true,
+            "parallel_tool_calls": true,
+            "previous_response_id": false,
+            "prompt": false,
+            "prompt_cache_breakpoint": false,
+            "prompt_cache_key": true,
+            "prompt_cache_options": false,
+            "prompt_cache_retention": true,
+            "reasoning": {
+              "effort": {
+                "none": false,
+                "minimal": false,
+                "low": true,
+                "medium": true,
+                "high": true,
+                "xhigh": true,
+                "max": true
+              }
+            },
+            "safety_identifier": true,
+            "service_tier": {
+              "auto": true,
+              "default": true,
+              "fast": false,
+              "flex": false,
+              "priority": false,
+              "scale": false,
+              "ultrafast": false
+            },
+            "stop": true,
+            "store": false,
+            "stream": true,
+            "stream_options": {
+              "include_obfuscation": false
+            },
+            "temperature": false,
+            "text": {
+              "verbosity": false,
+              "format": {
+                "text": true,
+                "json_schema": true,
+                "json_object": false
+              }
+            },
+            "tools": {
+              "function_calling": true,
+              "web_search": true,
+              "custom_tools": false,
+              "namespaces": false
+            },
+            "tool_choice": {
+              "none": true,
+              "auto": true,
+              "required": false,
+              "specific_tool": false,
+              "allowed_tools": false
+            },
+            "top_logprobs": false,
+            "top_p": false,
+            "truncation": false,
+            "user": true
+          },
+          "image_processing": {
+            "max_images_per_request": 100,
+            "supported_formats": [
+              "png",
+              "jpeg",
+              "gif",
+              "webp"
+            ],
+            "size_mb": {
+              "max_total": 24,
+              "max_per_image": 7.5
+            },
+            "max_dimension": 8000
+          },
+          "pdf_processing": {
+            "mode": "native",
+            "max_pages_per_request": 100,
+            "max_files_per_request": 100,
+            "supported_formats": [
+              "pdf"
+            ],
+            "size_mb": {
+              "max_total": 32,
+              "max_per_file": 32
+            }
+          }
+        },
+        "vertex": {
+          "provider_slug": "vertex",
+          "release_date": 1790553600000,
+          "pricing": [
+            {
+              "tokens": {
+                "input": {
+                  "price": {
+                    "USD": 2
+                  },
+                  "units": 1000000
+                },
+                "output": {
+                  "price": {
+                    "USD": 10
+                  },
+                  "units": 1000000
+                },
+                "cache": {
+                  "read": {
+                    "price": {
+                      "USD": 0.1
+                    },
+                    "units": 1000000
+                  },
+                  "write": {
+                    "ephemeral_5m_input_tokens": {
+                      "price": {
+                        "USD": 2.5
+                      },
+                      "units": 1000000
+                    },
+                    "ephemeral_1h_input_tokens": {
+                      "price": {
+                        "USD": 4
+                      },
+                      "units": 1000000
+                    }
+                  }
+                }
+              },
+              "tool_calls": {
+                "web_search": {
+                  "price": {
+                    "USD": 10
+                  },
+                  "units": 1000
+                }
+              }
+            }
+          ],
+          "context_window": 1000000,
+          "max_output_tokens": 128000,
+          "zdr": false,
+          "baa": true,
+          "certifications": [
+            "soc2_type2",
+            "iso27001",
+            "iso27701",
+            "iso42001",
+            "fedramp"
+          ],
+          "supports": {
+            "background": false,
+            "context_management": false,
+            "conversation": false,
+            "include": {
+              "file_search_call.results": false,
+              "web_search_call.results": false,
+              "web_search_call.action.sources": false,
+              "message.input_image.image_url": false,
+              "computer_call_output.output.image_url": false,
+              "code_interpreter_call.outputs": false,
+              "reasoning.encrypted_content": false,
+              "message.output_text.logprobs": false
+            },
+            "input": {
+              "additional_tools": false,
+              "agent_message": false,
+              "text": true,
+              "image": {
+                "png": true,
+                "jpg": true,
+                "webp": true,
+                "gif": true
+              },
+              "file": {
+                "pdf": true
+              }
+            },
+            "instructions": true,
+            "max_output_tokens": true,
+            "max_tool_calls": false,
+            "metadata": true,
+            "parallel_tool_calls": true,
+            "previous_response_id": false,
+            "prompt": false,
+            "prompt_cache_breakpoint": false,
+            "prompt_cache_key": true,
+            "prompt_cache_options": false,
+            "prompt_cache_retention": true,
+            "reasoning": {
+              "effort": {
+                "none": false,
+                "minimal": false,
+                "low": true,
+                "medium": true,
+                "high": true,
+                "xhigh": true,
+                "max": true
+              }
+            },
+            "safety_identifier": true,
+            "service_tier": {
+              "auto": true,
+              "default": true,
+              "fast": false,
+              "flex": false,
+              "priority": false,
+              "scale": false,
+              "ultrafast": false
+            },
+            "stop": true,
+            "store": false,
+            "stream": true,
+            "stream_options": {
+              "include_obfuscation": false
+            },
+            "temperature": false,
+            "text": {
+              "verbosity": false,
+              "format": {
+                "text": true,
+                "json_schema": false,
+                "json_object": false
+              }
+            },
+            "tools": {
+              "function_calling": true,
+              "web_search": false,
+              "custom_tools": false,
+              "namespaces": false
+            },
+            "tool_choice": {
+              "none": true,
+              "auto": true,
+              "required": false,
+              "specific_tool": false,
+              "allowed_tools": false
+            },
+            "top_logprobs": false,
+            "top_p": false,
+            "truncation": false,
+            "user": true
+          },
+          "image_processing": {
+            "max_images_per_request": 100,
+            "supported_formats": [
+              "png",
+              "jpeg",
+              "gif",
+              "webp"
+            ],
+            "size_mb": {
+              "max_total": 32
+            }
+          },
+          "pdf_processing": {
+            "mode": "native",
+            "max_pages_per_request": 100,
+            "max_files_per_request": 100,
+            "supported_formats": [
+              "pdf"
+            ],
+            "size_mb": {
+              "max_total": 32,
+              "max_per_file": 32
+            }
+          }
+        },
+        "azure": {
+          "provider_slug": "azure",
+          "release_date": 1790553600000,
+          "pricing": [
+            {
+              "tokens": {
+                "input": {
+                  "price": {
+                    "USD": 2
+                  },
+                  "units": 1000000
+                },
+                "output": {
+                  "price": {
+                    "USD": 10
+                  },
+                  "units": 1000000
+                },
+                "cache": {
+                  "read": {
+                    "price": {
+                      "USD": 0.1
+                    },
+                    "units": 1000000
+                  },
+                  "write": {
+                    "ephemeral_5m_input_tokens": {
+                      "price": {
+                        "USD": 2.5
+                      },
+                      "units": 1000000
+                    },
+                    "ephemeral_1h_input_tokens": {
+                      "price": {
+                        "USD": 4
+                      },
+                      "units": 1000000
+                    }
+                  }
+                }
+              },
+              "tool_calls": {
+                "web_search": {
+                  "price": {
+                    "USD": 10
+                  },
+                  "units": 1000
+                }
+              }
+            }
+          ],
+          "context_window": 1000000,
+          "max_output_tokens": 128000,
+          "zdr": {
+            "policy_url": "https://learn.microsoft.com/en-us/azure/foundry/responsible-ai/openai/data-privacy"
+          },
+          "baa": true,
+          "certifications": [
+            "soc2_type2",
+            "iso27001",
+            "iso27701",
+            "iso42001",
+            "fedramp"
+          ],
+          "supports": {
+            "background": false,
+            "context_management": false,
+            "conversation": false,
+            "include": {
+              "file_search_call.results": false,
+              "web_search_call.results": true,
+              "web_search_call.action.sources": true,
+              "message.input_image.image_url": false,
+              "computer_call_output.output.image_url": false,
+              "code_interpreter_call.outputs": false,
+              "reasoning.encrypted_content": false,
+              "message.output_text.logprobs": false
+            },
+            "input": {
+              "additional_tools": false,
+              "agent_message": false,
+              "text": true,
+              "image": {
+                "png": true,
+                "jpg": true,
+                "webp": true,
+                "gif": true
+              },
+              "file": {
+                "pdf": true
+              }
+            },
+            "instructions": true,
+            "max_output_tokens": true,
+            "max_tool_calls": false,
+            "metadata": true,
+            "parallel_tool_calls": true,
+            "previous_response_id": false,
+            "prompt": false,
+            "prompt_cache_breakpoint": false,
+            "prompt_cache_key": true,
+            "prompt_cache_options": false,
+            "prompt_cache_retention": true,
+            "reasoning": {
+              "effort": {
+                "none": false,
+                "minimal": false,
+                "low": true,
+                "medium": true,
+                "high": true,
+                "xhigh": true,
+                "max": true
+              }
+            },
+            "safety_identifier": true,
+            "service_tier": {
+              "auto": true,
+              "default": true,
+              "fast": false,
+              "flex": false,
+              "priority": false,
+              "scale": false,
+              "ultrafast": false
+            },
+            "stop": true,
+            "store": false,
+            "stream": true,
+            "stream_options": {
+              "include_obfuscation": false
+            },
+            "temperature": false,
+            "text": {
+              "verbosity": false,
+              "format": {
+                "text": true,
+                "json_schema": true,
+                "json_object": false
+              }
+            },
+            "tools": {
+              "function_calling": true,
+              "web_search": true,
+              "custom_tools": false,
+              "namespaces": false
+            },
+            "tool_choice": {
+              "none": true,
+              "auto": true,
+              "required": false,
+              "specific_tool": false,
+              "allowed_tools": false
+            },
+            "top_logprobs": false,
+            "top_p": false,
+            "truncation": false,
+            "user": true
+          },
+          "image_processing": {
+            "max_images_per_request": 100,
+            "supported_formats": [
+              "png",
+              "jpeg",
+              "gif",
+              "webp"
+            ],
+            "size_mb": {
+              "max_total": 24,
+              "max_per_image": 7.5
+            },
+            "max_dimension": 8000
+          },
+          "pdf_processing": {
+            "mode": "native",
+            "max_pages_per_request": 100,
+            "max_files_per_request": 100,
+            "supported_formats": [
+              "pdf"
+            ],
+            "size_mb": {
+              "max_total": 32,
+              "max_per_file": 32
+            }
+          }
+        }
+      },
+      "integrations": {
+        "claude_code": {
+          "supported": true,
+          "details": {
+            "compatibility": "high"
+          }
+        },
+        "cursor": {
+          "supported": true,
+          "details": {
+            "compatibility": "high"
+          }
+        },
+        "codex": {
+          "supported": true,
+          "details": {
+            "compatibility": "high"
+          }
+        }
+      },
+      "object": "model",
+      "created": 1790553600,
+      "owned_by": "anthropic",
+      "type": "model",
+      "display_name": "Claude Sonnet 5.5",
+      "created_at": "2026-09-28T00:00:00.000Z",
+      "max_input_tokens": 1000000,
+      "max_tokens": 128000,
+      "capabilities": {
+        "batch": {
+          "supported": false
+        },
+        "citations": {
+          "supported": false
+        },
+        "code_execution": {
+          "supported": false
+        },
+        "context_management": {
+          "supported": false,
+          "clear_thinking_20251015": {
+            "supported": false
+          },
+          "clear_tool_uses_20250919": {
+            "supported": false
+          },
+          "compact_20260112": {
+            "supported": false
+          }
+        },
+        "effort": {
+          "supported": true,
+          "low": {
+            "supported": true
+          },
+          "medium": {
+            "supported": true
+          },
+          "high": {
+            "supported": true
+          },
+          "max": {
+            "supported": true
+          },
+          "xhigh": {
+            "supported": true
+          }
+        },
+        "image_input": {
+          "supported": true
+        },
+        "pdf_input": {
+          "supported": true
+        },
+        "structured_outputs": {
+          "supported": true
+        },
+        "thinking": {
+          "supported": true,
+          "types": {
+            "adaptive": {
+              "supported": false
+            },
+            "enabled": {
+              "supported": true
+            }
+          }
+        }
+      }
     }
   ]
 }

@@ -158,6 +158,10 @@ export const AnalyzeMediaResponse = z.object({
   waiting_reason: z.string().nullable().optional(),
   /** Safe failure classification for a failed request (never a provider payload). */
   error_code: z.string().nullable().optional(),
+  /** Style design §E.3: the label every client shows; null when the reading ran on qualified roles. */
+  experimental: z.object({ label: z.string(), note: z.string() }).nullable().optional(),
+  /** Frame-cited vision summary; `style` is the compact style preview (E.3) once the reading is ready. */
+  result: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export const MediaLibraryQuery = z.object({
   kind: MediaKind.optional(),
@@ -329,7 +333,16 @@ export const CaptureCapabilitiesResponse = z.object({
   }),
   availability: z.record(
     z.string(),
-    z.object({ available: z.boolean(), reasons: z.array(z.string()) }),
+    z.object({
+      available: z.boolean(),
+      reasons: z.array(z.string()),
+      /** Style design §D.3: present when the reading runs on an unqualified (experimental) role. */
+      experimental: z.boolean().optional(),
+      label: z.string().optional(),
+      note: z.string().optional(),
+      reason: z.string().optional(),
+      message: z.string().optional(),
+    }),
   ),
 });
 

@@ -113,6 +113,10 @@ export interface QlooInsightsRequest {
   signalEntities?: string[];
   signalTags?: { id: string; weight?: number }[];
   signalLocationQuery?: string;
+  /** filter.location.query: restrict places to this locality (style rails, design §C.3). */
+  filterLocationQuery?: string;
+  /** filter.popularity.min (0..1). */
+  filterPopularityMin?: number;
   /** filter.results.entities: restrict scored candidates. */
   filterResultsEntities?: string[];
   filterTags?: string[];

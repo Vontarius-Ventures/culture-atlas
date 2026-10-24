@@ -538,6 +538,8 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
     const row = await analysisRow(req.analysis_id);
     expect(row.state).toBe('partial');
     expect(row.result.note).toBe('We explore selected moments, not every frame.');
+    // Style design R-13: the style reading runs once, on the display frame; its index is recorded.
+    expect([0, 2]).toContain(row.result.display_frame_index);
     expect(row.result.frames).toEqual([
       { frame_id: video.frames[0]!.id, timestamp_ms: 1000, state: 'complete', error_code: null },
       {

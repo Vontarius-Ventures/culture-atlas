@@ -10,6 +10,8 @@ import {
   aggregateFrameReadings,
   publishableCitations,
   verifierOptedIn,
+  activeKills,
+  prereadStyle,
   captures,
   createCaptureV2Context,
   type AnalysisAssetKind,
@@ -214,6 +216,7 @@ export class MediaAnalysisWorker {
     this.stopped = true;
     await this.loop;
     await Promise.allSettled([...this.running.values()].map((r) => r.done));
+    await Promise.allSettled([...this.styleReads]);
   }
 
   async execute(lease: CaptureLease, kind: AnalysisAssetKind): Promise<void> {
@@ -252,6 +255,42 @@ export class MediaAnalysisWorker {
     }
   }
 
+  /** Style pre-reads still running (awaited on stop so a shutdown never strands a reading). */
+  private readonly styleReads = new Set<Promise<void>>();
+
+  private startStyleRead(lease: CaptureLease, gateway: ModelGateway, objectKey: string, analysisId: string): void {
+    const db = this.opts.db;
+    const task = (async () => {
+      if (gateway.experimentalRoles.has('vision_style')) {
+        const killed = await activeKills(db, lease.account_id, this.opts.config);
+        if (killed.has('experimental_analysis_enabled')) return;
+      }
+      const claimed = await db.query<{ id: string }>(
+        `UPDATE media_analysis_requests SET style_state='running', style_observation=NULL
+          WHERE account_id=$1 AND id=$2 AND style_state IS NULL RETURNING id`,
+        [lease.account_id, lease.analysis_id],
+      );
+      if (!claimed.rows[0]) return;
+      let out: Awaited<ReturnType<typeof prereadStyle>>;
+      try {
+        const bytes = await readBounded(this.opts.storage, objectKey);
+        out = await prereadStyle({ vlmStyle: gateway.vlmStyle, modelGateway: gateway }, bytes, {
+          modelIdentity: identityFromCaptureLease(lease, `media:${analysisId}:style`),
+        });
+      } catch {
+        out = { reading: null, model: null, ms: 0, image: null, errorCode: 'media_unreadable', experimental: false, profile: null };
+      }
+      await db.query(`UPDATE media_analysis_requests SET style_state=$3, style_observation=$4::jsonb WHERE account_id=$1 AND id=$2`, [
+        lease.account_id,
+        lease.analysis_id,
+        out.reading ? 'complete' : 'failed',
+        JSON.stringify(out),
+      ]);
+    })().catch(() => undefined);
+    this.styleReads.add(task);
+    void task.finally(() => this.styleReads.delete(task));
+  }
+
   private async process(
     run: MediaAnalysisRun,
     lease: CaptureLease,
@@ -272,18 +311,30 @@ export class MediaAnalysisWorker {
       frames: Array<{ frame_id: string | null; timestamp_ms: number | null; state: string }>,
       candidates: unknown[] = [],
       reading?: 'quick',
+      displayFrameIndex?: number | null,
     ) => ({
       mode: work.mode,
       note: kind === 'video' ? VIDEO_ANALYSIS_NOTE : null,
       frames,
       candidates,
       ...(reading ? { reading } : {}),
+      ...(displayFrameIndex !== undefined && displayFrameIndex !== null ? { display_frame_index: displayFrameIndex } : {}),
     });
     const fail = async (code: string, frames: Parameters<typeof result>[0] = []) => {
       await run.publishVision(lease, { state: 'failed', errorCode: code, result: result(frames) });
       return `failed:${code}`;
     };
     const readiness = runner ? await runner.readinessDetail() : null;
+    // Style design §D.1/§D.2: an experimental (unqualified) role is paused by the runtime kill
+    // switch experimental_analysis_enabled: the request waits (ai_paused); the media stays stored.
+    const experimental = !!gateway?.experimentalRoles.has(role);
+    if (runner && experimental) {
+      const killed = await activeKills(this.opts.db, lease.account_id, this.opts.config);
+      if (killed.has('experimental_analysis_enabled')) {
+        await run.defer(lease, { reason: 'ai_paused', until: new Date(Date.now() + 60_000) });
+        return 'deferred:ai_paused';
+      }
+    }
     if ((!runner || !vlm || readiness?.state === 'unavailable') && fallbackVlm) {
       // Gateway cannot serve this role at all: use only the operator-chosen fallback.
       runner = undefined;
@@ -322,6 +373,9 @@ export class MediaAnalysisWorker {
             objectKey: f.objectKey,
           }));
     if (!inputs.length) return fail('media_not_ready');
+    // Style design §B.1: the style reading starts at t0, next to stage 1, on the same derivative the
+    // capture displays. The compile job waits for it and reuses it (once per request, never re-sent).
+    if (kind === 'photo' && work.normalized && gateway?.runners.vision_style) this.startStyleRead(lease, gateway, work.normalized.objectKey, String(work.analysisId ?? lease.analysis_id));
     // Amendment 2.2: stage 1 (the quick read, <= 5 candidates at 512 px) runs per
     // frame here; the single stage-2 enrichment runs in the compile job on the
     // best frame (the aggregate's display frame), so publishing never waits on it.
@@ -412,6 +466,14 @@ export class MediaAnalysisWorker {
             });
             return `deferred:${pause?.reason ?? error.kind}`;
           }
+          // Style design §D.2: an experimental reading past its daily bucket or per-account cap
+          // waits for tomorrow (waiting_reason daily_limit, no error code); the media stays stored.
+          if (experimental && kind === 'photo') {
+            const tomorrow = new Date(Date.now());
+            tomorrow.setUTCHours(24, 5, 0, 0);
+            await run.defer(lease, { reason: 'daily_limit', until: tomorrow });
+            return 'deferred:daily_limit';
+          }
           // Account/global daily allowance: not a pause, stop dispatching for this request.
           await run.recordFrame(lease, {
             ...input,
@@ -493,6 +555,8 @@ export class MediaAnalysisWorker {
     const quickReading =
       !!quickRunner && readings.every((r) => r.model === quickRunner.profile.model) ? ('quick' as const) : undefined;
     const display = inputs.find((i) => i.frameKey === aggregate.displayFrameKey)!;
+    // R-13: the style reading runs once, in the compile job, on this display frame.
+    const displayFrameIndex = kind === 'video' ? inputs.indexOf(display) : null;
     const captureId = randomUUID();
     const displayBytes = await readBounded(this.opts.storage, display.objectKey);
     const meta = await sharp(displayBytes).metadata();
@@ -514,7 +578,8 @@ export class MediaAnalysisWorker {
         },
         // Only what the guardrails publish; the raw frame candidates never reach the owner API.
         // With the verifier opted in, its targets wait for the compile job's check (fail closed).
-        result: result(frames, publishableCitations(aggregate, { verifierEnabled: verifierOptedIn(config.ANALYSIS_VERIFIER_ENABLED) }), quickReading),
+        result: result(frames, publishableCitations(aggregate, { verifierEnabled: verifierOptedIn(config.ANALYSIS_VERIFIER_ENABLED) }), quickReading, displayFrameIndex),
+        experimental,
         compile: {
           compilerVersion: config.COMPILER_VERSION,
           maxAttempts: config.JOB_MAX_ATTEMPTS,

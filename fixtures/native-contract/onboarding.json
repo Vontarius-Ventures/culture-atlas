@@ -21,7 +21,10 @@
       "GET /v1/collections",
       "POST /v1/collections",
       "GET /v1/collections/{id}",
-      "PUT /v1/collections/{id}/items/{item_id}"
+      "PUT /v1/collections/{id}/items/{item_id}",
+      "GET /v1/captures/{id}",
+      "POST /v1/captures/{id}/style/retry",
+      "PUT /v1/me/city"
     ],
     "mutation_headers": [
       "Idempotency-Key",
@@ -103,6 +106,18 @@
     "add_collection_item": {
       "route": "PUT /v1/collections/{id}/items/{item_id}",
       "operation": "addCollectionItem"
+    },
+    "capture": {
+      "route": "GET /v1/captures/{id}",
+      "operation": "getCapture"
+    },
+    "style_retry": {
+      "route": "POST /v1/captures/{id}/style/retry",
+      "operation": "retryStyle"
+    },
+    "set_city": {
+      "route": "PUT /v1/me/city",
+      "operation": "setCity"
     }
   },
   "limits": {

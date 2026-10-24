@@ -73,6 +73,15 @@ export const JobPayloads = {
     asset_id: Uuid,
     expected_generation: z.number().int().positive(),
   }),
+  /**
+   * Style design §D.2 "Try again": re-runs only the style reading and its
+   * rails for one analysis whose style section failed (once per analysis;
+   * at most 6 Qloo requests and 1 vision call, R-11).
+   */
+  style_retry: z.object({
+    capture_id: Uuid,
+    analysis_id: Uuid,
+  }),
 } as const satisfies Record<JobType, z.ZodType>;
 
 export type JobPayload<T extends JobType> = z.infer<(typeof JobPayloads)[T]>;
