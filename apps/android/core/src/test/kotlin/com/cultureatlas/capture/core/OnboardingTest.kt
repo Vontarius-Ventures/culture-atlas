@@ -161,6 +161,19 @@ class OnboardingTest {
     }
 
     @Test
+    fun mixImagesPutsEveryCategoryOnTheFirstScreen() {
+        fun image(id: String, category: TasteCategory) = com.cultureatlas.capture.core.contract.OnboardingCatalogEntry(
+            id = id, kind = "image", category = category, label = id, picked = false,
+        )
+        // Server order: five Wear photos first, then the rest.
+        val images = (1..5).map { image("w$it", TasteCategory.WEAR) } +
+            listOf(image("p1", TasteCategory.PLAY), image("p2", TasteCategory.PLAY), image("wa1", TasteCategory.WATCH), image("e1", TasteCategory.EAT))
+        val mixed = OnboardingPolicy.mixImages(images).map { it.id }
+        assertEquals(listOf("w1", "p1", "wa1", "e1", "w2", "p2", "w3", "w4", "w5"), mixed)
+        assertEquals(images.size, mixed.size)
+    }
+
+    @Test
     fun counterTable() {
         for (row in fixture["counter"]!!.arr.map { it.obj }) {
             val counter = OnboardingPolicy.counter(row["picks"].int!!)

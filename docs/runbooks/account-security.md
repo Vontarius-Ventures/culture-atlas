@@ -40,14 +40,18 @@ SELECT date_trunc('hour', created_at) AS hour, reason, count(*)
 FROM identity_authority_events WHERE created_at > now() - interval '1 day' GROUP BY 1,2 ORDER BY 1;
 ```
 
-## Email delivery outage
+## Sign-in link delivery problems
 
-Sign-in, verification and recovery depend on the configured mail driver
-(`IDENTITY_MAIL_DRIVER=ses`). Failures return the same "check your email"
-response (no enumeration) and consume the failed proof.
+Sign-in, verification and recovery depend on the configured mail driver. In
+production (on-prem Compose) that is the spec's file mailbox
+(`IDENTITY_MAIL_DRIVER=file`): no email is sent, and each link is a 0600 JSON
+file in the `mailbox` volume of the `web` container. Failures return the same
+neutral response (no enumeration) and consume the failed proof.
 
-1. Check SES sending status and bounces in the SES console (sandbox accounts
-   can only send to verified addresses; see deploy-aws.md).
+1. Check that the newest link was written:
+   `docker compose exec web sh -c 'ls -t /var/lib/culture-atlas/mail | head'`
+   (docs/deploy.md, "Identity mail" row). A write error usually means the
+   volume is full or not owned by the `node` user.
 2. Logs: `identity_mail_misconfigured` at startup means the driver settings
    are incomplete. The app then fails closed with 503 for email start in
    production instead of pretending to send.

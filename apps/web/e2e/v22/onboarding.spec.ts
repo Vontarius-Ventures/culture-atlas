@@ -8,6 +8,10 @@ import { expect, test, type Page } from '@playwright/test';
 import { expectNoHorizontalScroll } from '../helpers';
 import { isDesktop, noSeriousAxe, openV22 } from './helpers';
 
+// Clicks cards in the feed; Reduce Motion keeps the floating feed still
+// (the conveyor itself is covered in feed-float.spec.ts).
+test.use({ contextOptions: { reducedMotion: 'reduce' } });
+
 const counter = (page: Page) => page.locator('.pick-counter');
 const build = (page: Page) => page.getByRole('button', { name: 'Build my feed' });
 
@@ -193,7 +197,7 @@ test.describe('Taste onboarding (screen 14)', () => {
     await expect(page).toHaveURL(/\/welcome\/building/);
     // Honest state: nothing fabricated, keep building in the background.
     await expect(page.getByText("We'll keep building in the background.")).toBeVisible();
-    await expect(page.getByText('Until then, Discover shows example results.')).toBeVisible();
+    await expect(page.getByText('Until then, your feed shows example results.')).toBeVisible();
     await expectNoHorizontalScroll(page);
     await page.getByRole('link', { name: 'See my feed' }).click();
     await expect(page).toHaveURL(/\/$/);

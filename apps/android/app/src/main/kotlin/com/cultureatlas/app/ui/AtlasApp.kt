@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.cultureatlas.app.AppController
 import com.cultureatlas.app.AppGraph
+import com.cultureatlas.app.BuildConfig
 import com.cultureatlas.app.notify.AtlasMessagingService
 import com.cultureatlas.app.onboarding.OnboardingController
 import com.cultureatlas.capture.core.notify.ReadyNoticeCopy
@@ -196,11 +197,15 @@ private fun SignInScreen(controller: AppController) {
         Text("culture atlas", style = MaterialTheme.typography.headlineLarge.copy(fontFamily = FontFamily.Serif))
         Text("Keep what catches your eye.", style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Serif))
         Text("Sign in with your email to capture and keep photos and videos in your private library.", color = AtlasColors.muted)
-        Text(
-            "This test build doesn't send email. After you tap, the sign-in link opens on this phone.",
-            color = AtlasColors.muted,
-            style = MaterialTheme.typography.bodySmall,
-        )
+        // Debug builds talk to a development server whose mailbox is a local
+        // folder; release builds use the production server, which sends through Resend.
+        if (BuildConfig.DEBUG) {
+            Text(
+                "This test build doesn't send email. After you tap, the sign-in link opens on this phone.",
+                color = AtlasColors.muted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         OutlinedTextField(value = email, onValueChange = { email = it }, label = { Text("Email address") }, modifier = Modifier.fillMaxWidth())
         Button(
             onClick = { sending = true; scope.launch { controller.sendLink(email.trim()); sending = false } },

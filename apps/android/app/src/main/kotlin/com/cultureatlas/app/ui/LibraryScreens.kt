@@ -4,6 +4,7 @@ import android.Manifest
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -14,11 +15,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,12 +31,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -51,6 +48,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -70,6 +73,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -77,7 +81,10 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import com.cultureatlas.app.notify.ReadyNoticeCenter
 import com.cultureatlas.capture.core.contract.CollectionMember
 import com.cultureatlas.capture.core.contract.CollectionSummary
@@ -85,6 +92,7 @@ import com.cultureatlas.capture.core.contract.CreateCollectionRequest
 import com.cultureatlas.capture.core.contract.DiscoveryCard
 import com.cultureatlas.capture.core.contract.ItemDetailResponse
 import com.cultureatlas.capture.core.contract.TasteCategory
+import com.cultureatlas.capture.core.feed.FeedConveyor
 import com.cultureatlas.capture.core.net.AtlasApi
 import com.cultureatlas.capture.core.net.AtlasClientException
 import com.cultureatlas.capture.core.net.addCollectionItem
@@ -97,17 +105,24 @@ import com.cultureatlas.capture.core.net.item
 import com.cultureatlas.capture.core.onboarding.OnboardingCopy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.min
-import kotlin.math.sin
+import kotlin.math.roundToInt
 
-/** Living interest feed from GET /v1/discoveries. Visual-first: licensed pictures when we have them, typographic posters otherwise — never a stand-in portrait of a person or film. */
+/**
+ * Living interest feed from GET /v1/discoveries. Visual-first: licensed pictures when we have them,
+ * typographic posters otherwise — never a stand-in portrait of a person or film.
+ *
+ * The grid is a conveyor ([FeedConveyor]): two columns drift slowly upward at slightly different
+ * speeds; cards enter from below and leave off the top, and the next waiting card joins the
+ * bottom of that column. Cards never overlap. Touching pauses the drift (it resumes 2s after
+ * release). Reduce Motion: no drift; cards swap in place with a crossfade.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
     var pool by remember { mutableStateOf<List<DiscoveryCard>>(emptyList()) }
-    var shown by remember { mutableStateOf<List<DiscoveryCard>>(emptyList()) }
+    val conveyor = remember { feedConveyor() }
     var exampleFeed by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -129,19 +144,20 @@ fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
                     }
                 } else {
                     val incomingIds = feed.items.map { it.id }.toSet()
-                    val keepOnScreen = shown.map { it.id }.toSet()
-                    pool = feed.items + pool.filter { it.id in keepOnScreen && it.id !in incomingIds }
-                    if (pool.any { it.image != null }) {
-                        pool = pool.filter { it.image != null || it.id in keepOnScreen }
-                    }
-                    if (shown.isEmpty() || refresh) shown = mosaic(pool)
+                    val keepOnScreen = conveyor.onScreenIds()
+                    // Posters stay in the pool (as on iOS): the conveyor already takes pictured cards
+                    // first and never passes a waiting photo for a poster. Dropping them left too few
+                    // cards to fill both columns, so the feed drifted into empty gaps.
+                    val next = feed.items + pool.filter { it.id in keepOnScreen && it.id !in incomingIds }
+                    // New cards join the conveyor; nothing on screen is reset or removed.
+                    pool = next
                     message = null
                 }
             }
             .onFailure {
                 if (it is AtlasClientException.Server && it.code == "onboarding_required") {
                     pool = emptyList()
-                    shown = emptyList()
+                    conveyor.clear()
                     message = "Finish picking your interests to see suggestions."
                 } else if (pool.isEmpty()) {
                     message = "Suggestions aren't available right now. Pull to try again."
@@ -157,26 +173,6 @@ fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
         while (true) {
             delay(8_000)
             load(refresh = false)
-        }
-    }
-    LaunchedEffect(pool, shown) {
-        while (true) {
-            delay(6_000)
-            val waiting = pool.filter { card -> shown.none { it.id == card.id } }
-            if (waiting.isNotEmpty() && shown.isNotEmpty()) {
-                val incomingIds = pool.take(24).map { it.id }.toSet()
-                val fresh = waiting.filter { it.id in incomingIds }.ifEmpty { waiting }
-                val pictured = fresh.filter { it.image != null }
-                val incoming = when {
-                    pictured.isNotEmpty() -> pictured.random()
-                    shown.any { it.image != null } -> null
-                    else -> waiting.random()
-                } ?: continue
-                val imageless = shown.indices.filter { shown[it].image == null }
-                val visible = shown.indices.take(minOf(4, shown.size))
-                val outIdx = (imageless.ifEmpty { visible }).random()
-                shown = shown.toMutableList().also { it[outIdx] = incoming }
-            }
         }
     }
     if (opened != null) {
@@ -200,36 +196,42 @@ fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
             scope.launch { load(refresh = true) }
         },
     ) {
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(bottom = 72.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        // A scrollable that consumes nothing: a pull anywhere (header, empty state, or back past
+        // the conveyor's oldest card) reaches pull-to-refresh, so refresh is always available.
+        Column(
+            Modifier
+                .fillMaxSize()
+                .scrollable(rememberScrollableState { 0f }, Orientation.Vertical)
+                .padding(horizontal = 16.dp),
         ) {
-            item(span = { GridItemSpan(2) }) {
-                Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Feed", Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
-                    Text("A feed of what you're into. Pull down for more.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-                    if (exampleFeed) {
-                        Text("These are example results until your personal feed is ready.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                    if (exploring.isNotEmpty()) {
-                        AnalysisLookingBanner()
-                    } else if (toast != null) {
-                        AnalysisReadyBanner()
-                    }
-                    if (loading && shown.isEmpty()) Text("Loading…", color = AtlasColors.muted)
-                    message?.let { Text(it, color = AtlasColors.muted) }
-                    if (!loading && shown.isEmpty() && message == null) {
-                        Text("No suggestions yet", style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
-                        Text("Finish picking your interests, then pull to refresh.", color = AtlasColors.muted)
-                    }
+            Column(Modifier.padding(top = 16.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Feed", Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium.copy(fontFamily = FontFamily.Serif))
+                Text("A feed of what you're into. Pull down for more.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                if (exampleFeed) {
+                    Text("These are example results until your personal feed is ready.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                }
+                if (exploring.isNotEmpty()) {
+                    AnalysisLookingBanner()
+                } else if (toast != null) {
+                    AnalysisReadyBanner()
+                }
+                if (loading && pool.isEmpty()) Text("Loading…", color = AtlasColors.muted)
+                message?.let { Text(it, color = AtlasColors.muted) }
+                if (!loading && pool.isEmpty() && message == null) {
+                    Text("No suggestions yet", style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
+                    Text("Finish picking your interests, then pull to refresh.", color = AtlasColors.muted)
                 }
             }
-            itemsIndexed(shown, key = { index, _ -> index }) { index, card ->
-                FeedCardTile(card = card, phase = index, onOpen = { opened = card })
-            }
+            DriftingCards(
+                conveyor = conveyor,
+                cards = pool,
+                orientation = Orientation.Vertical,
+                lanes = 2,
+                speeds = FEED_LANE_SPEEDS,
+                rotateWhenStill = true,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                onOpen = { opened = it },
+            )
         }
     }
     adding?.let { card ->
@@ -237,10 +239,142 @@ fun FeedScreen(api: AtlasApi, notices: ReadyNoticeCenter) {
     }
 }
 
-private fun mosaic(pool: List<DiscoveryCard>): List<DiscoveryCard> {
-    val pictured = pool.filter { it.image != null }
-    if (pictured.isEmpty()) return pool.take(4)
-    return pictured.take(4)
+/** dp per second, per column. Staggered so the columns never move in lockstep. */
+private val FEED_LANE_SPEEDS = listOf(12.dp, 15.5.dp)
+private val RAIL_SPEED = listOf(14.dp)
+private val TILE_GAP = 12.dp
+private val RAIL_TILE_WIDTH = 140.dp
+
+private fun feedConveyor() = FeedConveyor<DiscoveryCard>(idOf = { it.id }, picturedOf = { it.image != null })
+
+/** Caption area under the 4:5 picture. Fixed, so every tile is the same height and the conveyor can space them exactly. */
+@Composable
+private fun tileCaptionHeight(): Dp = 62.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
+
+@Composable
+private fun tileHeight(width: Dp): Dp = width * 1.25f + 8.dp + tileCaptionHeight()
+
+/**
+ * Renders a [FeedConveyor]: cards drift along [orientation] on the frame clock and are placed
+ * with layout-phase offsets (no recomposition per frame). Keys are card ids. The user's drag or
+ * fling scrolls the conveyor and pauses its drift; whatever it cannot consume (a pull back past
+ * the oldest card) goes to the parent, so pull-to-refresh keeps working.
+ */
+@Composable
+private fun DriftingCards(
+    conveyor: FeedConveyor<DiscoveryCard>,
+    cards: List<DiscoveryCard>,
+    orientation: Orientation,
+    lanes: Int,
+    speeds: List<Dp>,
+    rotateWhenStill: Boolean,
+    modifier: Modifier,
+    tileWidth: Dp? = null,
+    onOpen: (DiscoveryCard) -> Unit,
+) {
+    val reduceMotion = prefersReducedMotion()
+    val density = LocalDensity.current
+    var version by remember { mutableIntStateOf(conveyor.version) }
+    var motion by remember { mutableLongStateOf(0L) }
+    fun sync() {
+        if (version != conveyor.version) version = conveyor.version
+    }
+    var touching by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollableState { delta ->
+        // Dragging toward the near edge (up / left) moves the conveyor forward.
+        val consumed = conveyor.scrollBy(-delta)
+        if (consumed != 0f) motion++
+        sync()
+        -consumed
+    }
+    LaunchedEffect(scrollState.isScrollInProgress) {
+        if (scrollState.isScrollInProgress) conveyor.hold() else if (!touching) conveyor.release()
+    }
+    LaunchedEffect(reduceMotion, rotateWhenStill) {
+        if (reduceMotion) {
+            if (!rotateWhenStill) return@LaunchedEffect
+            while (true) {
+                delay(6_000)
+                if (!touching && !scrollState.isScrollInProgress && conveyor.rotate() != null) sync()
+            }
+        } else {
+            var last = -1L
+            while (true) {
+                withFrameNanos { now ->
+                    if (last >= 0) {
+                        val wasPaused = conveyor.isPaused
+                        conveyor.tick((now - last) / 1_000_000_000.0)
+                        if (!wasPaused || !conveyor.isPaused) motion++
+                        sync()
+                    }
+                    last = now
+                }
+            }
+        }
+    }
+    BoxWithConstraints(
+        modifier
+            .clipToBounds()
+            .pointerInput(conveyor) {
+                // A finger resting on the feed holds it still, so a moving card is easy to tap.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    touching = true
+                    conveyor.hold()
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                    } while (event.changes.any { it.pressed })
+                    touching = false
+                    if (!scrollState.isScrollInProgress) conveyor.release()
+                }
+            }
+            .scrollable(scrollState, orientation),
+    ) {
+        val vertical = orientation == Orientation.Vertical
+        val laneWidth = tileWidth ?: ((maxWidth - TILE_GAP * (lanes - 1)) / lanes)
+        val height = tileHeight(laneWidth)
+        val extent = with(density) { (if (vertical) height else laneWidth).toPx() }
+        val gap = with(density) { TILE_GAP.toPx() }
+        val viewport = with(density) { (if (vertical) maxHeight else maxWidth).toPx() }
+        val speedsPx = with(density) { speeds.map { it.toPx() } }
+        val laneStride = with(density) { (laneWidth + TILE_GAP).roundToPx() }
+        remember(lanes, extent, gap, viewport, speedsPx) {
+            // Guard against unbounded constraints (the conveyor needs a finite viewport).
+            if (viewport > 0f && viewport.isFinite() && extent.isFinite()) conveyor.configure(lanes, extent, gap, viewport, speedsPx, stagger = extent * 0.42f)
+            true
+        }
+        remember(cards) {
+            conveyor.setPool(cards)
+            true
+        }
+        // Reading `version` subscribes this scope to structure changes (cards added, removed or swapped).
+        if (version >= 0) {
+            for (entry in conveyor.entries()) {
+                val card = entry.card
+                key(if (reduceMotion) "slot-${entry.key}" else card.id) {
+                    Box(
+                        Modifier
+                            .size(laneWidth, height)
+                            .offset {
+                                motion // re-run placement every drift frame without recomposing
+                                val along = conveyor.positionOf(entry).roundToInt()
+                                val across = entry.lane * laneStride
+                                if (vertical) IntOffset(across, along) else IntOffset(along, across)
+                            },
+                    ) {
+                        if (reduceMotion) {
+                            Crossfade(targetState = card, label = "feed-swap") { shown ->
+                                FeedCardTile(card = shown, onOpen = { onOpen(shown) })
+                            }
+                        } else {
+                            FeedCardTile(card = card, onOpen = { onOpen(card) })
+                        }
+                    }
+                }
+            }
+        }
+        SideEffect { sync() }
+    }
 }
 
 @Composable
@@ -255,34 +389,24 @@ private fun prefersReducedMotion(): Boolean {
     }
 }
 
+/** A fixed-height tile: 4:5 picture (or poster) plus a fixed caption area, so tiles never overlap. */
 @Composable
-private fun FeedCardTile(card: DiscoveryCard, onOpen: () -> Unit, phase: Int = 0) {
-    val reduceMotion = prefersReducedMotion()
-    val infinite = rememberInfiniteTransition(label = "feed-float")
-    val drift by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(4200), RepeatMode.Reverse),
-        label = "drift",
-    )
-    val y = if (reduceMotion) 0.dp else (sin((drift + phase * 0.18f) * 2f * PI.toFloat()) * 5f).dp
-    Box(
-        Modifier
+private fun FeedCardTile(card: DiscoveryCard, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier
             .fillMaxWidth()
             .clipToBounds()
             .clickable(onClick = onOpen)
             .semantics(mergeDescendants = true) {
                 contentDescription = if (card.isExample) "${card.title}. Example result" else card.title
             },
-    ) {
-    Column(
-        Modifier.offset(y = y),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         FeedCardVisual(card, Modifier.fillMaxWidth().aspectRatio(4f / 5f).clip(RoundedCornerShape(14.dp)))
-        Text(card.title, style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif), maxLines = 2)
-        if (card.isExample) Text("Example result", color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall)
-    }
+        Column(Modifier.height(tileCaptionHeight()).clipToBounds()) {
+            Text(card.title, style = MaterialTheme.typography.titleSmall.copy(fontFamily = FontFamily.Serif), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (card.isExample) Text("Example result", color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        }
     }
 }
 
@@ -519,28 +643,20 @@ private fun FeedCardDetail(
                 if (relatedState == "pending") {
                     Text("Looking for more like this.", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
                 }
-                val reduceMotion = prefersReducedMotion()
-                val infinite = rememberInfiniteTransition(label = "related-float")
-                val drift by infinite.animateFloat(
-                    initialValue = 0f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(tween(3500), RepeatMode.Reverse),
-                    label = "drift",
-                )
+                // Same conveyor as the feed: one horizontal lane drifting left through the cached related cards.
                 val rail = related.filter { it.image != null }.ifEmpty { related }
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    rail.forEachIndexed { index, relatedCard ->
-                        val y = if (reduceMotion) 0.dp else (sin((drift + index * 0.2f) * 2f * PI.toFloat()) * 8f).dp
-                        Box(Modifier.width(140.dp).clipToBounds()) {
-                            Column(Modifier.offset(y = y)) {
-                                FeedCardTile(card = relatedCard, phase = index, onOpen = { onOpenRelated(relatedCard) })
-                            }
-                        }
-                    }
-                }
+                val railConveyor = remember(card.id) { feedConveyor() }
+                DriftingCards(
+                    conveyor = railConveyor,
+                    cards = rail,
+                    orientation = Orientation.Horizontal,
+                    lanes = 1,
+                    speeds = RAIL_SPEED,
+                    rotateWhenStill = false,
+                    tileWidth = RAIL_TILE_WIDTH,
+                    modifier = Modifier.fillMaxWidth().height(tileHeight(RAIL_TILE_WIDTH)),
+                    onOpen = onOpenRelated,
+                )
             }
         }
     }

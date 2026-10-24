@@ -3,18 +3,23 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useState } from 'react';
-import type { ItemDetailResponse } from '@culture-atlas/domain/schemas';
+import type { DiscoveryCard as Card, ItemDetailResponse } from '@culture-atlas/domain/schemas';
 import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
 import { useAsyncEffect } from '@/lib/client/hooks';
 import { hostOf } from '@/lib/client/format';
 import { useJob } from '@/lib/client/jobs';
 import { cardToTarget, useSave } from '@/lib/client/save';
 import { applyOverrides, useItemOverrides } from '@/lib/client/store';
+import { Conveyor } from '../Conveyor';
 import { CardGrid, DiscoveryCard, SkeletonGrid, TextArt } from '../DiscoveryCard';
 import { Icon } from '../Icon';
 import { useToast } from '../Toast';
 import { BackLink, Disclosure, MoreMenu, Notice, PageError } from '../ui';
 import { referencePhrase } from './CaptureResultView';
+
+function relatedHref(card: Card): string {
+  return `/items/${card.id}?from=item${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`;
+}
 
 /** Where "Back" goes, from the `from` query the opener set. */
 export function backTarget(params: URLSearchParams): { href: string; label: string } {
@@ -237,18 +242,39 @@ export function ItemView({ itemId }: { itemId: string }) {
               You might also like
             </h2>
             {relatedCards.length > 0 && (
-              <CardGrid columns="related" label="Related discoveries">
-                {relatedCards.map((card) => (
-                  <li key={card.id}>
-                    <DiscoveryCard
-                      card={card}
-                      aspect="portrait"
-                      href={`/items/${card.id}?from=item${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`}
-                      onSave={(c, el) => openSave(cardToTarget(c), el)}
-                    />
-                  </li>
-                ))}
-              </CardGrid>
+              // Similar cards float leftward through the cached related set (static under Reduce Motion
+              // or when there are too few to keep the rail full without repeating a card on screen).
+              <Conveyor
+                key={itemId}
+                memoryKey={`related:${itemId}`}
+                axis="horizontal"
+                label="Related discoveries"
+                className="related-rail"
+                items={relatedCards}
+                renderItem={(card) => (
+                  <DiscoveryCard
+                    card={card}
+                    aspect="portrait"
+                    priority
+                    href={relatedHref(card)}
+                    onSave={(c, el) => openSave(cardToTarget(c), el)}
+                  />
+                )}
+                fallback={() => (
+                  <CardGrid columns="related" label="Related discoveries">
+                    {relatedCards.map((card) => (
+                      <li key={card.id} className="feed-fade">
+                        <DiscoveryCard
+                          card={card}
+                          aspect="portrait"
+                          href={relatedHref(card)}
+                          onSave={(c, el) => openSave(cardToTarget(c), el)}
+                        />
+                      </li>
+                    ))}
+                  </CardGrid>
+                )}
+              />
             )}
             {pending && <SkeletonGrid count={3} columns="related" />}
             {related.job?.state === 'failed' && (

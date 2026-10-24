@@ -110,10 +110,19 @@ describe('worker qualification', () => {
     expect(qualification.codecs['prepare/mp4/h264/aac']).toBe(true);
     expect(qualification.codecs['mp4/h264/aac']).toBe(true);
     expect(qualification.codecs['webm/vp9/opus']).toBe(true);
-    expect([...qualification.qualified.video]).toEqual(
-      expect.arrayContaining(['h264', 'vp9', 'vp8']),
-    );
+    // The product contract on every supported host: MP4/H.264/AAC and WebM/VP9/Opus qualify.
+    expect([...qualification.qualified.video]).toEqual(expect.arrayContaining(['h264', 'vp9']));
     expect([...qualification.qualified.audio]).toEqual(expect.arrayContaining(['aac', 'opus']));
+    // Other codecs depend on the host's ffmpeg build (e.g. VP8 is self-tested with libvorbis, which
+    // Debian's ffmpeg ships and some builds do not). Whatever qualifies must be exactly what passed
+    // the real verifier here, never a hardcoded host list.
+    const passed = Object.entries(qualification.codecs)
+      .filter(([key, ok]) => ok && !key.startsWith('prepare/'))
+      .map(([key]) => key.split('/'));
+    expect(new Set(passed.map(([, video]) => video))).toEqual(qualification.qualified.video);
+    expect(new Set(passed.map(([, , audio]) => audio).filter(Boolean))).toEqual(
+      qualification.qualified.audio,
+    );
   });
   it('an unqualified worker defers video instead of rejecting customer files', async () => {
     const verifier = createMediaVerifier({
@@ -151,9 +160,19 @@ describe('MED-03 video verification with real ffprobe/ffmpeg', () => {
       audioPresent: true,
       codecs: ['vp9', 'opus'],
     });
-    expect(await verify(fixture('vp8-silent'), 'video/webm')).toMatchObject({
-      audioPresent: false,
-    });
+    // VP8 is accepted exactly when this host qualified it, and refused as unsupported otherwise.
+    if (qualification.qualified.video.has('vp8')) {
+      expect(await verify(fixture('vp8-silent'), 'video/webm')).toMatchObject({
+        container: 'webm',
+        audioPresent: false,
+        codecs: ['vp8'],
+      });
+    } else {
+      await expect(verify(fixture('vp8-silent'), 'video/webm')).rejects.toMatchObject({
+        code: 'unsupported_media',
+        retryable: false,
+      });
+    }
     // QuickTime-declared ISO media is the same family (iPhone .mov uploads).
     expect(await verify(fixture('h264-silent'), 'video/quicktime')).toMatchObject({
       audioPresent: false,

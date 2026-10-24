@@ -50,7 +50,10 @@ import {
  *    location-less place queries, see docs/ARCHITECTURE.md). At most
  *    TASTE_SEED_MAX_QLOO_REQUESTS requests per attempt, inline retries
  *    included and the adapter's own retries disabled so every HTTP request is
- *    counted; at most TASTE_SEED_MAX_CONCURRENCY in flight.
+ *    counted; at most TASTE_SEED_MAX_CONCURRENCY in flight. Eat may first
+ *    search for pictured venues, but only with the budget's slack
+ *    (seedPlaceSearchBudget: one request per pending category and one retry
+ *    are kept back), so place searches never push a job past the cap.
  *  - Each category publishes as soon as it is fetched: recommendations
  *    (parent: the seed run, citing their provider query) into the account's
  *    feed pool, then a rebuilt FeedSnapshot with the usual feed rules. Screen
@@ -70,6 +73,22 @@ export const SEED_RESULTS_TAKE = 15;
 export const SEED_CARDS_PER_CATEGORY = 8;
 /** Distinct cuisine/place names to search so expand waves don't repeat one query. */
 export const EAT_PLACE_SEARCHES = 3;
+/**
+ * Requests of the seed's ONB-04 budget kept back for one retry of a failed
+ * category; Eat place searches only spend what is left after one request per
+ * pending category and this reserve.
+ */
+export const SEED_RETRY_RESERVE = 1;
+
+/**
+ * Eat place searches this attempt may make inside the per-job cap (ONB-04):
+ * every pending category needs one request of its own and one is kept back
+ * for a retry, so place searches only ever use the slack and never crowd out
+ * a category or push the job past TASTE_SEED_MAX_QLOO_REQUESTS.
+ */
+export function seedPlaceSearchBudget(budgetLeft: number, pendingCategories: number): number {
+  return Math.max(0, Math.min(EAT_PLACE_SEARCHES, budgetLeft - pendingCategories - SEED_RETRY_RESERVE));
+}
 /** Cuisine-tag insights measured ~12 s uncached on the hackathon key (Oct 2026). */
 export const SEED_EAT_TIMEOUT_MS = 25_000;
 /** Retry delay when Qloo's circuit is open and the adapter cannot say for how long (its default cooldown). */
@@ -266,10 +285,12 @@ async function eatPlaceCards(
   signalNames: Map<string, string>,
   generic: string,
   foodExclusions: readonly string[],
+  maxSearches: number,
 ): Promise<SeedCard[]> {
   const cards: SeedCard[] = [];
   const seen = new Set<string>();
-  for (const placeQuery of eatPlaceSearchQueries(signals)) {
+  if (maxSearches <= 0) return cards;
+  for (const placeQuery of eatPlaceSearchQueries(signals, maxSearches)) {
     try {
       // Search is faster than place insights (which timed out at 25s on this key).
       const { response, queryId } = await session.search(placeQuery, ['urn:entity:place'], {
@@ -310,6 +331,10 @@ async function eatPlaceCards(
         });
       }
     } catch (err) {
+      // Qloo throttled or down: fail the category like any other request would (the job retries),
+      // instead of spending another request on cuisine tags during an outage.
+      if (isProviderError(err) && (err.kind === 'rate_limited' || err.kind === 'server' || err.kind === 'unavailable')) throw err;
+      // Out of budget, or this search failed on its own (bad request, timeout): fall back to cuisine tags.
       if (err instanceof BudgetExhaustedError || isProviderError(err)) break;
       throw err;
     }
@@ -327,6 +352,8 @@ export async function fetchCategory(
     take?: number;
     /** Qloo insights page (1-based). Expand uses later pages once the first is already in the pool. */
     page?: number;
+    /** Eat place searches allowed before the cuisine-tag request (the caller's budget); default EAT_PLACE_SEARCHES. */
+    placeSearches?: number;
   },
 ): Promise<CategoryOutput> {
   const plan = SEED_CATEGORY_PLAN[category];
@@ -349,7 +376,7 @@ export async function fetchCategory(
 
   // Pictured venues first so expand waves spend Qloo budget on new photos, not cuisine tags.
   if (category === 'eat') {
-    for (const card of await eatPlaceCards(session, signals, signalNames, generic, input.foodExclusions)) {
+    for (const card of await eatPlaceCards(session, signals, signalNames, generic, input.foodExclusions, input.placeSearches ?? EAT_PLACE_SEARCHES)) {
       consider(card);
     }
     if (cards.length > 0) return { state: 'ready', cards, queries: ownQueries() };
@@ -615,6 +642,8 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
       ]);
       const excludedKeys = new Set([...hidden, ...saved.rows.map((r) => r.canonical_key)]);
       const foodExclusions = readFoodExclusions(prefs.rows[0]?.preferences);
+      // ONB-04: Eat place searches come out of this attempt's slack, never out of another category's request.
+      const placeSearches = seedPlaceSearchBudget(jobBudgetLeft, todo.length);
 
       // Qloo throttled or down: stop asking in this attempt (the job retries later),
       // so an outage costs as few of the job's requests as possible.
@@ -627,7 +656,7 @@ export const tasteSeed: JobHandler<'taste_seed'> = async (ctx) => {
         }
         let out: CategoryOutput;
         try {
-          out = await ctx.runStage(`category:${category}`, () => fetchCategory(session, category, { signals, excludedKeys, foodExclusions }));
+          out = await ctx.runStage(`category:${category}`, () => fetchCategory(session, category, { signals, excludedKeys, foodExclusions, placeSearches }));
         } catch (err) {
           if (!(err instanceof BudgetExhaustedError) && !isProviderError(err)) throw err;
           if (isOutage(err)) outage = true;

@@ -1,0 +1,26 @@
+# Garage (S3-compatible object store) for culture atlas on-prem.
+# Mounted read-only at /etc/garage.toml by docker-compose.yml.
+# Secrets are NOT here: GARAGE_RPC_SECRET and GARAGE_ADMIN_TOKEN come from the
+# gitignored .env through the compose environment.
+#
+# Single node, replication factor 1: durability comes from the nightly
+# off-host backups (infra/onprem/atlas-backup.sh), not from replicas.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+# Point-in-time copies of the metadata DB inside metadata_dir.
+metadata_auto_snapshot_interval = "6h"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+api_bind_addr = "[::]:3900"
+# Must equal S3_REGION in .env (default us-east-1).
+s3_region = "us-east-1"
+
+[admin]
+api_bind_addr = "[::]:3903"

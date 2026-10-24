@@ -1,5 +1,9 @@
 # Deploying culture atlas on AWS (small, credit-funded shape)
 
+> **Reference only.** Production is on-prem Compose on the owner's hardware
+> ([deploy.md](deploy.md), [production-readiness.md](production-readiness.md)).
+> The SES section below still applies: on-prem identity mail is Amazon SES.
+
 Status: **written and statically tested, never deployed.** Nothing in this
 repository has created AWS resources. The CloudFormation template, Compose
 file and host scripts are checked by `scripts/aws-infra.test.ts` (parsing,
