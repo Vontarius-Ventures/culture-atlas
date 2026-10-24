@@ -1,6 +1,6 @@
 # Style reading and style-driven discovery: design
 
-Date: 2026-10-23. Branch `factory5/style-design`, cut from `origin/factory3/integration` @ `3af8936`. Status: design for build. Four engineers (server, web, iOS, Android) should be able to build from this document in parallel.
+Date: 2026-10-23. Branch `factory5/style-design`, cut from `origin/factory3/integration` @ `3af8936`. Status: design for build, **amended after adversarial review** (see section R; where R and the body disagree, R wins). Four engineers (server, web, iOS, Android) should be able to build from this document in parallel.
 
 ## 0. Owner direction and what changes
 
@@ -48,9 +48,9 @@ Non-negotiables:
   "usable": true,                       // false → no subjects; reason in "unusable_reason"
   "unusable_reason": null,              // "too_dark" | "too_blurry" | "no_styled_subject" | null
   "summary": "A heavyweight canvas work jacket with a rugged, utilitarian look.",  // ≤ 160 chars, no people
-  "subjects": [                         // 1–3, most prominent first
+  "subjects": [                         // 1–2, most prominent first (R-3)
     {
-      "id": "s1",                       // s1..s3
+      "id": "s1",                       // s1..s2
       "category": "fashion",            // see A.3
       "label": "Canvas work jacket",    // object noun phrase; never a person
       "region": { "x": 0.18, "y": 0.10, "w": 0.60, "h": 0.78 },   // normalized 0–1 on the sent image
@@ -84,7 +84,7 @@ Enumerations:
   - `read_text` must quote text that is also in the stage-1 or stage-2 `visible_text`, or the claim is downgraded to `visible`.
 - Certainty is in `[0, 1]`. The prompt anchors the scale: 0.9 or above means unmistakable defining features are visible; 0.7 means likely; 0.5 means a resemblance; below 0.35 means do not output it.
 
-Model-side limits: at most 3 subjects. Per subject: at most 3 aesthetics, 2 lineage items, 4 materials, 5 construction items, 5 palette entries, 3 moods and 4 details. `max_output_tokens` is 1400.
+Model-side limits (amended R-3): at most 2 subjects (the rails serve at most 2). Per subject: at most 3 aesthetics, 2 lineage items, 3 materials, 4 construction items, 4 palette entries, 3 moods and 3 details. `region` is emitted only on the subject, on aesthetics and on details. `tag_query` is chosen from the closed vocabulary list sent in the prompt (R-2). `max_output_tokens` is 1100; a `length` stop counts as a failed call.
 
 ### A.2 Wording is decided by the server, not the model (`style/wording.ts`)
 
@@ -136,6 +136,9 @@ Existing rules apply unchanged to the stage-1 and stage-2 readings. The style re
 |---|---|
 | **G-STYLE-PERSON** (new; reuses `PERSON_OBS_RE`, `PEOPLE_RE`, `ROLE_RE`) | Any subject `label`, `summary`, `detail.text`, `mood` or `lineage` that refers to a person, body, age, gender, ethnicity, occupation, role or group membership is dropped. The code is `G-STYLE-PERSON`. A label like "man's outfit" is rewritten to the garment noun ("Outfit"), or the subject is dropped if no garment noun remains. Example: "worn by a skater" must never appear. "Skate-inspired" is an aesthetic of the clothes and is allowed only as `resembles`. |
 | **G-STYLE-MOOD** (new) | Allowed moods are drawn from `MOOD_VOCAB` (about 80 words describing things, such as rugged, airy, cozy, austere, playful or opulent). Words that describe a person's character or attractiveness (confident, sexy, young, professional, rich) are dropped. |
+| **G-STYLE-PERSON-TYPE** (new, R-7a) | Aesthetic names that describe a type of person (proposed initial list, owner-reviewed: "clean girl", "that girl", "e-girl", "soft boy", "dad core", "grandpa core", "tomboy", "old money") are dropped with `G-STYLE-PERSON`. A versioned `GARMENT_COMPOUND_ALLOW` list ("boyfriend jeans", "mom jeans", "dad sneakers", "sailor collar", "fisherman sweater", "worker jacket", "bomber jacket") stops `PEOPLE_RE`/`ROLE_RE` from dropping real garment nouns. |
+| **G-STYLE-CULTURE** (new, R-7b) | On a photo where stage 1 reports people, an aesthetic or lineage that names an ethnicity, nationality, religion or people-subculture ("Harajuku", "Afrocentric", "hip hop") is never asserted. It may appear as `resembles` only with at least 2 visible garment defining features; otherwise it is held until stage 2 corroborates it. Object-only photos (ceramics, interiors, food) are unchanged. |
+| **G-STYLE-PALETTE** (new, R-7c) | A palette entry is shown only if its swatch is present (share ≥ 10%, ΔE < 10) inside the subject region, recomputed server-side after the call. Swatches not assigned to a subject are never shown. This keeps skin and hair colors out of outfit palettes. |
 | **G-STYLE-OF / G-IDENTITY** (existing) | "X-style" aesthetics that name a person, designer or maker are dropped. A designer's name is never an aesthetic. A brand is allowed only through the `brand` slot with read text. |
 | **G-TEXT-ECHO** (existing) | An aesthetic whose only evidence is a sign or label reading is held, so `basis: read_text` cannot assert an aesthetic. |
 | **G-GENERIC** (existing, scoped) | Applies to **aesthetics only**. Materials, palette and construction are attribute slots, so "red wool" is valid there. A generic word as an *aesthetic* ("Red", "Wool") is dropped. |
@@ -147,7 +150,9 @@ Existing rules apply unchanged to the stage-1 and stage-2 readings. The style re
 Hold until confirmed: the existing guard-v11 rule holds styles on photos with people until stage 2 confirms them. The style reading follows the same rule.
 
 - When the stage-1 guard reports people in the photo, **non-garment** aesthetics with basis `context` are held. They are published only if the enrichment's guarded reading corroborates them (A.6) or the claim was `visible` with at least 2 defining features.
-- Garment aesthetics are published, because garments are the existing exception.
+- Garment aesthetics are published, because garments are the existing exception (subject to G-STYLE-PERSON-TYPE and G-STYLE-CULTURE).
+- **Ordering dependency (R-7e):** the brand rule, the `read_text` rule and the unusable-photo rule all need the stage-1 guarded result. `publishStyle()` therefore waits for it, for at most 3 s after the style call returns. If stage 1 failed, the brand is dropped, `read_text` claims are downgraded to `visible`, and the unusable check is skipped.
+- Qloo `target_*` tags (`target_gender`, `target_age_group`, `target_income_level`) and `market_archetype` never enter the vocabulary, signals, filters or reasons (R-7d). A harvest test enforces it.
 
 ### A.6 Corroboration (cheap accuracy, no extra call)
 
@@ -206,14 +211,16 @@ t0 ─┬─ observe (stage-1 quick)  ──► guard ──► publish chips (e
     │                         ─► publishStyle()  [section "style" = ready]  ~5–8 s
     │                         ─► styleMap (Qloo tags, C.2)
     │                         ─► moreLikeThis (C.3)  ─► publish rail       ~7–11 s
-    ├─ recommend+compose (existing, now with style signals; waits ≤ 1.5 s for styleMap
-    │   if the style call is still running, otherwise proceeds and appends later)
+    ├─ [anchor E resolved] ─► early More-like-this entity call (R-4)  ─► rail   ~4–5 s
+    ├─ recommend+compose (existing): runs ONCE, starting when resolve is done AND
+    │   (the More-like-this primary has returned OR 4 s have passed OR style failed/empty);
+    │   it uses whatever signals exist at that moment (R-5)
     ├─ enrich (stage 2, existing) ─► corroboration pass (A.6) ─► republish style wording
     ├─ research, eat (existing)
     └─ finish
 ```
 
-- **Video:** `apps/worker/src/media-analysis.ts` already chooses a display frame. The style reading runs once, on the display frame, after aggregation. Before aggregation finishes it runs on frame 0, and it is re-run on the display frame only if that frame changed and the call budget allows (B.4). The `image.frame_index` field records which frame was read.
+- **Video:** `apps/worker/src/media-analysis.ts` already chooses a display frame. The style reading runs once, on the display frame, after aggregation (amended R-13: no frame-0 reading and no re-run, so claims are never replaced after display). The `image.frame_index` field records which frame was read.
 - **Failure isolation:** if the style call times out (profile timeout 18 s), fails schema validation or is refused, the `style` section becomes `failed` with a user-facing message (F.1). Everything else continues as today. Nothing is retried silently in a way that doubles spend. One retry is allowed only on a 5xx or timeout, and only within the deadline.
 
 ### B.2 Model and profile (accuracy first)
@@ -224,12 +231,12 @@ The new role `vision_style` is added to `MODEL_ROLE_VALUES` and to `QUALIFICATIO
 |---|---|
 | Model (primary candidate) | `anthropic/claude-sonnet-5-5` with `reasoningEffort: "low"`, if it is catalog-compatible in Concentrate's `catalog-snapshot.json` (the engineer checks the snapshot; never assume) |
 | Model (fallback candidate) | `anthropic/claude-haiku-5-5` with `reasoningEffort: "low"` |
-| Selection rule | Run eval G on both. **Pick the candidate with the higher style-attribute precision** (G.3 M-S1) that also meets B.3 timing. Choose Haiku only if Sonnet misses p90 timing, or if it does not beat Haiku by ≥ 0.03 precision. Record the decision in `docs/analysis-latency-plan.md`. |
+| Selection rule (amended R-3) | Run eval G on both. Accuracy first: **pick Sonnet unless it misses the B.3 style p90 (15 s), or Haiku is at least as good on both M-S2 and M-R1** (ties go to the faster model). A small precision gap on this set is noise, so no fixed margin is used. Record the decision in `docs/analysis-latency-plan.md`. |
 | Image | 1024 px long edge, ≤ 350 KB JPEG, ≤ 1,048,576 px (`STYLE_MAX_DIMENSION = 1024`) |
-| Max output tokens | 1400 |
+| Max output tokens | 1100 (R-3; eval reports output-token p90, target ≤ 800) |
 | Timeout | 18 s |
 | Prompt / schema | `vlm-style-v1` / `atlas_style_reading_v1` (new `VLM_STYLE_SYSTEM_PROMPT` in `vlm/prompt.ts`, `buildVlmStyleUserText(swatches, hints)`) |
-| Spend reservation | 20,000 µUSD per call; the actual cost is settled after the call |
+| Spend reservation (amended R-12) | Computed at startup from `catalog-snapshot.json` prices × (max input tokens + 1100 output), never hardcoded. The role refuses to start (`reason:"spend_cap"`) if that exceeds `STYLE_MAX_CALL_USD` (default 0.05). The actual cost is settled after the call. Prompt caching of the static system + vocabulary prefix is used only if the catalog says the model supports it. |
 | Hints passed in user text | Swatches only. The style call does **not** receive stage-1 candidates, which keeps it independent (A.6). |
 
 Prompt rules (summary; the engineer writes the full prompt):
@@ -251,8 +258,8 @@ Each target is measured from the moment the capture is stored (upload complete) 
 | Milestone | p50 | p90 | Hard limit |
 |---|---|---|---|
 | Stage-1 chips (existing FAST-01) | ≤ 3 s model / ≤ 4 s visible | ≤ 6 s | — |
-| **Style reading visible** (section `style` = `ready`) | **≤ 7 s** | **≤ 12 s** | 18 s call timeout |
-| **First "More like this" cards** | **≤ 10 s** | **≤ 16 s** | — |
+| **Style reading visible** (section `style` = `ready`; amended R-3) | **≤ 9 s** | **≤ 15 s** | 18 s call timeout |
+| **First "More like this" cards** (amended R-4) | **≤ 5 s with an anchor E / ≤ 11 s without** | **≤ 8 s / ≤ 17 s** | — |
 | Cross-domain rails (Wear/Play/Watch/Eat) | ≤ 12 s | ≤ 20 s | — |
 | **Complete** (enrich corroboration, research, all rails) | **≤ 20 s** | **≤ 35 s** | 60 s `analysisDeadlineMs` (photo) / 180 s video |
 
@@ -331,8 +338,8 @@ Let *E* be the subject's identified entity, if there is one, and *F* the subject
 | Subject | Primary call | Secondary call (only if primary returns < 6 after filtering) |
 |---|---|---|
 | fashion, E = brand | `filter.type=urn:entity:brand`, `filter.tags=F` (else `urn:tag:genre:brand:fashion`), `signal.interests.entities=E` (+ `signal.interests.tags=<personal_style tag> weight 0.5`) | same without `filter.tags=F` |
-| fashion, no E | `filter.type=urn:entity:brand`, `filter.tags=F` (else fashion genre tag), `signal.interests.tags=<other accepted fashion tags, weights per C.2>`, `filter.popularity.min=0.7` | **bridge:** take the top 2 results of the primary call as entity signals (real Qloo ids) with `filter.tags=F`. That turns a slow tag-only call into a fast, explainable entity call. |
-| interior | `filter.type=urn:entity:brand`, `signal.interests.tags=<decor/aesthetic tags>`, `filter.popularity.min=0.7`; with E (an identified design brand or place), entity signal first | places: `filter.type=urn:entity:place`, `filter.tags=<decor tag>`, `filter.location.query=<city>` (only with a city) |
+| fashion, no E (amended R-1) | **Exemplar call:** `filter.type=urn:entity:brand`, `filter.tags=F` (else fashion genre tag), `signal.interests.entities=<top 3 exemplar brands, R-1>`, `feature.explainability=true`. This is the probe's i04 recipe (210 ms, on-style). | Only when fewer than 2 exemplars qualify: the tag-only call (`signal.interests.tags`, `filter.popularity.min=0.7`) runs with a 12 s timeout and must pass the flat detector. Its top 2 results are never used as bridges (i01/i22 showed the top results of tag-only calls are off-style). |
+| interior (amended R-9) | With a city: `filter.type=urn:entity:place`, `filter.tags=<decor tag>`, `filter.location.query=<city>` (i18: on-tag but sparse; no minimum list size). With E (a design brand or place): entity signal. | Brands only through exemplars (R-1) built from non-fashion brand tags in the harvest, and only after open item O-1 is resolved. No tag-only brand call (i05: 6.3 s, flat). Otherwise the rail is an honest empty with `style.no_city`. |
 | food | city known: `filter.type=urn:entity:place`, `filter.tags=<genre:place:restaurant:* tag>`, `signal.location.query=<city>`, + E as an entity signal if a place was identified | no city: no Qloo call. The existing dish ideas are shown, plus an honest "Add a city to see places" row (F.1). |
 | place | city known: `filter.type=urn:entity:place`, `filter.tags=<decor/setting tag>`, `filter.location.query=<city>`, E signal if identified | — |
 | media, E = film/album/book | `filter.type=<same type>`, `signal.interests.entities=E`, + `style:qloo` tag signal weight 0.5 | — |
@@ -340,7 +347,7 @@ Let *E* be the subject's identified entity, if there is one, and *F* the subject
 
 Result hygiene, applied to every insights response:
 
-1. **Flat-affinity detector.** The list is considered unmatched when all of these hold: (a) the tag-only signal returned no explainability; (b) the affinity spread (max − min) is below 0.005; and (c) fewer than half of the results carry any accepted tag of the subject (local overlap, C.4). Such a list is **discarded**. If nothing else remains the rail is empty (F.1), and the job logs the `Q-FLAT` warning. This filters out the probe's 0.765 junk.
+1. **Flat-affinity detector.** The list is considered unmatched when all of these hold: (a) the tag-only signal returned no explainability; (b) the affinity spread (max − min) is below 0.005; and (c) fewer than half of the results carry any accepted tag of the subject (local overlap, C.4). Such a list is **discarded**, unless the call carried a `filter.tags`. A flat list with a filter (i08: every result is ramen, but in entity-id order) is kept with RRF weight 0, so only the overlap re-rank (list C) orders it (R-10). If nothing else remains the rail is empty (F.1), and the job logs the `Q-FLAT` warning. This filters out the probe's 0.765 junk.
 2. Results that are anchors themselves are removed (existing behavior), as are results whose tags hit `FORBIDDEN_TAG_FAMILIES`.
 3. Places whose `properties.address` is outside the requested city are dropped. They are only possible with `filter.location.query` (the Brooklyn → Manhattan leak); a drop needs a missing city token or a distance over 40 km.
 
@@ -350,7 +357,7 @@ Result hygiene, applied to every insights response:
 - list B, the secondary or bridge call, at 0.6 weight;
 - list C, a **style-overlap re-rank** of A ∪ B: score = Σ over the subject's accepted tag ids present in the result's `tags[]` of the slot weight (aesthetic 1.0, material 0.6, lineage/era 0.4, mood 0.3).
 
-Then `selectDiverse` (existing) runs with slots = **8** for the More-like-this rail. It has one new constraint: at most 2 results may share the same `price_level` tag or the same `fashion_segment`, unless fewer than 8 results remain.
+Then `selectDiverse` (existing) runs with slots = **8** for the More-like-this rail. It has one new constraint: at most 3 results may share the same `price_level` tag, unless fewer than 8 results remain. (Amended R-20: no `fashion_segment` diversity cap, because the rail filters on that segment, so every result shares it.)
 
 **Brand bonus:** for a fashion E, Qloo's own `similar_brand:qloo:*` names are shown under the rail as a typographic line, "Qloo also links: Filson, Patagonia, Pendleton". These are real tag names. They are **not** resolved to cards, which saves requests, and clients render them as text, not cards.
 
@@ -369,6 +376,7 @@ Then `selectDiverse` (existing) runs with slots = **8** for the More-like-this r
    - With palette: `… and the {color} and {color} palette`.
    - Entity only, no shared tag: the existing `buildReason` copy, "Connected to Carhartt in your photo."
    - Bridge result: `Linked through {bridgeName}, which shares the {a}`.
+   - Exemplar-driven result (R-1): the overlap templates above only. The exemplar brand is never named, because it is not in the photo and the user never saw it.
 5. Reasons never say "you", never mention people, and are at most 90 characters. Long reasons are truncated by dropping the palette clause first, then the second claim.
 
 The reason goes to `recommendations.display_reason`. The structured match goes to `recommendations.style_match`, which supports "Why this?" and the eval:
@@ -416,7 +424,7 @@ Without a city, no place calls are made. The Eat and place rails show `style.no_
 
 Justification: style rails are the owner's top feature, and every addition is an entity- or filter-backed call (fast and explainable). Monthly ceiling: 50,000 / 18 ≈ 2,770 full analyses a month before caching. Cached tag lookups and repeated aesthetics make the average about 12. Monitoring: the worker logs `qloo_requests_used` per job, and `/admin` (existing ops view) shows the monthly sum against a 40,000 warning threshold.
 
-**Rate limiting:** `sharedLimiter` gains a minimum spacing of `QLOO_MIN_SPACING_MS=120` on top of concurrency 3, because the probe hit a 429 at the 11th call within one second. `QLOO_TIMEOUT_MS` stays at 10 s by default. Tag-only insights calls (fashion with no E, and media with no E) pass a per-request `timeoutMs: 12000`, and a 429 backs off for 1100 ms.
+**Rate limiting (amended R-11):** `sharedLimiter` is an in-process map, and web, worker and media-worker share one key, so per-process spacing cannot keep the key under 10 rps. The build adds a cross-process Postgres token bucket (8 tokens/s for the key). A `QLOO_DAILY_REQUEST_LIMIT` (default 1,500) stops a burst from draining the monthly quota; past it, rails are an honest empty. The style retry endpoint has its own budget of at most 6 Qloo requests and 1 vision call. On top of that, `sharedLimiter` gains a minimum spacing of `QLOO_MIN_SPACING_MS=120` on top of concurrency 3, because the probe hit a 429 at the 11th call within one second. `QLOO_TIMEOUT_MS` stays at 10 s by default. Tag-only insights calls (fashion with no E, and media with no E) pass a per-request `timeoutMs: 12000`, and a 429 backs off for 1100 ms.
 
 **Honest empty:** if all Qloo lists for a rail are empty or flat, the rail renders the empty state (F.1). Nothing is filled from the model, samples or another subject.
 
@@ -484,11 +492,18 @@ Compose (`docker-compose.yml`) sets the env vars above for `web` and `worker`. C
 | `style.empty` | `No clear style to read here.` |
 | `style.no_city` | `Add a city to see places with this style.` |
 | `style.rail_empty` | `Qloo found nothing close to this style yet.` |
+| `style.reading` (R-16d) | `Reading the style…` |
+| `style.rail_running` (R-16d) | `Finding things with this style…` |
+| `style.updated` (R-16d) | `Style reading updated` |
+| `style.try_again` (R-16d) | `Try again` |
+| `style.add_city` (R-16d) | `Add city` |
+| `style.qloo_links` (R-16d) | `Qloo also links: {names}` |
+| `style.show_details` (R-17) | `Show all details` |
 
 Where the label must appear:
 
 1. The style reading header shows a badge, and tapping it shows the note.
-2. The header of every capture-derived rail shows the caption.
+2. The caption appears on the first More-like-this rail and once above the cross-domain group (amended R-17).
 3. "Why this?" on any card whose recommendation came from an experimental analysis shows `why_line`.
 4. The v2 media analysis screen on iOS and Android shows a badge and note.
 5. Feed cards that come from a capture show a small `Experimental` text tag beside the reason in the card detail. The feed grid stays clean, which the design guide requires.
@@ -507,8 +522,10 @@ ALTER TABLE analyses
 
 ALTER TABLE recommendations
   ADD COLUMN rail text CHECK (rail IN ('more_like_this','cross_domain')),
-  ADD COLUMN subject_id text,                     -- 's1'..'s3' for more_like_this
-  ADD COLUMN style_match jsonb;                   -- C.4 structure
+  ADD COLUMN subject_id text,                     -- 's1'..'s2' for more_like_this
+  ADD COLUMN style_match jsonb,                   -- C.4 structure
+  ADD COLUMN reading_rev integer,                 -- style reading revision the card was built from (R-6)
+  ADD COLUMN hidden_at timestamptz;               -- soft-hide after a retraction (R-6); API omits hidden cards
 
 CREATE INDEX recommendations_rail_idx ON recommendations (analysis_id, rail) WHERE rail IS NOT NULL;
 
@@ -548,7 +565,7 @@ Existing rows keep `rail = NULL`, which reads as cross-domain. `analyses.section
         "construction": [ { "name": "boxy, hip-length cut", "kind": "silhouette", "wording": "asserted", "display": "Boxy, hip-length cut", "region": null } ],
         "palette": [ { "swatch": 0, "name": "tobacco brown", "hex": "#7B5A3A" } ],
         "mood": [ { "name": "rugged", "display": "Feels rugged" } ],
-        "details": [ { "text": "Metal snap closures at the cuffs", "wording": "asserted", "region": { … } } ],
+        "details": [ { "text": "Metal snap closures at the cuffs", "display": "Metal snap closures at the cuffs", "wording": "asserted", "region": { … } } ],   // display on every claim (R-16b)
         "brand": null,                      // { "name": "Carhartt", "read_text": "CARHARTT" }
         "qloo_links": ["Filson", "Patagonia", "Pendleton"],   // similar_brand tag names, text only; [] if none
         "rail": "more_like_this:s1"
@@ -587,7 +604,9 @@ Existing rows keep `rail = NULL`, which reads as cross-domain. `analyses.section
 
 Notes:
 
-- Internal certainty numbers are **never** sent. `strength` is a coarse band (`clear` ≥ 0.75, `likely` 0.55–0.75, `possible` < 0.55), which matches the existing v2 rule "no model certainty".
+- Internal certainty numbers are **never** sent. `strength` is a coarse band (`clear` ≥ 0.75, `likely` 0.55–0.75, `possible` < 0.55), which matches the existing v2 rule "no model certainty". Amended R-16a: strength is derived **after** wording, so `asserted` is `clear|likely` and `resembles` is `likely|possible`. Era, lineage and mood carry `strength: null`.
+- Amended R-15: claim regions other than the subject region are sent only while the server flag `STYLE_SHOW_CLAIM_REGIONS` is on (on only after M-G passes); otherwise `region: null`.
+- Amended R-16c: for polling, the terminal section and rail statuses are `ready | empty | failed | held`. New clients treat any unknown status as terminal.
 - `region` values are normalized to the **displayed capture image**. The server rescales when the style call used a different size, and both have the same aspect because only the long edge is resized.
 - Zod: `StyleReadingDto`, `RailDto` and the `DiscoveryCard` additions go in `packages/domain/src/schemas/style.ts`, exported from `schemas/captures.ts`.
 - `GET /v1/items/{id}` "Why this?" adds `style_match` and `experimental_line` (the `why_line` copy) when they apply.
@@ -637,14 +656,14 @@ These use the design tokens from `design/cultural-atlas-v1/tokens.css`: ivory ca
 - Header: `Style reading` in a 20 px serif, with the `Experimental` badge beside it (quiet control background `#EEEAE2` and 14 px caption; it is a button that opens the note in a popover or sheet).
 - `summary` in 16 px body text.
 - Subject tabs appear only if there are 2 or more subjects. They are pill buttons with the subject `label`. Selecting one outlines that subject's region on the photo for 1.2 s.
-- **Aesthetic chips** are fully rounded pills. Asserted chips have a solid olive border and the name. Resembles chips have a dashed border and the `display` text ("Resembles mid-century modern"). `strength` is shown as 1–3 small dots, with `aria-label` "clear", "likely" or "possible".
+- **Aesthetic chips** are fully rounded pills. Asserted chips have a solid olive border and the name. Resembles chips have a dashed border and the `display` text ("Resembles mid-century modern"). `strength` is not drawn as dots (amended R-17: solid vs dashed plus the "Resembles" text already carry it). It is exposed only as the `aria-label` "clear", "likely" or "possible".
 - **Palette swatches**: 28 px circles with the hex fill and the name below in 13 px. The circle width is proportional to share (min 28, max 56 px). Tapping a swatch copies the color name; there is no hex text, to keep things calm.
-- **Details list**: rows grouped as Era & lineage, Materials, Construction and Details. Each row is the `display` text. A resembles row uses secondary text color plus the word "Resembles" or "Looks like", never color alone. Each row with a region has a small locate icon (20 px outline, 1.75 stroke) that triggers the highlight.
+- **Details list**: shows the first 3 rows, then a `style.show_details` control (R-17). Rows are grouped as Era & lineage, Materials, Construction and Details. Each row is the `display` text. A resembles row uses secondary text color plus the word "Resembles" or "Looks like", never color alone. Each row with a region has a small locate icon (20 px outline, 1.75 stroke) that triggers the highlight.
 - Mood is one line at the bottom: "Feels rugged, utilitarian".
 - `qloo_links` is one quiet line: "Qloo also links: Filson, Patagonia, Pendleton".
 
 **3. Rails**, in `rails[]` order:
-- Rail header: serif title, the subtitle (the attributes that drove it) and `From an experimental reading` as a 14 px secondary caption.
+- Rail header: serif title and the subtitle (the attributes that drove it). `From an experimental reading` appears as a 14 px secondary caption on the first More-like-this rail and once above the cross-domain group, not on every rail (R-17). The reading badge and the `why_line` keep the label clear everywhere else.
 - Cards are the existing `DiscoveryCard`. The reason shows in 14 px secondary text under the title, at most 2 lines.
 - The More-like-this rail scrolls horizontally on mobile and is a grid of up to 8 on desktop. Cross-domain rails reuse the existing category filter and grid.
 
@@ -703,6 +722,8 @@ These use the design tokens from `design/cultural-atlas-v1/tokens.css`: ivory ca
 
 ### G.1 Photo set `style-v1` (16 photos, all already in the repo or fetchable by pinned URL; no new images in git)
 
+> **Amended R-14a:** the set grows to **at least 40 photos**: the 16 below, the other style-relevant golden-v5 photos (h17, h18, h19, h35, h38, h54, h55, h57, h58, h70), and at least 15 new fashion photos fetched by pinned URL (no-brand outfits with and without people, footwear, bags). That gives at least 24 tune and 16 holdout. Fashion without a brand is the most common real capture, and it must be the largest group.
+
 | # | File | Why | Split |
 |---|---|---|---|
 | 1 | `golden-v5` h03 `h03-ootd_00126.jpg` | outfit, full look | tune |
@@ -750,6 +771,8 @@ Labels go in `fixtures/eval/style-v1/labels/<id>.json`. They follow the golden s
 
 ### G.3 Metrics (scorer `score-style-v1`, in `scripts/eval/style-scorer.ts`)
 
+> **Amended R-14:** every metric is reported with a Wilson 95% interval and per category. The M-R1/M-R2 judges see the photo, the item name and an independent description (Qloo `properties.short_description` or the card image), **never** the item's Qloo tags or our reason; seeing the tags would be circular. Before any scoring, the judges are calibrated against the owner on 40 claims and 40 results; Cohen's κ ≥ 0.6 is required, or owner labels are used. New metrics: M-C1 coverage, M-C2 rail fill, M-S6 run-to-run stability, M-G region accuracy, and output-token p90 under M-T (see R-14).
+
 | Id | Metric | How |
 |---|---|---|
 | M-S1 | **Style-attribute precision** (asserted + resembles, per slot) | Each emitted claim goes to **two independent vision judges** from model families different from the generator (for example an OpenAI and a Google catalog model via Concentrate), each with the image, the claim and the rubric. Verdicts are `supported` / `plausible` / `unsupported` / `about_person`. Precision = (supported + plausible) / all. A claim counts if both judges agree. Disagreements go to the owner adjudication sheet (CSV). Label `expected`/`acceptable` matches are auto-supported, and `forbidden` matches are auto-unsupported. |
@@ -759,13 +782,15 @@ Labels go in `fixtures/eval/style-v1/labels/<id>.json`. They follow the golden s
 | M-S5 | Palette agreement | The judge rates each swatch name against the hex (`fits` / `off`) |
 | M-Q1 | **Qloo tag acceptance precision** | For each accepted tag id: does the tag mean the claim? Judged by a text judge plus owner review. Separate figures for filter tags and soft tags. |
 | M-Q2 | Flat-list rejection correctness | On recorded Qloo responses, the detector's decision vs. a manual label |
-| M-R1 | **More-like-this relevance@5** | Judges see the photo, the style reading and each result's name plus its Qloo tags and short description (no image needed). They answer "Is this the same style family as the subject?" `relevant` / `partly` / `not`. Score = relevant + 0.5·partly. |
+| M-R1 | **More-like-this relevance@5** | Judges see the photo, the style reading and each result's name plus an independent description or image, never its Qloo tags or our reason (amended R-14c). They answer "Is this the same style family as the subject?" `relevant` / `partly` / `not`. Score = relevant + 0.5·partly. |
 | M-R2 | Cross-domain relevance@3 | "Would someone drawn to this photo's style plausibly enjoy this?" on the same scale |
 | M-R3 | Reason faithfulness | Every attribute named in a reason must exist in the published style reading **and** in the result's tags. Checked automatically. **Must be 1.0.** |
 | M-T | Timing | p50/p90 of each B.3 milestone, measured in the worker with `performance.now()` marks written to the recording |
 | M-$ | Spend | Mean model USD per photo and mean Qloo requests per job |
 
 ### G.4 Pass bar (to turn production on beyond experimental later, and to merge this feature)
+
+> **Amended R-14:** a bar passes only if the point estimate meets it **and** the Wilson lower bound is within 0.08 of it. Added merge bars: M-C1 coverage ≥ 0.80 (fashion and interior), M-C2 rail fill (≥ 4 More-like-this cards) ≥ 0.70 for fashion, M-S6 stability ≥ 0.70, and M-R1 for fashion on its own ≥ 0.70 and ≥ baseline + 0.15. M-$ is replaced by "≤ `STYLE_MAX_CALL_USD` per style call", with the mean reported. M-T uses the R-3 targets.
 
 | Metric | Merge bar (experimental launch) | Qualification bar (future: drop the label) |
 |---|---|---|
@@ -780,7 +805,7 @@ Labels go in `fixtures/eval/style-v1/labels/<id>.json`. They follow the golden s
 | M-R2 relevance@3 | ≥ 0.55 and ≥ baseline | ≥ 0.65 |
 | M-R3 reason faithfulness | 1.0 | 1.0 |
 | M-T | B.3 targets on the holdout | same, on a deployed demo |
-| M-$ | ≤ $0.025 model per photo, ≤ 18 Qloo requests (mean ≤ 14) | same |
+| M-$ (amended R-12) | ≤ `STYLE_MAX_CALL_USD` per style call (mean reported), ≤ 18 Qloo requests (mean ≤ 14) | same |
 
 All bars are reported separately for tune and holdout. **A merge needs holdout to pass.** The scorecard goes to `docs/style-eval.md`, the thresholds to `fixtures/eval/thresholds.json` as `style_v1`, and the qualification artifact for `vision_style` (`vs-…json`) is produced only when the qualification bar passes.
 
@@ -895,10 +920,10 @@ All bars are reported separately for tune and holdout. **A merge needs holdout t
 | The vocabulary goes stale or misses aesthetics (techwear, gorpcore return 0) | Claims show without rails | Honest `qloo:null`; the claim still displays; re-harvest per `svocab-N`; the M-S3 vs. M-Q1 gap is tracked |
 | Tag-only insights are slow (5–10 s, one at 48 s) | Misses the B.3 timing | Bridge entity calls; places always get a location; per-request 12 s timeout; tag-only calls run in the background with progressive rails |
 | Flat or junk Qloo lists | Off-style cards | Flat-affinity detector plus the local overlap requirement; empty is better than junk |
-| Hitting the 10 rps rate limit | 429s and lost cards | 120 ms spacing, a 1100 ms 429 backoff and the retry headroom in the budget |
+| Hitting the 10 rps rate limit | 429s and lost cards | A cross-process token bucket (R-11), 120 ms spacing, a 1100 ms 429 backoff and the retry headroom in the budget |
 | Unqualified models in production | Wrong claims shown as fact | Server-derived wording (A.2), corroboration, guardrails, the experimental label everywhere, the kill switch and the eval merge bar on holdout |
 | Person or identity leakage through style phrasing | Trust and safety | G-STYLE-PERSON and G-STYLE-MOOD; the people-trap photos in the eval; M-S4 must be 0 |
-| Spend growth (bigger model, larger image, 5th call) | Cost | 20k µUSD reservation, an experimental daily bucket, a per-account cap and an M-$ bar |
+| Spend growth (bigger model, larger image, 5th call) | Cost | A reservation computed from catalog prices and capped by `STYLE_MAX_CALL_USD` (R-12), an experimental daily bucket, a per-account cap and an M-$ bar |
 | The Qloo monthly quota (50k) | Outage late in the month | 18 per job cap, the 24 h cache and a 40k warning on the admin page |
 | Region boxes from the model are inaccurate | A misleading highlight | Highlights shown only for claims with regions; the eval judges see regions and can mark them `unsupported`; regions on multi-frame video are dropped (existing behavior) |
 | Older clients | Breakage | All fields are additive and optional; `recommendations` is kept; native decoders use nullable defaults |
@@ -911,3 +936,70 @@ All bars are reported separately for tune and holdout. **A merge needs holdout t
    - Then: the gateway experimental mode; the palette, `vision_style` and guard; the vocabulary harvest (paid, owner-confirmed); map-tags and rails; reasons; the budget; the eval script.
 2. **Web, iOS and Android:** build against the replay fixtures from day 1. The iOS bug fix ships first.
 3. **Eval:** labels are frozen before prompt tuning. Merge needs the G.4 holdout bar.
+4. **Before build (R):** run the paid vocabulary harvest at 20 pages, which also writes the exemplar matrix (R-1). Resolve open item O-1. The Day-1 contract PR includes every R-16 field.
+
+---
+
+## R. Review amendments (adversarial review, 2026-10-23)
+
+This section records an adversarial review of the design above. The review was grounded in the live Qloo probe (`/private/tmp/…/style/probe/raw/*.json` and `latency.tsv`) and in the code at `3af8936`. The body has been edited where the amendments change it, and those edits are marked "amended R-n". **Where R and the body disagree, R wins.**
+
+### R.0 What is strong (keep it)
+
+- **The server decides wording.** The model reports only certainty and evidence, and `wording.ts` decides between asserted, resembles and drop. This is the right place for the "never assert uncertain things" rule, and it is testable.
+- **The palette is measured from pixels.** No hex value comes from the model.
+- **Exact-match tag acceptance comes with the probe's own negative cases as tests:** "quiet luxury" must not accept `ambience:quiet`, and "denim" must not accept `decor:denim_themed`. Probe §1 shows fuzzy search would otherwise produce these mismatches.
+- **Entity signals plus a style filter is the backbone.** This is i04, the probe's best "same style" call: 210 ms, explainable, on-style.
+- **The design prefers an honest empty to junk.** It has a flat-affinity detector, never sends a place call without a location (i06 took 48 s and returned junk), and never fills a rail from the model or from samples.
+- **Reasons are computed from real tag overlap.** M-R3 faithfulness must be 1.0.
+- **Style runs as a parallel stage that never blocks the stage-1 chips.** It also does not see stage 1's candidates, which makes it a cross-check.
+- **Experimental production has its own env var, kill switch and spend bucket,** and `CONCENTRATE_DEMO_ALLOW_ROLES` stays refused in production.
+- **The contract is additive,** with wire fixtures in `messages.json`, and display strings are composed only on the server. This is the right way to keep four builders aligned.
+- **The holdout labels are frozen before tuning.**
+
+### R.1 Findings and amendments
+
+Severity scale: **Critical** means the core purpose (read the style, then find similar items) fails or is misleading. **High** means a large accuracy, latency or safety loss, or builders diverging. **Medium** means a real defect with a bounded impact. **Low** means polish.
+
+| # | Severity | Weakness (grounded) | Amendment (applied) |
+|---|---|---|---|
+| R-1 | **Critical** | **The most common capture, a garment with no legible brand, uses the recipe the probe showed is weak.** The design's "fashion, no E" row is `filter.tags=F` plus a tag signal plus `popularity.min`. The probe's results for that recipe:<br>• i01 returned tactical and workwear brands for "streetwear", all tied at 0.888.<br>• i22, with `popularity.min=0.9`, returned regional brands (Ahha Store, Erigo, Bro.do, Emoda) all at about 0.9999. Popularity ≥ 0.92 did not mean well known.<br>• Neither call had explainability.<br>The design's "bridge" then feeds the top 2 of that list back in as entity signals, which amplifies the off-style seed. | **Exemplar anchors from a local tag-space match.** The paid harvest (C.2) already pulls fashion brands with their full `tags[]`, about 90–150 each.<br>1. It is extended to 20 pages, about 1,000 brands and about 25 requests one time. It writes `fixtures/qloo/style-vocab/brands.json` with `{id, name, popularity, style_tag_ids[]}` for each brand, taken only from recorded responses.<br>2. `style/exemplars.ts` (pure) scores each brand as the sum of slot weights (C.3 list C) over the subject's accepted tag ids that the brand carries.<br>3. A brand qualifies only if it carries F (when F exists), carries ≥ 2 accepted tags, and has popularity ≥ 0.8. Ties break on popularity.<br>4. The top 3 qualifying brands become `signal.interests.entities`, sent with `filter.tags=F` and `feature.explainability=true`. That is the i04 recipe: about 0.2 s, explainable and on-style.<br>5. Exemplars are signals, not cards. Reasons for these results use only the overlap templates and never name the exemplar.<br>6. Only when fewer than 2 brands qualify does the old tag-only call run (12 s timeout, flat detector). Its results are never used as bridges.<br>Unit tests: exemplar selection is deterministic; every exemplar id exists in `brands.json`; no exemplar lacks F. |
+| R-2 | **Critical** | **Free-text names rarely match Qloo labels exactly.** Fashion tags live in vocab-only namespaces, and many are phrases: `aesthetic_property:qloo:utility_focused_design`, `earthy_color_palette`, `personal_style:qloo:workwear_inspired`. Exact matching (rightly) rejects fuzzy hits, so a model that says "Utilitarian workwear" or "Rugged Americana" maps to nothing. The claim then shows with `qloo:null`, and no rail is built. Accuracy of the reading would not turn into suggestions. | **Closed-vocabulary `tag_query`.** The style prompt carries, per category, the label list from `svocab` in a static, cacheable prefix:<br>• fashion: `fashion_segment`, `personal_style`, `material`, `design_inspiration`;<br>• interior and place: the decor, setting and ambience labels recorded in the tag fixtures;<br>• media: `style:qloo` and `subgenre`.<br>`tag_query` must be one of these labels or null. Server-side, a value outside the list is set to null, never fuzzy-matched. `name` stays free text and is what users see. Materials also get a `tag_query`. This is still "Qloo ids only from real responses", because the list *is* the vocabulary.<br>Eval: M-Q1 now also reports the **mapping rate**, the share of accepted aesthetics that have an accepted tag. |
+| R-3 | **High** | **The latency targets do not fit the output budget.** A 1400-token strict-JSON output from a Sonnet-class model, plus a 1024 px image, will not reach p50 ≤ 7 s, and 3 fully populated subjects risk truncation, which shows up as a schema failure. A third subject is also wasted, because rails serve at most 2. The selection rule's 0.03 precision margin is below the noise of a 6-photo holdout. | 1. At most 2 subjects, with tighter per-slot limits. Regions are emitted only on the subject, the aesthetics and the details. `max_output_tokens` drops to 1100, a `length` stop counts as failed, and the eval reports output-token p90 (target ≤ 800).<br>2. Targets are honest and still sensible, because chips arrive at about 3 s regardless: style visible at **p50 ≤ 9 s and p90 ≤ 15 s**.<br>3. Selection is accuracy first: Sonnet wins unless it misses the 15 s p90, or Haiku is at least as good on both M-S2 and M-R1. There is no fixed margin. |
+| R-4 | **High** | **Rails with an identified anchor wait for the style call for no reason.** With an anchor E (a brand read in the photo, a poster title or a place), the probe's entity call is already good on its own: i02 at 207 ms, i10 at 1.7 s. The design makes it wait about 8 s for the style reading. | When resolve yields an E that overlaps the subject, the **primary entity call runs right after resolve**, so the first cards arrive at about 4–5 s. The style-constrained call (`filter.tags=F` plus E, the i04 recipe) becomes the secondary call once the reading lands. The two lists are fused. **Cards already shown are never removed or reordered; new cards are appended.** The budget is unchanged (primary plus secondary). Target: first cards p50 ≤ 5 s with E. |
+| R-5 | **High** | **The cross-domain timing contradicts itself.** `recommend()` "waits ≤ 1.5 s for styleMap", but C.5 makes the bridge entities from More-like-this (ready at about 7–11 s) its main cross-domain signal. As written, the bridges either never arrive in time, or `recommend()` runs twice, and 3 more Qloo calls are not in the budget. The four builders would each guess. | **`recommend()` runs once.** It starts when resolve is done **and** one of these holds: the More-like-this primary has returned, 4 s have passed since resolve, or style is `failed` or `empty`. It uses whatever signals exist at that moment, and `style_match.via` records which. There is no second pass. The cross-domain p50 of 12 s stays. |
+| R-6 | **High** | **Rails can contradict a retracted claim.** Rails are published at about 7–11 s; the stage-2 corroboration and veto pass lands later. If a claim is retracted, a card's reason can still cite it, which fails M-R3 (reason faithfulness must be 1.0) in production. | **On retraction,** the server recomputes `display_reason` for the affected cards from the overlap that remains. A card whose only overlap was the retracted claim, and that did not come from an entity signal, gets `hidden_at` set; clients fade it out. Rails are never re-queried. A wording upgrade only re-templates reasons. Rails record the `reading_rev` they were built from. Integration test: a veto causes no card reason to name the retracted claim. |
+| R-7 | **High** | **The guardrails have holes on the people-heavy fashion path.** Outfit photos almost always contain a person.<br>(a) Many fashion aesthetic names describe a type of person ("clean girl", "e-girl", "soft boy", "dad core"). Meanwhile `PEOPLE_RE` would wrongly drop garment nouns such as "boyfriend jeans" and "mom jeans".<br>(b) Culture-coded aesthetics ("Harajuku", "Afrocentric", "hip hop") on a photo of a person amount to an ethnicity or group inference. Qloo even carries `cultural_relevance:qloo:hip_hop_fashion` on Carhartt.<br>(c) The whole-image swatches in an outfit photo include skin and hair, and the model could name them.<br>(d) The `target_gender`, `target_age_group` and `target_income_level` tags sit on every fashion brand.<br>(e) The brand, `read_text` and unusable-photo rules depend on stage 1, but the style call can finish first. | (a) Add G-STYLE-PERSON-TYPE, a deny list of person-type aesthetic names, and `GARMENT_COMPOUND_ALLOW` (both owner-reviewed and versioned in `guard-v17`).<br>(b) Add G-STYLE-CULTURE: with people present, these names are never asserted. They may appear as `resembles` only with ≥ 2 visible garment features; otherwise they are held for stage 2. Qloo culture tags may be soft signals but are never display text.<br>(c) Add G-STYLE-PALETTE: a swatch is shown only if it is present inside the subject region (recomputed server-side after the call, 15 ms). Unassigned swatches are never shown.<br>(d) `target_*` and `market_archetype` tags never enter the vocabulary, signals, filters or reasons, and a test enforces it.<br>(e) `publishStyle()` waits up to 3 s for the stage-1 guard result. If stage 1 failed, the brand is dropped and `read_text` claims are downgraded. A brand that the style call reads and that passes the guard, with no overlapping anchor, is resolved through the existing resolver inside its 5-request budget.<br>Tests: each new rule has positive and negative cases, and h47, h03, h04 and p11 are scored for M-S4. |
+| R-8 | **High** | **Certainty is self-reported and uncalibrated.** The bars (0.75 to assert, 0.85 to assert without corroboration) are guesses about a number the model invents. Corroboration with stage 1 is also weaker than it looks: if both stages use the same model family, their errors are correlated. | **`sw-1` thresholds are fitted on the tune split.** Bucket certainty against the judged "supported" rate, then set the asserted bar at the lowest certainty where tune asserted precision is ≥ 0.95. Freeze the bar before holdout. Record the reliability table in `docs/style-eval.md`.<br>Corroboration from a stage of the same model family lowers the bar only to 0.80. Corroboration from a Qloo entity, or from a stage of another family, lowers it to 0.75.<br>An aesthetic that is not stable across the eval's 2 runs (M-S6) is capped at `resembles` for that family in `sw-1`. |
+| R-9 | **High** | **The interior recipe is the probe's weak pattern.** It sends a tag-only signal to brands, but `decor:*` tags live on places, not brands. The i05-type call took 6.3 s, was flat at 1.0, and only 4 of 8 results carried the tag. This puts junk or a stall into the owner's second most important category. | **Interior:**<br>1. With a city: places with `filter.tags=<decor>` and a location (i18 was on-tag, with no minimum list size).<br>2. With E: an entity signal.<br>3. Brands only through R-1 exemplars built from **non-fashion** brand `aesthetic_property` tags in the harvest.<br>4. Otherwise an honest empty with `style.no_city`.<br>There is never a tag-only brand call.<br>**Open item O-1 (before build, paid, owner-confirmed):** about 10 requests to find home and furniture brand genre tags for the non-fashion harvest. Until O-1 is resolved, interior brand rails are off. |
+| R-10 | Medium | **The flat detector would mishandle i08.** i08 (`filter.tags` ramen plus a japandi signal) is flat at 0.765, so the japandi signal matched nothing. Yet every result is a ramen place, because the filter carried it, and the list is in entity-id order. | A flat list from a call **with** `filter.tags` is kept at RRF weight 0, so only the overlap re-rank (list C) orders it. A flat list without a filter is discarded as before. Test: i08 is kept but not used as a ranking, and i06/i07 are discarded. |
+| R-11 | Medium | **The rate limiter does not span processes.** `sharedLimiter` (`packages/providers/src/http/concurrency.ts:82`) is an in-process map, while web, worker and media-worker all share one Qloo key. Spacing of 120 ms per process does not keep the key under 10 rps; the probe got a 429 at the 11th call in one second. There is also no daily guard, so a burst or an eval run can drain the 50k monthly quota, and the retry endpoint's Qloo use is not budgeted. | 1. A cross-process Postgres token bucket for the key, at 8 tokens/s.<br>2. `QLOO_DAILY_REQUEST_LIMIT`, default 1,500; past it, rails are an honest empty.<br>3. The style retry gets its own budget: ≤ 6 Qloo requests and 1 vision call, reserved at retry time.<br>4. Eval runs use a separate key or count against the daily guard.<br>Test: two processes running concurrently never exceed 8 dispatches per second. |
+| R-12 | High | **The spend reservation is hardcoded and probably low.** 20,000 µUSD may be below the worst case for a Sonnet-class call with a 1024 px image, a prompt of about 2k tokens (including the R-2 vocabulary list) and up to 1100 output tokens. Under-reservation breaks the "daily caps are exact" claim. The M-$ bar of ≤ $0.025 per photo may then fail by construction. | **The reservation is computed** from `catalog-snapshot.json` prices × (max input + max output tokens). The role refuses to start if that exceeds `STYLE_MAX_CALL_USD` (default 0.05). The M-$ bar becomes "≤ `STYLE_MAX_CALL_USD` per style call, mean reported". The vocabulary prefix is prompt-cached only if the catalog says the model supports caching. Never assume prices. |
+| R-13 | Medium | **Video produces two readings.** The frame-0 reading followed by a display-frame re-run means two calls, and the second reading can replace claims the user has already seen, which contradicts "never removed after display". | **One style call, on the display frame, after aggregation.** Video's existing 45 s p50 budget absorbs the wait. |
+| R-14 | **High** | **The eval cannot measure accuracy as planned.**<br>(a) 16 photos with a 6-photo holdout give about ±0.1 intervals, so bars of 0.92 or 0.97 and a 0.03 margin cannot be told apart from noise. Fashion with no brand, the core path, has only 3–4 photos.<br>(b) Bars that only measure precision reward abstention: an empty reading and empty rails would pass.<br>(c) The M-R1 judges see each result's Qloo tags. Those are the very tags we filtered on, so relevance is circular.<br>(d) Judge validity is assumed, not measured. | (a) **At least 40 photos** (G.1 note), with fashion without a brand as the largest group. Wilson 95% intervals throughout. A bar passes only if the point estimate meets it **and** the lower bound is within 0.08 of it.<br>(b) New merge bars: **M-C1 coverage** ≥ 0.80 (share of styled photos with at least one published aesthetic that has an accepted Qloo tag) and **M-C2 rail fill** ≥ 0.70 for fashion (≥ 4 More-like-this cards). M-S6 stability ≥ 0.70.<br>(c) Relevance judges see the photo, the item name and an independent description or image, never the tags or the reason.<br>(d) Judges are calibrated against the owner on 40 claims and 40 results; κ ≥ 0.6 is required, or owner labels are used. Judge models must be catalog-compatible and from another family. If none is available, use one judge plus owner adjudication of every "unsupported" verdict and every disagreement.<br>(e) Report every metric per category. M-R1 for fashion has its own bar (≥ 0.70 and ≥ baseline + 0.15). |
+| R-15 | Medium | **Claim region boxes from a VLM are often loose.** A tight-looking highlight on the wrong area is a confident visual misstatement, which is worse than none. | Subject regions are always shown, because they are coarse. Regions on claims (aesthetics and details) are sent only when the server flag `STYLE_SHOW_CLAIM_REGIONS` is on. It turns on only once the new metric **M-G** (the judge marks whether the box covers the claim) reaches ≥ 0.80. When the flag is off the server sends `region: null`, so clients need no change. |
+| R-16 | High | **Contract gaps that would make the four builders diverge:**<br>(a) `strength: clear` can appear on a `resembles` claim, which contradicts its wording.<br>(b) `details` and `palette` have no `display` string, so clients would compose their own text.<br>(c) Polling termination with the new `held` status and rail statuses is undefined.<br>(d) The skeleton, updated, try-again, add-city and Qloo-links copy is missing from `copy.json`.<br>(e) The retry semantics against an "immutable per version" reading are unclear.<br>(f) The "read it tomorrow" path has no mechanism. | (a) Strength is derived after wording: asserted → `clear` or `likely`; resembles → `likely` or `possible`; era, lineage and mood → `null`.<br>(b) Every claim, palette entry included, carries a server `display` string.<br>(c) The terminal statuses are `ready`, `empty`, `failed` and `held`; unknown statuses count as terminal.<br>(d) The copy keys are added to D.4.<br>(e) Retry writes into the same analysis version only while `style_reading` is null. It returns 202 with `sections.style = "running"`.<br>(f) Readings held for `daily_limit` never run automatically on paid models. When capabilities report the service available again, the result shows a "Read now" control. The Day-1 contract PR names its endpoint, reusing an existing re-run path if one exists, and adds it to the native allow-list.<br>All of this goes in the `messages.json` fixtures on Day 1. |
+| R-17 | Medium | **The style card is cluttered.**<br>• Certainty is encoded three times: solid or dashed border, the "Resembles" text and strength dots.<br>• The details list can run to about 15 rows.<br>• An experimental caption sits on every rail, on top of the badge and the why-line. | 1. Drop the strength dots; strength stays in the `aria-label` only.<br>2. Show the first 3 detail rows, then "Show all details".<br>3. Show the experimental caption on the first More-like-this rail and once above the cross-domain group.<br>The badge on the reading header, the analysis-screen badge and the `why_line` remain, so the label stays clear. |
+| R-18 | Low | **The "Qloo also links" names could be guessed from ids.** `similar_brand` names could be prettified from the ids (for example `red_wing_shoes`), which would be text we wrote ourselves. | Use the tag's own `name` from the response. If a tag has no name, omit it. |
+| R-19 | Low | **Brand-tag corroboration describes the brand, not the item.** Carhartt carries both workwear and streetwear tags. | Qloo-entity corroboration counts only when the claim also has ≥ 2 visible defining features. |
+| R-20 | Medium | **The diversity cap fights the filter.** The rail filters on F, a `fashion_segment` tag, so every result shares that segment, and the "≤ 2 per `fashion_segment`" cap is either void or drops on-style results. | Remove the segment cap and keep a `price_level` cap of ≤ 3. |
+
+### R.2 Net effect on budgets and timing
+
+- **Qloo per job:** the cap stays at 18. Fashion without a brand moves from a slow tag-only call plus a bridge (about 3–10 s, 2 requests) to one exemplar entity call (about 0.2 s, 1 request), which frees the secondary call for a second subject. The harvest is about 25 paid requests once, plus about 10 for O-1.
+- **Model:** still 5 vision calls per analysis. The reservation is computed rather than fixed, capped at `STYLE_MAX_CALL_USD`.
+- **Timing:**
+
+| Milestone | p50 | p90 |
+|---|---|---|
+| Chips | about 3 s (unchanged) | — |
+| Style reading | ≤ 9 s | ≤ 15 s |
+| More-like-this, with an anchor | ≤ 5 s | ≤ 8 s |
+| More-like-this, without an anchor | ≤ 11 s | ≤ 17 s |
+| Complete | ≤ 20 s (unchanged) | — |
+
+### R.3 Open items
+
+- **O-1:** non-fashion (home and furniture) brand genre tags for the interior exemplars. This is paid, owner-confirmed and about 10 requests.
+- **O-2:** the person-type deny list and `GARMENT_COMPOUND_ALLOW` need owner review before `guard-v17` freezes.
+- **O-3:** confirm in `catalog-snapshot.json` that two judge models from another family exist, that Sonnet 5.5 is present, and whether prompt caching is supported. Never assume any of these.
