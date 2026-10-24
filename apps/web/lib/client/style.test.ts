@@ -102,7 +102,12 @@ describe('StyledCaptureResponse (E.2 additive fields)', () => {
             subject_id: 's1',
             status: 'ready',
             empty_message: null,
-            cards: [card(20, { reason: 'Because of the sportswear', style_match: styleMatchFor(MORE_LIKE_THIS_SEEDS[0]!) })],
+            cards: [
+              card(20, {
+                reason: 'Because of the sportswear',
+                style_match: styleMatchFor(MORE_LIKE_THIS_SEEDS[0]!),
+              }),
+            ],
           },
         ],
       },
@@ -139,7 +144,11 @@ describe('StyledCaptureResponse (E.2 additive fields)', () => {
   it('a malformed claim is dropped alone; a malformed reading never breaks the page', () => {
     const reading = styleReading();
     (reading.subjects[0]!.aesthetics as unknown[]).push({ name: 42 });
-    (reading.subjects[0]!.palette as unknown[]).push({ swatch: 0, name: 'x', hex: 'red;background:url(x)' });
+    (reading.subjects[0]!.palette as unknown[]).push({
+      swatch: 0,
+      name: 'x',
+      hex: 'red;background:url(x)',
+    });
     const parsed = StyledCaptureResponse.parse(
       capture({ style_reading: reading }, { sections: { style: 'ready' } }),
     );
@@ -180,7 +189,9 @@ describe('wording is never composed on the client (A.2 / R-16b)', () => {
   });
   it('hides an unasserted claim without display, and held claims', () => {
     expect(claimText({ name: 'Japandi', wording: 'resembles' })).toBeNull();
-    expect(claimText({ name: 'Workwear', wording: 'asserted', display: 'Workwear', held: true })).toBeNull();
+    expect(
+      claimText({ name: 'Workwear', wording: 'asserted', display: 'Workwear', held: true }),
+    ).toBeNull();
   });
   it('mood line joins server strings and never shows mood without display', () => {
     expect(moodLine([{ display: 'Feels rugged' }, { display: 'Feels utilitarian' }])).toBe(
@@ -212,7 +223,10 @@ describe('detail rows', () => {
 
   it('flags retracted claims from the claim flag or the retracted[] paths', () => {
     const parsed = StyledCaptureResponse.parse(
-      capture({ style_reading: { ...styleReading(), retracted: ['subjects[0].materials[1]'] } }, { sections: { style: 'ready' } }),
+      capture(
+        { style_reading: { ...styleReading(), retracted: ['subjects[0].materials[1]'] } },
+        { sections: { style: 'ready' } },
+      ),
     );
     const rows = detailRows(parsed.style.reading!, 0);
     expect(rows.find((r) => r.text === 'Looks like ribbed knit cuffs')?.retracted).toBe(true);
@@ -242,7 +256,8 @@ describe('states and polling', () => {
     }) as unknown as Rail;
 
   it('terminal statuses are ready, empty, failed, held and anything unknown (R-16c)', () => {
-    for (const s of ['ready', 'empty', 'failed', 'held', 'mystery']) expect(isActiveStatus(s)).toBe(false);
+    for (const s of ['ready', 'empty', 'failed', 'held', 'mystery'])
+      expect(isActiveStatus(s)).toBe(false);
     for (const s of ['pending', 'running']) expect(isActiveStatus(s)).toBe(true);
   });
 
@@ -256,8 +271,12 @@ describe('states and polling', () => {
   it('maps D.2 situations to card states', () => {
     expect(styleCardState(extras({ status: 'failed' })).kind).toBe('failed');
     expect(styleCardState(extras({ status: 'empty' })).kind).toBe('empty');
-    expect(styleCardState(extras({ status: 'held', waitingReason: 'daily_limit' })).kind).toBe('limit');
-    expect(styleCardState(extras({ status: 'held', waitingReason: 'ai_paused' })).kind).toBe('paused');
+    expect(styleCardState(extras({ status: 'held', waitingReason: 'daily_limit' })).kind).toBe(
+      'limit',
+    );
+    expect(styleCardState(extras({ status: 'held', waitingReason: 'ai_paused' })).kind).toBe(
+      'paused',
+    );
     expect(styleCardState(extras({ status: 'pending' })).kind).toBe('loading');
   });
 
@@ -292,7 +311,9 @@ describe('copy (D.4, verbatim)', () => {
   });
 
   it('labels any experimental analysis, whatever the server label says', () => {
-    expect(analysisExperimental({ available: true, experimental: true, label: 'Experimental reading' })).toEqual({
+    expect(
+      analysisExperimental({ available: true, experimental: true, label: 'Experimental reading' }),
+    ).toEqual({
       label: 'Experimental',
       note: STYLE_COPY['experimental.note'],
     });
@@ -310,7 +331,11 @@ describe('geometry', () => {
       { width: 1000, height: 1000 },
     );
     expect(rect).toEqual({ left: 0, top: 0, width: 250, height: 125 });
-    const full = regionToRect({ x: 0.1, y: 0.1, w: 0.2, h: 0.2 }, { width: 400, height: 500 }, null);
+    const full = regionToRect(
+      { x: 0.1, y: 0.1, w: 0.2, h: 0.2 },
+      { width: 400, height: 500 },
+      null,
+    );
     expect(full.left).toBeCloseTo(40);
     expect(full.top).toBeCloseTo(50);
     expect(full.width).toBeCloseTo(80);

@@ -81,10 +81,14 @@ test.describe('Style reading', () => {
     await expect(badge).toHaveAttribute('aria-expanded', 'false');
 
     // Style-only work kept re-reading the capture after the job finished, then stopped.
-    const reads = api.log.filter((r) => r.method === 'GET' && /^\/v1\/captures\/[^/]+$/.test(r.path));
+    const reads = api.log.filter(
+      (r) => r.method === 'GET' && /^\/v1\/captures\/[^/]+$/.test(r.path),
+    );
     expect(reads.length).toBeGreaterThanOrEqual(3);
     await page.waitForTimeout(2000);
-    const after = api.log.filter((r) => r.method === 'GET' && /^\/v1\/captures\/[^/]+$/.test(r.path));
+    const after = api.log.filter(
+      (r) => r.method === 'GET' && /^\/v1\/captures\/[^/]+$/.test(r.path),
+    );
     expect(after.length).toBe(reads.length);
     await expectNoHorizontalScroll(page);
   });
@@ -99,7 +103,9 @@ test.describe('Style reading', () => {
     await expect(cards).toHaveCount(6);
     // Each reason names an attribute the reading shows.
     await expect(rail.getByText('Because of the sportswear and nylon shell').first()).toBeVisible();
-    await expect(rail.getByText('For the vintage motorsport look your photo resembles')).toBeVisible();
+    await expect(
+      rail.getByText('For the vintage motorsport look your photo resembles'),
+    ).toBeVisible();
     await expect(
       styleCard(page).getByRole('button', { name: 'Resembles vintage motorsport, likely' }),
     ).toBeVisible();
@@ -109,7 +115,9 @@ test.describe('Style reading', () => {
     // Cross-domain rails reuse the Discoveries grid and filter.
     const grid = page.getByRole('list', { name: 'Discoveries from your photo' });
     await expect(grid.getByRole('listitem')).toHaveCount(6);
-    await expect(grid.getByText('Bold stripes in the spirit of 1970s endurance racing.')).toBeVisible();
+    await expect(
+      grid.getByText('Bold stripes in the spirit of 1970s endurance racing.'),
+    ).toBeVisible();
 
     // The second subject has an honest empty rail asking for a city.
     const second = page.getByRole('region', { name: 'More like this' }).nth(1);
@@ -169,7 +177,7 @@ test.describe('Style reading', () => {
   test('a failed reading offers one Try again, then shows the reading', async ({ page }) => {
     const api = await openOutfit(page, { style: 'failed' });
     const card = styleCard(page);
-    await expect(card.getByText('We couldn\'t read the style of this one.')).toBeVisible({
+    await expect(card.getByText("We couldn't read the style of this one.")).toBeVisible({
       timeout: 15_000,
     });
     // Everything else still renders.
@@ -205,10 +213,14 @@ test.describe('Style reading', () => {
       timeout: 15_000,
     });
     // The retraction arrives on a later read (the mock reads it on the third GET).
-    await expect(card.getByText('Resembles vintage motorsport')).toHaveCount(0, { timeout: 10_000 });
+    await expect(card.getByText('Resembles vintage motorsport')).toHaveCount(0, {
+      timeout: 10_000,
+    });
     await expect(page.getByText('Style reading updated')).toBeAttached();
     const rail = page.getByRole('region', { name: 'More like this' }).first();
-    await expect(rail.getByText('For the vintage motorsport look your photo resembles')).toHaveCount(0);
+    await expect(
+      rail.getByText('For the vintage motorsport look your photo resembles'),
+    ).toHaveCount(0);
     await expect(rail.getByRole('listitem')).toHaveCount(5);
   });
 
@@ -270,7 +282,10 @@ test.describe('Style reading', () => {
           .filter((a) => (a as CSSAnimation).animationName?.startsWith('style-')).length,
     );
     expect(animations).toBe(0);
-    await page.screenshot({ path: testInfo.outputPath('style-reduced-motion.png'), fullPage: true });
+    await page.screenshot({
+      path: testInfo.outputPath('style-reduced-motion.png'),
+      fullPage: true,
+    });
     const results = await new AxeBuilder({ page })
       .include('.style-card')
       .include('.style-rail')
@@ -295,7 +310,9 @@ test.describe('Experimental label on media detail', () => {
     await expect(badge).toBeVisible();
     await badge.click();
     await expect(
-      page.getByText('Photo and video readings are experimental. They can miss or misread details.'),
+      page.getByText(
+        'Photo and video readings are experimental. They can miss or misread details.',
+      ),
     ).toBeVisible();
   });
 

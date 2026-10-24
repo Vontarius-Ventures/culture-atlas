@@ -292,7 +292,9 @@ function ReadingBody({
 
 function rowRetractKey(subjectIndex: number, rowKey: string): string {
   const [slot, index] = rowKey.split(':');
-  return slot === 'era' ? `subjects[${subjectIndex}].era` : `subjects[${subjectIndex}].${slot}[${index}]`;
+  return slot === 'era'
+    ? `subjects[${subjectIndex}].era`
+    : `subjects[${subjectIndex}].${slot}[${index}]`;
 }
 
 /** Paths of every retracted claim (flagged on the claim or listed in `retracted[]`). */

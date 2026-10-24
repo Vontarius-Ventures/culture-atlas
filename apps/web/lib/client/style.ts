@@ -29,7 +29,8 @@ import {
 
 export const STYLE_COPY = {
   'experimental.badge': 'Experimental',
-  'experimental.note': 'Photo and video readings are experimental. They can miss or misread details.',
+  'experimental.note':
+    'Photo and video readings are experimental. They can miss or misread details.',
   'experimental.rail_caption': 'From an experimental reading',
   'experimental.why_line': 'Suggested from an experimental reading of your photo.',
   'style.paused':
@@ -63,30 +64,36 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 
 /** Array whose invalid elements are dropped individually (a bad claim never hides the rest). */
 function lenientArray<T extends z.ZodType>(item: T, max = 50) {
-  return z.unknown().optional().transform((value) => {
-    if (!Array.isArray(value)) return [] as z.output<T>[];
-    const out: z.output<T>[] = [];
-    for (const raw of value.slice(0, max)) {
-      const parsed = item.safeParse(raw);
-      if (parsed.success) out.push(parsed.data);
-    }
-    return out;
-  });
+  return z
+    .unknown()
+    .optional()
+    .transform((value) => {
+      if (!Array.isArray(value)) return [] as z.output<T>[];
+      const out: z.output<T>[] = [];
+      for (const raw of value.slice(0, max)) {
+        const parsed = item.safeParse(raw);
+        if (parsed.success) out.push(parsed.data);
+      }
+      return out;
+    });
 }
 
 /** Optional object: absent or invalid becomes null. */
 function lenientObject<T extends z.ZodType>(schema: T) {
-  return z.unknown().optional().transform((value) => {
-    if (value === null || value === undefined) return null;
-    const parsed = schema.safeParse(value);
-    return parsed.success ? (parsed.data as z.output<T>) : null;
-  });
+  return z
+    .unknown()
+    .optional()
+    .transform((value) => {
+      if (value === null || value === undefined) return null;
+      const parsed = schema.safeParse(value);
+      return parsed.success ? (parsed.data as z.output<T>) : null;
+    });
 }
 
 const unit = z.number().min(0).max(1);
-export const StyleRegion = z.object({ x: unit, y: unit, w: unit, h: unit }).refine(
-  (r) => r.w > 0 && r.h > 0,
-);
+export const StyleRegion = z
+  .object({ x: unit, y: unit, w: unit, h: unit })
+  .refine((r) => r.w > 0 && r.h > 0);
 export type StyleRegion = z.infer<typeof StyleRegion>;
 
 const region = lenientObject(StyleRegion);
@@ -150,7 +157,10 @@ export const StyleSubject = z.object({
   mood: lenientArray(MoodClaim, 4),
   details: lenientArray(DetailClaim, 8),
   brand: lenientObject(
-    z.object({ name: z.string().trim().min(1).max(120), read_text: z.string().max(200).nullable().optional() }),
+    z.object({
+      name: z.string().trim().min(1).max(120),
+      read_text: z.string().max(200).nullable().optional(),
+    }),
   ),
   qloo_links: lenientArray(z.string().trim().min(1).max(80), 8),
   rail: z.string().nullable().optional().catch(null),
@@ -297,7 +307,9 @@ export const StyledCaptureResponse = z.unknown().transform((raw, ctx): StyledCap
   const recRaw = isObj(raw) && Array.isArray(raw.recommendations) ? raw.recommendations : [];
   const recommendations = parsed.data.recommendations.map((card, i) => {
     const extra = StyledCard.safeParse(recRaw[i]);
-    return extra.success ? { ...card, reason: extra.data.reason, style_match: extra.data.style_match } : card;
+    return extra.success
+      ? { ...card, reason: extra.data.reason, style_match: extra.data.style_match }
+      : card;
   });
   return { ...parsed.data, recommendations, style: extras };
 });
@@ -380,7 +392,9 @@ export function moodText(m: { display?: string | null; held?: boolean }): string
 }
 
 /** "Feels rugged, utilitarian": joins mood displays onto one line (F.1 §2). */
-export function moodLine(moods: Array<{ display?: string | null; held?: boolean; retracted?: boolean }>): string | null {
+export function moodLine(
+  moods: Array<{ display?: string | null; held?: boolean; retracted?: boolean }>,
+): string | null {
   const parts = moods
     .filter((m) => !m.retracted)
     .map(moodText)
@@ -434,7 +448,15 @@ export function detailRows(reading: StyleReading, subjectIndex: number): DetailR
     group: DetailRow['group'],
     slot: string,
     index: number | null,
-    claim: { name?: string; text?: string; wording: 'asserted' | 'resembles'; display?: string | null; held?: boolean; region?: StyleRegion | null; retracted?: boolean },
+    claim: {
+      name?: string;
+      text?: string;
+      wording: 'asserted' | 'resembles';
+      display?: string | null;
+      held?: boolean;
+      region?: StyleRegion | null;
+      retracted?: boolean;
+    },
   ) => {
     const text = claimText(claim);
     if (!text) return;
@@ -473,7 +495,9 @@ export function paletteWithShare(reading: StyleReading, subject: StyleSubject) {
 }
 
 /** aria-label strength word; strength is never drawn (R-17). */
-export function strengthLabel(s: 'clear' | 'likely' | 'possible' | null | undefined): string | null {
+export function strengthLabel(
+  s: 'clear' | 'likely' | 'possible' | null | undefined,
+): string | null {
   return s ?? null;
 }
 

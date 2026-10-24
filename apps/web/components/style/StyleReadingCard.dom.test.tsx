@@ -36,10 +36,15 @@ describe('StyleReadingCard', () => {
   it('a chip with a region toggles the highlight', () => {
     const reading = StyleReading.parse(styleReading());
     const onHighlight = vi.fn();
-    render(<StyleReadingCard {...base} onHighlight={onHighlight} state={{ kind: 'ready', reading }} />);
+    render(
+      <StyleReadingCard {...base} onHighlight={onHighlight} state={{ kind: 'ready', reading }} />,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Sportswear, clear' }));
     expect(onHighlight).toHaveBeenCalledWith(
-      expect.objectContaining({ label: 'Sportswear', region: expect.objectContaining({ x: 0.22 }) }),
+      expect.objectContaining({
+        label: 'Sportswear',
+        region: expect.objectContaining({ x: 0.22 }),
+      }),
     );
   });
 

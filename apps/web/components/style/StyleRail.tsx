@@ -48,7 +48,10 @@ export const StyleRail = forwardRef<
         {caption && <p className="style-rail__caption">{caption}</p>}
       </header>
       {cards.length > 0 && (
-        <ul className="style-rail__cards" aria-label={`${rail.title}: ${rail.subtitle ?? 'suggestions'}`}>
+        <ul
+          className="style-rail__cards"
+          aria-label={`${rail.title}: ${rail.subtitle ?? 'suggestions'}`}
+        >
           {cards.slice(0, 8).map((card) => (
             <li key={card.id} className="style-rail__card">
               <DiscoveryCard
@@ -84,7 +87,11 @@ export const StyleRail = forwardRef<
         <div className="style-rail__empty" role="status">
           <p>{empty}</p>
           {needsCity(empty) && (
-            <button type="button" className="button button--outline button--small" onClick={onAddCity}>
+            <button
+              type="button"
+              className="button button--outline button--small"
+              onClick={onAddCity}
+            >
               {STYLE_COPY['style.add_city']}
             </button>
           )}
