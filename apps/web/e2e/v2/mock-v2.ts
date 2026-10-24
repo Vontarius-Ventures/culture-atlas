@@ -115,6 +115,8 @@ export interface V2Options extends MockOptions {
   failParts?: boolean;
   /** Media stays in `processing` after upload. */
   holdPreparation?: boolean;
+  /** Capabilities label photo/video analysis as experimental (D.3). */
+  experimentalAnalysis?: boolean;
 }
 
 interface UploadRec {
@@ -243,7 +245,7 @@ export class MockV2 {
             'temporarily_disabled',
           ];
     const video = this.opts.videoUploads !== false;
-    return CaptureCapabilitiesResponse.parse({
+    const caps = CaptureCapabilitiesResponse.parse({
       contract_version: '2026-10-15.1',
       flags: {
         media_library: true,
@@ -277,6 +279,15 @@ export class MockV2 {
         video: { available: video, reasons: video ? [] : ['decoder_unqualified'] },
       },
     });
+    // D.3: experimental production label (additive; not in the shared schema yet).
+    if (this.opts.experimentalAnalysis && caps.availability.analysis?.available)
+      Object.assign(caps.availability.analysis, {
+        experimental: true,
+        label: 'Experimental',
+        note: 'Photo and video readings are experimental. They can miss or misread details.',
+        reason: 'experimental_production',
+      });
+    return caps;
   }
 
   private uploadResponse(u: UploadRec, sign: boolean) {

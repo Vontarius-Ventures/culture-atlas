@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { Category } from '@culture-atlas/domain';
 import type { CaptureResponse, Focus, ReferenceSummary } from '@culture-atlas/domain/schemas';
 import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
@@ -21,15 +21,36 @@ import { BackLink, Disclosure, MoreMenu, Notice, PageError } from '../ui';
 import { ClockIcon } from '../onboarding/parts';
 import { WhileWeLook } from '../onboarding/WhileWeLook';
 import { COPY } from '../v2/copy';
+import { CitySheet } from '../style/CitySheet';
+import { RegionHighlight, type ActiveRegion } from '../style/RegionHighlight';
+import { StyleRail } from '../style/StyleRail';
+import { StyleReadingCard } from '../style/StyleReadingCard';
+import {
+  isActiveStatus,
+  needsCity,
+  railEmptyMessage,
+  splitRails,
+  STYLE_COPY,
+  styleCardState,
+  StyledCaptureResponse,
+  styleWorkPending,
+  type StyledCapture,
+  type StyleRegion,
+} from '@/lib/client/style';
 
 const DISCOVERY_SECTIONS = ['wear', 'play', 'watch', 'eat'] as const;
 const NO_SUBJECT_WARNING = /blur|no_subject|no_useful|unclear|low_quality/i;
 
 export type ResultPhase = 'processing' | 'results' | 'failed';
 
+/** Re-read cadence while only style work (reading, rails) is still running (B.4). */
+export const STYLE_POLL_MS = 1500;
+/** Safety stop for style-only polling (the 60 s analysis deadline plus slack). */
+export const STYLE_POLL_MAX = 60;
+
 /** Pure view-state derivation (unit-tested). */
 export function deriveCaptureState(
-  capture: CaptureResponse | null,
+  capture: (CaptureResponse & { style?: { rails: Array<{ cards: unknown[] }> | null } | null }) | null,
   job: { state: string } | null,
   jobError: boolean,
 ) {
@@ -41,7 +62,9 @@ export function deriveCaptureState(
     (s) => s === 'unavailable' || s === 'failed' || s === 'partial',
   );
   const pending = discoveryStatuses.filter((s) => s === 'pending' || s === 'running');
-  const hasResults = (capture?.recommendations.length ?? 0) > 0;
+  const hasResults =
+    (capture?.recommendations.length ?? 0) > 0 ||
+    (capture?.style?.rails ?? []).some((r) => r.cards.length > 0);
   const failed =
     !jobActive &&
     (job?.state === 'failed' || capture?.status === 'failed') &&
@@ -92,7 +115,7 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
   const toast = useToast();
   const { openSave } = useSave();
   const overrides = useItemOverrides();
-  const [capture, setCapture] = useState<CaptureResponse | null>(null);
+  const [capture, setCapture] = useState<StyledCapture | null>(null);
   const [loadError, setLoadError] = useState<ApiError | null>(null);
   const [jobId, setJobId] = useState<string | null>(search.get('job'));
   const [category, setCategory] = useState<Category | null>(null);
@@ -103,7 +126,9 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.request('getCapture', { params: { id: captureId } });
+      const res = await api.requestAs('getCapture', StyledCaptureResponse, {
+        params: { id: captureId },
+      });
       setCapture((prev) => {
         if (prev && prev.recommendations.length === 0 && res.recommendations.length > 0)
           toast.announce(`${res.recommendations.length} discoveries found`);
@@ -194,6 +219,100 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
     }
   };
 
+  // ---- style reading + rails (prp/2026-10-23-style-analysis F.1/F.2) ----
+  const style = capture?.style ?? null;
+  const [highlight, setHighlight] = useState<ActiveRegion | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  const photoRef = useRef<HTMLImageElement>(null);
+  const railRefs = useRef(new Map<string, HTMLElement>());
+  const [pulseRail, setPulseRail] = useState<string | null>(null);
+  const [styleRetrying, setStyleRetrying] = useState(false);
+  const [styleRetryUsed, setStyleRetryUsed] = useState(false);
+  const [cityOpen, setCityOpen] = useState(false);
+  const [politeMessage, setPoliteMessage] = useState('');
+
+  const announce = useCallback((message: string) => {
+    setPoliteMessage('');
+    window.setTimeout(() => setPoliteMessage(message), 30);
+  }, []);
+
+  const setRegion = useCallback((next: ActiveRegion | null) => {
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    flashTimer.current = null;
+    setHighlight(next);
+  }, []);
+  const flashSubject = useCallback((region: StyleRegion, label: string) => {
+    if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    setHighlight({ key: `subject:${label}`, region, label });
+    // Selecting a subject outlines its region for 1.2 s (F.1 §2).
+    flashTimer.current = window.setTimeout(() => setHighlight(null), 1200);
+  }, []);
+  useEffect(
+    () => () => {
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+    },
+    [],
+  );
+
+  // Style work can outlive the job (a style retry, a late rail): keep re-reading
+  // the capture every 1.5 s until every section and rail is terminal (R-16c).
+  const stylePending = Boolean(capture) && !state.jobActive && styleWorkPending(style);
+  const stylePolls = useRef(0);
+  useEffect(() => {
+    if (!stylePending) {
+      stylePolls.current = 0;
+      return;
+    }
+    if (stylePolls.current >= STYLE_POLL_MAX) return;
+    const t = window.setTimeout(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      stylePolls.current += 1;
+      void load();
+    }, STYLE_POLL_MS);
+    return () => window.clearTimeout(t);
+  }, [stylePending, capture, load]);
+
+  const retryStyle = async () => {
+    setStyleRetrying(true);
+    try {
+      await api.send('POST', `/v1/captures/${encodeURIComponent(captureId)}/style/retry`, {
+        idempotencyKey: newIdempotencyKey(),
+      });
+      setStyleRetryUsed(true);
+      announce(STYLE_COPY['style.reading']);
+      await load();
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === 'retry_used' || err.status === 409))
+        setStyleRetryUsed(true);
+      toast.show({
+        message: err instanceof ApiError ? err.message : 'That didn’t work. Try again.',
+      });
+    } finally {
+      setStyleRetrying(false);
+    }
+  };
+
+  const showMoreLikeThis = (subjectId: string) => {
+    const rail = style?.rails?.find(
+      (r) => r.kind === 'more_like_this' && r.subject_id === subjectId,
+    );
+    const el = rail ? railRefs.current.get(rail.key) : null;
+    if (!rail || !el) return;
+    const reduce =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    el.focus({ preventScroll: true });
+    setPulseRail(rail.key);
+    window.setTimeout(() => setPulseRail((k) => (k === rail.key ? null : k)), 1000);
+  };
+
+  const railCards = useMemo(() => {
+    const map = new Map<string, StyledCapture['recommendations']>();
+    for (const rail of style?.rails ?? []) map.set(rail.key, applyOverrides(rail.cards, overrides));
+    return map;
+  }, [style?.rails, overrides]);
+
   if (loadError && !capture) {
     if (loadError.status === 404) {
       return (
@@ -212,7 +331,20 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
 
   const imageUrl = capture?.image?.url ?? preview ?? null;
   const analysis = capture?.analysis ?? null;
-  const cards = applyOverrides(capture?.recommendations ?? [], overrides);
+  const rails = style?.rails ?? null;
+  const { moreLikeThis, crossDomain } = splitRails(rails ?? []);
+  const cards = rails
+    ? crossDomain.flatMap((r) => railCards.get(r.key) ?? [])
+    : applyOverrides(capture?.recommendations ?? [], overrides);
+  const experimental = style?.experimental ?? null;
+  const styleState = styleCardState(style);
+  const railSubjects = new Set(
+    moreLikeThis.map((r) => r.subject_id).filter((x): x is string => Boolean(x)),
+  );
+  const crossRunning = crossDomain.some((r) => isActiveStatus(r.status));
+  const crossMessages = crossDomain
+    .map((r) => ({ rail: r, message: railEmptyMessage({ ...r, cards: railCards.get(r.key) ?? [] }) }))
+    .filter((x): x is { rail: typeof x.rail; message: string } => Boolean(x.message));
   const available = CATEGORY_ORDER.filter((c) => capture?.available_categories.includes(c));
   const filtered = category ? cards.filter((c) => c.category === category) : cards;
   const visible =
@@ -251,7 +383,14 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
     !state.stillLoading &&
     !state.jobActive &&
     state.phase === 'results';
-  const nothingFound = settled && cards.length === 0;
+  // With style rails, "nothing found" only when no rail has cards and none says why it is empty.
+  const nothingFound =
+    settled &&
+    cards.length === 0 &&
+    (rails === null ||
+      (!crossRunning &&
+        crossMessages.length === 0 &&
+        moreLikeThis.every((r) => (railCards.get(r.key) ?? []).length === 0)));
 
   return (
     <div className="page capture-result">
@@ -291,11 +430,19 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
       <div className="result-head">
         <figure className="result-photo">
           {imageUrl ? (
-            <img
-              src={imageUrl}
-              alt={capture?.image?.alt || 'Your photo'}
-              className="result-photo__img"
-            />
+            <div className="result-photo__frame">
+              <img
+                ref={photoRef}
+                src={imageUrl}
+                alt={capture?.image?.alt || 'Your photo'}
+                className="result-photo__img"
+              />
+              <RegionHighlight
+                imageRef={photoRef}
+                active={highlight}
+                onClear={() => setRegion(null)}
+              />
+            </div>
           ) : (
             <div className="result-photo__img result-photo__img--empty" aria-hidden="true" />
           )}
@@ -350,6 +497,19 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
                   ))}
                 </ul>
               )}
+              <StyleReadingCard
+                state={styleState}
+                experimental={experimental}
+                active={highlight}
+                onHighlight={setRegion}
+                onFlashSubject={flashSubject}
+                onMoreLikeThis={showMoreLikeThis}
+                railSubjects={railSubjects}
+                onRetry={() => void retryStyle()}
+                retrying={styleRetrying}
+                retryUsed={styleRetryUsed}
+                onAnnounce={announce}
+              />
             </>
           )}
           {capture?.is_example && <p className="example-label">Example result</p>}
@@ -378,10 +538,34 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
         </div>
       </div>
 
+      <p className="visually-hidden" aria-live="polite">
+        {politeMessage}
+      </p>
+
+      {moreLikeThis.map((rail, i) => (
+        <StyleRail
+          key={rail.key}
+          ref={(el) => {
+            if (el) railRefs.current.set(rail.key, el);
+            else railRefs.current.delete(rail.key);
+          }}
+          rail={rail}
+          cards={railCards.get(rail.key) ?? []}
+          captureId={captureId}
+          caption={i === 0 && experimental ? STYLE_COPY['experimental.rail_caption'] : null}
+          pulse={pulseRail === rail.key}
+          onSave={(c, el) => openSave(cardToTarget(c), el)}
+          onAddCity={() => setCityOpen(true)}
+        />
+      ))}
+
       <section className="result-grid" aria-labelledby="discoveries-heading">
         <h2 id="discoveries-heading" className="section-title">
           Discoveries
         </h2>
+        {rails && experimental && crossDomain.length > 0 && (
+          <p className="style-rail__caption">{STYLE_COPY['experimental.rail_caption']}</p>
+        )}
         {available.length > 0 && (
           <FilterRow
             label="Filter discoveries"
@@ -396,6 +580,7 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
               <li key={card.id}>
                 <DiscoveryCard
                   card={card}
+                  reason={card.reason ?? undefined}
                   href={`/items/${card.id}?from=capture&capture=${captureId}${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}${via}`}
                   onSave={(c, el) => openSave(cardToTarget(c), el)}
                 />
@@ -403,7 +588,29 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
             ))}
           </CardGrid>
         )}
-        {(processing || state.stillLoading) && <SkeletonGrid count={processing ? 4 : 2} />}
+        {(processing ||
+          state.stillLoading ||
+          (rails !== null && crossRunning && visible.length === 0)) && (
+          <SkeletonGrid count={processing ? 4 : 2} />
+        )}
+        {!processing &&
+          crossMessages.map(({ rail, message }) => (
+            <div key={rail.key} className="style-rail__empty" role="status">
+              <p>
+                <span className="style-rail__empty-label">{rail.title}: </span>
+                {message}
+              </p>
+              {needsCity(message) && (
+                <button
+                  type="button"
+                  className="button button--outline button--small"
+                  onClick={() => setCityOpen(true)}
+                >
+                  {STYLE_COPY['style.add_city']}
+                </button>
+              )}
+            </div>
+          ))}
         {nothingFound && (
           <div className="empty-state empty-state--inline" role="status">
             <p className="empty-state__title">Nothing strong enough to suggest from this photo.</p>
@@ -485,6 +692,14 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
           )}
         </Disclosure>
       )}
+      <CitySheet
+        open={cityOpen}
+        onClose={() => setCityOpen(false)}
+        onSaved={() => {
+          setCityOpen(false);
+          toast.show({ message: 'City saved' });
+        }}
+      />
     </div>
   );
 }

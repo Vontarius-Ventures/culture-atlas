@@ -1,0 +1,574 @@
+/*
+ * Style reading + style rails (prp/2026-10-23-style-analysis F.1/F.2).
+ * Tokens only (styles/tokens.css): ivory canvas, olive actions, Georgia
+ * headings, 160–220 ms motion, no shimmer, Reduce Motion renders instantly.
+ */
+
+/* ---- Photo with evidence regions -------------------------------------------------- */
+
+.result-photo__frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-image);
+}
+
+.result-photo__frame .result-photo__img {
+  display: block;
+}
+
+.region-highlight {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  animation: style-fade-in 180ms ease both;
+}
+
+.region-highlight__box {
+  position: absolute;
+  border: 2px solid var(--canvas);
+  border-radius: 6px;
+  /* 1 px olive inner line; everything outside dims to 40% black. */
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 9999px rgb(0 0 0 / 0.4);
+  pointer-events: none;
+}
+
+/* ---- Experimental badge + note ------------------------------------------------------ */
+
+.experimental-note {
+  position: relative;
+  display: inline-flex;
+}
+
+.experimental-note__badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--quiet);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.experimental-note__badge:hover {
+  background: var(--line);
+}
+
+.experimental-note__badge:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.experimental-note__popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: min(300px, calc(100vw - 2 * var(--gutter)));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgb(37 40 35 / 0.12);
+}
+
+.experimental-note__popover--start {
+  left: 0;
+}
+
+.experimental-note__popover--end {
+  right: 0;
+}
+
+.experimental-note__popover[hidden] {
+  display: none;
+}
+
+.detail__experimental {
+  margin: var(--space-3) 0;
+}
+
+/* ---- Style reading card ------------------------------------------------------------- */
+
+.style-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.style-card > .button--text {
+  align-self: flex-start;
+  padding-left: 0;
+}
+
+.style-card__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.style-card__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+.style-card__summary {
+  margin: 0;
+  font-size: 16px;
+}
+
+.style-card__subject {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.style-card__subjects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.style-card__caption,
+.style-card__mood,
+.style-card__links,
+.style-card__brand {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.style-card__mood {
+  color: var(--ink);
+}
+
+.style-card__brand .reference-source {
+  display: block;
+}
+
+.style-card__message {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.style-card__message p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.style-card__skeleton {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.style-skeleton-pill {
+  width: 96px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--quiet);
+  background: var(--quiet);
+}
+
+/* Aesthetic chips: solid border = asserted, dashed + "Resembles …" = resemblance (R-17). */
+
+.style-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.style-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  max-width: 100%;
+  border: 1.5px solid var(--accent);
+  border-radius: 999px;
+  background: var(--canvas);
+  transition:
+    border-color var(--transition-standard) ease,
+    background-color var(--transition-standard) ease;
+}
+
+/* Keep an open chip menu above the following chips (each chip is its own stacking context). */
+.style-chip {
+  position: relative;
+}
+
+.style-chip:focus-within {
+  z-index: 5;
+}
+
+.style-chip--resembles {
+  border-style: dashed;
+  border-color: var(--muted);
+}
+
+.style-chip.is-active {
+  background: var(--quiet);
+}
+
+.style-chip__label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  min-width: 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.25;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+button.style-chip__label {
+  cursor: pointer;
+}
+
+button.style-chip__label:focus-visible,
+.style-locate:focus-visible,
+.style-palette__button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.style-chip__menu {
+  display: inline-flex;
+  margin: 0 4px 0 -8px;
+}
+
+.style-chip__menu .icon-button {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+}
+
+/* Palette: measured colors only; circles sized by share, names below. */
+
+.style-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.style-palette__button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.style-palette__dot {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgb(37 40 35 / 0.12);
+}
+
+.style-palette__dot--skeleton {
+  background: var(--quiet);
+  box-shadow: none;
+}
+
+.style-palette__name {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* Details: first three rows, then "Show all details". */
+
+.style-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.style-details__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.style-details__group {
+  margin-top: var(--space-2);
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.style-details__text {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 15px;
+}
+
+.style-details__text--resembles {
+  color: var(--muted);
+}
+
+.style-locate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.style-locate:hover,
+.style-locate[aria-pressed='true'] {
+  background: var(--quiet);
+  color: var(--accent);
+}
+
+/* ---- Rails --------------------------------------------------------------------------- */
+
+.style-rail {
+  margin: 0 0 var(--space-12);
+  scroll-margin-top: calc(var(--header-height) + var(--space-4));
+  outline: none;
+}
+
+.style-rail__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-4);
+  border-radius: 8px;
+}
+
+.style-rail--pulse .style-rail__head {
+  animation: style-pulse 1s ease;
+}
+
+.style-rail__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.style-rail__subtitle {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.style-rail__caption,
+.style-rail__status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.result-grid > .style-rail__caption {
+  margin-bottom: var(--space-4);
+}
+
+.style-rail__status {
+  margin-top: var(--space-3);
+}
+
+.style-rail__cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-6) var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.style-rail__empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.style-rail__empty p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.style-rail__empty-label {
+  color: var(--ink);
+}
+
+.card__reason {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (max-width: 1023px) {
+  .style-rail__cards {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Mobile: the More-like-this rail scrolls sideways inside itself, never the page. */
+@media (max-width: 767px) {
+  .style-rail__cards {
+    display: flex;
+    gap: var(--space-3);
+    margin: 0 calc(-1 * var(--gutter));
+    padding: 0 var(--gutter) var(--space-2);
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+  }
+  .style-rail__card {
+    flex: 0 0 min(44vw, 200px);
+    scroll-snap-align: start;
+  }
+  .style-rail__title {
+    font-size: 22px;
+  }
+}
+
+/* ---- "Why this?" style attributes ------------------------------------------------------ */
+
+.why-attributes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: 0;
+  list-style: none;
+}
+
+.why-attributes li {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 14px;
+}
+
+.why-attributes__palette {
+  color: var(--muted);
+}
+
+.why-experimental {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.city-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ---- Motion -------------------------------------------------------------------------- */
+
+.is-retracted {
+  animation: style-retract 200ms ease forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .style-enter {
+    animation: style-enter 220ms ease both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .region-highlight,
+  .style-rail--pulse .style-rail__head {
+    animation: none;
+  }
+  .is-retracted {
+    animation-duration: 1ms;
+  }
+}
+
+@keyframes style-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes style-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes style-retract {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes style-pulse {
+  0%,
+  100% {
+    background: transparent;
+  }
+  35% {
+    background: var(--quiet);
+  }
+}

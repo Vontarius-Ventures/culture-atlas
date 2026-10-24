@@ -10,6 +10,7 @@ import { hostOf } from '@/lib/client/format';
 import { useJob } from '@/lib/client/jobs';
 import { cardToTarget, useSave } from '@/lib/client/save';
 import { applyOverrides, useItemOverrides } from '@/lib/client/store';
+import { StyledItemResponse, type StyledItem } from '@/lib/client/style';
 import { Conveyor } from '../Conveyor';
 import { CardGrid, DiscoveryCard, SkeletonGrid, TextArt } from '../DiscoveryCard';
 import { Icon } from '../Icon';
@@ -73,14 +74,14 @@ export function ItemView({ itemId }: { itemId: string }) {
   const { openSave, hide } = useSave();
   const toast = useToast();
   const overrides = useItemOverrides();
-  const [data, setData] = useState<ItemDetailResponse | null>(null);
+  const [data, setData] = useState<StyledItem | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [relatedJob, setRelatedJob] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await api.request('getItem', {
+      const res = await api.requestAs('getItem', StyledItemResponse, {
         params: { id: itemId },
         query: {
           recommendation_id: rec,
@@ -258,14 +259,30 @@ export function ItemView({ itemId }: { itemId: string }) {
                 </ul>
               </Disclosure>
             )}
-            {whyThis && (
+            {(whyThis || data.style_match || data.experimental_line) && (
               <Disclosure label="Why this?">
-                {whyThis.text ? (
+                {whyThis?.text ? (
                   <p>{whyThis.text}</p>
-                ) : (
+                ) : whyThis && whyThis.sources.length > 0 ? (
                   <p className="muted">Where this comes from:</p>
+                ) : null}
+                {data.style_match && data.style_match.attributes.length > 0 && (
+                  // Style rails: the attributes that connected this card (non-interactive).
+                  <ul className="why-attributes" aria-label="Style that connected it">
+                    {data.style_match.attributes.map((a) => (
+                      <li key={a}>{a}</li>
+                    ))}
+                    {data.style_match.palette.map((p) => (
+                      <li key={`palette:${p}`} className="why-attributes__palette">
+                        {p}
+                      </li>
+                    ))}
+                  </ul>
                 )}
-                {whyThis.sources.length > 0 && (
+                {data.experimental_line && (
+                  <p className="why-experimental">{data.experimental_line}</p>
+                )}
+                {whyThis && whyThis.sources.length > 0 && (
                   <ul className="source-list">
                     {whyThis.sources.map((s) => (
                       <li key={s.id}>
