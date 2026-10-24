@@ -115,15 +115,45 @@ object CapabilityGate {
             capabilities?.flags?.get("camera_video") ?: true,
         )
 
-    /** Photo Explore: server `availability.analysis`. Capture still works when this is off. */
-    data class PhotoAnalysis(val available: Boolean, val message: String)
+    /**
+     * Photo Explore: server `availability.analysis`. Capture still works when this is off.
+     * [experimental] is true when readings run on an unqualified role (production experimental
+     * mode or a demo override); [label] and [note] are then shown with the capture button.
+     */
+    data class PhotoAnalysis(
+        val available: Boolean,
+        val message: String,
+        val experimental: Boolean = false,
+        val label: String? = null,
+        val note: String? = null,
+    )
+
+    const val EXPERIMENTAL_BADGE = "Experimental"
+    const val EXPERIMENTAL_NOTE = "Photo and video readings are experimental. They can miss or misread details."
+    const val PAUSED_MESSAGE = "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back."
 
     fun photoAnalysis(capabilities: Capabilities?): PhotoAnalysis {
         if (capabilities == null) return PhotoAnalysis(true, "")
         val analysis = capabilities.availability["analysis"]
         val flaggedOff = capabilities.flags["concentrate_analysis_enabled"] == false
         if (analysis?.available == false || (analysis == null && flaggedOff)) {
-            return PhotoAnalysis(false, photoAnalysisMessage(analysis?.reasons.orEmpty()))
+            // The experimental kill switch pauses readings; the server's own words win when sent.
+            val message = if (analysis?.reason == "paused") {
+                analysis.note?.takeIf { it.isNotBlank() } ?: PAUSED_MESSAGE
+            } else {
+                photoAnalysisMessage(analysis?.reasons.orEmpty())
+            }
+            return PhotoAnalysis(false, message)
+        }
+        if (analysis?.experimental == true) {
+            // The badge text is always "Experimental" (older servers sent "Experimental reading", no note).
+            return PhotoAnalysis(
+                available = true,
+                message = "",
+                experimental = true,
+                label = EXPERIMENTAL_BADGE,
+                note = analysis.note?.takeIf { it.isNotBlank() } ?: EXPERIMENTAL_NOTE,
+            )
         }
         return PhotoAnalysis(true, "")
     }

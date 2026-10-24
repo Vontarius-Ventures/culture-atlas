@@ -68,12 +68,18 @@ data class AnalysisResultResponse(
     @SerialName("waiting_reason") val waitingReason: String? = null,
     @SerialName("error_code") val errorCode: String? = null,
     val result: JsonObject? = null,
+    /** Set when the reading ran on an experimental (unqualified) role; null when qualified. */
+    val experimental: ExperimentalLabel? = null,
 )
 
 @Serializable
 data class CaptureAnalysisSummary(
     val title: String? = null,
     val interpretation: String? = null,
+    /** Per-section status (`observations`, `style`, `wear`, …): pending | running | ready | empty | failed | held. */
+    val sections: Map<String, String> = emptyMap(),
+    /** Experimental label; null when the reading ran on qualified roles. */
+    val experimental: ExperimentalLabel? = null,
 )
 
 /**
@@ -88,6 +94,10 @@ data class CaptureResultResponse(
     val analysis: CaptureAnalysisSummary? = null,
     val references: List<ItemReference> = emptyList(),
     val recommendations: List<DiscoveryCard> = emptyList(),
+    /** Style reading (design E.2); null on older analyses and until `sections.style == "ready"`. */
+    @SerialName("style_reading") val styleReading: StyleReading? = null,
+    /** Display-ordered rails; null on older analyses (then [recommendations] is the only row). */
+    val rails: List<StyleRail>? = null,
     @SerialName("discovery_item_id") val discoveryItemId: String? = null,
     @SerialName("job_id") val jobId: String? = null,
 )

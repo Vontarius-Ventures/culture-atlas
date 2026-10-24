@@ -37,6 +37,10 @@ data class DiscoveryCard(
     @SerialName("saved_item_id") val savedItemId: String? = null,
     @SerialName("recommendation_id") val recommendationId: String? = null,
     @SerialName("evidence_available") val evidenceAvailable: Boolean,
+    /** Why this card: server text built from real overlap (≤ 90 chars); null if none. */
+    val reason: String? = null,
+    /** Which style attributes connected a capture card; null outside capture rails. */
+    @SerialName("style_match") val styleMatch: StyleMatch? = null,
 )
 
 @Serializable
@@ -144,6 +148,9 @@ data class ItemDetailResponse(
     @SerialName("related_job_id") val relatedJobId: String? = null,
     @SerialName("collection_ids") val collectionIds: List<String> = emptyList(),
     @SerialName("capture_id") val captureId: String? = null,
+    @SerialName("style_match") val styleMatch: StyleMatch? = null,
+    /** "Suggested from an experimental reading of your photo." when the card came from one. */
+    @SerialName("experimental_line") val experimentalLine: String? = null,
 )
 
 /** POST /v1/items/{id}/discoveries — 202, explicit and bounded. */

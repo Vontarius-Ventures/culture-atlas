@@ -2,6 +2,7 @@ package com.cultureatlas.capture.core.result
 
 import com.cultureatlas.capture.core.contract.AnalysisResultResponse
 import com.cultureatlas.capture.core.contract.AnalysisState
+import com.cultureatlas.capture.core.contract.CaptureResultResponse
 import com.cultureatlas.capture.core.contract.ItemReference
 import com.cultureatlas.capture.core.contract.LibraryEntry
 import kotlinx.serialization.json.JsonArray
@@ -22,6 +23,15 @@ object AnalysisResultReader {
     const val MAX_SEEN = 12
 
     fun read(response: AnalysisResultResponse): AnalysisReading = read(response.result)
+
+    /**
+     * The style reading of a compiled capture, built only from the server's `display` strings
+     * (see [StyleReader]); null for an older analysis or before the reading lands.
+     */
+    fun readStyle(capture: CaptureResultResponse): StylePresentation? = StyleReader.read(capture)
+
+    /** The compact `result.style` preview of the analysis screen (design E.3). */
+    fun readStylePreview(response: AnalysisResultResponse): StylePreviewPresentation? = StyleReader.preview(response.result)
 
     fun read(result: JsonObject?): AnalysisReading {
         if (result == null) return AnalysisReading.Nothing

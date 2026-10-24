@@ -359,7 +359,7 @@ private fun DriftingCards(
 }
 
 @Composable
-private fun prefersReducedMotion(): Boolean {
+internal fun prefersReducedMotion(): Boolean {
     val context = LocalContext.current
     return remember(context) {
         Settings.Global.getFloat(
@@ -597,8 +597,33 @@ fun FeedCardDetail(
                 detail?.detail?.let { Text(it, color = AtlasColors.muted) }
                 if (shownCard.isExample) Text("Example result", color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
                 detail?.description?.let { Text(it) }
-                (detail?.reason ?: detail?.whyThis?.text)?.let {
+                (detail?.reason ?: detail?.whyThis?.text ?: shownCard.reason)?.let {
                     Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                }
+                // Capture cards: the style attributes that connected them (not interactive) and the
+                // experimental line (design D.4 §3, F.1 §6). Feed tiles themselves stay unbadged.
+                val styleMatch = detail?.styleMatch ?: shownCard.styleMatch
+                styleMatch?.attributes?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }?.let { attributes ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        attributes.take(4).forEach { name ->
+                            Text(
+                                name,
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(AtlasColors.quiet)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        }
+                    }
+                }
+                val experimentalLine = detail?.experimentalLine
+                    ?: if (styleMatch?.experimental == true) com.cultureatlas.capture.core.result.StyleCopy.WHY_LINE else null
+                experimentalLine?.let {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        ExperimentalTag()
+                        Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
                 detail?.destinationUrl?.let { url ->
                     TextButton(onClick = { uriHandler.openUri(url) }) { Text("Open source") }

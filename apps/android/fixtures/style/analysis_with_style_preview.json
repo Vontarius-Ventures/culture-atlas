@@ -1,0 +1,33 @@
+{
+  "_comment": "Android test fixture for GET /v2/media/{id}/analysis/{analysisId} with the E.3 style preview and the top-level experimental label.",
+  "analysis_id": "7f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b",
+  "job_id": "j1",
+  "state": "complete",
+  "reused": true,
+  "result_url": "/captures/8f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b",
+  "capture_id": "8f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b",
+  "waiting_reason": null,
+  "error_code": null,
+  "experimental": { "label": "Experimental", "note": "Photo and video readings are experimental. They can miss or misread details." },
+  "result": {
+    "mode": "photo",
+    "note": null,
+    "frames": [ { "frame_id": null, "timestamp_ms": null, "state": "complete" } ],
+    "candidates": [
+      { "name": "Canvas work jacket", "type": "object", "relation": "depicted", "cited_frames": [0] },
+      { "name": "Workwear", "type": "style", "relation": "resembles", "cited_frames": [0] }
+    ],
+    "reading": "quick",
+    "style": {
+      "status": "ready",
+      "summary": "A heavyweight canvas work jacket with a rugged, utilitarian look.",
+      "aesthetics": [
+        { "subject_id": "s1", "display": "Workwear", "wording": "asserted" },
+        { "subject_id": "s1", "display": "Resembles Americana", "wording": "resembles" },
+        { "subject_id": "s2", "display": "", "wording": "resembles" }
+      ],
+      "swatches": ["#7B5A3A", "#2B2A28", "#zzzzzz"],
+      "frame_index": null
+    }
+  }
+}

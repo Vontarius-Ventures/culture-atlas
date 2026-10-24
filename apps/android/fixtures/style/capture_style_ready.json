@@ -1,0 +1,131 @@
+{
+  "_comment": "Android test fixture for GET /v1/captures/{id} with a style reading and rails (design prp/2026-10-23-style-analysis/design.md E.2). Hand-written to the design contract until fixtures/native-contract/messages.json#capture_style lands; not a recorded server or Qloo response. Edge cases on purpose: a held claim, a retracted path, a resembles claim with no display, a contradictory strength band, an invalid hex, and an unknown field.",
+  "id": "8f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b",
+  "source": "photo",
+  "status": "ready",
+  "analysis": {
+    "id": "a1",
+    "version": 1,
+    "title": "Canvas work jacket",
+    "interpretation": "A heavyweight canvas work jacket photographed on a wooden chair.",
+    "sections": { "observations": "ready", "references": "ready", "style": "ready", "wear": "ready", "play": "running", "watch": "ready", "eat": "empty" },
+    "question": null,
+    "warnings": [],
+    "created_at": "2026-10-23T10:00:00Z",
+    "experimental": { "label": "Experimental", "note": "Photo and video readings are experimental. They can miss or misread details." },
+    "a_field_this_client_does_not_know": { "x": 1 }
+  },
+  "style_reading": {
+    "version": "atlas_style_reading_v1",
+    "summary": "A heavyweight canvas work jacket with a rugged, utilitarian look.",
+    "swatches": [
+      { "index": 0, "hex": "#7B5A3A", "share": 0.31 },
+      { "index": 1, "hex": "#C9B99A", "share": 0.22 },
+      { "index": 3, "hex": "#2B2A28", "share": 0.12 },
+      { "index": 4, "hex": "not-a-colour", "share": 0.05 }
+    ],
+    "subjects": [
+      {
+        "id": "s1",
+        "category": "fashion",
+        "label": "Canvas work jacket",
+        "region": { "x": 0.18, "y": 0.10, "w": 0.60, "h": 0.78 },
+        "aesthetics": [
+          { "name": "Workwear", "wording": "asserted", "display": "Workwear", "strength": "clear", "region": { "x": 0.2, "y": 0.1, "w": 0.5, "h": 0.3 }, "features": ["duck canvas shell", "corduroy collar"] },
+          { "name": "Americana", "wording": "resembles", "display": "Resembles Americana", "strength": "clear", "region": null, "features": ["blanket lining"] },
+          { "name": "Streetwear", "wording": "resembles", "strength": "possible" },
+          { "name": "Skate", "wording": "resembles", "display": "Resembles skate", "strength": "possible", "held": true }
+        ],
+        "era": { "name": "1950s–1970s American", "display": "Suggests the 1950s–1970s", "wording": "resembles", "strength": null },
+        "lineage": [ { "name": "American heritage workwear", "display": "Resembles American heritage workwear", "wording": "resembles" } ],
+        "materials": [ { "name": "duck canvas", "texture": "stiff, matte, slightly faded", "wording": "asserted", "display": "Duck canvas", "strength": "likely", "region": { "x": 0.3, "y": 0.4, "w": 0.2, "h": 0.2 } } ],
+        "construction": [
+          { "name": "boxy, hip-length cut", "kind": "silhouette", "wording": "asserted", "display": "Boxy, hip-length cut", "region": null },
+          { "name": "triple-stitched seams", "kind": "technique", "wording": "resembles", "display": "Looks like triple-stitched seams", "region": null }
+        ],
+        "palette": [
+          { "swatch": 0, "name": "tobacco brown", "hex": "#7B5A3A", "display": "Tobacco brown" },
+          { "swatch": 3, "name": "faded black", "hex": "#2B2A28", "display": "Faded black" },
+          { "swatch": 4, "name": "mystery", "display": "Mystery" }
+        ],
+        "mood": [ { "name": "rugged", "display": "Feels rugged" }, { "name": "utilitarian", "display": "Feels utilitarian" }, { "name": "austere", "display": "Feels austere" } ],
+        "details": [ { "text": "Metal snap closures at the cuffs", "display": "Metal snap closures at the cuffs", "wording": "asserted", "region": { "x": 0.6, "y": 0.7, "w": 0.1, "h": 0.08 } } ],
+        "brand": null,
+        "qloo_links": ["Filson", "Patagonia", "Pendleton"],
+        "rail": "more_like_this:s1"
+      },
+      {
+        "id": "s2",
+        "category": "interior",
+        "label": "Wooden chair",
+        "region": { "x": 0.05, "y": 0.55, "w": 0.4, "h": 0.42 },
+        "aesthetics": [ { "name": "Mid-century modern", "wording": "resembles", "display": "Resembles mid-century modern", "strength": "likely" } ],
+        "era": null,
+        "lineage": [],
+        "materials": [ { "name": "walnut", "wording": "resembles", "display": "Looks like walnut" } ],
+        "construction": [],
+        "palette": [ { "swatch": 1, "name": "oat", "display": "Oat" } ],
+        "mood": [],
+        "details": [],
+        "brand": null,
+        "qloo_links": [],
+        "rail": "more_like_this:s2"
+      }
+    ],
+    "retracted": ["subjects[0].mood[2]"]
+  },
+  "rails": [
+    {
+      "key": "more_like_this:s1",
+      "kind": "more_like_this",
+      "title": "More like this",
+      "subtitle": "Workwear · duck canvas",
+      "subject_id": "s1",
+      "status": "ready",
+      "empty_message": null,
+      "cards": [
+        { "id": "m1", "kind": "qloo_entity", "category": "wear", "title": "Filson", "subtitle": "Outdoor outfitter", "is_example": false, "saved": false, "evidence_available": true,
+          "reason": "Because of the workwear cut and duck canvas",
+          "style_match": { "subject_id": "s1", "attributes": ["Workwear", "duck canvas"], "palette": ["tobacco brown"], "via": null, "experimental": true } },
+        { "id": "m2", "kind": "qloo_entity", "category": "wear", "title": "Dickies", "subtitle": "Workwear brand", "is_example": false, "saved": false, "evidence_available": true,
+          "reason": "Because of the workwear cut and boxy fit",
+          "style_match": { "subject_id": "s1", "attributes": ["Workwear"], "palette": [], "via": null, "experimental": true } },
+        { "id": "m3", "kind": "qloo_entity", "category": "wear", "title": "Red Wing Shoes", "subtitle": "Boots", "is_example": false, "saved": false, "evidence_available": true,
+          "reason": "For the Americana look your photo resembles",
+          "style_match": { "subject_id": "s1", "attributes": ["Americana"], "palette": [], "via": null, "experimental": true } }
+      ]
+    },
+    {
+      "key": "more_like_this:s2",
+      "kind": "more_like_this",
+      "title": "More like this",
+      "subtitle": "Mid-century modern",
+      "subject_id": "s2",
+      "status": "empty",
+      "empty_message": "Add a city to see places with this style.",
+      "cards": []
+    },
+    {
+      "key": "wear", "kind": "cross_domain", "title": "Wear", "subtitle": null, "subject_id": null, "status": "ready", "empty_message": null,
+      "cards": [
+        { "id": "w1", "kind": "qloo_entity", "category": "wear", "title": "Carhartt WIP", "subtitle": "Streetwear label", "is_example": false, "saved": false, "evidence_available": true,
+          "reason": "Shares a taste with Filson, from your workwear rail",
+          "style_match": { "subject_id": "s1", "attributes": ["Workwear"], "palette": [], "via": "Filson", "experimental": true } }
+      ]
+    },
+    { "key": "play", "kind": "cross_domain", "title": "Play", "subtitle": null, "subject_id": null, "status": "running", "empty_message": null, "cards": [] },
+    {
+      "key": "watch", "kind": "cross_domain", "title": "Watch", "subtitle": null, "subject_id": null, "status": "ready", "empty_message": null,
+      "cards": [
+        { "id": "t1", "kind": "qloo_entity", "category": "watch", "title": "Paris, Texas", "subtitle": "Wim Wenders", "is_example": false, "saved": false, "evidence_available": true,
+          "reason": "Shares a taste with Filson, from your workwear rail", "style_match": null }
+      ]
+    }
+  ],
+  "references": [],
+  "recommendations": [
+    { "id": "w1", "kind": "qloo_entity", "category": "wear", "title": "Carhartt WIP", "is_example": false, "saved": false, "evidence_available": true }
+  ],
+  "available_categories": ["wear", "play", "watch"],
+  "job_id": "j1"
+}
