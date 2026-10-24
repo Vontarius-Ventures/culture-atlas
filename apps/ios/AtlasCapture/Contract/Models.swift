@@ -500,6 +500,15 @@ public struct Capabilities: Codable, Sendable, Equatable {
   public struct Availability: Codable, Sendable, Equatable {
     public var available: Bool
     public var reasons: [String]
+    /// Production experimental mode (design D.3): the roles run unqualified
+    /// and every client shows the label. All optional on the wire.
+    public var experimental: Bool? = nil
+    public var label: String? = nil
+    public var note: String? = nil
+    public var reason: String? = nil
+    public var message: String? = nil
+
+    enum CodingKeys: String, CodingKey { case available, reasons, experimental, label, note, reason, message }
   }
 
   public var contractVersion: String
@@ -513,6 +522,19 @@ public struct Capabilities: Codable, Sendable, Equatable {
   }
 
   public func flag(_ name: String) -> Bool { flags[name] == true }
+}
+
+extension Capabilities.Availability {
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    available = try c.decode(Bool.self, forKey: .available)
+    reasons = (try? c.decodeIfPresent([String].self, forKey: .reasons)) ?? []
+    experimental = (try? c.decodeIfPresent(Bool.self, forKey: .experimental)) ?? nil
+    label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? nil
+    note = (try? c.decodeIfPresent(String.self, forKey: .note)) ?? nil
+    reason = (try? c.decodeIfPresent(String.self, forKey: .reason)) ?? nil
+    message = (try? c.decodeIfPresent(String.self, forKey: .message)) ?? nil
+  }
 }
 
 public struct ServerErrorBody: Codable, Sendable, Equatable {

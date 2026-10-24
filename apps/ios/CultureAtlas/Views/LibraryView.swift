@@ -363,6 +363,10 @@ struct MediaDetailView: View {
         Text("We look for what's in the photo and use it to grow your feed. Nothing is invented.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
+        if analysis.experimental {
+          ExperimentalNotice(label: ExperimentalLabel(
+            label: analysis.label ?? StyleCopy.experimentalBadge, note: analysis.note ?? StyleCopy.experimentalNote))
+        }
       }
     }
   }
@@ -419,13 +423,29 @@ struct AnalysisResultView: View {
   @State private var media: MediaLibraryItem?
   @State private var failed = false
   @State private var revealed = false
+  @State private var styleModel: CaptureStyleViewModel?
+  @State private var styleHighlight: StyleRegion?
 
   private var isAudio: Bool { route.kind == .audio }
 
+  /// The label for this reading: the analysis's own, else the server's
+  /// capabilities (production experimental mode).
+  private var experimentalLabel: ExperimentalLabel? {
+    if isAudio { return nil }
+    if let label = result?.experimental { return label }
+    let gate = CapabilityGate.photoAnalysis(controller.capabilities)
+    guard gate.experimental else { return nil }
+    return ExperimentalLabel(label: gate.label ?? StyleCopy.experimentalBadge, note: gate.note ?? StyleCopy.experimentalNote)
+  }
+
   var body: some View {
+    ScrollViewReader { reader in
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
         header
+        if let experimentalLabel {
+          ExperimentalNotice(label: experimentalLabel)
+        }
         if let result {
           if result.stillWorking {
             AnalysisLookingBanner()
@@ -440,6 +460,13 @@ struct AnalysisResultView: View {
             musicResult(result.result ?? AnalysisResult())
           } else {
             photoResult(result.result ?? AnalysisResult())
+            if let styleModel {
+              CaptureStyleSection(
+                model: styleModel, highlight: $styleHighlight, baseURL: controller.api.baseURL,
+                scrollProxy: reader, setCity: { [api = controller.api] city in try await api.setCity(city) })
+            } else if let preview = result.result?.style {
+              StylePreviewView(preview: preview)
+            }
           }
           if result.finished {
             nextSteps
@@ -457,6 +484,7 @@ struct AnalysisResultView: View {
       .padding(20)
       .animation(AtlasMotion.spring, value: result)
     }
+    }
     .background(AtlasTheme.ivory.ignoresSafeArea())
     .navigationTitle(isAudio ? "Your music" : "Your photo")
     .navigationBarTitleDisplayMode(.inline)
@@ -464,6 +492,26 @@ struct AnalysisResultView: View {
       ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
     }
     .task { await load() }
+    .task(id: result?.captureID) { await loadStyle() }
+  }
+
+  /// Once the capture exists, load its full style reading and rails
+  /// (`GET /v1/captures/{id}`), polling every 1.5 s until terminal.
+  private func loadStyle() async {
+    guard !isAudio, let captureID = result?.captureID else { return }
+    let api = controller.api
+    let model = styleModel ?? CaptureStyleViewModel(
+      load: { try await api.capture(captureID) },
+      retry: { try await api.retryStyle(captureID: captureID) },
+      waitingReason: result?.waitingReason)
+    if styleModel == nil { styleModel = model }
+    await model.run()
+  }
+
+  private var photoAspect: Double? {
+    if let aspect = styleModel?.imageAspect { return aspect }
+    guard let w = media?.media.width, let h = media?.media.height, w > 0, h > 0 else { return nil }
+    return Double(w) / Double(h)
   }
 
   @ViewBuilder private var header: some View {
@@ -490,6 +538,9 @@ struct AnalysisResultView: View {
                       authorize: controller.api.imageAuthorizer) {
             AtlasTheme.quiet
           }
+        }
+        .overlay {
+          StyleRegionOverlay(region: styleHighlight, imageAspect: photoAspect) { styleHighlight = nil }
         }
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .shadow(color: .black.opacity(0.08), radius: 14, y: 6)

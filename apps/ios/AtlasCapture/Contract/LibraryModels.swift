@@ -31,9 +31,15 @@ public struct DiscoveryCard: Codable, Sendable, Equatable, Identifiable, Hashabl
   public var savedItemID: UUID?
   public var recommendationID: UUID?
   public var evidenceAvailable: Bool
+  /// Capture rails only (C.4): the server's reason, at most 90 characters,
+  /// built from real overlap with the style reading. Older payloads omit it.
+  public var reason: String? = nil
+  /// Capture rails only: which style attributes connected this card.
+  public var styleMatch: StyleMatch? = nil
 
   enum CodingKeys: String, CodingKey {
-    case id, kind, category, title, subtitle, image, saved
+    case id, kind, category, title, subtitle, image, saved, reason
+    case styleMatch = "style_match"
     case isExample = "is_example"
     case savedItemID = "saved_item_id"
     case recommendationID = "recommendation_id"
@@ -183,6 +189,10 @@ public struct ItemReference: Codable, Sendable, Equatable, Identifiable, Hashabl
   public var hasPage: Bool
   public var readText: String?
 
+  /// Chip text. A qualified (uncertain) reference is phrased as a
+  /// resemblance, the same as web and Android (ReferenceCopy).
+  public var displayName: String { qualified ? "Resembles \(name)" : name }
+
   enum CodingKeys: String, CodingKey {
     case id, name, type, relation, qualified
     case hasPage = "has_page"
@@ -204,9 +214,15 @@ public struct ItemDetailResponse: Codable, Sendable, Equatable {
   public var relatedJobID: UUID?
   public var collectionIDs: [UUID]
   public var captureID: UUID?
+  /// Style attributes that connected a capture-rail card (non-interactive chips).
+  public var styleMatch: StyleMatch? = nil
+  /// "Suggested from an experimental reading of your photo." when it applies.
+  public var experimentalLine: String? = nil
 
   enum CodingKeys: String, CodingKey {
     case item, description, detail, reason, references, related
+    case styleMatch = "style_match"
+    case experimentalLine = "experimental_line"
     case whyThis = "why_this"
     case destinationURL = "destination_url"
     case relatedState = "related_state"

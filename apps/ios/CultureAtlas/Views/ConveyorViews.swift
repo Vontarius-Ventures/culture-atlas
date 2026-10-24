@@ -302,6 +302,10 @@ struct SimilarConveyorRail: View {
   let cards: [DiscoveryCard]
   let baseURL: URL
   let reduceMotion: Bool
+  /// Capture rails show each card's server reason under its title.
+  var showsReason = false
+  var identifier = "similar.rail"
+  var cardPrefix = "similar.card."
   let destination: (DiscoveryCard) -> FeedCardDetail
   @StateObject private var driver = ConveyorDriver<DiscoveryCard>(laneSpeeds: [16], spacing: FeedTileMetrics.spacing)
   @StateObject private var pause = DriftPause()
@@ -311,7 +315,7 @@ struct SimilarConveyorRail: View {
   @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 
   private let tileWidth: CGFloat = 132
-  private var tileHeight: CGFloat { (tileWidth * 5 / 4 + 46).rounded(.up) }
+  private var tileHeight: CGFloat { (tileWidth * 5 / 4 + (showsReason ? 112 : 46)).rounded(.up) }
 
   var body: some View {
     Group {
@@ -325,11 +329,21 @@ struct SimilarConveyorRail: View {
         }
       } else {
         GeometryReader { geo in
+          if fitsWithoutDrift(width: geo.size.width) {
+            // Too few cards to fill the width: a looping drift would show a
+            // large gap, so they sit still in a row instead.
+            HStack(alignment: .top, spacing: FeedTileMetrics.spacing) {
+              ForEach(cards) { card in tile(card) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+          } else {
           drifting(width: geo.size.width)
             .onAppear { driver.resize(itemLength: Double(tileWidth), viewport: Double(geo.size.width)) }
             .onChange(of: geo.size.width) { _, width in
               driver.resize(itemLength: Double(tileWidth), viewport: Double(width))
             }
+          }
         }
         .frame(height: tileHeight + 20)
         .edgeFade(.horizontal, length: 20)
@@ -337,9 +351,13 @@ struct SimilarConveyorRail: View {
     }
     // Container identifier on a wrapper that keeps each card addressable.
     .accessibilityElement(children: .contain)
-    .accessibilityIdentifier("similar.rail")
+    .accessibilityIdentifier(identifier)
     .onAppear { driver.setPool(cards, fresh: []) }
     .onChange(of: cards.map(\.id)) { _, _ in driver.setPool(cards, fresh: Set(cards.map(\.id))) }
+  }
+
+  private func fitsWithoutDrift(width: CGFloat) -> Bool {
+    CGFloat(cards.count) * (tileWidth + FeedTileMetrics.spacing) + 32 <= width
   }
 
   private func drifting(width: CGFloat) -> some View {
@@ -385,11 +403,11 @@ struct SimilarConveyorRail: View {
     NavigationLink {
       destination(card)
     } label: {
-      FeedCardTile(card: card, baseURL: baseURL, captionForPosters: false)
+      FeedCardTile(card: card, baseURL: baseURL, captionForPosters: showsReason, showsReason: showsReason)
         .frame(width: tileWidth, height: tileHeight, alignment: .top)
         .contentShape(Rectangle())
     }
     .buttonStyle(.pressableCard)
-    .accessibilityIdentifier("similar.card.\(card.id.uuidString)")
+    .accessibilityIdentifier("\(cardPrefix)\(card.id.uuidString)")
   }
 }
