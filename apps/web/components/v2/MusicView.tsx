@@ -233,7 +233,11 @@ export function MusicView() {
   };
 
   const discard = () => {
-    if (draft) URL.revokeObjectURL(draft.url);
+    // Revoke only after <audio> has let go of the blob URL (no ERR_FILE_NOT_FOUND).
+    if (draft) {
+      const url = draft.url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     setDraft(null);
     setKept(null);
     setExploreNoticeText(null);
@@ -261,9 +265,9 @@ export function MusicView() {
         generation: saved.generation,
         duration_ms: saved.media.duration_ms,
       });
-      setAnnounce('Saved to your library');
-      // "Saved to your library." is already the status line above the actions.
-      setNotice('Explore is optional and does not change taste.');
+      setAnnounce('Recording kept privately on your account');
+      // The kept status line sits above the actions.
+      setNotice('Exploring is optional; it doesn’t change your picks.');
     } catch (err) {
       if (isSignedOutError(err)) {
         setNotice('Sign in to keep this recording in your library. You can still save it on this device.');
@@ -345,7 +349,10 @@ export function MusicView() {
       return;
     }
     setNotice(null);
-    if (draft) URL.revokeObjectURL(draft.url);
+    if (draft) {
+      const url = draft.url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     setDraft({
       blob: file,
       url: URL.createObjectURL(file),
@@ -389,7 +396,7 @@ export function MusicView() {
         </select>
       </label>
 
-      <div className={`camera__stage music__stage${match ? ' music__stage--compact' : ''}`}>
+      <div className={`camera__stage music__stage${match || draft ? ' music__stage--compact' : ''}`}>
         <div
           className={`music__wave${recording ? ' music__wave--live' : ''}`}
           role="img"
@@ -452,7 +459,8 @@ export function MusicView() {
         {(phase === 'review' || phase === 'explored') && draft && (
           <div className="music__review">
             <span className="music__length" data-testid="music-length">
-              {formatDuration(draft.durationMs)} recording
+              {/* Whole seconds, floored, the way the player counts them. */}
+              {formatDuration(Math.floor(draft.durationMs / 1000) * 1000)} recording
             </span>
             <audio src={draft.url} controls playsInline aria-label="Your recording" />
             {exploring && (
@@ -550,7 +558,7 @@ export function MusicView() {
           ) : (
             <>
               <p className="camera__status" role="status">
-                Saved to your library.
+                Kept privately on your account.
               </p>
               {exploreNoticeText && !match && (
                 <p className="camera__status" role="status">

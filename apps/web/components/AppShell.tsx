@@ -2,18 +2,30 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { recordRouteChange } from '@/lib/client/store';
 import { Icon } from './Icon';
 import { V2Icon, type V2IconName } from './v2/V2Icon';
 import { UploadStatusBar } from './v2/UploadStatusBar';
 import { useOnboardingGate } from './onboarding/OnboardingGate';
+import { useSession } from '@/lib/client/session';
 
 type Section = 'discover' | 'library' | 'collections' | 'plans' | null;
 
-/** Which primary destination a path belongs to (detail pages stay under their parent). */
-export function sectionFor(pathname: string): Section {
-  if (pathname === '/' || /^\/(items|captures|references)(\/|$)/.test(pathname)) return 'discover';
+/**
+ * Which primary destination a path belongs to (detail pages stay under their
+ * parent). Captures, items and references are reached from more than one
+ * place: `from=library` (or a capture/item opened from the library) keeps the
+ * Library tab lit, `from=collection` keeps Collections, `from=plan` keeps Plans.
+ */
+export function sectionFor(pathname: string, from?: string | null): Section {
+  if (/^\/(items|captures|references)(\/|$)/.test(pathname)) {
+    if (from === 'library' || from === 'upload') return 'library';
+    if (from === 'collection' || from === 'later') return 'collections';
+    if (from === 'plan') return 'plans';
+    return 'discover';
+  }
+  if (pathname === '/') return 'discover';
   if (/^\/(library|uploads)(\/|$)/.test(pathname)) return 'library';
   if (/^\/collections(\/|$)/.test(pathname)) return 'collections';
   if (/^\/plans(\/|$)/.test(pathname)) return 'plans';
@@ -51,6 +63,24 @@ function isV2Width(pathname: string) {
   );
 }
 
+const noSubscribe = () => () => undefined;
+/**
+ * The `from` query parameter, read from location on every render (a route
+ * change re-renders the shell). Avoids useSearchParams, which would force a
+ * Suspense boundary around the whole shell; the server snapshot is null.
+ */
+function useFromParam(): string | null {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => {
+      const q = new URLSearchParams(window.location.search);
+      // `via` carries the original section through a chain (library photo -> result -> item).
+      return q.get('via') ?? q.get('from');
+    },
+    () => null,
+  );
+}
+
 const NAV: Array<{
   section: Exclude<Section, null>;
   href: string;
@@ -71,18 +101,16 @@ const NAV: Array<{
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? '/';
-  const active = sectionFor(pathname);
+  const from = useFromParam();
+  const active = sectionFor(pathname, from);
   const chrome = chromeFor(pathname);
   const settingsActive = /^\/settings(\/|$)/.test(pathname);
-  // v1 surfaces (design/cultural-atlas-v1 mockups 01–07) keep Capture in the
-  // mobile header, top right, as in mockup 04. Library and uploads follow the
-  // v2 reference 08 (Capture pill above the bottom bar, Settings in the header).
-  // Settings -> Taste (amendment 2.2 mockup 18) is drawn with the v1 header pill too.
-  const headerCapture =
-    active === 'discover' ||
-    active === 'collections' ||
-    active === 'plans' ||
-    pathname === '/settings/taste';
+  const { session, isAccount } = useSession();
+  // One header on every route: wordmark, Capture and Settings (a gear on
+  // phones) — so the header never changes shape between tabs. Signed-out
+  // visitors also get a Sign in entry, which goes to the one sign-in form in
+  // Settings.
+  const signedOut = session !== null && !isAccount;
   useEffect(() => {
     recordRouteChange();
   }, [pathname]);
@@ -111,7 +139,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className={`shell shell--${chrome}${isV2Width(pathname) ? ' shell--v2' : ''}${headerCapture ? ' shell--header-capture' : ''}`}
+      className={`shell shell--${chrome}${isV2Width(pathname) ? ' shell--v2' : ''} shell--header-capture`}
     >
       <a className="skip-link" href="#main">
         Skip to content
@@ -137,6 +165,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             </ul>
           </nav>
           <div className="header__actions">
+            {signedOut && (
+              <Link href="/identity" className="header__signin">
+                Sign in
+              </Link>
+            )}
             <Link
               href="/capture"
               className="button button--primary header__capture"
@@ -170,12 +203,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       {chrome === 'default' && (
         <div className="mobile-dock">
           {pathname !== '/uploads' && <UploadStatusBar variant="mobile" />}
-          {!headerCapture && (
-            <Link href="/capture" className="mobile-dock__capture">
-              <Icon name="camera" size={26} />
-              <span>Capture</span>
-            </Link>
-          )}
         </div>
       )}
       {chrome === 'default' && (

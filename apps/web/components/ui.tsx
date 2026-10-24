@@ -210,3 +210,41 @@ export function LoadingText({ children }: { children: ReactNode }) {
     </p>
   );
 }
+
+/**
+ * One designed "not here" state for unknown routes and missing or deleted
+ * things: a page-level H1, a short explanation and a clear way back.
+ */
+export function UnavailableState({
+  title,
+  body,
+  primary = { href: '/', label: 'Back to Discover' },
+  secondary,
+}: {
+  title: string;
+  body: ReactNode;
+  primary?: { href: string; label: string };
+  secondary?: { href: string; label: string };
+}) {
+  return (
+    <section className="unavailable" aria-labelledby="unavailable-title">
+      <span className="unavailable__mark" aria-hidden="true">
+        <Icon name="plan" size={28} />
+      </span>
+      <h1 id="unavailable-title" className="display display--medium">
+        {title}
+      </h1>
+      <p className="unavailable__body">{body}</p>
+      <div className="unavailable__actions">
+        <Link href={primary.href} className="button button--primary">
+          {primary.label}
+        </Link>
+        {secondary && (
+          <Link href={secondary.href} className="button button--outline">
+            {secondary.label}
+          </Link>
+        )}
+      </div>
+    </section>
+  );
+}

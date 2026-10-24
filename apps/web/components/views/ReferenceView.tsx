@@ -72,7 +72,7 @@ export function ReferenceView({ referenceId }: { referenceId: string }) {
       <div className="page--reading">
         <BackLink {...back} />
         <article className="reference__article">
-          <h1 className="display">{data.name}</h1>
+          <h1 className="display display--medium">{data.name}</h1>
           {data.overview && <p className="lede reference__overview">{data.overview}</p>}
           {data.sections.map((s) => (
             <section key={s.heading} className="reference__section">

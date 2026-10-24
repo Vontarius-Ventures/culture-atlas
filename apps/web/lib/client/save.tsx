@@ -70,6 +70,7 @@ export function SaveProvider({ children }: { children: ReactNode }) {
         setTarget(null);
         toast.show({
           message: 'Saved for later',
+          link: { href: '/collections/later', label: 'View' },
           action: {
             label: 'Undo',
             onAction: async () => {
@@ -107,6 +108,7 @@ export function SaveProvider({ children }: { children: ReactNode }) {
       const collectionId = collection.id;
       toast.show({
         message: res.created ? `Saved to ${name}` : `Already in ${name}`,
+        link: { href: `/collections/${collectionId}`, label: 'View' },
         action: res.created
           ? {
               label: 'Undo',

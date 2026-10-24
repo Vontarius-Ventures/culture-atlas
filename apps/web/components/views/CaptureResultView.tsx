@@ -235,10 +235,28 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
     ? (overrides.get(capture.discovery_item_id)?.saved ?? capture.saved)
     : false;
 
+  // Opened from a library item: Back returns to that item and the Library tab stays lit.
+  const fromLibrary = search.get('from') === 'library';
+  const fromMedia = search.get('media');
+  const back = fromLibrary
+    ? fromMedia
+      ? { href: `/library/media/${fromMedia}`, label: 'Back to photo' }
+      : { href: '/library', label: 'Library' }
+    : { href: '/', label: 'Discover' };
+  const via = fromLibrary ? `&via=library${fromMedia ? `&media=${fromMedia}` : ''}` : '';
+  const settled =
+    Boolean(capture) &&
+    !capture?.is_example &&
+    !processing &&
+    !state.stillLoading &&
+    !state.jobActive &&
+    state.phase === 'results';
+  const nothingFound = settled && cards.length === 0;
+
   return (
     <div className="page capture-result">
       <div className="page-top">
-        <BackLink href="/" label="Discover" />
+        <BackLink href={back.href} label={back.label} />
         {capture && (
           <MoreMenu
             label="More options for this photo"
@@ -378,7 +396,7 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
               <li key={card.id}>
                 <DiscoveryCard
                   card={card}
-                  href={`/items/${card.id}?from=capture&capture=${captureId}${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`}
+                  href={`/items/${card.id}?from=capture&capture=${captureId}${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}${via}`}
                   onSave={(c, el) => openSave(cardToTarget(c), el)}
                 />
               </li>
@@ -386,6 +404,24 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
           </CardGrid>
         )}
         {(processing || state.stillLoading) && <SkeletonGrid count={processing ? 4 : 2} />}
+        {nothingFound && (
+          <div className="empty-state empty-state--inline" role="status">
+            <p className="empty-state__title">Nothing strong enough to suggest from this photo.</p>
+            <p className="muted">
+              We only suggest what the taste graph actually links to what we saw, and this time
+              nothing passed. Try a photo with one clear subject, look through the references, or
+              head back to your feed.
+            </p>
+            <div className="empty-state__actions">
+              <Link href="/capture" className="button button--primary">
+                Try another photo
+              </Link>
+              <Link href="/" className="button button--outline">
+                See your feed
+              </Link>
+            </div>
+          </div>
+        )}
         {!showAll && !category && filtered.length > UI_LIMITS.initialRenderedRecommendations && (
           <div className="load-more">
             <button

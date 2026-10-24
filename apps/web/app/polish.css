@@ -1,0 +1,529 @@
+/*
+ * Cross-route consistency and motion polish (loaded last so it settles the
+ * v1 / v2 / onboarding differences). Every value comes from tokens.css.
+ * Motion is transform/opacity only and is switched off entirely under
+ * prefers-reduced-motion.
+ */
+
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  /* One display scale for the whole app: section pages, then detail pages. */
+  --h1-page: 52px;
+  --h1-detail: 44px;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --h1-page: 34px;
+    --h1-detail: 30px;
+    /* Phones: v2 surfaces share the 16 px gutter too (full-bleed players still cancel it exactly). */
+    --v2-gutter: var(--gutter);
+  }
+}
+
+/* ---- One container: the header never moves between tabs --------------------- */
+
+@media (min-width: 768px) {
+  .shell--v2 .header__inner,
+  .shell--v2 .footer__inner {
+    max-width: var(--content-max);
+    padding-left: var(--gutter);
+    padding-right: var(--gutter);
+  }
+}
+
+.v2-page {
+  max-width: var(--content-max);
+  padding-left: var(--gutter);
+  padding-right: var(--gutter);
+}
+
+/* Narrow pages keep their reading column but start at the same left edge as every other page. */
+.page--narrow {
+  max-width: var(--content-max);
+}
+
+.page--narrow > * {
+  max-width: 760px;
+}
+
+/* ---- One H1 scale ------------------------------------------------------------- */
+
+.display,
+.v2-title {
+  font-size: var(--h1-page);
+  line-height: 1.08;
+}
+
+.display--medium,
+.detail__title,
+.source__title,
+.glasses__title {
+  font-size: var(--h1-detail);
+  line-height: 1.1;
+}
+
+@media (min-width: 768px) {
+  .v2-title {
+    font-size: var(--h1-page);
+  }
+  .detail__title {
+    font-size: var(--h1-detail);
+  }
+}
+
+@media (max-width: 767px) {
+  .source__title,
+  .glasses__title {
+    font-size: var(--h1-detail);
+  }
+}
+
+/* ---- Header: the same on every route ------------------------------------------ */
+
+.header__signin {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 var(--space-2);
+  color: var(--ink);
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  border-radius: var(--radius-control);
+  transition: background var(--transition-fast) ease;
+}
+
+.header__signin:hover {
+  background: var(--quiet);
+}
+
+.header__capture {
+  transition:
+    transform var(--transition-fast) var(--ease-out),
+    box-shadow var(--transition-fast) ease,
+    background var(--transition-fast) ease;
+}
+
+.header__capture:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgb(37 40 35 / 0.14);
+}
+
+.header__capture:active {
+  transform: translateY(0) scale(0.98);
+}
+
+@media (max-width: 767px) {
+  .header__actions {
+    gap: var(--space-2);
+  }
+  /* Settings (the gear) stays in the phone header on every route. */
+  .shell--header-capture .header__settings {
+    display: inline-flex;
+  }
+  .header__signin {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 420px) {
+  /* Narrow phones: the Capture pill keeps its icon and its accessible name. */
+  .shell--header-capture .header__capture {
+    padding: 0 12px;
+  }
+  .shell--header-capture .header__capture span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* Nav: the active underline slides in rather than snapping. */
+.header__link::after {
+  transform: scaleX(0.4);
+  opacity: 0;
+  transition:
+    transform var(--transition-standard) var(--ease-out),
+    opacity var(--transition-fast) ease,
+    background var(--transition-fast) ease;
+}
+
+.header__link:hover::after,
+.header__link[aria-current='page']::after {
+  transform: scaleX(1);
+  opacity: 1;
+}
+
+.bottom-nav__link svg {
+  transition: transform var(--transition-standard) var(--ease-out);
+}
+
+.bottom-nav__link[aria-current='page'] svg {
+  transform: translateY(-1px) scale(1.06);
+}
+
+/* ---- Page enter --------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .main > * {
+    animation: page-in 280ms var(--ease-out) both;
+  }
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ---- Feed toolbar: Refresh never sits on the filter chips ---------------------- */
+
+@media (max-width: 767px) {
+  .feed-toolbar .filter-row {
+    margin-right: 0;
+    padding-right: 0;
+  }
+  .feed-toolbar__refresh {
+    margin-left: 0;
+  }
+}
+
+.feed-toolbar__refresh svg {
+  transition: transform 600ms var(--ease-out);
+}
+
+.feed-toolbar__refresh:disabled svg {
+  animation: spin 900ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-toolbar__refresh:disabled svg {
+    animation: none;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Cards: poster while loading, fade in, logos framed ----------------------- */
+
+.card-poster {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  padding: var(--space-4);
+  background: var(--quiet);
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.card-poster--film,
+.card-poster--track,
+.card-poster--artist {
+  background: #e3e1d6;
+}
+
+.card-poster--food {
+  background: #efe5d4;
+}
+
+.card-poster--style,
+.card-poster--brand {
+  background: #e9e3d6;
+}
+
+.card-poster__kind {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card-poster::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 20%,
+      rgb(255 255 255 / 0.45) 50%,
+      transparent 80%
+    );
+    transform: translateX(-100%);
+    animation: sheen 1.6s var(--ease-standard) infinite;
+  }
+}
+
+@keyframes sheen {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.card-img {
+  position: relative;
+  opacity: 0;
+  transition:
+    opacity 420ms var(--ease-out),
+    transform 600ms var(--ease-out);
+}
+
+.card-img.is-loaded {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-img {
+    transition: none;
+  }
+}
+
+/* Brand pictures are logos and wordmarks: frame them on a light tile instead of cropping. */
+.card__media img.card-img--logo {
+  object-fit: contain;
+  padding: 18%;
+  background: var(--surface);
+}
+
+.card__media:has(.card-img--logo) {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* A gentle lift on hover (pointer devices only). */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .card .card__media img.card-img.is-loaded {
+    will-change: transform;
+  }
+  .card:hover .card__media img.card-img.is-loaded:not(.card-img--logo) {
+    transform: scale(1.035);
+  }
+}
+
+.card__sub {
+  font-size: 14px;
+  color: var(--muted);
+  margin-top: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.card__sub .card__example {
+  margin-top: 0;
+  font-size: inherit;
+}
+
+.card__sub .card__example::before {
+  content: '·';
+  margin-right: 6px;
+}
+
+/* Save chip: a small press and a pop when it flips to Saved. */
+.save-chip__surface {
+  transition:
+    transform var(--transition-fast) var(--ease-out),
+    background var(--transition-fast) ease;
+}
+
+.save-chip:active .save-chip__surface {
+  transform: scale(0.94);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .save-chip--saved .save-chip__surface {
+    animation: pop 320ms var(--ease-out);
+  }
+}
+
+@keyframes pop {
+  40% {
+    transform: scale(1.12);
+  }
+}
+
+/* ---- Buttons ------------------------------------------------------------------ */
+
+.button {
+  transition:
+    background var(--transition-fast) ease,
+    border-color var(--transition-fast) ease,
+    box-shadow var(--transition-fast) ease,
+    transform var(--transition-fast) var(--ease-out);
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* ---- Toast: View link ----------------------------------------------------------- */
+
+.toast__link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  color: var(--canvas);
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+
+.toast__link:focus-visible {
+  outline-color: var(--canvas);
+}
+
+/* ---- Item detail ------------------------------------------------------------------ */
+
+.item-detail__reason {
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.item-detail__about {
+  margin: 0;
+}
+
+.item-detail__provenance {
+  margin-top: var(--space-1);
+  font-size: 13px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+@media (max-width: 767px) {
+  /* The main action stays in reach: Save sticks above the bottom bar while the page scrolls. */
+  .item-detail__actions {
+    position: sticky;
+    bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom) + var(--space-2));
+    z-index: 5;
+    padding: var(--space-2);
+    margin-left: calc(-1 * var(--space-2));
+    margin-right: calc(-1 * var(--space-2));
+    background: rgb(248 246 241 / 0.94);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: var(--radius-control);
+  }
+}
+
+/* ---- Unavailable / not found ------------------------------------------------------ */
+
+.unavailable {
+  max-width: 620px;
+  padding: var(--space-16) 0 var(--space-12);
+}
+
+.unavailable__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--quiet);
+  color: var(--accent);
+  margin-bottom: var(--space-6);
+}
+
+.unavailable__body {
+  margin-top: var(--space-4);
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.unavailable__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+}
+
+@media (max-width: 767px) {
+  .unavailable {
+    padding-top: var(--space-8);
+  }
+}
+
+/* ---- Inline empty state (capture result with no discoveries) ---------------------- */
+
+.empty-state--inline {
+  padding: var(--space-8);
+  max-width: 640px;
+  background: var(--quiet);
+  border-radius: var(--radius-image);
+}
+
+.empty-state--inline .muted {
+  margin-top: var(--space-3);
+}
+
+.detail-unavailable {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.detail-unavailable .text-button {
+  justify-self: start;
+}
+
+/* ---- Settings skeleton ------------------------------------------------------------ */
+
+.settings-skeleton {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-8);
+}
+
+/* ---- Music Mode: related artists are links --------------------------------------- */
+
+.music-related__link {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+  border-radius: var(--radius-control);
+}
+
+.music-related__link:hover .music-related__name,
+.music-related__link:focus-visible .music-related__name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---- Settings: one sign-in path ---------------------------------------------------- */
+
+.settings__signin {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  padding: var(--space-6);
+  background: var(--quiet);
+  border-radius: var(--radius-image);
+  margin-bottom: var(--space-6);
+}
+
+.settings__or {
+  margin-bottom: var(--space-3);
+}
+
+.plans-pending {
+  padding: var(--space-12) 0;
+  max-width: 560px;
+}
+
+/* ---- Music Mode: the player matches its dark panel ---- */
+
+.music__review audio {
+  color-scheme: dark;
+  border-radius: 999px;
+}

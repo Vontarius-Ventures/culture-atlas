@@ -53,9 +53,11 @@ test.describe('navigation', () => {
     if (isDesktop(testInfo.project.name))
       await expect(page.getByRole('banner').getByRole('link', { name: 'Capture' })).toBeVisible();
     else {
-      // Capture sits above the bottom bar, distinct from the four destinations.
-      const capture = page.locator('.mobile-dock').getByRole('link', { name: 'Capture' });
+      // Capture is a distinct action in the (same-on-every-route) header, apart from the
+      // four destinations in the bottom bar; Settings stays reachable there too.
+      const capture = page.getByRole('banner').getByRole('link', { name: 'Capture' });
       await expect(capture).toBeVisible();
+      await expect(page.getByRole('banner').getByRole('link', { name: 'Settings' })).toBeVisible();
       const navBox = (await nav.boundingBox())!;
       const capBox = (await capture.boundingBox())!;
       expect(capBox.y + capBox.height).toBeLessThanOrEqual(navBox.y + 1);
@@ -89,7 +91,15 @@ test.describe('library', () => {
   test('signed-out visitors see the private-library sign-in state', async ({ page }) => {
     const v2 = await openV2(page, '/library', { account: false });
     await expect(page.getByRole('heading', { name: 'Your library is private.' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/identity');
+    // One sign-in path: the panel and the header both start the email sign-in.
+    await expect(page.getByRole('main').getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/identity',
+    );
+    await expect(page.getByRole('banner').getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/identity',
+    );
     expect(v2.log.filter((r) => r.path === '/v2/library')).toHaveLength(0);
   });
 
@@ -437,7 +447,10 @@ test.describe('media detail', () => {
     const id = [...v2.media.keys()][0]!;
     await page.goto(`/library/media/${id}`);
     await page.getByRole('button', { name: 'Explore this video' }).click();
-    await expect(page).toHaveURL(new RegExp(`/captures/${capture}$`), { timeout: 15_000 });
+    // The result remembers it was opened from the library (?from=library&media=…).
+    await expect(page).toHaveURL(new RegExp(`/captures/${capture}(\\?from=library|$)`), {
+      timeout: 15_000,
+    });
   });
 
   test('a paused request reads “Waiting to explore” with Cancel; an input failure explains what to do', async ({

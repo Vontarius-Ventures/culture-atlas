@@ -259,6 +259,44 @@ export function mergeRefreshed<T extends { id: string }>(
   return out;
 }
 
+/** Normalized identity a person would recognize: two cards with the same kind and title are "the same". */
+export function cardKey(card: { kind?: string; title: string }): string {
+  return `${card.kind ?? ''}:${card.title.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
+/**
+ * How many incoming cards are really new to the person: neither the same id
+ * nor the same kind and title as a card already in the pool. This is the
+ * number a refresh announces ("1 new discovery"), never the page size.
+ */
+export function countFresh<T extends { id: string; kind?: string; title: string }>(
+  incoming: readonly T[],
+  existing: readonly T[],
+): number {
+  const ids = new Set(existing.map((c) => c.id));
+  const keys = new Set(existing.map(cardKey));
+  let fresh = 0;
+  for (const card of incoming) {
+    const key = cardKey(card);
+    if (ids.has(card.id) || keys.has(key)) continue;
+    ids.add(card.id);
+    keys.add(key);
+    fresh += 1;
+  }
+  return fresh;
+}
+
+/** Drops later cards that repeat an earlier card's kind and title (keeps the first, in order). */
+export function dedupeByTitle<T extends { kind?: string; title: string }>(cards: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return cards.filter((c) => {
+    const key = cardKey(c);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** Feed columns by viewport width: 2 on phones, up to 4 on wide screens. */
 export function feedColumns(width: number): number {
   if (width < 600) return 2;

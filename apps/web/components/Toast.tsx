@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import {
   createContext,
   useCallback,
@@ -19,6 +20,8 @@ export interface ToastAction {
 export interface ToastInput {
   message: string;
   action?: ToastAction;
+  /** Optional quiet link (e.g. "View" the collection something was saved to). */
+  link?: { href: string; label: string };
   /** ms before auto-dismiss (default 6000; paused while hovered or focused). */
   duration?: number;
 }
@@ -102,6 +105,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           }}
         >
           <span className="toast__message">{toast.message}</span>
+          {toast.link && (
+            <Link
+              href={toast.link.href}
+              className="toast__link"
+              onClick={() => {
+                setToast(null);
+                clear();
+              }}
+            >
+              {toast.link.label}
+            </Link>
+          )}
           {toast.action && (
             <button
               type="button"
