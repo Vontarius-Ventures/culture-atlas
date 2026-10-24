@@ -74,15 +74,26 @@ import com.cultureatlas.capture.core.contract.DiscoveryCard
 import com.cultureatlas.capture.core.contract.LibraryEntry
 import com.cultureatlas.capture.core.net.AtlasApi
 import com.cultureatlas.capture.core.net.AtlasClientException
+import com.cultureatlas.capture.core.contract.StyleRegion
 import com.cultureatlas.capture.core.net.analysisResult
 import com.cultureatlas.capture.core.net.captureResult
 import com.cultureatlas.capture.core.net.mediaEntry
+import com.cultureatlas.capture.core.net.retryStyle
+import com.cultureatlas.capture.core.net.setCity
 import com.cultureatlas.capture.core.net.startAnalysis
 import com.cultureatlas.capture.core.result.AnalysisReading
 import com.cultureatlas.capture.core.result.AnalysisResultCopy
 import com.cultureatlas.capture.core.result.AnalysisResultReader
 import com.cultureatlas.capture.core.result.LibraryTileCopy
+import com.cultureatlas.capture.core.result.RailState
 import com.cultureatlas.capture.core.result.ReferenceCopy
+import com.cultureatlas.capture.core.result.StyleCopy
+import com.cultureatlas.capture.core.result.StyleReader
+import com.cultureatlas.capture.core.result.StyleState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.ui.semantics.stateDescription
+import java.util.UUID
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -94,6 +105,7 @@ import kotlinx.coroutines.launch
  * Qloo recommendations. While the work runs, a slow scan line passes over the
  * picture and the page polls; nothing here ever opens the browser on its own.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun AnalysisResultScreen(
     api: AtlasApi,
@@ -113,11 +125,44 @@ fun AnalysisResultScreen(
     var resolving by remember { mutableStateOf(analysisId == null) }
     var starting by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
+    // Style reading and rails (design F.4).
+    var highlighted by remember { mutableStateOf<StyleRegion?>(null) }
+    var capturePolls by remember { mutableIntStateOf(0) }
+    var retrying by remember { mutableStateOf(false) }
+    var retryNote by remember { mutableStateOf<String?>(null) }
+    var cityOpen by remember { mutableStateOf(false) }
+    var citySaving by remember { mutableStateOf(false) }
+    var cityError by remember { mutableStateOf<String?>(null) }
+    var cityNote by remember { mutableStateOf<String?>(null) }
+    var pulse by remember { mutableStateOf<String?>(null) }
     val toast by notices.toast.collectAsState()
     val scope = rememberCoroutineScope()
     val haptics = rememberHaptics()
     val uriHandler = LocalUriHandler.current
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
+    // The compiled capture: references, the style reading and the rails. Sections publish
+    // progressively, so it is polled every 1.5 s until every section and rail is terminal (R-16c).
+    // An older capture (no sections, no rails) keeps the old rule: stop once recommendations land.
+    val loadCapture: suspend (String) -> Unit = load@{ captureId ->
+        var legacyPolls = 0
+        repeat(CAPTURE_POLL_LIMIT) {
+            val c = runCatching { api.captureResult(captureId) }
+            c.onSuccess {
+                capture = it
+                when (StyleReader.isSettled(it)) {
+                    true -> return@load
+                    null -> if (it.recommendations.isNotEmpty() || it.jobId == null || ++legacyPolls >= 8) return@load
+                    false -> Unit
+                }
+            }
+            c.onFailure { error ->
+                // Not readable from a phone yet (native owner bridge): show what /v2 returned.
+                if (error is AtlasClientException.Server) return@load
+            }
+            delay(if (capture?.rails != null || capture?.analysis?.sections?.isNotEmpty() == true) 1_500 else 3_000)
+        }
+    }
 
     LaunchedEffect(mediaId) {
         runCatching { api.mediaEntry(mediaId) }.onSuccess {
@@ -150,23 +195,14 @@ fun AnalysisResultScreen(
         val done = analysis
         if (done != null && (done.state == AnalysisState.COMPLETE || done.state == AnalysisState.PARTIAL)) {
             haptics.confirm()
-            done.captureId?.let { captureId ->
-                // References and recommendations are compiled after the vision read; poll briefly.
-                repeat(8) {
-                    val c = runCatching { api.captureResult(captureId) }
-                    c.onSuccess {
-                        capture = it
-                        if (it.recommendations.isNotEmpty() || it.jobId == null) return@LaunchedEffect
-                    }
-                    c.onFailure { error ->
-                        // Refused (an older server without the bridged read, or not found): show what /v2 returned.
-                        if (error is AtlasClientException.Server) return@LaunchedEffect
-                    }
-                    delay(3_000)
-                }
-            }
+            done.captureId?.let { loadCapture(it) }
         }
         runCatching { api.mediaEntry(mediaId) }.onSuccess { library.update(it) }
+    }
+    val finishedCaptureId = analysis?.takeIf { it.state == AnalysisState.COMPLETE || it.state == AnalysisState.PARTIAL }?.captureId
+    // After "Try again" the style stage re-runs: poll the capture again until it settles.
+    LaunchedEffect(capturePolls) {
+        if (capturePolls > 0) finishedCaptureId?.let { loadCapture(it) }
     }
 
     val kind = media?.media?.kind
@@ -175,6 +211,70 @@ fun AnalysisResultScreen(
     val working = resolving || starting || analysis?.state?.let { AnalysisResultCopy.isWorking(it) } == true ||
         (currentId != null && analysis == null)
     val scroll = rememberScrollState()
+    val badge = StyleReader.experimental(capture, analysis?.experimental)
+    val styleState = capture?.let { StyleReader.state(it) }
+        ?: if (isAudio) StyleState.ABSENT else StyleReader.previewState(analysis?.result)
+    val styleReading = capture?.let { AnalysisResultReader.readStyle(it) }
+    val stylePreview = analysis?.let { AnalysisResultReader.readStylePreview(it) }
+    val rails = capture?.let { StyleReader.rails(it, experimental = badge != null) }.orEmpty()
+    val railKeys = rails.map { it.key }
+    val requesters = remember(railKeys) { railKeys.associateWith { BringIntoViewRequester() } }
+    val retryKey = remember(finishedCaptureId) { UUID.randomUUID() }
+    val styleActions = StyleActions(
+        onHighlight = { highlighted = it },
+        onRetry = finishedCaptureId?.let { captureId ->
+            {
+                haptics.press()
+                retrying = true
+                scope.launch {
+                    runCatching { api.retryStyle(captureId, retryKey) }
+                        .onSuccess {
+                            // 202: only the style stage re-runs; poll again until it lands.
+                            capture = capture?.let { c ->
+                                c.copy(analysis = c.analysis?.copy(sections = c.analysis!!.sections + ("style" to "running")))
+                            }
+                            capturePolls++
+                        }
+                        .onFailure { error ->
+                            haptics.reject()
+                            retryNote = if ((error as? AtlasClientException.Server)?.code == "retry_used") StyleCopy.RETRY_USED
+                            else "Couldn't try again right now."
+                        }
+                    retrying = false
+                }
+            }
+        },
+        onShowRail = { key ->
+            scope.launch {
+                requesters[key]?.bringIntoView()
+                pulse = key
+                delay(900)
+                pulse = null
+            }
+        },
+    )
+
+    val cityPanel: @Composable () -> Unit = {
+        AddCityPanel(
+            saving = citySaving,
+            error = cityError,
+            onSave = { city ->
+                citySaving = true
+                cityError = null
+                scope.launch {
+                    runCatching { api.setCity(city) }
+                        .onSuccess {
+                            haptics.confirm()
+                            cityOpen = false
+                            cityNote = "City saved. Places with this style show up from your next photo."
+                        }
+                        .onFailure { cityError = "Couldn't save the city. Try again." }
+                    citySaving = false
+                }
+            },
+            onDismiss = { cityOpen = false },
+        )
+    }
 
     Column(Modifier.fillMaxSize()) {
         AtlasTopBar(
@@ -190,7 +290,7 @@ fun AnalysisResultScreen(
             Modifier.fillMaxSize().verticalScroll(scroll).padding(start = 16.dp, end = 16.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            ResultHero(media, isAudio, scanning = working && currentId != null)
+            ResultHero(media, isAudio, scanning = working && currentId != null, highlighted = highlighted, onClearHighlight = { highlighted = null })
             val headline = when {
                 currentId == null && !working -> if (isAudio) "Explore this recording" else if (kind == "video") "Explore this video" else "Explore this photo"
                 analysis == null -> AnalysisResultCopy.LOOKING
@@ -212,6 +312,19 @@ fun AnalysisResultScreen(
             }
             Column(Modifier.animateContentSize(tween(320)), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 analysis?.let { a -> AnalysisResultCopy.detail(a)?.let { Text(it, color = AtlasColors.muted) } }
+                // The analysis screen always carries the label; the style card carries it once shown.
+                if (badge != null && styleState == StyleState.ABSENT) ExperimentalBadgeButton(badge)
+                capture?.analysis?.interpretation?.let { Text(it) }
+                StyleReadingSection(
+                    state = styleState,
+                    reading = styleReading,
+                    preview = stylePreview,
+                    badge = badge,
+                    highlighted = highlighted,
+                    actions = styleActions,
+                    retryNote = retryNote,
+                    retrying = retrying,
+                )
                 when (val r = reading) {
                     is AnalysisReading.Vision -> {
                         if (r.seen.isNotEmpty()) SeenList(r)
@@ -223,9 +336,24 @@ fun AnalysisResultScreen(
                     is AnalysisReading.Music -> ArtistList(r)
                     AnalysisReading.Nothing -> Unit
                 }
-                capture?.let { c -> CaptureSuggestions(c, onOpenCard) }
+                capture?.let { c -> CaptureReferences(c) }
+                if (rails.isNotEmpty()) {
+                    StyleRails(
+                        rails,
+                        onOpenCard = onOpenCard,
+                        onAddCity = {
+                            cityError = null
+                            cityOpen = true
+                        },
+                        pulse = pulse,
+                        requesters = requesters,
+                        cityOpen = cityOpen,
+                        cityPanel = cityPanel,
+                    )
+                }
+                cityNote?.let { Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall) }
                 val finished = analysis?.state == AnalysisState.COMPLETE || analysis?.state == AnalysisState.PARTIAL
-                if (finished && capture?.recommendations.isNullOrEmpty()) {
+                if (finished && rails.none { it.cards.isNotEmpty() || it.state == RailState.RUNNING }) {
                     Text(AnalysisResultCopy.SUGGESTIONS_IN_FEED, color = AtlasColors.muted)
                     OutlinedButton(onClick = { haptics.tick(); onFeed() }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text(AnalysisResultCopy.OPEN_FEED)
@@ -287,7 +415,13 @@ fun AnalysisResultScreen(
 }
 
 @Composable
-private fun ResultHero(media: LibraryEntry?, isAudio: Boolean, scanning: Boolean) {
+private fun ResultHero(
+    media: LibraryEntry?,
+    isAudio: Boolean,
+    scanning: Boolean,
+    highlighted: StyleRegion? = null,
+    onClearHighlight: () -> Unit = {},
+) {
     val shape = RoundedCornerShape(16.dp)
     val transition = rememberInfiniteTransition(label = "scan")
     val sweep by transition.animateFloat(
@@ -316,7 +450,18 @@ private fun ResultHero(media: LibraryEntry?, isAudio: Boolean, scanning: Boolean
                         size = androidx.compose.ui.geometry.Size(size.width, 160f),
                     )
                 }
-            },
+            }
+            // Evidence region of a tapped style claim; tapping the photo clears it.
+            .styleRegionOverlay(highlighted, media?.media?.width, media?.media?.height)
+            .then(
+                if (highlighted != null) {
+                    Modifier
+                        .clickable(onClickLabel = "Clear highlight", onClick = onClearHighlight)
+                        .semantics { stateDescription = StyleReader.regionDescription(highlighted) }
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         val path = media?.let { LibraryTileCopy.picturePath(it) }
         if (isAudio) {
@@ -401,24 +546,18 @@ private fun ArtistList(reading: AnalysisReading.Music) {
     }
 }
 
+/** Sourced references of the compiled capture. Suggestions render as rails ([StyleRails]). */
 @Composable
-private fun CaptureSuggestions(capture: CaptureResultResponse, onOpenCard: (DiscoveryCard) -> Unit) {
+private fun CaptureReferences(capture: CaptureResultResponse) {
+    if (capture.references.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        capture.analysis?.interpretation?.let { Text(it) }
-        if (capture.references.isNotEmpty()) {
-            Text("References", style = MaterialTheme.typography.labelLarge)
-            capture.references.forEach { ref ->
-                Text(ReferenceCopy.phrase(ref), color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
-                ReferenceCopy.attribution(ref)?.let { Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall) }
-            }
-        }
-        if (capture.recommendations.isNotEmpty()) {
-            Text(AnalysisResultCopy.SUGGESTIONS_TITLE, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Serif))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(capture.recommendations, key = { it.id }) { card ->
-                    Box(Modifier.width(140.dp)) { FeedCardTile(card = card, onOpen = { onOpenCard(card) }) }
-                }
-            }
+        Text("References", style = MaterialTheme.typography.labelLarge)
+        capture.references.forEach { ref ->
+            Text(ReferenceCopy.phrase(ref), color = AtlasColors.muted, style = MaterialTheme.typography.bodySmall)
+            ReferenceCopy.attribution(ref)?.let { Text(it, color = AtlasColors.muted, style = MaterialTheme.typography.labelSmall) }
         }
     }
 }
+
+/** Polls of the compiled capture at 1.5 s: covers the 180 s video deadline. */
+private const val CAPTURE_POLL_LIMIT = 120
