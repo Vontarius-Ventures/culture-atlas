@@ -66,8 +66,14 @@ import {
   type CaptureForCompile,
 } from './store';
 import { humanList, normalizeName, slugify } from './text';
-import { BRIDGE_WAIT_MS, BRIDGE_WAIT_NO_ANCHOR_MS, StyleStage, type StyleBridge, type StyleCallOutput, type StylePlan } from './style-stage';
+import { BRIDGE_WAIT_MS, BRIDGE_WAIT_NO_ANCHOR_MS, StyleStage, topicReason, type StyleBridge, type StyleCallOutput, type StylePlan } from './style-stage';
 import { normalizeStyleName } from '../style/vocabulary';
+
+/**
+ * TOPIC-1: films tagged with the topic, popular enough to be known. Measured: 0.8 left 5 architecture
+ * films; 0.3 keeps 20 food films (Japanese diner films among them) for the reading to re-rank.
+ */
+const TOPIC_POPULARITY_MIN = 0.3;
 
 /**
  * Cultural compilation pipeline for one capture (build spec steps 3-8):
@@ -224,6 +230,8 @@ interface CategoryCandidate {
   explain: string[];
   image: DisplayImage | null;
   destination_url: string | null;
+  /** TOPIC-1: the card's own reason when no reference or bridge explains it. */
+  styleReason?: string | null;
 }
 
 interface RecommendOutput {
@@ -451,6 +459,7 @@ export class CaptureCompiler {
               .filter((c) => c.type === 'style' || c.type === 'tradition')
               .flatMap((c) => [c.name, ...(c.tag_queries ?? [])])
               .map(normalizeStyleName),
+            brands: guarded.analysis.candidates.filter((c) => c.type === 'brand').map((c) => c.name),
           },
     );
     // guard-v8: with the verifier on, the first section's attribution and context-only claims
@@ -1651,25 +1660,32 @@ export class CaptureCompiler {
     const target = CATEGORY_ENTITY_TYPE[category]!;
     const anchorTags = anchors.filter((a) => a.qloo?.tagId && (!a.qloo.types?.length || a.qloo.types.includes(target))).map((a) => a.qloo!.tagId!);
     const tagIds = [...new Set([...anchorTags, ...styleTags.map((t) => t.id)])];
-    if (entityIds.length + tagIds.length === 0) return empty('skipped', 'no_anchors');
+    // TOPIC-1: with nothing else to signal, films Qloo tags with the room's, building's or dish's topic.
+    const topic = entityIds.length + tagIds.length === 0 ? (this.style?.topicFor(target) ?? null) : null;
+    if (entityIds.length + tagIds.length === 0 && !topic) return empty('skipped', 'no_anchors');
     if (this.budget.remaining('qloo') === 0) return empty('skipped', 'budget');
     if (this.pastSoftDeadline()) return empty('skipped', 'deadline');
     const counter = attemptCounter();
     const started = Date.now();
-    const request = {
-      filterType: CATEGORY_ENTITY_TYPE[category]!,
-      signalEntities: entityIds,
-      signalTags: tagIds.map((id) => ({ id })),
-      // Wear recommends fashion brands only (unfiltered, Qloo returned banks and streaming services).
-      ...(category === 'wear' ? { filterTags: [FASHION_BRAND_TAG] } : {}),
-      explainability: true,
-      take: 10,
-    };
+    const restyle = !!this.style?.reading;
+    const request = topic
+      ? { filterType: target, filterTags: topic.topics.map((t) => t.tagId), filterPopularityMin: TOPIC_POPULARITY_MIN, explainability: false, take: 20 }
+      : {
+          filterType: CATEGORY_ENTITY_TYPE[category]!,
+          signalEntities: entityIds,
+          signalTags: tagIds.map((id) => ({ id })),
+          // Wear recommends fashion brands only (unfiltered, Qloo returned banks and streaming services).
+          ...(category === 'wear' ? { filterTags: [FASHION_BRAND_TAG] } : {}),
+          explainability: true,
+          // smatch-1: with a style reading, a wider list lets the reading re-rank it.
+          take: restyle ? 20 : 10,
+        };
     try {
       const call = await this.qlooCall(`recommend:${category}`, (o) => ctx.providers.qloo.insights(request, { ...o, onAttempt: counter.observer }));
       const res = call.value;
       const anchorIds = new Set(entityIds);
-      const entities = res.data.entities.filter((e) => !anchorIds.has(e.entity_id));
+      const raw = res.data.entities.filter((e) => !anchorIds.has(e.entity_id));
+      const entities = this.style && topic ? this.style.topicFilms(raw) : this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { gateFashion: category === 'wear' }) : raw;
       if (bridges.length) this.recommendBridges.set(category, bridges);
       const providerQueryId = await recordProviderQuery(ctx.db, {
         parent: { analysisId: this.analysisId },
@@ -1697,6 +1713,7 @@ export class CaptureCompiler {
           explain: (e.query?.explainability ?? []).sort((a, b) => b.score - a.score).map((x) => x.entity_id),
           image: imageFromQlooProperties(e.properties, e.name),
           destination_url: destinationFromQlooProperties(e.properties),
+          ...(topic ? { styleReason: topicReason(topic.topics, e.tags.map((t) => t.id), topic.subject.label) } : {}),
         })),
       };
     } catch (err) {
@@ -1760,9 +1777,19 @@ export class CaptureCompiler {
         }),
       },
     ];
-    if (category === 'wear') {
-      // Style directions the photo resembles, resolved to real Qloo tags.
-      const styles = (append ? append.signals : refs).filter((r) => r.type === 'style' && r.qloo?.tagId && r.resolution === 'resolved' && r.providerQueryId);
+    if (category === 'wear' && rec.candidates.length === 0) {
+      // Style directions the photo resembles, resolved to real Qloo tags: only a fashion tag (Qloo lists
+      // it on brands) and only when Qloo returned no brand at all. A decor or architecture tag ("Knotty
+      // Pine Paneling", "Mughal Architecture") is not something to wear, and a tag is not a suggestion
+      // next to real brands.
+      const styles = (append ? append.signals : refs).filter(
+        (r) =>
+          r.type === 'style' &&
+          r.qloo?.tagId &&
+          r.resolution === 'resolved' &&
+          r.providerQueryId &&
+          ((r.qloo.types ?? []).includes('urn:entity:brand') || /^urn:tag:(?:aesthetic_property|personal_style|fashion_segment|design_inspiration|cultural_relevance):/.test(r.qloo.tagId)),
+      );
       lists.push({ source: 'qloo:tags:style', items: styles.map((r) => ({ key: `qloo_tag:${r.qloo!.tagId}`, originRefs: [r.referenceId], payload: { source: 'style' as const, ref: r } })) });
     }
     const fused = reciprocalRankFusion(lists, { exclude: new Set([...excluded, ...usedKeys]) });
@@ -1832,7 +1859,7 @@ export class CaptureCompiler {
             rank: nextRank(),
             title: c.name,
             externalIds: { qloo: c.entityId },
-            displayReason: bridge ? bridgeReason(bridge) : buildReason(contributors),
+            displayReason: bridge ? bridgeReason(bridge) : (c.styleReason ?? buildReason(contributors)),
             origin: rec.isReplay ? 'replay' : 'qloo',
             providerQueryIds: [rec.providerQueryId!],
             contributingReferenceIds: bridge ? [] : contributors.map((r) => r.referenceId),
@@ -2056,6 +2083,8 @@ export class CaptureCompiler {
     // The style stage finishes inside the job's deadline; a section never stays running.
     if (this.styleRun) await Promise.race([this.styleRun, new Promise((r) => setTimeout(r, Math.max(0, this.startedAt + ctx.budget.deadlineMs * 0.9 - Date.now())))]);
     if (this.style && (this.style.sectionStatus === 'running' || this.style.sectionStatus === 'pending')) await this.style.publishOff('failed', 'deadline').catch(() => undefined);
+    // TITLE-1: stage 2 may have restored the neutral people line after the style reading named the thing.
+    if (this.style?.sectionStatus === 'ready') await this.style.applyThingTitle().catch(() => undefined);
     const gateway = ctx.providers.modelGateway;
     const experimental = !!gateway && ['vision_photo', 'vision_video_frame', 'vision_photo_enrich', 'vision_style'].some((r) => gateway.experimentalRoles.has(r as never));
     // A reviewed example replay is not a model reading: it is never labelled experimental.

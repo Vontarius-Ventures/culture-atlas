@@ -14,7 +14,7 @@ export const REASON_MAX_CHARS = 90;
 export type ReasonVia = 'overlap' | 'entity' | 'bridge' | 'exemplar';
 
 export interface StyleMatchClaim {
-  slot: AcceptedTag['slot'];
+  slot: AcceptedTag['slot'] | 'construction';
   name: string;
   wording: AcceptedTag['wording'];
   tag_id: string;

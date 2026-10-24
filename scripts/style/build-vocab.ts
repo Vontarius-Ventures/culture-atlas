@@ -63,6 +63,10 @@ interface BrandRow {
   popularity: number;
   style_tag_ids: string[];
   price_level: string | null;
+  /** urn:tag:genre:brand:* ids (product families: footwear, bags, jewelry, eyewear, formalwear, ...). */
+  genre_ids: string[];
+  /** signature_piece tag names, verbatim (the brand's known products, e.g. "Penny Loafer"). */
+  pieces: string[];
 }
 
 function main(): void {
@@ -95,8 +99,18 @@ function main(): void {
       if (type === 'urn:entity:brand' && file.startsWith('fashion-brands')) {
         const ids = e.tags.filter((t) => BRAND_STYLE_NAMESPACES.includes(namespaceOf(t.tag_id) ?? '')).map((t) => t.tag_id);
         const price = e.tags.find((t) => t.tag_id.startsWith('urn:tag:price_level:'))?.name ?? null;
+        const genres = e.tags.filter((t) => t.tag_id.startsWith('urn:tag:genre:brand:')).map((t) => t.tag_id);
+        const pieces = e.tags.filter((t) => t.tag_id.startsWith('urn:tag:signature_piece:') && t.name?.trim()).map((t) => t.name.trim());
         if (!brands.has(e.entity_id))
-          brands.set(e.entity_id, { id: e.entity_id, name: e.name, popularity: Math.round((e.popularity ?? 0) * 10000) / 10000, style_tag_ids: [...new Set(ids)].sort(), price_level: price });
+          brands.set(e.entity_id, {
+            id: e.entity_id,
+            name: e.name,
+            popularity: Math.round((e.popularity ?? 0) * 10000) / 10000,
+            style_tag_ids: [...new Set(ids)].sort(),
+            price_level: price,
+            genre_ids: [...new Set(genres)].sort(),
+            pieces: [...new Set(pieces)].slice(0, 8),
+          });
       }
     }
     for (const t of body.results?.tags ?? []) {

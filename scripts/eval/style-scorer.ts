@@ -127,7 +127,8 @@ export function scoreStyle(photos: readonly PhotoInput[]) {
     }
     const personHits = shown.filter((t) => t && styleTextAboutPerson(t));
     violations += personHits.length;
-    const claimNames = new Set(subjects.flatMap((s) => [...s.aesthetics, ...s.materials, ...s.lineage, ...(s.era ? [s.era] : []), ...s.mood].map((c) => fold(c.name))));
+    // smatch-1 reasons may also name a construction claim (shown in the reading as well).
+    const claimNames = new Set(subjects.flatMap((s) => [...s.aesthetics, ...s.materials, ...s.lineage, ...(s.era ? [s.era] : []), ...s.mood, ...s.construction].map((c) => fold(c.name))));
     const mlt = (p.view.rails ?? []).filter((r) => r.kind === 'more_like_this');
     const mltCards = mlt.reduce((n, r) => n + r.cards.length, 0);
     for (const r of p.view.rails ?? [])

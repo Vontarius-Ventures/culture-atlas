@@ -4,6 +4,8 @@ import {
   STYLE_TIMEOUT_MS,
   guardStyleReading,
   isProviderError,
+  NEUTRAL_PEOPLE_TITLE,
+  styleTextAboutPerson,
   isUsable,
   type CallOptions,
   type QlooEntity,
@@ -21,13 +23,17 @@ import type { Owner } from '../principal';
 import { destinationFromQlooProperties, imageFromQlooProperties } from '../services/display';
 import { selectExemplars } from '../style/exemplars';
 import { acceptedTags, bestFilterTag, mapSubjectTags, primaryStyleTag, tagLookupQueries, type AcceptedTag } from '../style/map-tags';
-import { computeSwatches, PALETTE_SIZE, swatchPresentInRegion, type Swatch } from '../style/palette';
+import { computeSwatches, PALETTE_SIZE, swatchIsBackground, swatchPresentInRegion, type Swatch } from '../style/palette';
 import { buildStyleReason, sharedClaims, type StyleMatch, type StyleMatchClaim } from '../style/reasons';
+import { affinityReason, entityProfile, genreFilterFor, rankCatalogue, scoreMatch, subjectProfile } from '../style/affinity';
+import { lowerFirst } from '../style/text';
+import { matchClaims, rankAffinity, type AffinityCandidate } from '../style/affinity-rail';
 import type { StoredStyleReading, StoredSubject } from '../style/types';
 import { closedTagQuery, closedVocabularyLists, normalizeStyleName, styleVocabulary, VOCAB_VERSION } from '../style/vocabulary';
 import { NO_CORROBORATION, STYLE_WORDING_VERSION, rewordAfterStage2, wordSubject, type CorroborationEvidence } from '../style/wording';
 import type { JobBudget } from './budget';
 import { attemptCounter, errorSummary, recordProviderQuery } from './provider-queries';
+import { FASHION_BRAND_TAG } from './grounding';
 import {
   SECONDARY_BELOW,
   TAG_ONLY_TIMEOUT_MS,
@@ -82,6 +88,8 @@ export interface Stage1Facts {
   visibleText: string[];
   /** Normalized names and tag queries of published stage-1 style/tradition candidates. */
   styleNames: string[];
+  /** Names of published stage-1 brand candidates (guard-v18: a logo stage 1 identified keeps the reading's brand). */
+  brands?: string[];
 }
 
 export interface StyleAnchor {
@@ -206,6 +214,17 @@ function iou(a: { x: number; y: number; w: number; h: number }, b: { x: number; 
   return union > 0 ? inter / union : 0;
 }
 
+/** Share of box a's area that lies inside box b. */
+export function insideShare(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): number {
+  const x0 = Math.max(a.x, b.x);
+  const y0 = Math.max(a.y, b.y);
+  const x1 = Math.min(a.x + a.w, b.x + b.w);
+  const y1 = Math.min(a.y + a.h, b.y + b.h);
+  const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
+  const area = a.w * a.h;
+  return area > 0 ? inter / area : 0;
+}
+
 /** Rail card item kind and category from the result's entity type. */
 function kindFor(types: readonly string[]): { kind: ItemKind; category: Category } | null {
   if (types.includes('urn:entity:brand')) return { kind: 'brand', category: 'wear' };
@@ -227,6 +246,38 @@ export function dedupeByName<T extends { entity: { name: string } }>(list: reado
     return true;
   });
 }
+/** TOPIC-1: Qloo theme tags on films per subject category (recorded: fixtures/qloo/probe-2026-10-24-tune). */
+export interface StyleTopic {
+  tagId: string;
+  topic: string;
+}
+const DESIGN: StyleTopic = { tagId: 'urn:tag:theme:qloo:design', topic: 'design' };
+const ARCHITECTURE: StyleTopic = { tagId: 'urn:tag:theme:qloo:architecture', topic: 'architecture' };
+const FOOD: StyleTopic = { tagId: 'urn:tag:theme:qloo:food', topic: 'food' };
+/** Several filter tags are OR in Qloo (probe v1: design + architecture gave 20 films, design alone 4). */
+export const TOPIC_BY_CATEGORY: Partial<Record<StoredSubject['category'], readonly StyleTopic[]>> = {
+  interior: [DESIGN, ARCHITECTURE],
+  place: [ARCHITECTURE, DESIGN],
+  food: [FOOD],
+};
+/** TOPIC-1 films are ranked mostly by the reading (their tags: "Midcentury modern", "Decay", "Sushi"), then Qloo's order. */
+export const TOPIC_STYLE_SHARE = 0.75;
+/** ... and a film is kept only with a real overlap: at least this score, and this share of the best film's. */
+export const TOPIC_MIN_SCORE = 0.6;
+export const TOPIC_MIN_RELATIVE = 0.45;
+
+/** TOPIC-1 card reason: the film's own Qloo theme (the first topic tag it carries) next to the subject's label. */
+export function topicReason(topics: readonly StyleTopic[], filmTagIds: readonly string[], label: string): string {
+  const topic = (topics.find((t) => filmTagIds.includes(t.tagId)) ?? topics[0]!).topic;
+  const text = `A film about ${topic}, for the ${lowerFirst(label)} in your photo`;
+  return text.length <= 90 ? text : `A film about ${topic}, like your photo`;
+}
+
+/** smatch-1: catalogue brands Qloo is asked to rank for a fashion subject, signals of the taste call, and its size. */
+export const FASHION_POOL_MAX = 30;
+export const FASHION_EXEMPLARS = 3;
+export const FASHION_TASTE_TAKE = 30;
+export const FASHION_BRIDGES = 3;
 /** C.7: style tag lookups per job (non-fashion; cached). */
 export const STYLE_TAG_LOOKUPS_MAX = 4;
 /** R-7e: how long publishStyle waits for the stage-1 guard after the style call returns. */
@@ -246,6 +297,8 @@ export class StyleStage {
   private swatches: Swatch[] = [];
   private pixels: { data: Buffer; width: number; height: number; channels: number } | null = null;
   private earlyRail: Promise<void> | null = null;
+  /** A brand anchor's early insights results, kept for the fashion rail (smatch-1). */
+  private earlyEntity: { entityId: string; name: string; entities: QlooEntity[]; providerQueryId: string; isReplay: boolean } | null = null;
   /** Subjects whose rail already holds an early entity call's cards (R-4). */
   private readonly earlyBySubject = new Map<string, { entityId: string; count: number }>();
   readonly timings: Record<string, number> = {};
@@ -299,6 +352,77 @@ export class StyleStage {
         out.push({ id: c.qloo.tag_ids[0]!, weight: c.qloo.weight });
       }
     return out.slice(0, 3);
+  }
+
+  /**
+   * TOPIC-1: a Watch rail for a room, building, craft object or dish when nothing else can signal
+   * Qloo (no identified entity, no city for places): films Qloo itself tags with the subject's
+   * topic (theme "design", "architecture" or "food"; ids recorded in
+   * fixtures/qloo/probe-2026-10-24-tune). Only when no fashion or media subject is read.
+   */
+  topicFor(targetType: string): { topics: readonly StyleTopic[]; subject: StoredSubject } | null {
+    if (targetType !== 'urn:entity:movie' || !this.stored) return null;
+    const subjects = this.stored.subjects;
+    if (subjects.some((x) => x.category === 'fashion' || x.category === 'media')) return null;
+    for (const x of subjects) {
+      const topics = TOPIC_BY_CATEGORY[x.category];
+      if (topics?.length && x.aesthetics.some((a) => !a.held && !a.retracted)) return { topics, subject: x };
+    }
+    return null;
+  }
+
+  /**
+   * smatch-1 for cross-domain cards: Qloo's own order, re-ranked by how well each result's own tags
+   * match the reading (half and half), so a film tagged "Midcentury design history" or "Culinary
+   * cinema" rises for the room or the dish it echoes. Never drops a result.
+   */
+  rerankCrossDomain<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[], styleShare = 0.5, options: { gateFashion?: boolean } = {}): T[] {
+    // Wear cards for a garment pass the same product and tier gates as its rail (no couture house
+    // next to a casual dress, no eyewear house for a jacket).
+    const garment = options.gateFashion ? this.stored?.subjects.find((x) => x.category === 'fashion') : undefined;
+    const q = garment ? subjectProfile(garment) : null;
+    const kept = q ? entities.filter((e) => !scoreMatch(q, entityProfile(e.tags ?? [])).gate) : entities;
+    const scored = this.crossDomainScores(kept);
+    const best = Math.max(0, ...scored.map((x) => x.style));
+    if (best <= 0 || kept.length < 2) return [...kept];
+    return scored
+      .map((x) => ({ ...x, score: styleShare * (x.style / best) + (1 - styleShare) / (1 + x.i / 5) }))
+      .sort((a, b) => b.score - a.score || a.i - b.i)
+      .map((x) => x.e);
+  }
+
+  /**
+   * TOPIC-1 films: only those whose own Qloo tags share a style claim with the reading ("Midcentury
+   * modern", "Urban decay", "Ramen", "Cafe"), strongest first. A topic alone ("design") is not a
+   * match: with no overlapping film the Watch rail stays empty rather than showing popular films
+   * about something else.
+   */
+  topicFilms<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[]): T[] {
+    const scored = this.crossDomainScores(entities).filter((x) => x.styleHit);
+    const best = Math.max(0, ...scored.map((x) => x.style));
+    if (best < TOPIC_MIN_SCORE) return [];
+    return scored
+      .filter((x) => x.style >= Math.max(TOPIC_MIN_SCORE, TOPIC_MIN_RELATIVE * best))
+      .map((x) => ({ ...x, score: TOPIC_STYLE_SHARE * (x.style / best) + (1 - TOPIC_STYLE_SHARE) / (1 + x.i / 5) }))
+      .sort((a, b) => b.score - a.score || a.i - b.i)
+      .map((x) => x.e);
+  }
+
+  private crossDomainScores<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[]): { e: T; i: number; style: number; styleHit: boolean }[] {
+    const profiles = (this.stored?.subjects ?? []).map((x) => subjectProfile(x));
+    return entities.map((e, i) => {
+      const prof = entityProfile(e.tags ?? []);
+      let style = 0;
+      let styleHit = false;
+      for (const q of profiles) {
+        const m = scoreMatch(q, prof, { fashion: false });
+        if (m.score > style) {
+          style = m.score;
+          styleHit = m.styleHit;
+        }
+      }
+      return { e, i, style, styleHit };
+    });
   }
 
   /** The style section for analyses where style does not run (examples, no role, kill switch, budget). */
@@ -455,7 +579,7 @@ export class StyleStage {
     const stage1 = this.stage1.settled ? await this.stage1.promise : await within(this.stage1.promise, STAGE1_WAIT_MS);
     const lists = closedVocabularyLists();
     const guarded = guardStyleReading(out.reading, {
-      stage1: stage1 ? { usable: stage1.usable, peopleShown: stage1.peopleShown, visibleText: stage1.visibleText } : null,
+      stage1: stage1 ? { usable: stage1.usable, peopleShown: stage1.peopleShown, visibleText: stage1.visibleText, brands: stage1.brands ?? [] } : null,
       vocabulary: (category, q) => closedTagQuery(lists, category, q),
     });
     if (guarded.discarded || !guarded.reading.usable) {
@@ -471,12 +595,15 @@ export class StyleStage {
     const dropped: { path: string; rule: string }[] = [...guarded.dropped];
     const keepRegions = ctx.config.STYLE_SHOW_CLAIM_REGIONS === true;
     const subjects = guarded.reading.subjects.map((s) => {
-      const present = new Set(
-        s.palette.filter((p) => {
-          const sw = swatches[p.swatch];
-          return !!sw && !!this.pixels && swatchPresentInRegion(this.pixels.data, this.pixels.width, this.pixels.height, this.pixels.channels, s.region, sw, swatches);
-        }).map((p) => p.swatch),
-      );
+      const px = this.pixels;
+      const inRegion = s.palette.filter((p) => {
+        const sw = swatches[p.swatch];
+        return !!sw && !!px && swatchPresentInRegion(px.data, px.width, px.height, px.channels, s.region, sw, swatches);
+      });
+      // BG-1: a colour far more common around the subject than on it is the background (court, wall),
+      // unless it is the only colour left (a subject that blends into its setting keeps one swatch).
+      const own = inRegion.filter((p) => !(px && swatchIsBackground(px.data, px.width, px.height, px.channels, s.region, swatches[p.swatch]!, swatches)));
+      const present = new Set((own.length ? own : inRegion.slice(0, 1)).map((p) => p.swatch));
       return wordSubject({ subject: s, swatches: sent, presentSwatches: present, corroboration: evidence, keepClaimRegions: keepRegions }, dropped);
     });
     // Fashion maps from the vocabulary right away (0 requests), so the first publish already carries its tags.
@@ -499,6 +626,7 @@ export class StyleStage {
     };
     await this.publish('ready');
     this.mark('style_published');
+    await this.applyThingTitle();
     await this.trace('style', {
       status: 'ready',
       model: out.model,
@@ -534,6 +662,25 @@ export class StyleStage {
     this.primary.resolve();
     if (!traced) await this.trace('style', { status, reason, timings: this.timings });
     return status;
+  }
+
+  /**
+   * TITLE-1: on a photo that shows people the stage-1 guard replaces any headline about them by
+   * "People in your photo", which hides a garment- or artwork-focused photo behind a line about
+   * people. When the guarded style reading names a fashion or media THING (a person-free label:
+   * thingLabel and G-STYLE-PERSON already ran), that thing becomes the title instead. Only the
+   * neutral line is replaced, never a real headline; the interpretation stays neutral. Idempotent:
+   * the compiler calls it again at the end, after stage 2 may have restored the neutral line.
+   */
+  async applyThingTitle(): Promise<void> {
+    const s = this.stored?.subjects.find((x) => x.category === 'fashion' || x.category === 'media');
+    const label = s?.label.trim();
+    if (!label || styleTextAboutPerson(label)) return;
+    const title = label.slice(0, 120);
+    await publishForCapture(this.host.ctx.db, this.host.capture.id, this.host.ctx.ensureActive, async (tx) => {
+      const { rowCount } = await tx.query(`UPDATE analyses SET title = $2 WHERE id = $1 AND title = $3`, [this.host.analysisId, title, NEUTRAL_PEOPLE_TITLE]);
+      if (rowCount) await tx.query(`UPDATE discovery_items SET title = $2, updated_at = now() WHERE capture_id = $1 AND kind = 'capture' AND title = $3`, [this.host.capture.id, title, NEUTRAL_PEOPLE_TITLE]);
+    });
   }
 
   /** One UPDATE of analyses.style_reading (B.4) plus the section status. */
@@ -616,10 +763,15 @@ export class StyleStage {
     return out;
   }
 
-  /** C.1: anchors whose stage-1 region overlaps the subject (IoU >= 0.1); with no regions, the first subject takes them. */
+  /**
+   * C.1: anchors whose stage-1 region overlaps the subject; with no regions, the first subject takes
+   * them. Overlap is IoU >= 0.1 OR the anchor's box lying mostly inside the subject (>= 50 % of the
+   * anchor's area): a logo or wordmark is far smaller than the garment it is printed on, so its IoU
+   * with the garment is tiny (measured: a FILA chest print never joined the tee's rail).
+   */
   private entityFor(subject: StoredSubject, index: number, anchors: readonly StyleAnchor[]): StyleAnchor | null {
     const withBoxes = anchors.filter((a) => a.boxes.length);
-    const overlapping = withBoxes.filter((a) => a.boxes.some((b) => iou(b, subject.region) >= 0.1));
+    const overlapping = withBoxes.filter((a) => a.boxes.some((b) => iou(b, subject.region) >= 0.1 || insideShare(b, subject.region) >= 0.5));
     if (overlapping.length) return overlapping[0]!;
     if (index === 0) return anchors.find((a) => !a.boxes.length) ?? null;
     return null;
@@ -646,6 +798,12 @@ export class StyleStage {
       };
       const res = await this.insights('style:mlt:early', request, false, { subjectId: 's1', recipe: 'early_entity' });
       if (!res) return;
+      // smatch-1: a brand's taste neighbours span every product (eyewear, jewellery, fragrance houses):
+      // they wait for the reading, which gates and re-ranks them with the rest of the rail.
+      if (type === 'urn:entity:brand') {
+        this.earlyEntity = { entityId: e.entityId, name: e.name, entities: res.entities, providerQueryId: res.providerQueryId, isReplay: res.isReplay };
+        return;
+      }
       const anchorIds = new Set(anchors.map((a) => a.entityId));
       const entities = res.entities.filter((x) => !anchorIds.has(x.entity_id));
       const candidates = fuseRail(entities, [], []);
@@ -764,6 +922,7 @@ export class StyleStage {
     const { ctx } = this.host;
     const stored = this.stored!;
     const key = `more_like_this:${s.id}`;
+    if (s.category === 'fashion' && !this.earlyBySubject.get(s.id)?.count) return this.buildFashionRail(s, anchors);
     const accepted = acceptedTags(s);
     const F = bestFilterTag(s);
     // Exemplars must carry the subject's primary style tag (F, else its strongest mapped aesthetic).
@@ -788,7 +947,9 @@ export class StyleStage {
       return;
     }
     await this.railStatus(key, 'running', null);
-    const palette = s.palette.map((p) => p.name);
+    // smatch-1: reasons no longer cite the photo's palette: a place or film never shares it, and a
+    // palette swatch can still be partly background, so the clause read as overlap it was not.
+    const palette: string[] = [];
     const anchorIds = new Set(anchors.map((a) => a.entityId));
     const clean = (list: readonly QlooEntity[], request: QlooInsightsRequest) =>
       list.filter((x) => !anchorIds.has(x.entity_id) && !(request.filterLocationQuery || request.signalLocationQuery ? outsideCity(x, (request.filterLocationQuery ?? request.signalLocationQuery)!) : false));
@@ -855,6 +1016,144 @@ export class StyleStage {
     });
     if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
     await this.trace('style:rail', { subject: s.id, status: 'ready', cards: added + (early?.count ?? 0), verdict_a: verdictA, verdict_b: verdictB, timings: this.timings });
+  }
+
+  /**
+   * smatch-1 fashion rail. The reading's own words pick the closest catalogue
+   * brands of the same product family (rankCatalogue: product, tier and region
+   * gates, rare words first). Two Qloo calls run in parallel:
+   *  A: taste neighbours of the identified brand (logo) and the top 3
+   *     catalogue matches, filtered to the product's Qloo genre (footwear,
+   *     bags, formalwear, ...), take 30;
+   *  B: Qloo ranks the catalogue pool itself (filter.results.entities), so
+   *     the best-matching brands can be cards with a real Qloo response.
+   * Every result is then gated and re-ranked by its OWN Qloo tags against the
+   * reading (style first, Qloo order second): Qloo's co-liked popular houses
+   * of other products, tiers or regions no longer lead the rail.
+   */
+  private async buildFashionRail(s: StoredSubject, anchors: readonly StyleAnchor[]): Promise<void> {
+    const stored = this.stored!;
+    const key = `more_like_this:${s.id}`;
+    const anchor = s.entity ? (anchors.find((a) => a.entityId === s.entity!.id) ?? null) : null;
+    const brandAnchor = anchor && anchor.types.includes('urn:entity:brand') ? anchor : null;
+    const q = subjectProfile(s, brandAnchor?.tags ?? []);
+    const anchorIds = new Set(anchors.map((a) => a.entityId));
+    const pool = rankCatalogue(q, { exclude: anchorIds, max: FASHION_POOL_MAX });
+    const genre = genreFilterFor(q.kind);
+    const filterTags = [genre ?? FASHION_BRAND_TAG];
+    const signals = [...(brandAnchor ? [brandAnchor.entityId] : []), ...pool.slice(0, FASHION_EXEMPLARS).map((x) => x.id)];
+    await this.trace('style:rail', { subject: s.id, recipe: 'fashion_affinity', kind: q.kind, tier: q.tier, regions: [...q.regions], genre, pool: pool.length, exemplars: signals.length });
+    if (!signals.length) {
+      await this.railStatus(key, 'empty', 'no_signal');
+      return;
+    }
+    await this.railStatus(key, 'running', null);
+    const reqA: QlooInsightsRequest = { filterType: 'urn:entity:brand', filterTags, signalEntities: signals, explainability: true, take: FASHION_TASTE_TAKE };
+    const reqB: QlooInsightsRequest | null = pool.length ? { filterType: 'urn:entity:brand', filterTags: [FASHION_BRAND_TAG], filterResultsEntities: pool.map((x) => x.id), take: pool.length } : null;
+    const [a, b] = await Promise.all([
+      this.insights(`style:mlt:${s.id}`, reqA, false, { subject_id: s.id, recipe: 'fashion_affinity', list: 'taste' }),
+      reqB ? this.insights(`style:mlt:${s.id}:pool`, reqB, false, { subject_id: s.id, recipe: 'fashion_affinity', list: 'pool' }) : Promise.resolve(null),
+    ]);
+    const early = brandAnchor && this.earlyEntity?.entityId === brandAnchor.entityId ? this.earlyEntity : null;
+    if (a || b) {
+      this.primary.resolve();
+      this.mark(`rail_primary_${s.id}`);
+    }
+    const ranked = rankAffinity(
+      q,
+      [
+        { list: a?.entities ?? [], prior: true, fromEntity: false },
+        { list: early?.entities ?? [], prior: true, fromEntity: true },
+        { list: b?.entities ?? [], prior: false, fromEntity: false },
+      ],
+      { exclude: anchorIds, entityLinked: !!brandAnchor, signalNames: new Map(pool.slice(0, FASHION_EXEMPLARS).map((x) => [x.id, x.name])) },
+    );
+    const providerQueryIds = [a?.providerQueryId, early?.providerQueryId, b?.providerQueryId].filter((x): x is string => !!x);
+    if (!ranked.candidates.length || !providerQueryIds.length) {
+      await this.railStatus(key, 'empty', a || b ? 'flat_or_empty' : 'qloo_unavailable');
+      await this.trace('style:rail', { subject: s.id, status: 'empty', recipe: 'fashion_affinity', gated: ranked.gated });
+      return;
+    }
+    // Bridges for cross-domain recommend (C.5): the three most on-style results, not Qloo's first two
+    // (three average out one brand's audience: one bridge alone pulled a whole rail into its market).
+    for (const c of ranked.candidates.filter((x) => !x.via).slice(0, FASHION_BRIDGES))
+      this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, aesthetic: s.aesthetics.find((x) => !x.held && !x.retracted)?.name ?? null });
+    const added = await this.publishAffinityRail(s.id, ranked.candidates, {
+      entityName: brandAnchor?.name ?? null,
+      providerQueryIds,
+      isReplay: (a?.isReplay ?? false) || (b?.isReplay ?? false) || (early?.isReplay ?? false),
+      rev: stored.rev,
+    });
+    if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
+    await this.trace('style:rail', { subject: s.id, status: added ? 'ready' : 'empty', recipe: 'fashion_affinity', cards: added, gated: ranked.gated, timings: this.timings });
+  }
+
+  /** Inserts affinity rail cards (rail = more_like_this) with their own reasons and style_match. */
+  private async publishAffinityRail(
+    subjectId: string,
+    ranked: readonly AffinityCandidate[],
+    o: { entityName: string | null; providerQueryIds: readonly string[]; isReplay: boolean; rev: number },
+  ): Promise<number> {
+    const { ctx } = this.host;
+    const excluded = await this.host.excludedKeys();
+    const pool = ranked.filter((c) => kindFor(c.entity.types) && !excluded.has(`qloo:${c.entity.entity_id}`) && !this.host.usedKeys.has(`qloo:${c.entity.entity_id}`));
+    const byId = new Map(pool.map((c) => [c.entity.entity_id, c]));
+    const picked = selectRail(
+      pool.map((c) => ({ entity: c.entity, sources: ['primary' as const], overlap: c.match.score, score: c.score })),
+      LIMITS.moreLikeThisPerSubject,
+    ).map((x) => byId.get(x.entity.entity_id)!);
+    let added = 0;
+    await publishForCapture(ctx.db, this.host.capture.id, ctx.ensureActive, async (tx) => {
+      const { rows } = await tx.query<{ next: number }>(`SELECT COALESCE(MAX(rank), 999) + 1 AS next FROM recommendations WHERE analysis_id = $1 AND rail = 'more_like_this' AND subject_id = $2`, [this.host.analysisId, subjectId]);
+      let rank = Math.max(1000, rows[0]?.next ?? 1000);
+      for (const c of picked) {
+        const e = c.entity;
+        const kc = kindFor(e.types)!;
+        const viaEntity = !!o.entityName && c.fromEntity;
+        const reason = c.via ? `Shares a taste with ${c.via}, a close match for this style` : affinityReason(c.match.hits, { entityName: viaEntity ? o.entityName : null });
+        const claims: StyleMatchClaim[] = c.via ? [] : matchClaims(c.match.hits);
+        const match: StyleMatch = {
+          subject_id: subjectId,
+          claims,
+          palette: [],
+          via_entity: viaEntity ? o.entityName : (c.via ?? null),
+          via: viaEntity ? 'entity' : c.via ? 'exemplar' : 'overlap',
+          rail: 'more_like_this',
+        };
+        const itemKey = `qloo:${e.entity_id}`;
+        const itemId = await upsertDiscoveryItem(tx, this.host.owner, {
+          kind: kc.kind,
+          category: kc.category,
+          canonicalKey: itemKey,
+          title: e.name,
+          displayMetadata: {
+            subtitle: null,
+            ...(imageFromQlooProperties(e.properties, e.name) ? { image: imageFromQlooProperties(e.properties, e.name)! } : {}),
+            ...(destinationFromQlooProperties(e.properties) ? { destination_url: destinationFromQlooProperties(e.properties)! } : {}),
+            example: o.isReplay,
+          },
+          externalIds: { qloo: e.entity_id },
+          resolvedAnchorIds: [],
+        });
+        const recId = await insertRecommendation(tx, {
+          analysisId: this.host.analysisId,
+          discoveryItemId: itemId,
+          category: kc.category,
+          rank: rank++,
+          title: e.name,
+          externalIds: { qloo: e.entity_id },
+          displayReason: reason,
+          origin: o.isReplay ? 'replay' : 'qloo',
+          providerQueryIds: [...o.providerQueryIds],
+          contributingReferenceIds: [],
+        });
+        await tx.query(`UPDATE recommendations SET rail = 'more_like_this', subject_id = $2, style_match = $3::jsonb, reading_rev = $4 WHERE id = $1`, [recId, subjectId, JSON.stringify(match), o.rev]);
+        this.host.usedKeys.add(itemKey);
+        added++;
+      }
+      await setAnalysisSection(tx, this.host.analysisId, `more_like_this:${subjectId}`, added > 0 ? 'ready' : 'empty');
+    });
+    return added;
   }
 
   private async railStatus(key: string, status: 'running' | 'ready' | 'empty' | 'failed', reason: string | null): Promise<void> {

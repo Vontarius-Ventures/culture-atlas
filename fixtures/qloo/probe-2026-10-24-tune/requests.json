@@ -1,0 +1,197 @@
+{
+ "recorded": "2026-10-24",
+ "note": "Style tune probes (smatch-1, TOPIC-1). Each response body is verbatim in <id>.json; no key is stored.",
+ "requests": [
+  {
+   "id": "p2_pool_entity",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.results.entities": [
+     "82946F1C-AB10-4669-B9A1-640A01E2A407",
+     "9F274D1B-D337-4934-B381-6F160B9B9578",
+     "08C1CD26-59F0-4DDB-AA45-0E8044534B15",
+     "81EC4A41-53FB-47FD-995A-B8AE3EE90652",
+     "2F0FA398-CBA7-4F38-A00A-74A80135EA13",
+     "13DBD930-A05C-4BED-AB69-D4B8F0417CE6",
+     "A4F0BE29-87A4-4074-9ABB-21B215E532FD",
+     "2723B38E-C3E2-435F-A77B-A94A92D68D07"
+    ],
+    "signal.interests.entities": [
+     "82946F1C-AB10-4669-B9A1-640A01E2A407"
+    ],
+    "feature.explainability": "true",
+    "take": 10
+   },
+   "finding": "filter.results.entities: Qloo ranks a given brand pool by an entity signal (signal entities are left out of the results).",
+   "status": 200,
+   "ms": 314
+  },
+  {
+   "id": "p3_exclude",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.tags": "urn:tag:genre:brand:fashion",
+    "exclude.tags": [
+     "urn:tag:genre:brand:fashion:accessories:jewelry",
+     "urn:tag:genre:brand:fashion:accessories:eyewear",
+     "urn:tag:genre:brand:fashion:accessories:watch",
+     "urn:tag:genre:brand:fashion:footwear"
+    ],
+    "signal.interests.entities": [
+     "82946F1C-AB10-4669-B9A1-640A01E2A407",
+     "9F274D1B-D337-4934-B381-6F160B9B9578",
+     "A4F0BE29-87A4-4074-9ABB-21B215E532FD"
+    ],
+    "feature.explainability": "true",
+    "take": 10
+   },
+   "finding": "exclude.tags did NOT exclude multi-category brands (eyewear and footwear labels returned): not used; gates are local.",
+   "status": 200,
+   "ms": 265
+  },
+  {
+   "id": "p4_footwear",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.tags": "urn:tag:genre:brand:fashion:footwear",
+    "signal.interests.entities": [
+     "66968622-B220-428F-A7D6-AFFDAF4AB338",
+     "A6B753D8-C777-4D6E-BED3-CBB72428CEA4"
+    ],
+    "feature.explainability": "true",
+    "take": 10
+   },
+   "finding": "filter.tags genre:brand:fashion:footwear with dress-sneaker brand signals: dress-casual footwear labels.",
+   "status": 200,
+   "ms": 674
+  },
+  {
+   "id": "p5_ramen_noloc",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:place",
+    "filter.tags": "urn:tag:genre:place:restaurant:ramen",
+    "filter.popularity.min": 0.95,
+    "take": 10
+   },
+   "finding": "Places without a location: unrelated chains; place rails keep needing the user city.",
+   "status": 200,
+   "ms": 710
+  },
+  {
+   "id": "q4_tags_architecture",
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "architecture",
+    "take": 20
+   },
+   "finding": "Source of urn:tag:theme:qloo:architecture.",
+   "status": 200,
+   "ms": 165
+  },
+  {
+   "id": "s6_tags_food_media",
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "food",
+    "filter.tag.types": "urn:tag:theme:qloo,urn:tag:subgenre:qloo,urn:tag:genre:media",
+    "take": 20
+   },
+   "finding": "Source of urn:tag:theme:qloo:food.",
+   "status": 200,
+   "ms": 351
+  },
+  {
+   "id": "s7_tags_design_media",
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "design",
+    "filter.tag.types": "urn:tag:theme:qloo,urn:tag:subgenre:qloo,urn:tag:genre:media",
+    "take": 20
+   },
+   "finding": "Source of urn:tag:theme:qloo:design.",
+   "status": 200,
+   "ms": 204
+  },
+  {
+   "id": "t1_movie_food",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:movie",
+    "filter.tags": "urn:tag:theme:qloo:food",
+    "filter.popularity.min": 0.7,
+    "take": 10
+   },
+   "finding": "TOPIC-1 food: films tagged theme:food.",
+   "status": 200,
+   "ms": 1650
+  },
+  {
+   "id": "t2_movie_design",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:movie",
+    "filter.tags": "urn:tag:theme:qloo:design",
+    "filter.popularity.min": 0.5,
+    "take": 10
+   },
+   "finding": "TOPIC-1 interior: films tagged theme:design.",
+   "status": 200,
+   "ms": 359
+  },
+  {
+   "id": "t5_movie_arch_sig",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:movie",
+    "filter.tags": "urn:tag:theme:qloo:architecture",
+    "take": 10
+   },
+   "finding": "TOPIC-1 place: films tagged theme:architecture.",
+   "status": 200,
+   "ms": 321
+  },
+  {
+   "id": "u1_pool_nosignal",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.tags": "urn:tag:genre:brand:fashion",
+    "filter.results.entities": [
+     "82946F1C-AB10-4669-B9A1-640A01E2A407",
+     "9F274D1B-D337-4934-B381-6F160B9B9578",
+     "08C1CD26-59F0-4DDB-AA45-0E8044534B15",
+     "81EC4A41-53FB-47FD-995A-B8AE3EE90652",
+     "2F0FA398-CBA7-4F38-A00A-74A80135EA13",
+     "13DBD930-A05C-4BED-AB69-D4B8F0417CE6",
+     "A4F0BE29-87A4-4074-9ABB-21B215E532FD",
+     "2723B38E-C3E2-435F-A77B-A94A92D68D07"
+    ],
+    "take": 10
+   },
+   "finding": "filter.results.entities with filter.tags only: Qloo returns the pool itself (real response for catalogue brands).",
+   "status": 200,
+   "ms": 571
+  },
+  {
+   "id": "u2_breton_A",
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.tags": "urn:tag:genre:brand:fashion",
+    "signal.interests.entities": [
+     "82946F1C-AB10-4669-B9A1-640A01E2A407",
+     "2723B38E-C3E2-435F-A77B-A94A92D68D07"
+    ],
+    "feature.explainability": "true",
+    "take": 30
+   },
+   "finding": "Unfiltered taste neighbours of two preppy brands drift to popular luxury houses: why results are re-ranked by their own tags.",
+   "status": 200,
+   "ms": 404
+  }
+ ]
+}

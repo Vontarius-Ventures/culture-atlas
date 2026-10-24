@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, describe, expect, it } from 'vitest';
 import { AppError, captures, schemas, setFeatureKill, style, type ServiceContext } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb } from '@culture-atlas/domain/testing';
 import {
   ProviderError,
+  resolveFromWorkspace,
   VlmEnrichment,
   VlmEnrichmentV1,
   VlmQuickRead,
@@ -87,19 +89,27 @@ const brand = (id: string, name: string, tags: { id: string; name: string }[], a
   query: { affinity, explainability: [{ entity_id: 'X', score: 1 }] },
 });
 
-/** Fixture Qloo: the style rail call (brand, exemplar signals) returns on-style and off-style brands. */
+const SHOES = 'urn:tag:genre:brand:fashion:footwear';
+const CASUAL = 'urn:tag:genre:brand:fashion:casual';
+
+/**
+ * Fixture Qloo: the fashion rail calls (smatch-1: a taste call signalled by catalogue brands and a
+ * pool call that ranks catalogue brands) return on-style and off-style brands.
+ */
 function styleQloo(): FakeQloo {
   return new FakeQloo(
     {
       search: (query) => CATALOG.search[query.toLowerCase()] ?? [],
       tags: (query) => CATALOG.tags[query.toLowerCase()] ?? [],
       insights: (req) => {
-        if (req.filterType === 'urn:entity:brand' && req.filterTags?.includes(WORKWEAR))
+        if (req.filterType === 'urn:entity:brand' && (req.signalEntities?.length || req.filterResultsEntities?.length) && !req.filterTags?.includes(SHOES))
           return {
             entities: [
-              brand('FIXTURE-BRAND-0201', 'Fixture Work Co', [{ id: WORKWEAR, name: 'Workwear' }, { id: CANVAS, name: 'Canvas' }, { id: 'urn:tag:price_level:qloo:_', name: '$$' }], 0.93),
-              brand('FIXTURE-BRAND-0202', 'Fixture Duck Goods', [{ id: WORKWEAR, name: 'Workwear' }], 0.91),
-              brand('FIXTURE-BRAND-0203', 'Fixture Off Style', [], 0.88),
+              brand('FIXTURE-BRAND-0201', 'Fixture Work Co', [{ id: CASUAL, name: 'Casual' }, { id: WORKWEAR, name: 'Workwear' }, { id: CANVAS, name: 'Canvas' }, { id: 'urn:tag:price_level:qloo:_', name: '$$' }], 0.93),
+              brand('FIXTURE-BRAND-0202', 'Fixture Duck Goods', [{ id: CASUAL, name: 'Casual' }, { id: WORKWEAR, name: 'Workwear' }], 0.91),
+              brand('FIXTURE-BRAND-0203', 'Fixture Off Style', [{ id: CASUAL, name: 'Casual' }], 0.9),
+              // A popular co-liked house of another product (eyewear only) is gated off a garment's rail.
+              brand('FIXTURE-BRAND-0204', 'Fixture Eyewear House', [{ id: 'urn:tag:genre:brand:fashion:accessories:eyewear', name: 'Eyewear' }, { id: WORKWEAR, name: 'Workwear' }], 0.95),
             ],
             tags: [],
           };
@@ -141,19 +151,26 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     expect(a.section_statuses['more_like_this:s1']).toBe('ready');
     expect(Object.values(a.section_statuses)).not.toContain('running');
     expect(a.style_reading_version).toBe('atlas_style_reading_v1');
-    expect(a.style_reading).toMatchObject({ schema: 'atlas_style_reading_v1', wording_version: 'sw-1', guard_version: 'guard-v17', vocab_version: 'svocab-1', model: { role: 'vision_style', model: 'fake-style', experimental: false } });
+    expect(a.style_reading).toMatchObject({ schema: 'atlas_style_reading_v1', wording_version: 'sw-1', guard_version: 'guard-v18', vocab_version: 'svocab-1', model: { role: 'vision_style', model: 'fake-style', experimental: false } });
 
     const { rows: rail } = await db.query<{ title: string; rail: string; subject_id: string; display_reason: string | null; style_match: { claims: { name: string; tag_id: string }[] }; provider_query_ids: string[] }>(
       `SELECT title, rail, subject_id, display_reason, style_match, provider_query_ids FROM recommendations WHERE analysis_id = $1 AND rail = 'more_like_this' ORDER BY rank`,
       [a.id],
     );
+    // smatch-1: on-style brands only, ranked by their own Qloo tags; the off-style and the eyewear house are left out.
     expect(rail.map((r) => r.title)).toEqual(['Fixture Work Co', 'Fixture Duck Goods']);
-    expect(rail[0]).toMatchObject({ subject_id: 's1', display_reason: 'Because of the workwear look and canvas and the tobacco brown palette' });
+    expect(rail[0]).toMatchObject({ subject_id: 's1', display_reason: 'Known for workwear, like your photo' });
+    expect(rail[0]!.display_reason).not.toMatch(/palette|tobacco/);
     expect(rail[0]!.style_match.claims.map((c) => c.tag_id)).toEqual([WORKWEAR, CANVAS]);
     for (const r of rail) expect(r.provider_query_ids.length).toBeGreaterThan(0);
-    // The rail call filtered on the asserted aesthetic F (C.2 rule 7).
-    const railCall = qloo.calls.find((c) => c.op === 'insights' && (c.req as { filterTags?: string[] }).filterTags?.includes(WORKWEAR));
-    expect(railCall).toBeDefined();
+    // The taste call is signalled by real catalogue brands (never invented ids) and filtered to fashion brands;
+    // the pool call asks Qloo to rank catalogue brands.
+    const vocabIds = new Set((JSON.parse(readFileSync(resolveFromWorkspace('fixtures/qloo/style-vocab/brands.json'), 'utf8')) as { brands: { id: string }[] }).brands.map((b) => b.id));
+    const taste = qloo.calls.find((c) => c.op === 'insights' && ((c.req as { signalEntities?: string[] }).signalEntities?.length ?? 0) > 0)!;
+    expect((taste.req as { signalEntities: string[] }).signalEntities.every((id) => vocabIds.has(id))).toBe(true);
+    expect((taste.req as { filterTags: string[] }).filterTags).toEqual(['urn:tag:genre:brand:fashion']);
+    const pool = qloo.calls.find((c) => c.op === 'insights' && ((c.req as { filterResultsEntities?: string[] }).filterResultsEntities?.length ?? 0) > 0)!;
+    expect((pool.req as { filterResultsEntities: string[] }).filterResultsEntities.every((id) => vocabIds.has(id))).toBe(true);
 
     const view = await captures.getCapture(ctx, { id: capture_id });
     expect(schemas.CaptureResponse.safeParse(view).success).toBe(true);
@@ -308,6 +325,67 @@ class VetoEnricher implements VlmEnricher {
     return { enrichment: VlmEnrichment.parse(e), model: 'fake-enrich', durationMs: 1 };
   }
 }
+
+class EmptyQuickVlm implements VlmProvider {
+  readonly id = 'vlm:fake-empty';
+  capability() {
+    return AVAILABLE;
+  }
+  async analyzeImage(_input: VlmAnalyzeInput): Promise<VlmResult> {
+    const quick = VlmQuickRead.parse({ title: 'A sunlit room', interpretation: 'A bright room stood out.', candidates: [], quality: { usable: true, issue: null } });
+    return { analysis: toVlmAnalysis(quick), quick, model: 'fake-empty', durationMs: 1 };
+  }
+}
+
+describe('TOPIC-1: a room with nothing else to signal gets films Qloo tags with its topic', () => {
+  it('fills Watch from theme-tagged films that share the reading, with a topic reason', async () => {
+    const room = (): VlmStyleReading => ({
+      ...jacketReading(),
+      subjects: [
+        {
+          ...jacketReading().subjects[0]!,
+          category: 'interior',
+          label: 'Teak sideboard room',
+          aesthetics: [{ name: 'Mid-century modern', certainty: 0.8, defining_features: ['tapered legs', 'teak veneer'], evidence: { basis: 'visible', region: null }, tag_query: null }],
+          materials: [],
+          mood: [],
+          era: null,
+        },
+      ],
+    });
+    const film = (id: string, name: string, tags: { id: string; name: string }[]): QlooEntity => ({ entity_id: id, name, types: ['urn:entity:movie'], properties: {}, tags });
+    const qloo = new FakeQloo(
+      {
+        search: () => [],
+        tags: () => [],
+        insights: (req) =>
+          req.filterType === 'urn:entity:movie' && req.filterTags?.includes('urn:tag:theme:qloo:design')
+            ? {
+                entities: [
+                  film('FIXTURE-FILM-0101', 'Fixture Car Design Story', [{ id: 'urn:tag:theme:qloo:design', name: 'Design' }]),
+                  film('FIXTURE-FILM-0102', 'Fixture Modern House', [{ id: 'urn:tag:theme:qloo:architecture', name: 'Architecture' }, { id: 'urn:tag:keyword:qloo:fixture_midcentury', name: 'Midcentury modern' }]),
+                ],
+                tags: [],
+              }
+            : { entities: [], tags: [] },
+      },
+      { live: true },
+    );
+    const { providers } = world({ overrides: { vlm: new EmptyQuickVlm(), vlmStyle: new FakeStyleReader(room), qloo } });
+    const ctx = await accountCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    const call = qloo.calls.find((c) => c.op === 'insights' && (c.req as { filterType: string }).filterType === 'urn:entity:movie')!;
+    expect((call.req as { filterTags: string[] }).filterTags).toEqual(['urn:tag:theme:qloo:design', 'urn:tag:theme:qloo:architecture']);
+    const watch = view.rails!.find((r) => r.key === 'watch')!;
+    // Only a film whose own tags echo the reading ("Midcentury modern") is shown; a film that shares only
+    // the topic ("Design") is not a match. The reason names the film's own theme.
+    expect(watch.cards.map((c) => [c.title, c.reason])).toEqual([['Fixture Modern House', 'A film about architecture, for the teak sideboard room in your photo']]);
+    // A decor style tag is never a Wear card.
+    expect(view.recommendations.filter((r) => r.category === 'wear')).toEqual([]);
+  });
+});
 
 describe('stage-2 corroboration pass (style design §A.6, R-6)', () => {
   it('a stage-2 veto retracts the claim; no card reason names it afterwards and cards that only shared it are hidden', async () => {

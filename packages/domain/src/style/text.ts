@@ -14,6 +14,8 @@ export function lowerFirst(s: string): string {
   if (s.length > 1 && s.charAt(1) === s.charAt(1).toUpperCase() && /\p{L}/u.test(s.charAt(1))) return s;
   const first = s.split(/[\s-]/)[0]?.toLowerCase() ?? '';
   if (vlmLexicons.NATIONALITIES.has(first) || PROPER_ADJECTIVES.has(first)) return s.charAt(0).toUpperCase() + s.slice(1);
+  // A hyphenated proper compound keeps its capital ("Indo-Islamic", "Anglo-Indian", "Afro-Cuban").
+  if (/^\p{Lu}\p{Ll}*-\p{Lu}/u.test(s)) return s;
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
 

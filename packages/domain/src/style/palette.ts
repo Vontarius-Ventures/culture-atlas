@@ -3,7 +3,7 @@
  * RGB) pixel buffer: the compiler passes a 64x64 sharp downsample. Every hex
  * shown to a user comes from these pixels; the model only names swatches.
  *
- * k-means in CIE Lab, k = 5, k-means++ seeding from a fixed PRNG (seed 0),
+ * k-means in CIE Lab, k = 6, k-means++ seeding from a fixed PRNG (seed 0),
  * 8 iterations: the same buffer always gives the same swatches. Empty and
  * near-duplicate clusters (Delta E < 5) are merged, so a solid image gives one
  * swatch. Swatches are ordered by share (largest first) and indexed 0..n-1.
@@ -16,9 +16,11 @@ export interface Swatch {
   lab: [number, number, number];
 }
 
-export const PALETTE_K = 5;
+/** k = 6 (was 5): a stripe or trim colour gets its own swatch instead of merging into a neighbouring one. */
+export const PALETTE_K = 6;
 export const PALETTE_ITERATIONS = 8;
-export const PALETTE_SIZE = 64;
+/** 96 px (was 64): thin stripes and trims survive the downsample as their own colour. */
+export const PALETTE_SIZE = 96;
 /**
  * G-STYLE-PALETTE: a swatch counts as present in a region when >= 10% of the
  * region's pixels are nearest to it among the measured swatches (and within
@@ -26,7 +28,7 @@ export const PALETTE_SIZE = 64;
  * colors that were plainly in the subject in the first live check (a k-means
  * center is an average; most of its cluster lies further than 10 from it).
  */
-export const PRESENCE_SHARE = 0.1;
+export const PRESENCE_SHARE = 0.08;
 export const PRESENCE_DELTA_E = 25;
 
 type Lab = [number, number, number];
@@ -203,4 +205,68 @@ export function swatchPresentInRegion(
       if (d < PRESENCE_DELTA_E && all.every((other) => other === swatch || deltaE(lab, other.lab) >= d)) near++;
     }
   return inside > 0 && near / inside >= PRESENCE_SHARE;
+}
+
+/** Background test thresholds (BG-1): see swatchIsBackground. */
+export const BACKGROUND_OUTSIDE_MIN_AREA = 0.15;
+export const BACKGROUND_OUTSIDE_SHARE = 0.25;
+export const BACKGROUND_RATIO = 1.6;
+
+/** Share of the pixels inside and outside a region that are nearest to the swatch (among all swatches). */
+export function swatchShares(
+  pixels: Uint8Array | Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  region: Region,
+  swatch: Pick<Swatch, 'lab'>,
+  all: readonly Pick<Swatch, 'lab'>[] = [swatch],
+): { inside: number; outside: number; outsideArea: number } {
+  const x0 = Math.max(0, Math.floor(region.x * width));
+  const y0 = Math.max(0, Math.floor(region.y * height));
+  const x1 = Math.min(width, Math.ceil((region.x + region.w) * width));
+  const y1 = Math.min(height, Math.ceil((region.y + region.h) * height));
+  let inN = 0;
+  let inHit = 0;
+  let outN = 0;
+  let outHit = 0;
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const o = (y * width + x) * channels;
+      if (channels === 4 && pixels[o + 3]! < 16) continue;
+      const lab = rgbToLab(pixels[o]!, pixels[o + 1]!, pixels[o + 2]!);
+      const d = deltaE(lab, swatch.lab);
+      const nearest = d < PRESENCE_DELTA_E && all.every((other) => other === swatch || deltaE(lab, other.lab) >= d);
+      const inside = x >= x0 && x < x1 && y >= y0 && y < y1;
+      if (inside) {
+        inN++;
+        if (nearest) inHit++;
+      } else {
+        outN++;
+        if (nearest) outHit++;
+      }
+    }
+  const total = inN + outN;
+  return { inside: inN ? inHit / inN : 0, outside: outN ? outHit / outN : 0, outsideArea: total ? outN / total : 0 };
+}
+
+/**
+ * BG-1: the swatch is the scene behind the subject, not the subject: the
+ * region leaves a real part of the image outside (>= 15 %), the colour covers
+ * at least a quarter of that outside part, and it is far more common outside
+ * than inside (>= 1.6x). A tennis court around an outfit, a gallery wall
+ * around a vitrine. A colour of the subject itself (a navy stripe) is rarer
+ * outside the subject than inside, so it is never caught.
+ */
+export function swatchIsBackground(
+  pixels: Uint8Array | Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  region: Region,
+  swatch: Pick<Swatch, 'lab'>,
+  all: readonly Pick<Swatch, 'lab'>[] = [swatch],
+): boolean {
+  const s = swatchShares(pixels, width, height, channels, region, swatch, all);
+  return s.outsideArea >= BACKGROUND_OUTSIDE_MIN_AREA && s.outside >= BACKGROUND_OUTSIDE_SHARE && s.outside >= BACKGROUND_RATIO * s.inside;
 }

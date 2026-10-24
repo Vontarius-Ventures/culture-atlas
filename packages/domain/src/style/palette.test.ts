@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeSwatches, deltaE, labToHex, rgbToLab, swatchPresentInRegion } from './palette';
+import { computeSwatches, deltaE, labToHex, rgbToLab, swatchIsBackground, swatchPresentInRegion } from './palette';
 
 function image(width: number, height: number, paint: (x: number, y: number) => [number, number, number]): Uint8Array {
   const buf = new Uint8Array(width * height * 4);
@@ -52,5 +52,25 @@ describe('measured palette (style design §A.4)', () => {
     expect(swatchPresentInRegion(stripes, 64, 64, 4, left, brown, swatches)).toBe(true);
     expect(swatchPresentInRegion(stripes, 64, 64, 4, left, light, swatches)).toBe(false);
     expect(swatchPresentInRegion(stripes, 64, 64, 4, { x: 0.8, y: 0, w: 0.2, h: 1 }, light, swatches)).toBe(true);
+  });
+
+  it('BG-1: the colour all around the subject is background; a stripe colour of the subject is not', () => {
+    // A green ground around a centred white garment with navy stripes (synthetic).
+    const scene = image(64, 64, (x, y) => {
+      const inside = x >= 20 && x < 44 && y >= 12 && y < 52;
+      if (!inside) return [70, 110, 60];
+      return y % 6 < 2 ? [30, 40, 90] : [240, 240, 235];
+    });
+    const swatches = computeSwatches(scene, 64, 64);
+    const region = { x: 20 / 64, y: 12 / 64, w: 24 / 64, h: 40 / 64 };
+    const nearest = (rgb: [number, number, number]) => swatches.reduce((b, s) => (deltaE(s.lab, rgbToLab(...rgb)) < deltaE(b.lab, rgbToLab(...rgb)) ? s : b));
+    const ground = nearest([70, 110, 60]);
+    const navy = nearest([30, 40, 90]);
+    const white = nearest([240, 240, 235]);
+    expect(swatchIsBackground(scene, 64, 64, 4, region, ground, swatches)).toBe(true);
+    expect(swatchIsBackground(scene, 64, 64, 4, region, navy, swatches)).toBe(false);
+    expect(swatchIsBackground(scene, 64, 64, 4, region, white, swatches)).toBe(false);
+    // A subject that fills the frame has no outside to compare with.
+    expect(swatchIsBackground(scene, 64, 64, 4, { x: 0, y: 0, w: 1, h: 0.95 }, ground, swatches)).toBe(false);
   });
 });

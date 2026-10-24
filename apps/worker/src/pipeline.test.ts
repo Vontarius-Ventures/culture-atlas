@@ -185,8 +185,8 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     await runJobs(ctx, [job_id]);
     const view = await captures.getCapture(ctx, { id: capture_id });
     expect(view.recommendations.filter((r) => r.category === 'play' || r.category === 'watch')).toHaveLength(0);
-    // Wear may still show the resolved style direction (a real returned tag).
-    expect(view.recommendations.filter((r) => r.category === 'wear').map((r) => r.title)).toEqual(['Vintage Racing']);
+    // A resolved style tag is not a suggestion (smatch-1): a non-fashion style tag ("style:qloo") never becomes a Wear card.
+    expect(view.recommendations.filter((r) => r.category === 'wear').map((r) => r.title)).toEqual([]);
   });
 
   it('enforces the per-job Qloo request budget and skips lower-priority work', async () => {

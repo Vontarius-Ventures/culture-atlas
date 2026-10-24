@@ -22,9 +22,13 @@ import { SECURITY_RULES, userDataJson } from './prompt';
  */
 
 export const STYLE_READING_SCHEMA = 'atlas_style_reading_v1';
-export const STYLE_PROMPT_VERSION = 'vlm-style-v1';
-/** Style guard rules (A.5). Separate from GUARDRAIL_VERSION, which binds the stage-1/2 rules. */
-export const STYLE_GUARD_VERSION = 'guard-v17';
+export const STYLE_PROMPT_VERSION = 'vlm-style-v2';
+/**
+ * Style guard rules (A.5). Separate from GUARDRAIL_VERSION, which binds the stage-1/2 rules.
+ * guard-v18: a brand is also kept when stage 1 published the same brand (a logo stage 1 identified),
+ * and a logo without letters may carry an empty read_text.
+ */
+export const STYLE_GUARD_VERSION = 'guard-v18';
 /** §B.2: the style call reads a larger image than stage 1 (fine material and construction). */
 export const STYLE_MAX_DIMENSION = 1024;
 export const STYLE_MAX_OUTPUT_TOKENS = 1100;
@@ -184,7 +188,7 @@ export function normalizeStyleReading(raw: VlmStyleWire, swatchCount: number): V
     if (!region) continue;
     const seenSwatch = new Set<number>();
     const era = keep(s.era, 1)[0];
-    const brand = s.brand.find((b) => b.name.trim() && b.read_text.trim());
+    const brand = s.brand.find((b) => b.name.trim());
     subjects.push({
       id: `s${subjects.length + 1}`,
       category: s.category,
@@ -236,15 +240,15 @@ ${SECURITY_RULES}
 
 What to read:
 - Up to 2 styled subjects, most prominent first: a garment, outfit, footwear or accessory (fashion); a room, furniture, ceramics or craft object (interior); a dish or drink (food); a street, building or venue (place); a poster, artwork, screen, album or book (media); anything else styled (other). Read the first subject in full. Add a second subject only when it is a clearly separate styled thing, and give it at most 2 aesthetics, 1 material and its palette, with empty lists for everything else.
-- label: a short noun phrase for the THING ("Canvas work jacket", "Walnut sideboard"). Never a person.
+- label: a short noun phrase naming the exact kind of THING ("Canvas work jacket", "Suede chelsea boots", "Walnut sideboard"), not a generic word such as "outfit" or "room" when the kind is visible. Never a person.
 - box: the subject's region as four numbers [x, y, w, h], normalized 0..1 (x, y = top-left).
-- aesthetics (max 3): a style family the subject belongs to, with 2-3 features you can actually SEE that make it that style. Name an aesthetic only when its defining features are visible. basis is "visible" for what you see, "context" when you infer it from surroundings, "read_text" only for text you can read. box is [x, y, w, h] around the main defining feature, or [] when it is the whole subject.
+- aesthetics (max 3): a style family the subject belongs to, with 2-3 features you can actually SEE that make it that style. Name an aesthetic only when its defining features are visible. Put the most specific family first (a named tradition, sport, era, place or subculture of dress or design whose features are visible), and a broad umbrella word ("casual", "sportswear", "modern", "classic") only after it, never instead of it. basis is "visible" for what you see, "context" when you infer it from surroundings, "read_text" only for text you can read. box is [x, y, w, h] around the main defining feature, or [] when it is the whole subject.
 - tag_query: choose EXACTLY one label from the vocabulary list for the subject's category in user_data (copy it as written), or "" when none fits. Never invent a tag.
 - era (at most one entry, or []) and lineage (max 1): what period or tradition it suggests, with the visible cue.
 - materials (max 2) with texture and a tag_query (as above), construction (max 3: cut, silhouette, fit, hardware, technique, pattern, finish, form, layout, plating, composition), details (max 2, concrete and visible, each with a box or []).
-- palette (max 3): name the measured swatches listed in user_data by their index, only swatches that belong to this subject. Give each a plain color name ("tobacco brown"). Do not invent colors.
+- palette (max 3): name the measured swatches listed in user_data by their index, only swatches that are the subject's OWN surface (its fabric, leather, glaze, paint, finish or food), including a stripe, print or trim color. Never a swatch of what is behind or under it (floor, wall, ground, sky, sports court, table, display case, backdrop). Give each a plain color name ("tobacco brown"). Do not invent colors.
 - mood (max 2): single words about the THING (rugged, airy, cozy, austere, playful, opulent), never about a person.
-- brand: one entry only when a brand name is legible in the photo (read_text is the exact text you read); otherwise [].
+- brand: one entry only when a brand name or an unmistakable brand logo is visible on the subject (read_text is the exact text you read, or "" for a logo without letters); otherwise [].
 
 Rules:
 - Describe things, never people. Never mention a person's body, face, age, gender, ethnicity, nationality, religion, role, occupation or character. Never say who wears or uses something. "Outfit", not "man's outfit".
@@ -486,7 +490,7 @@ export interface StyleGuardContext {
    * not arrive in time (R-7e): then the brand is dropped, read_text claims
    * are downgraded to visible, and the unusable check is skipped.
    */
-  stage1: { usable: boolean; peopleShown: boolean; visibleText: readonly string[] } | null;
+  stage1: { usable: boolean; peopleShown: boolean; visibleText: readonly string[]; brands?: readonly string[] } | null;
   /** Normalized closed tag vocabulary per category (R-2); a tag_query outside it becomes null. */
   vocabulary?: (category: StyleCategory, tagQuery: string) => string | null;
 }
@@ -619,9 +623,13 @@ export function guardStyleReading(input: VlmStyleReading, ctx: StyleGuardContext
       if (!ok) dropped.push({ path: `${sp}.palette[${i}]`, rule: 'G-STYLE-PERSON' });
       return ok;
     });
-    // A brand only with legible text that stage 1 also transcribed (existing rule: no brand without legible text).
+    // A brand only with legible text that stage 1 also transcribed (existing rule: no brand without legible
+    // text), or (guard-v18) the same brand stage 1 published itself, e.g. a logo it identified and grounded.
     let brand = s.brand;
-    if (brand && !(ctx.stage1 && textReadIn(brand.read_text, visibleText) && foldText(brand.read_text).includes(foldText(brand.name).split(' ')[0] ?? ''))) {
+    const head = (n: string) => foldText(n).split(' ')[0] ?? '';
+    const readOk = !!brand && !!ctx.stage1 && !!brand.read_text && textReadIn(brand.read_text, visibleText) && foldText(brand.read_text).includes(head(brand.name));
+    const stage1Brand = !!brand && !!ctx.stage1 && (ctx.stage1.brands ?? []).some((b) => !!head(b) && head(b) === head(brand!.name));
+    if (brand && !(readOk || stage1Brand)) {
       dropped.push({ path: `${sp}.brand`, rule: 'G-BRAND' });
       brand = null;
     }

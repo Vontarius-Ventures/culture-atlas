@@ -26,6 +26,10 @@ export interface ExemplarBrand {
   popularity: number;
   style_tag_ids: string[];
   price_level: string | null;
+  /** urn:tag:genre:brand:* ids (product families), from the same recorded brand page. */
+  genre_ids?: string[];
+  /** signature_piece tag names, verbatim. */
+  pieces?: string[];
 }
 
 export interface VocabAlias {
