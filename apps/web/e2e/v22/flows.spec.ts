@@ -17,6 +17,9 @@ async function openProcessing(
   const api = await openV22(page, '/', { holdJobs: true, ...opts }, capabilities);
   await page.waitForLoadState('networkidle');
   const c = api.createCapture(null, 'upload');
+  // Leave the feed first: it prefetches its next page in the background, and
+  // that request must not land in the result page's log.
+  await page.goto('about:blank');
   // Only count what the result page itself requests.
   api.log.length = 0;
   await page.goto(`/captures/${c.id}?job=${c.jobId}`);

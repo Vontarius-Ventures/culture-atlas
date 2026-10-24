@@ -102,6 +102,13 @@ android {
     }
 }
 
+// The Compose test activity (ui-test-manifest) is debug-only so it never ships,
+// so the Robolectric UI tests can only run against debug variants. Release unit
+// tests would just repeat them and fail to resolve that activity.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { it.enableUnitTest = false }
+}
+
 dependencies {
     implementation(project(":core"))
     implementation(libs.androidx.core.ktx)
