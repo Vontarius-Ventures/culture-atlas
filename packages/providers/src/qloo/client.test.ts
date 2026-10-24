@@ -195,7 +195,8 @@ describe('Qloo adapter fault injection (no fabricated results)', () => {
     ]);
     const err = await p.searchEntities({ query: 'x' }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ProviderError);
-    expect(err).toMatchObject({ kind: 'rate_limited', status: 429, retryAfterMs: 1000 });
+    // Style design R-11: a 429 backs off at least 1100 ms.
+    expect(err).toMatchObject({ kind: 'rate_limited', status: 429, retryAfterMs: 1100 });
     expect(calls).toHaveLength(3); // 1 + 2 retries (spec: two retries per stage)
   });
 

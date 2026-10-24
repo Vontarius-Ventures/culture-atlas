@@ -148,5 +148,35 @@
     "schemaVersion": "atlas_quick_read_v2",
     "qualificationArtifactId": "vvf-haiku55-none-20261022",
     "reservationMicros": 7000
+  },
+  {
+    "gateway": "concentrate",
+    "model": "anthropic/claude-sonnet-5-5",
+    "provider": "anthropic",
+    "allowedFallbackProviders": [],
+    "structuredOutput": true,
+    "requireZdr": true,
+    "providerZdrEligible": true,
+    "contentLoggingEnabled": false,
+    "privacyVerifiedAt": "2026-10-19T01:11:57.000Z",
+    "catalogSnapshotAt": "2026-10-22T03:13:03.746Z",
+    "pricingSnapshotVersion": "2026-10-22T03:13:03.746Z",
+    "reasoningEffort": "low",
+    "role": "vision_style",
+    "version": "style-1",
+    "maxOutputTokens": 1100,
+    "maxInputTokens": 17000,
+    "maxInputBytes": 17000,
+    "image": {
+      "maxBytes": 350000,
+      "maxPixels": 1048576,
+      "maxDimension": 1024,
+      "maxCount": 1
+    },
+    "timeoutMs": 18000,
+    "promptVersion": "vlm-style-v1",
+    "schemaVersion": "atlas_style_reading_v1",
+    "qualificationArtifactId": "vs-style1-sonnet55-low-pending",
+    "reservationMicros": 47798
   }
 ]

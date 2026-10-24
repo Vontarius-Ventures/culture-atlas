@@ -7,7 +7,8 @@ import type { CaptureV2Context } from './capture-v2/types';
 
 // The Concentrate gateway's durable spend ledger needs a pool-level handle.
 // Registered lazily: getDb() runs only when Concentrate is actually configured.
-configureProviderRuntime({ gateway: { db: () => getDb() } });
+// The shared Qloo key's cross-process rate gate (style design R-11) uses the same pool.
+configureProviderRuntime({ gateway: { db: () => getDb() }, qlooDb: () => getDb() });
 
 /**
  * Everything a service function needs. REST handlers, MCP tools and server

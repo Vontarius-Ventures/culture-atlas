@@ -1,0 +1,175 @@
+{
+ "note": "Live Qloo style probe, 2026-10-23 (design prp/2026-10-23-style-analysis). Raw bodies as returned; requests below.",
+ "requests": {
+  "t01_japandi": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "japandi",
+    "take": 10
+   }
+  },
+  "t02_wabi_sabi": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "wabi-sabi",
+    "take": 10
+   }
+  },
+  "t03_mid_century_modern": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "mid-century modern",
+    "take": 10
+   }
+  },
+  "t04_art_deco": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "art deco",
+    "take": 10
+   }
+  },
+  "t05_brutalism": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "brutalism",
+    "take": 10
+   }
+  },
+  "t06_minimalism": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "minimalism",
+    "take": 10
+   }
+  },
+  "t07_streetwear": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "streetwear",
+    "take": 10
+   }
+  },
+  "t22_quiet_luxury": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "quiet luxury",
+    "take": 10
+   }
+  },
+  "t23_y2k": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "y2k",
+    "take": 10
+   }
+  },
+  "t24_grunge": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "grunge",
+    "take": 10
+   }
+  },
+  "t25_denim": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "denim",
+    "take": 10
+   }
+  },
+  "t26_ramen": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "ramen",
+    "take": 10
+   }
+  },
+  "t27_natural_wine": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "natural wine",
+    "take": 10
+   }
+  },
+  "t30_movie_noir": {
+   "path": "/v2/tags",
+   "params": {
+    "filter.query": "noir",
+    "filter.parents.types": "urn:entity:movie",
+    "take": 10
+   }
+  },
+  "i01_fash_tag": {
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.tags": "urn:tag:genre:brand:fashion",
+    "signal.interests.tags": "urn:tag:fashion_segment:qloo:streetwear,urn:tag:personal_style:qloo:utilitarian",
+    "feature.explainability": "true",
+    "take": 8
+   }
+  },
+  "i04_fash_filterstyle": {
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.tags": "urn:tag:fashion_segment:qloo:streetwear",
+    "signal.interests.entities": "2D69DB33-B4DF-4879-B3DC-308E3402A1FD",
+    "feature.explainability": "true",
+    "take": 8
+   }
+  },
+  "i06_place_japandi_noloc": {
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:place",
+    "signal.interests.tags": "urn:tag:decor:qloo:japandi",
+    "feature.explainability": "true",
+    "take": 8
+   }
+  },
+  "i07_place_japandi_bk": {
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:place",
+    "signal.interests.tags": "urn:tag:decor:qloo:japandi",
+    "filter.location.query": "Brooklyn, NY",
+    "feature.explainability": "true",
+    "take": 8
+   }
+  },
+  "i08_ramen_la_japandi": {
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:place",
+    "filter.tags": "urn:tag:genre:place:restaurant:ramen",
+    "signal.interests.tags": "urn:tag:decor:qloo:japandi",
+    "filter.location.query": "Los Angeles, CA",
+    "feature.explainability": "true",
+    "take": 8
+   }
+  },
+  "i18_place_filter_japandi_bk": {
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:place",
+    "filter.tags": "urn:tag:decor:qloo:japandi",
+    "filter.location.query": "Brooklyn, NY",
+    "feature.explainability": "true",
+    "take": 8
+   }
+  },
+  "i22_fash_filterstyle_tag_pop": {
+   "path": "/v2/insights",
+   "params": {
+    "filter.type": "urn:entity:brand",
+    "filter.tags": "urn:tag:fashion_segment:qloo:streetwear",
+    "signal.interests.tags": "urn:tag:personal_style:qloo:minimalist",
+    "filter.popularity.min": "0.9",
+    "feature.explainability": "true",
+    "take": 8
+   }
+  }
+ }
+}

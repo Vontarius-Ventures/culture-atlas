@@ -13,6 +13,11 @@ configureProviderRuntime({
   gateway: {
     db: () => getDb(),
     onAlert: (alert) => console.error('[alert] model_gateway', JSON.stringify(alert)),
+    // Style design §D.1: one line per role named in ANALYSIS_EXPERIMENTAL_ROLES (never silent).
+    onExperimental: (notice) =>
+      notice.access === 'experimental_production'
+        ? console.log(`[experimental production] ${notice.role} runs unqualified profile ${notice.profileVersion ?? '?'}; users see "Experimental"`)
+        : console.error(`[experimental production] ${notice.role} does not run: ${notice.access}`),
   },
 });
 const providers = getProviders();
@@ -62,7 +67,7 @@ if (providers.modelGateway)
         Object.fromEntries(
           Object.entries(r).map(([role, d]) => [
             role,
-            `${d.reason ? `${d.state} (${d.reason})` : d.state}${d.experimental ? ' [experimental demo override]' : ''}`,
+            `${d.reason ? `${d.state} (${d.reason})` : d.state}${d.experimental ? (d.access === 'experimental_production' ? ' [experimental production]' : ' [experimental demo override]') : ''}`,
           ]),
         ),
       );

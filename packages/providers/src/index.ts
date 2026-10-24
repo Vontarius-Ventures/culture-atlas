@@ -18,6 +18,12 @@ export { backoffDelay, CircuitBreaker, parseRetryAfter, withRetries, type Breake
 export { createAnthropicVlm, AnthropicVlm } from './vlm/anthropic';
 export * from './vlm/guardrails';
 export * from './vlm/verify';
+export * from './vlm/style';
+export * from './concentrate/style-provider';
+export * from './qloo/rate-gate';
+export { resolveFromWorkspace } from './paths';
+export { parseInsights, parseSearch, parseTags } from './qloo/parse';
+export { keyFingerprint, type QlooRateGate } from './qloo/client';
 export * as vlmLexicons from './vlm/lexicons';
 export {
   VLM_SYSTEM_PROMPT,

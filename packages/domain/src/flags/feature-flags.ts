@@ -42,6 +42,9 @@ export const FEATURE_FLAG_DEFAULTS = {
   // verifier is off by default. The tune-split evaluation (docs/quality-plan.md
   // §15) kept it off: it lowered no forbidden-label count on the tune split.
   analysis_verifier_enabled: false,
+  // Style design §D.1: production experimental mode. On when ANALYSIS_EXPERIMENTAL_ROLES
+  // names roles; a kill turns every unqualified (experimental) role off at runtime.
+  experimental_analysis_enabled: false,
 } as const;
 
 export type FeatureFlagName = Exclude<keyof typeof FEATURE_FLAG_DEFAULTS, 'meta_glasses_label'>;
@@ -68,6 +71,7 @@ export const KILLABLE_FLAGS = [
   'fast_analysis_two_stage',
   'while_we_look_enabled',
   'analysis_verifier_enabled',
+  'experimental_analysis_enabled',
 ] as const satisfies readonly FeatureFlagName[];
 export type KillableFlag = (typeof KILLABLE_FLAGS)[number];
 export const isKillableFlag = (value: string): value is KillableFlag =>
@@ -115,6 +119,11 @@ export interface FeatureFlagInputs {
     /** WHILE_WE_LOOK_ENABLED */
     whileWeLookConfigured: boolean;
   };
+  /**
+   * Style design §D.1: ANALYSIS_EXPERIMENTAL_ROLES names roles and
+   * ANALYSIS_EXPERIMENTAL_ENABLED is not off. Absent: not configured.
+   */
+  experimentalConfigured?: boolean;
   /** Explicit operator opt-ins for default-off flags without a written activation rule. */
   optIn: {
     automaticAnalysis: boolean;
@@ -217,6 +226,7 @@ export function evaluateFeatureFlags(i: FeatureFlagInputs): FeatureFlagEvaluatio
       [i.onboarding.whileWeLookConfigured, 'not_enabled'],
     ]),
     analysis_verifier_enabled: false,
+    experimental_analysis_enabled: gate('experimental_analysis_enabled', [[i.experimentalConfigured === true, 'not_enabled']]),
   };
   // The verifier runs only after a stage 2, so it needs the two-stage reading,
   // a qualified, ready vision_verify profile and the operator's opt-in.
@@ -305,8 +315,12 @@ export interface AnalysisReadiness {
   enrichReady?: boolean;
   /** Verifier role (vision_verify) is qualified and ready (absent: not ready). */
   verifyReady?: boolean;
-  /** vision_photo dispatches under the non-production demo override (unqualified). */
+  /** vision_photo dispatches unqualified: ANALYSIS_EXPERIMENTAL_ROLES (any environment) or the demo override. */
   experimental?: boolean;
+  /** How vision_photo got its runner (gateway RoleAccess). */
+  access?: string;
+  /** The vision_style role is ready (style design §D.3). */
+  styleReady?: boolean;
 }
 
 /**
@@ -368,6 +382,7 @@ export async function resolveFeatureFlags(
   const elorianFallback = env.MODEL_FALLBACK === 'elorian' && !!env.ELORIAN_API_KEY;
   return evaluateFeatureFlags({
     killed,
+    experimentalConfigured: !!env.ANALYSIS_EXPERIMENTAL_ROLES?.trim() && notOff(env.ANALYSIS_EXPERIMENTAL_ENABLED),
     mediaCreationEnabled: notOff(env.CAPTURE_MEDIA_CREATION_ENABLED),
     cameraVideoEnabled: notOff(env.CAPTURE_VIDEO_UPLOAD_ENABLED),
     videoDecoderQualified: input.videoDecoderQualified,

@@ -57,7 +57,7 @@ describe('createCapture', () => {
 
     const job = await getJobById(db, first.job_id);
     expect(job).toMatchObject({ type: 'analyze_capture', state: 'queued', result_type: 'capture', result_id: first.capture_id });
-    expect(job!.budget).toMatchObject({ qloo_requests: 12, research_refs: 5, provider_retries: 2, deadline_ms: 60000 });
+    expect(job!.budget).toMatchObject({ qloo_requests: 18, research_refs: 5, provider_retries: 2, deadline_ms: 60000 });
     const view = await captures.getCapture(a, { id: first.capture_id });
     expect(view).toMatchObject({ status: 'pending', source: 'upload', analysis: null, job_id: first.job_id, saved: false, is_example: false });
     expect(view.image?.url).toMatch(/\/v1\/media\?key=/);

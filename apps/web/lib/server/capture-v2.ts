@@ -44,6 +44,7 @@ import {
   type MultipartStorage,
 } from '@culture-atlas/providers';
 import { abuseLimitIp } from './http';
+const { STYLE_COPY } = schemas;
 import { analysisAvailability, photoAnalysisReadiness } from './model-readiness';
 import { musicMatchAvailability } from './music-readiness';
 import { ensureServerRuntime } from './runtime';
@@ -351,15 +352,31 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
         ...caps,
         availability: {
           ...caps.availability,
-          // Demo override (CONCENTRATE_DEMO_ALLOW_ROLES, never production): the
-          // reading runs on an unqualified profile and clients label it.
-          ...(readiness.experimental && caps.availability.analysis.available
+          // Style design §D.3: an unqualified role (ANALYSIS_EXPERIMENTAL_ROLES in any
+          // environment, or the non-production demo override) runs labelled in every
+          // client; the kill switch experimental_analysis_enabled pauses it (D.2).
+          ...(readiness.experimental
             ? {
-                analysis: {
-                  ...caps.availability.analysis,
-                  experimental: true,
-                  label: 'Experimental reading',
-                },
+                analysis: evaluation.killed.includes('experimental_analysis_enabled')
+                  ? {
+                      ...caps.availability.analysis,
+                      available: false,
+                      reasons: ['paused'],
+                      reason: 'paused',
+                      message: STYLE_COPY.style.paused,
+                      experimental: true,
+                      label: STYLE_COPY.experimental.badge,
+                      note: STYLE_COPY.experimental.note,
+                    }
+                  : caps.availability.analysis.available
+                    ? {
+                        ...caps.availability.analysis,
+                        experimental: true,
+                        label: STYLE_COPY.experimental.badge,
+                        note: STYLE_COPY.experimental.note,
+                        reason: readiness.access === 'demo_override' ? 'demo_override' : 'experimental_production',
+                      }
+                    : caps.availability.analysis,
               }
             : {}),
           music_match: musicMatchAvailability({

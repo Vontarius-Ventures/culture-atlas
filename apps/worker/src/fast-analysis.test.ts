@@ -203,7 +203,8 @@ describe('two-stage photo reading (FAST-02)', () => {
     expect(view.status).toBe('ready');
     // The advisory veto only lowers certainty: the style card and the reference both stay, the reference
     // keeps its place and now reads as qualified; the reference stage 2 added comes after every published one.
-    expect(view.recommendations.map((r) => r.title)).toContain('Vintage Racing');
+    // A style tag is never a card next to real brands (smatch-1); the reference itself stays.
+    expect(view.recommendations.map((r) => r.title)).not.toContain('Vintage Racing');
     expect(beforeRefs).toContain('Vintage Racing');
     const names = view.references.map((r) => r.name);
     expect(names.slice(0, beforeRefs.length)).toEqual(beforeRefs);

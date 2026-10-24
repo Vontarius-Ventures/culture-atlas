@@ -8,6 +8,9 @@ import { assertCaptureAuthority, captureMutation } from './policy';
 import { CaptureQueue } from './queue';
 import type { CaptureLease, CaptureV2Context } from './types';
 import { authorizeCaptureAgent, assertCaptureWorkAgent } from './agent-fence';
+import { EXPERIMENTAL_LABEL } from '../services/captures';
+import { mediaStylePreview } from '../services/style-dto';
+import type { StoredStyleReading } from '../style/types';
 
 /** User intent/allowance and worker publication; P4 owns inference orchestration. */
 export class MediaAnalysis {
@@ -158,14 +161,28 @@ export class MediaAnalysis {
     await assertCaptureAuthority(this.ctx, this.ctx.db);
     await authorizeCaptureAgent(this.ctx, this.ctx.db, 'analysis.read', analysisId);
     const { rows } = await this.ctx.db.query(
-      `SELECT a.*,w.id AS job_id FROM media_analysis_requests a
+      `SELECT a.*,w.id AS job_id, an.style_reading AS style_reading, an.section_statuses->>'style' AS style_section,
+              COALESCE(an.experimental, false) AS analysis_experimental
+         FROM media_analysis_requests a
        JOIN media_assets m ON m.account_id=a.account_id AND m.id=a.asset_id AND m.deleted_at IS NULL
        JOIN capture_work w ON w.account_id=a.account_id AND w.analysis_id=a.id
+       LEFT JOIN captures c ON c.id=a.capture_id AND c.deleted_at IS NULL
+       LEFT JOIN analyses an ON an.id=c.active_analysis_id
        WHERE a.account_id=$1 AND a.asset_id=$2 AND a.id=$3`,
       [this.ctx.authority.accountId, assetId, analysisId],
     );
     if (!rows[0]) throw new AppError('not_found');
-    return this.projection(rows[0], true);
+    const row = rows[0];
+    const base = this.projection(row, true);
+    // Style design §E.3: the experimental label (top level) and a compact style preview in `result`;
+    // native apps then load GET /v1/captures/{capture_id} for the full reading and rails.
+    const experimental = row.experimental === true || row.analysis_experimental === true;
+    const style = row.capture_id ? mediaStylePreview(row.style_reading as StoredStyleReading | null, row.style_section as string | undefined) : null;
+    return {
+      ...base,
+      experimental: experimental ? { ...EXPERIMENTAL_LABEL } : null,
+      result: base.result ? { ...base.result, style } : base.result,
+    };
   }
   /**
    * DELETE /v2/media/{id}/analysis/{analysisId} — the owner cancels exploration

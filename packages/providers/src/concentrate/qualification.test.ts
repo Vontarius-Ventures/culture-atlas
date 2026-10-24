@@ -172,26 +172,37 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
         model: 'fixture/model-1',
         state: 'catalog-compatible',
         reason: 'not_qualified',
+        access: 'not_qualified',
       },
       vision_video_frame: {
         role: 'vision_video_frame',
         model: null,
         state: 'unavailable',
         reason: 'not_configured',
+        access: 'not_configured',
       },
-      research_text: { role: 'research_text', model: 'fixture/model-1', state: 'qualified' },
-      composer: { role: 'composer', model: null, state: 'unavailable', reason: 'not_configured' },
+      research_text: { role: 'research_text', model: 'fixture/model-1', state: 'qualified', access: 'qualified' },
+      composer: { role: 'composer', model: null, state: 'unavailable', reason: 'not_configured', access: 'not_configured' },
       vision_photo_enrich: {
         role: 'vision_photo_enrich',
         model: null,
         state: 'unavailable',
         reason: 'not_configured',
+        access: 'not_configured',
       },
       vision_verify: {
         role: 'vision_verify',
         model: null,
         state: 'unavailable',
         reason: 'not_configured',
+        access: 'not_configured',
+      },
+      vision_style: {
+        role: 'vision_style',
+        model: null,
+        state: 'unavailable',
+        reason: 'not_configured',
+        access: 'not_configured',
       },
     });
     expect(transport).not.toHaveBeenCalled();
@@ -222,8 +233,8 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
     const readiness = await gateway.readiness();
     expect(readiness.vision_photo).toEqual(
       allowed
-        ? { role: 'vision_photo', model: 'fixture/model-1', state: 'qualified', experimental: true }
-        : { role: 'vision_photo', model: 'fixture/model-1', state: 'catalog-compatible', reason: 'not_qualified' },
+        ? { role: 'vision_photo', model: 'fixture/model-1', state: 'qualified', experimental: true, access: 'demo_override' }
+        : { role: 'vision_photo', model: 'fixture/model-1', state: 'catalog-compatible', reason: 'not_qualified', access: 'not_qualified' },
     );
     expect(readiness.research_text.experimental).toBeUndefined();
   });

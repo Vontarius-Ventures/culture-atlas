@@ -184,6 +184,17 @@ describe('on-prem production Compose', () => {
       expect(web[key], key).toMatch(new RegExp(`^\\$\\{${key}:\\?`));
     for (const key of ['MODEL_DAILY_SPEND_LIMIT_USD', 'MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD', 'MODEL_MAX_UNKNOWN_SPEND_USD'])
       expect(web[key]).toMatch(new RegExp(`^\\$\\{${key}:-\\d`));
+    // Style design §D.1: production runs the unqualified vision roles in labelled experimental
+    // mode through its own variable, never through the demo override (refused in production).
+    for (const service of ['web', 'worker']) {
+      expect(env(service).ANALYSIS_EXPERIMENTAL_ROLES, service).toBe(
+        '${ANALYSIS_EXPERIMENTAL_ROLES:-vision_photo,vision_photo_enrich,vision_video_frame,vision_style}',
+      );
+      expect(env(service).ANALYSIS_EXPERIMENTAL_DAILY_SPEND_LIMIT_USD, service).toBe('${ANALYSIS_EXPERIMENTAL_DAILY_SPEND_LIMIT_USD:-15}');
+      expect(env(service).ANALYSIS_EXPERIMENTAL_ACCOUNT_DAILY, service).toBe('${ANALYSIS_EXPERIMENTAL_ACCOUNT_DAILY:-20}');
+      expect(env(service), service).not.toHaveProperty('CONCENTRATE_DEMO_ALLOW_ROLES');
+    }
+    expect(composeText).not.toMatch(/CONCENTRATE_DEMO_ALLOW_ROLES\s*:/);
     // storage-init and ops talk to Garage directly; the apps use the public https host.
     expect(env('storage-init').S3_ENDPOINT).toBe('http://garage:3900');
     expect(env('ops').S3_ENDPOINT).toBe('http://garage:3900');

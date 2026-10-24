@@ -1,13 +1,16 @@
 import {
   isProviderError,
   isUsable,
+  peopleShown,
   ProviderError,
   type CallOptions,
   type QlooEntity,
   type QlooResponse,
   type QlooTag,
+  type QlooTagRef,
   type RequestBudget,
   ENRICHMENT_VETO_CERTAINTY_FACTOR,
+  STYLE_TIMEOUT_MS,
   GUARDRAIL_VERSION,
   MERGED_CANDIDATES_MAX,
   VlmAnalysis,
@@ -63,6 +66,14 @@ import {
   type CaptureForCompile,
 } from './store';
 import { humanList, normalizeName, slugify } from './text';
+import { BRIDGE_WAIT_MS, BRIDGE_WAIT_NO_ANCHOR_MS, StyleStage, topicReason, type StyleBridge, type StyleCallOutput, type StylePlan } from './style-stage';
+import { normalizeStyleName } from '../style/vocabulary';
+
+/**
+ * TOPIC-1: films tagged with the topic, popular enough to be known. Measured: 0.8 left 5 architecture
+ * films; 0.3 keeps 20 food films (Japanese diner films among them) for the reading to re-rank.
+ */
+const TOPIC_POPULARITY_MIN = 0.3;
 
 /**
  * Cultural compilation pipeline for one capture (build spec steps 3-8):
@@ -131,6 +142,8 @@ export interface ResolvedRef {
    */
   textOnly?: boolean;
   readText?: string | null;
+  /** The resolved entity's own Qloo tags (search result), for style corroboration and "Qloo also links" (style design C.3). */
+  tags?: QlooTagRef[];
 }
 
 interface ObserveOutput {
@@ -181,6 +194,8 @@ interface EnrichSummary {
   /** guard-v8: stage-2 claims the verifier kept from publication (when it is on). */
   verifierBlocked?: number;
   appended?: Record<string, number>;
+  /** Style corroboration pass (A.6): wording upgrades, released holds and retractions. */
+  style?: { upgraded: number; released: number; retracted: number };
 }
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
@@ -215,6 +230,8 @@ interface CategoryCandidate {
   explain: string[];
   image: DisplayImage | null;
   destination_url: string | null;
+  /** TOPIC-1: the card's own reason when no reference or bridge explains it. */
+  styleReason?: string | null;
 }
 
 interface RecommendOutput {
@@ -244,6 +261,12 @@ const DOUBT_RULES: ReadonlySet<string> = new Set(['Q-DOUBT', 'Q-PLACE']);
 
 function boxesFor(regionIds: readonly string[], analysis: VlmAnalysis) {
   return regionIds.map((id) => analysis.regions.find((r) => r.id === id)?.box).filter((b): b is NonNullable<typeof b> => !!b);
+}
+
+/** C.5: a cross-domain card whose only explanation is a More-like-this bridge. */
+export function bridgeReason(bridge: Pick<StyleBridge, 'name' | 'aesthetic'>): string {
+  const text = bridge.aesthetic ? `Shares a taste with ${bridge.name}, from your ${bridge.aesthetic.toLowerCase()} rail` : `Shares a taste with ${bridge.name}, from your style rail`;
+  return text.length <= 90 ? text : `Shares a taste with ${bridge.name}`.slice(0, 90);
 }
 
 /** Plain-language "Why this?" — names references, never scores or provider names. */
@@ -305,6 +328,14 @@ export class CaptureCompiler {
   private twoStage: { enabled: boolean; reason: string | null } = { enabled: false, reason: 'not_planned' };
   /** Verifier plan (vision_verify), decided with the two-stage plan; its calls are reserved up front too. */
   private verifierPlan: { enabled: boolean; reason: string | null } = { enabled: false, reason: 'not_planned' };
+  /** Style stage (style design §B): parallel to stage 1, its own call, rails and section. */
+  private style: StyleStage | null = null;
+  private stylePlan: StylePlan = { enabled: false, off: { status: 'failed', reason: 'not_planned' } };
+  private styleRun: Promise<unknown> | null = null;
+  /** Canonical keys shown in this analysis (More-like-this and cross-domain never repeat a card). */
+  private readonly shownKeys = new Set<string>();
+  /** Stage-2 names and vetoes for the style corroboration pass (A.6). */
+  private stage2Evidence: { names: string[]; vetoed: string[] } | null = null;
   constructor(private readonly ctx: JobContext<'analyze_capture'>) {
     this.softDeadlineAt = this.startedAt + Math.floor(ctx.budget.deadlineMs * 0.75);
     this.traceId = ctx.job.trace_id;
@@ -403,11 +434,34 @@ export class CaptureCompiler {
     // Two-stage reading (amendment 2.2): decide up front and reserve both calls.
     this.twoStage = await this.planTwoStage(!!ctx.payload.media_analysis_id);
     this.verifierPlan = await this.planVerifier(!!ctx.payload.media_analysis_id);
-    const observed = await ctx.runStage<ObserveOutput>('observe', () => this.observe(rejectedNames, confirmed));
+    // Style reading (style design §B.1): starts at t0, in parallel with stage 1; never blocks the chips.
+    await this.startStyle();
+    let observed: ObserveOutput;
+    try {
+      observed = await ctx.runStage<ObserveOutput>('observe', () => this.observe(rejectedNames, confirmed));
+    } catch (err) {
+      this.style?.setStage1(null);
+      this.style?.setAnchors([]);
+      throw err;
+    }
     // Guardrails (docs/quality-plan.md §4): pure and deterministic, so a retried
     // attempt recomputes the same decisions from the cached reading. Only the
     // publish set is published, resolved and anchored; held claims wait for stage 2.
     let guarded = this.guardObserved(observed);
+    this.style?.setStage1(
+      observed.example
+        ? null
+        : {
+            usable: guarded.analysis.quality.usable,
+            peopleShown: peopleShown(observed.analysis, observed.analysis.observations),
+            visibleText: guarded.analysis.visible_text.map((t) => t.text),
+            styleNames: guarded.analysis.candidates
+              .filter((c) => c.type === 'style' || c.type === 'tradition')
+              .flatMap((c) => [c.name, ...(c.tag_queries ?? [])])
+              .map(normalizeStyleName),
+            brands: guarded.analysis.candidates.filter((c) => c.type === 'brand').map((c) => c.name),
+          },
+    );
     // guard-v8: with the verifier on, the first section's attribution and context-only claims
     // publish only on its "yes"; they are left out of the first write and added after the check.
     const targets1 =
@@ -430,6 +484,7 @@ export class CaptureCompiler {
 
     if (!guarded.analysis.quality.usable) {
       this.warnings.set(WARNINGS.unclear.code, WARNINGS.unclear);
+      this.style?.setAnchors([]);
       for (const s of ['references', 'research', ...CATEGORIES]) await this.section(s, 'skipped');
       return this.finish();
     }
@@ -459,6 +514,12 @@ export class CaptureCompiler {
     // The verified claims join the first section now (blocked ones never do).
     if (pending.size) await this.publishObserve(guarded.analysis);
     await this.publishReferences(resolved);
+    // Style: anchors with real Qloo entity ids (C.1); R-4: an identified entity's rail starts now.
+    const styleAnchors = resolved.refs
+      .filter((r) => r.isAnchor && r.qloo?.entityId)
+      .map((r) => ({ referenceId: r.referenceId, name: r.name, entityId: r.qloo!.entityId!, types: r.qloo!.types ?? [], boxes: r.boxes, tags: r.tags ?? [] }));
+    this.style?.setAnchors(styleAnchors);
+    if (this.style && this.stylePlan.enabled) this.style.startEarlyEntityRail(styleAnchors);
     await this.traceStage('resolve', t0, {
       resolved: resolved.refs.filter((r) => r.qloo).length,
       unmatched: resolved.refs.filter((r) => r.resolution === 'unmatched').length,
@@ -472,11 +533,19 @@ export class CaptureCompiler {
     const anchors = resolved.refs.filter((r) => r.isAnchor);
     const order = this.categoryOrder(anchors);
     const excluded = await loadExcludedKeys(ctx.db, this.owner);
-    const usedKeys = new Set<string>(anchors.flatMap((a) => (a.qloo?.entityId ? [`qloo:${a.qloo.entityId}`] : [])));
+    const usedKeys = this.shownKeys;
+    for (const a of anchors) if (a.qloo?.entityId) usedKeys.add(`qloo:${a.qloo.entityId}`);
     const qlooCaps = ctx.providers.qloo.capability();
+    // R-5: recommend runs once, when resolve is done AND (the More-like-this primary returned, or
+    // 4 s passed, or style failed/empty), with whatever style signals exist at that moment.
+    // With no anchor at all, cross-domain has no signal but the bridges, so it waits for them longer
+    // (bounded by the soft deadline) instead of publishing empty Wear/Play/Watch.
+    const bridgeWait = anchors.some((a) => a.qloo?.entityId || a.qloo?.tagId) ? BRIDGE_WAIT_MS : Math.max(0, Math.min(BRIDGE_WAIT_NO_ANCHOR_MS, this.softDeadlineAt - Date.now()));
+    const bridges = this.style && this.stylePlan.enabled ? await this.style.waitForBridges(bridgeWait) : [];
+    await this.traceStage('recommend:style_signals', Date.now(), { bridges: bridges.length, style: this.style?.sectionStatus ?? 'off' });
     for (const category of order.filter((c): c is (typeof QLOO_CATEGORIES)[number] => (QLOO_CATEGORIES as readonly string[]).includes(c))) {
       t0 = Date.now();
-      const rec = await ctx.runStage<RecommendOutput>(`recommend:${category}`, () => this.recommend(category, anchors, isUsable(qlooCaps.insights)));
+      const rec = await ctx.runStage<RecommendOutput>(`recommend:${category}`, () => this.recommend(category, anchors, isUsable(qlooCaps.insights), bridges));
       await this.composeCategory(rec, resolved.refs, order, excluded, usedKeys);
       await this.traceStage(`recommend:${category}`, t0, { status: rec.status, candidates: rec.candidates.length, reason: rec.reason });
     }
@@ -488,6 +557,11 @@ export class CaptureCompiler {
     t0 = Date.now();
     await ctx.setStage('enriching');
     const enriched = await this.enrichStage(observed, guarded, resolved, { rejectedNames, rejectedIds }, order, excluded, usedKeys);
+    // Style corroboration (A.6, B.4): stage 2 can raise wording, release holds or retract (never silently).
+    if (this.style && this.stage2Evidence) {
+      if (this.styleRun) await Promise.race([this.styleRun, new Promise((r) => setTimeout(r, Math.max(0, this.softDeadlineAt - Date.now())))]);
+      enriched.style = await this.style.corroborate(this.stage2Evidence);
+    }
     await this.traceStage('enrich', t0, { ...enriched });
     // The trace says why the verifier did not check this reading.
     if (enriched.status === 'complete' && !this.verifierPlan.enabled) await this.traceStage('verify', Date.now(), { status: 'skipped', reason: this.verifierPlan.reason });
@@ -728,7 +802,10 @@ export class CaptureCompiler {
     const idByKey = new Map(rows.map((r) => [r.canonical_key, r.id]));
     let added = 0;
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
-      const { rows: live } = await tx.query<{ category: Category }>('SELECT DISTINCT category FROM recommendations WHERE analysis_id = $1 AND category IS NOT NULL', [this.analysisId]);
+      const { rows: live } = await tx.query<{ category: Category }>(
+        `SELECT DISTINCT category FROM recommendations WHERE analysis_id = $1 AND category IS NOT NULL AND rail IS DISTINCT FROM 'more_like_this'`,
+        [this.analysisId],
+      );
       const liveCategories = new Set(live.map((r) => r.category));
       const positions = new Map<Category, number>();
       for (const { pick, item } of picks) {
@@ -1026,11 +1103,14 @@ export class CaptureCompiler {
     const resolution = userSelected ? ('user_confirmed' as const) : ('resolved' as const);
     if (match && 'entity_id' in match) {
       const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo:${match.entity_id}`, name: match.name, type, externalIds: { qloo: match.entity_id, qloo_types: match.types } });
-      return { ...base, referenceId, name: match.name, resolution, qloo: { entityId: match.entity_id, types: match.types }, providerQueryId, isReplay, isAnchor: false, grounding };
+      return { ...base, referenceId, name: match.name, resolution, qloo: { entityId: match.entity_id, types: match.types }, providerQueryId, isReplay, isAnchor: false, grounding, tags: match.tags };
     }
     if (match) {
       const referenceId = await upsertReference(ctx.db, { canonicalKey: `qloo_tag:${match.id}`, name: match.name, type, externalIds: { qloo_tag: match.id, qloo_tag_type: match.type } });
-      return { ...base, referenceId, name: match.name, resolution, qloo: { tagId: match.id }, providerQueryId, isReplay, isAnchor: false, grounding };
+      // The entity types the tag is used on (/v2/tags parents), when Qloo said: cross-domain only signals
+      // a category whose entity type carries the tag (style design C.2 rule 4 / C.5).
+      const tagTypes = (match.parents ?? []).filter((t) => t.startsWith('urn:entity:'));
+      return { ...base, referenceId, name: match.name, resolution, qloo: { tagId: match.id, ...(tagTypes.length ? { types: tagTypes } : {}) }, providerQueryId, isReplay, isAnchor: false, grounding };
     }
     // Unmatched or doubtful: stored under the candidate's OWN name, never a Qloo look-alike's.
     const referenceId = await upsertReference(ctx.db, { canonicalKey: `${type}:${slugify(candidate.name)}`, name: candidate.name, type, externalIds: {} });
@@ -1369,6 +1449,10 @@ export class CaptureCompiler {
     }
     const rejectedKeys = new Set(rejected.rejectedNames.map(normalizeName));
     const vetoed = new Set(stage2.advisoryVetoes.map(candidateNameKey));
+    this.stage2Evidence = {
+      names: stage2.publishNow.filter((c) => c.type === 'style' || c.type === 'tradition').flatMap((c) => [c.name, ...(c.tag_queries ?? [])]),
+      vetoed: base.candidates.filter((c) => (c.type === 'style' || c.type === 'tradition') && vetoed.has(candidateNameKey(c.name))).map((c) => c.name),
+    };
     const heldIds = new Set(guarded.held.map((c) => c.id));
     const published = stage2.publishNow.filter((c) => !rejectedKeys.has(normalizeName(c.name)));
     // Text-only references (G-TEXT-ONLY) are listed with their read text and never reach Qloo.
@@ -1520,7 +1604,8 @@ export class CaptureCompiler {
     );
     if (signals.length) {
       const { rows } = await ctx.db.query<{ category: Category; n: number }>(
-        'SELECT category, COUNT(*)::int AS n FROM recommendations WHERE analysis_id = $1 AND category IS NOT NULL GROUP BY category',
+        `SELECT category, COUNT(*)::int AS n FROM recommendations
+          WHERE analysis_id = $1 AND category IS NOT NULL AND rail IS DISTINCT FROM 'more_like_this' GROUP BY category`,
         [this.analysisId],
       );
       const counts = new Map(rows.map((r) => [r.category, r.n]));
@@ -1555,31 +1640,53 @@ export class CaptureCompiler {
     return [...CATEGORIES].sort((a, b) => (score.get(b) ?? 0) - (score.get(a) ?? 0) || CATEGORIES.indexOf(a) - CATEGORIES.indexOf(b));
   }
 
-  private async recommend(category: (typeof QLOO_CATEGORIES)[number], anchors: readonly ResolvedRef[], insightsUsable: boolean): Promise<RecommendOutput> {
+  private async recommend(
+    category: (typeof QLOO_CATEGORIES)[number],
+    anchors: readonly ResolvedRef[],
+    insightsUsable: boolean,
+    /** C.5: the top More-like-this results (real Qloo ids) as extra entity signals. */
+    bridges: readonly StyleBridge[] = [],
+  ): Promise<RecommendOutput> {
     const { ctx } = this;
     const empty = (status: SectionStatus, reason: string): RecommendOutput => ({ category, status, providerQueryId: null, isReplay: false, candidates: [], reason });
     if (!insightsUsable) return empty('unavailable', 'qloo_unavailable');
-    const entityIds = anchors.map((a) => a.qloo?.entityId).filter((v): v is string => !!v);
-    const tagIds = anchors.map((a) => a.qloo?.tagId).filter((v): v is string => !!v);
-    if (entityIds.length + tagIds.length === 0) return empty('skipped', 'no_anchors');
+    const anchorEntityIds = anchors.map((a) => a.qloo?.entityId).filter((v): v is string => !!v);
+    const bridgeIds = bridges.map((b) => b.entityId).filter((id) => !anchorEntityIds.includes(id));
+    const entityIds = [...new Set([...anchorEntityIds, ...bridgeIds])].slice(0, 6);
+    // C.5: the style reading's accepted tags join only when type-compatible with the target (rule 4).
+    const styleTags = this.style?.signalTagsFor(CATEGORY_ENTITY_TYPE[category]!) ?? [];
+    // A tag anchor signals a category only when Qloo lists the tag on that entity type (or does not say):
+    // a cuisine tag used on places never steers fashion brands, artists or films (measured: "Ramen" -> brands).
+    const target = CATEGORY_ENTITY_TYPE[category]!;
+    const anchorTags = anchors.filter((a) => a.qloo?.tagId && (!a.qloo.types?.length || a.qloo.types.includes(target))).map((a) => a.qloo!.tagId!);
+    const tagIds = [...new Set([...anchorTags, ...styleTags.map((t) => t.id)])];
+    // TOPIC-1: with nothing else to signal, films Qloo tags with the room's, building's or dish's topic.
+    const topic = entityIds.length + tagIds.length === 0 ? (this.style?.topicFor(target) ?? null) : null;
+    if (entityIds.length + tagIds.length === 0 && !topic) return empty('skipped', 'no_anchors');
     if (this.budget.remaining('qloo') === 0) return empty('skipped', 'budget');
     if (this.pastSoftDeadline()) return empty('skipped', 'deadline');
     const counter = attemptCounter();
     const started = Date.now();
-    const request = {
-      filterType: CATEGORY_ENTITY_TYPE[category]!,
-      signalEntities: entityIds,
-      signalTags: tagIds.map((id) => ({ id })),
-      // Wear recommends fashion brands only (unfiltered, Qloo returned banks and streaming services).
-      ...(category === 'wear' ? { filterTags: [FASHION_BRAND_TAG] } : {}),
-      explainability: true,
-      take: 10,
-    };
+    const restyle = !!this.style?.reading;
+    const request = topic
+      ? { filterType: target, filterTags: topic.topics.map((t) => t.tagId), filterPopularityMin: TOPIC_POPULARITY_MIN, explainability: false, take: 20 }
+      : {
+          filterType: CATEGORY_ENTITY_TYPE[category]!,
+          signalEntities: entityIds,
+          signalTags: tagIds.map((id) => ({ id })),
+          // Wear recommends fashion brands only (unfiltered, Qloo returned banks and streaming services).
+          ...(category === 'wear' ? { filterTags: [FASHION_BRAND_TAG] } : {}),
+          explainability: true,
+          // smatch-1: with a style reading, a wider list lets the reading re-rank it.
+          take: restyle ? 20 : 10,
+        };
     try {
       const call = await this.qlooCall(`recommend:${category}`, (o) => ctx.providers.qloo.insights(request, { ...o, onAttempt: counter.observer }));
       const res = call.value;
       const anchorIds = new Set(entityIds);
-      const entities = res.data.entities.filter((e) => !anchorIds.has(e.entity_id));
+      const raw = res.data.entities.filter((e) => !anchorIds.has(e.entity_id));
+      const entities = this.style && topic ? this.style.topicFilms(raw) : this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { gateFashion: category === 'wear' }) : raw;
+      if (bridges.length) this.recommendBridges.set(category, bridges);
       const providerQueryId = await recordProviderQuery(ctx.db, {
         parent: { analysisId: this.analysisId },
         provider: 'qloo',
@@ -1606,6 +1713,7 @@ export class CaptureCompiler {
           explain: (e.query?.explainability ?? []).sort((a, b) => b.score - a.score).map((x) => x.entity_id),
           image: imageFromQlooProperties(e.properties, e.name),
           destination_url: destinationFromQlooProperties(e.properties),
+          ...(topic ? { styleReason: topicReason(topic.topics, e.tags.map((t) => t.id), topic.subject.label) } : {}),
         })),
       };
     } catch (err) {
@@ -1654,6 +1762,7 @@ export class CaptureCompiler {
     const category = rec.category;
     const anchors = append ? append.signals.filter((r) => r.qloo) : refs.filter((r) => r.isAnchor);
     const refByEntity = new Map(anchors.filter((a) => a.qloo?.entityId).map((a) => [a.qloo!.entityId!, a]));
+    const bridgeByEntity = new Map((append ? [] : (this.recommendBridges.get(category) ?? [])).map((b) => [b.entityId, b]));
     const kind = CATEGORY_ITEM_KIND[category];
 
     type Payload =
@@ -1668,9 +1777,19 @@ export class CaptureCompiler {
         }),
       },
     ];
-    if (category === 'wear') {
-      // Style directions the photo resembles, resolved to real Qloo tags.
-      const styles = (append ? append.signals : refs).filter((r) => r.type === 'style' && r.qloo?.tagId && r.resolution === 'resolved' && r.providerQueryId);
+    if (category === 'wear' && rec.candidates.length === 0) {
+      // Style directions the photo resembles, resolved to real Qloo tags: only a fashion tag (Qloo lists
+      // it on brands) and only when Qloo returned no brand at all. A decor or architecture tag ("Knotty
+      // Pine Paneling", "Mughal Architecture") is not something to wear, and a tag is not a suggestion
+      // next to real brands.
+      const styles = (append ? append.signals : refs).filter(
+        (r) =>
+          r.type === 'style' &&
+          r.qloo?.tagId &&
+          r.resolution === 'resolved' &&
+          r.providerQueryId &&
+          ((r.qloo.types ?? []).includes('urn:entity:brand') || /^urn:tag:(?:aesthetic_property|personal_style|fashion_segment|design_inspiration|cultural_relevance):/.test(r.qloo.tagId)),
+      );
       lists.push({ source: 'qloo:tags:style', items: styles.map((r) => ({ key: `qloo_tag:${r.qloo!.tagId}`, originRefs: [r.referenceId], payload: { source: 'style' as const, ref: r } })) });
     }
     const fused = reciprocalRankFusion(lists, { exclude: new Set([...excluded, ...usedKeys]) });
@@ -1693,7 +1812,7 @@ export class CaptureCompiler {
           : rec.status;
 
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
-      if (!append) await tx.query('DELETE FROM recommendations WHERE analysis_id = $1 AND category = $2', [this.analysisId, category]);
+      if (!append) await tx.query(`DELETE FROM recommendations WHERE analysis_id = $1 AND category = $2 AND rail IS DISTINCT FROM 'more_like_this'`, [this.analysisId, category]);
       let position = append?.existing ?? 0;
       // Appended (stage-2) cards rank after EVERY card already published, in any
       // category, so the flat result order and the initially rendered cards never
@@ -1731,18 +1850,24 @@ export class CaptureCompiler {
             externalIds: { qloo: c.entityId },
             resolvedAnchorIds: contributors.map((r) => r.referenceId),
           });
-          await insertRecommendation(tx, {
+          // C.5: a card Qloo explains only by a bridge (a More-like-this result) says so honestly.
+          const bridge = contributors.length === 0 || c.explain.every((id) => !refByEntity.has(id)) ? c.explain.map((id) => bridgeByEntity.get(id)).find((b) => !!b) : undefined;
+          const recId = await insertRecommendation(tx, {
             analysisId: this.analysisId,
             discoveryItemId: itemId,
             category,
             rank: nextRank(),
             title: c.name,
             externalIds: { qloo: c.entityId },
-            displayReason: buildReason(contributors),
+            displayReason: bridge ? bridgeReason(bridge) : (c.styleReason ?? buildReason(contributors)),
             origin: rec.isReplay ? 'replay' : 'qloo',
             providerQueryIds: [rec.providerQueryId!],
-            contributingReferenceIds: contributors.map((r) => r.referenceId),
+            contributingReferenceIds: bridge ? [] : contributors.map((r) => r.referenceId),
           });
+          await tx.query(`UPDATE recommendations SET rail = 'cross_domain', style_match = $2::jsonb WHERE id = $1`, [
+            recId,
+            bridge ? JSON.stringify({ subject_id: bridge.subjectId, claims: [], palette: [], via_entity: bridge.name, via: 'bridge', rail: 'cross_domain' }) : null,
+          ]);
         } else {
           const r = p.payload.ref;
           const itemId = await upsertDiscoveryItem(tx, this.owner, {
@@ -1775,6 +1900,9 @@ export class CaptureCompiler {
     this.sections.set(category, status);
     return picked.length;
   }
+
+  /** Bridges used by each category's recommend call (C.5), for the bridge reason. */
+  private readonly recommendBridges = new Map<string, readonly StyleBridge[]>();
 
   private async composeEat(refs: readonly ResolvedRef[], order: readonly Category[], excluded: Set<string>, usedKeys: Set<string>): Promise<SectionStatus> {
     const { ctx } = this;
@@ -1828,7 +1956,7 @@ export class CaptureCompiler {
     // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat ideas.
     const foodExclusions = await foodExclusionsFor(ctx.db, this.owner);
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
-      await tx.query(`DELETE FROM recommendations WHERE analysis_id = $1 AND category = 'eat'`, [this.analysisId]);
+      await tx.query(`DELETE FROM recommendations WHERE analysis_id = $1 AND category = 'eat' AND rail IS DISTINCT FROM 'more_like_this'`, [this.analysisId]);
       let position = 0;
       for (const idea of ideas) {
         if (position >= LIMITS.recommendationsPerCategory) break;
@@ -1888,8 +2016,79 @@ export class CaptureCompiler {
       .map((r) => ({ id: r.referenceId, name: r.name, type: r.type }));
   }
 
+  /** Starts the style stage (or publishes why it does not run). */
+  private async startStyle(): Promise<void> {
+    const { ctx } = this;
+    const frameIndex = ctx.payload.media_analysis_id ? await this.displayFrameIndex(ctx.payload.media_analysis_id) : null;
+    this.style = new StyleStage({
+      ctx,
+      analysisId: this.analysisId,
+      capture: this.capture,
+      owner: this.owner,
+      traceId: this.traceId,
+      budget: this.budget,
+      startedAt: this.startedAt,
+      qlooCall: (stage, fn) => this.qlooCall(stage, fn),
+      callOptions: (stage) => this.callOptions(stage),
+      pastSoftDeadline: () => this.pastSoftDeadline(),
+      usedKeys: this.shownKeys,
+      excludedKeys: () => loadExcludedKeys(ctx.db, this.owner),
+      frameIndex,
+      ...(ctx.payload.media_analysis_id ? { preread: () => this.mediaStylePreread(ctx.payload.media_analysis_id!) } : {}),
+    });
+    this.stylePlan = await StyleStage.plan(ctx, this.budget, { example: !!this.example });
+    if (!this.stylePlan.enabled) {
+      await this.style.publishOff(this.stylePlan.off!.status, this.stylePlan.off!.reason);
+      return;
+    }
+    // Errors inside the stage become a failed section; they never fail the analysis.
+    this.styleRun = this.style.run().catch(async (err) => {
+      if (ctx.signal.aborted) return;
+      ctx.log('style stage error', { error: err instanceof Error ? `${err.name}: ${err.message}` : String(err) });
+      await this.style?.publishOff('failed', errorSummary(err).code).catch(() => undefined);
+    });
+  }
+
+  /**
+   * v2 photos: the media worker started the style call next to stage 1. Waits
+   * for it (<= the style call timeout) and returns its output; null when it
+   * never started (video, kill, budget), so the compile job calls itself.
+   */
+  private async mediaStylePreread(mediaAnalysisId: string): Promise<StyleCallOutput | null> {
+    const deadline = Date.now() + STYLE_TIMEOUT_MS + 2_000;
+    for (;;) {
+      const { rows } = await this.ctx.db.query<{ style_state: string | null; style_observation: StyleCallOutput | null }>(
+        `SELECT style_state, style_observation FROM media_analysis_requests WHERE id = $1`,
+        [mediaAnalysisId],
+      );
+      const row = rows[0];
+      if (!row?.style_state) return null;
+      if (row.style_state !== 'running') return row.style_observation;
+      if (Date.now() > deadline || this.ctx.signal.aborted) return { reading: null, model: null, ms: STYLE_TIMEOUT_MS, image: null, errorCode: 'timeout', experimental: false, profile: null };
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+
+  /** Video: which frame the display image (and so the style reading) came from (R-13). */
+  private async displayFrameIndex(mediaAnalysisId: string): Promise<number | null> {
+    const { rows } = await this.ctx.db.query<{ i: number | null }>(
+      `SELECT (result->>'display_frame_index')::int AS i FROM media_analysis_requests WHERE id = $1`,
+      [mediaAnalysisId],
+    );
+    return rows[0]?.i ?? null;
+  }
+
   private async finish(): Promise<JobOutcome> {
     const { ctx } = this;
+    // The style stage finishes inside the job's deadline; a section never stays running.
+    if (this.styleRun) await Promise.race([this.styleRun, new Promise((r) => setTimeout(r, Math.max(0, this.startedAt + ctx.budget.deadlineMs * 0.9 - Date.now())))]);
+    if (this.style && (this.style.sectionStatus === 'running' || this.style.sectionStatus === 'pending')) await this.style.publishOff('failed', 'deadline').catch(() => undefined);
+    // TITLE-1: stage 2 may have restored the neutral people line after the style reading named the thing.
+    if (this.style?.sectionStatus === 'ready') await this.style.applyThingTitle().catch(() => undefined);
+    const gateway = ctx.providers.modelGateway;
+    const experimental = !!gateway && ['vision_photo', 'vision_video_frame', 'vision_photo_enrich', 'vision_style'].some((r) => gateway.experimentalRoles.has(r as never));
+    // A reviewed example replay is not a model reading: it is never labelled experimental.
+    if (experimental && !this.example) await ctx.db.query('UPDATE analyses SET experimental = true WHERE id = $1', [this.analysisId]);
     const statuses = [...this.sections.values()];
     const partial = statuses.some((s) => s === 'failed' || s === 'unavailable' || s === 'partial') || this.warnings.has(WARNINGS.delayed.code);
     await ctx.setStage('publishing');
@@ -1899,7 +2098,7 @@ export class CaptureCompiler {
       if (!ok) throw new AppError('not_found', { retryable: false });
       await tx.query(`UPDATE captures SET status = $2, updated_at = now() WHERE id = $1`, [this.capture.id, partial ? 'partial' : 'ready']);
     });
-    await ctx.trace({ kind: 'stage', name: 'publish', data: { sections: Object.fromEntries(this.sections), warnings: [...this.warnings.keys()], qloo_requests: this.budget.usedBy('qloo') }, durationMs: Date.now() - this.startedAt, traceId: this.traceId });
+    await ctx.trace({ kind: 'stage', name: 'publish', data: { sections: Object.fromEntries(this.sections), style: this.style?.sectionStatus ?? 'off', style_timings: this.style?.timings ?? {}, warnings: [...this.warnings.keys()], qloo_requests: this.budget.usedBy('qloo') }, durationMs: Date.now() - this.startedAt, traceId: this.traceId });
     return { state: partial ? 'partial' : 'complete', resultType: 'capture', resultId: this.capture.id };
   }
 }

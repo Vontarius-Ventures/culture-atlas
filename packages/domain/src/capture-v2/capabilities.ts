@@ -103,6 +103,8 @@ export function evaluateCaptureCapabilities(
       while_we_look_enabled: true,
       // Off by default (the tune-split evaluation kept it off); the server overlay decides.
       analysis_verifier_enabled: false,
+      // Style design §D.1: production experimental mode; the server overlay decides.
+      experimental_analysis_enabled: false,
     },
     limits: {
       photo_max_bytes: limits.photoMaxBytes,

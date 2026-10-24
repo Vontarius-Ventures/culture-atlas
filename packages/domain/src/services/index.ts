@@ -29,3 +29,4 @@ export { createCaptureIdentityAdapter, createNativePrincipalResolver } from './c
 export * as devicePush from './device-push';
 export * as tasteSeed from './taste-seed';
 export * as interestExpand from './interest-expand';
+export * as style from './style';

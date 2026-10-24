@@ -91,6 +91,10 @@ x-base-env: &base-env
   TASTE_SEED_ENABLED: ${TASTE_SEED_ENABLED:-}
   WHILE_WE_LOOK_ENABLED: ${WHILE_WE_LOOK_ENABLED:-}
   ANALYSIS_VERIFIER_ENABLED: ${ANALYSIS_VERIFIER_ENABLED:-}
+  # Style reading (prp/2026-10-23-style-analysis): claim regions only after the M-G metric passes (R-15);
+  # interior brand rails only after open item O-1 (R-9).
+  STYLE_SHOW_CLAIM_REGIONS: ${STYLE_SHOW_CLAIM_REGIONS:-}
+  STYLE_INTERIOR_BRANDS: ${STYLE_INTERIOR_BRANDS:-}
   META_GLASSES_QUALIFIED_BUILDS: ${META_GLASSES_QUALIFIED_BUILDS:-}
   META_GLASSES_ENTITLED_PLATFORMS: ${META_GLASSES_ENTITLED_PLATFORMS:-}
   META_GLASSES_ROLLOUT: ${META_GLASSES_ROLLOUT:-}
@@ -115,6 +119,15 @@ x-provider-env: &provider-env
   MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: ${MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD:-1}
   MODEL_MAX_UNKNOWN_SPEND_USD: ${MODEL_MAX_UNKNOWN_SPEND_USD:-1}
   ACCOUNT_DAILY_MEDIA_ANALYSES: ${ACCOUNT_DAILY_MEDIA_ANALYSES:-}
+  # Production experimental mode (style design §D.1): these roles run UNQUALIFIED, always labelled
+  # "Experimental" to users, inside their own daily bucket and per-account cap. The runtime kill switch
+  # is the feature flag experimental_analysis_enabled (pnpm ops:kill). CONCENTRATE_DEMO_ALLOW_ROLES
+  # is never wired here (it stays refused in production).
+  ANALYSIS_EXPERIMENTAL_ROLES: ${ANALYSIS_EXPERIMENTAL_ROLES:-vision_photo,vision_photo_enrich,vision_video_frame,vision_style}
+  ANALYSIS_EXPERIMENTAL_ENABLED: ${ANALYSIS_EXPERIMENTAL_ENABLED:-}
+  ANALYSIS_EXPERIMENTAL_DAILY_SPEND_LIMIT_USD: ${ANALYSIS_EXPERIMENTAL_DAILY_SPEND_LIMIT_USD:-15}
+  ANALYSIS_EXPERIMENTAL_ACCOUNT_DAILY: ${ANALYSIS_EXPERIMENTAL_ACCOUNT_DAILY:-20}
+  STYLE_MAX_CALL_USD: ${STYLE_MAX_CALL_USD:-}
   VLM_MODEL: ${VLM_MODEL:-}
   RESEARCH_MODEL: ${RESEARCH_MODEL:-}
   COMPOSER_MODEL: ${COMPOSER_MODEL:-}
@@ -138,6 +151,11 @@ x-provider-env: &provider-env
   QLOO_API_URL: ${QLOO_API_URL:-https://hackathon.api.qloo.com}
   QLOO_TIMEOUT_MS: ${QLOO_TIMEOUT_MS:-}
   QLOO_MAX_CONCURRENCY: ${QLOO_MAX_CONCURRENCY:-}
+  # One Qloo key is shared by web, worker and media-worker (R-11): spacing per process,
+  # a cross-process token bucket and a daily request limit in Postgres.
+  QLOO_MIN_SPACING_MS: ${QLOO_MIN_SPACING_MS:-}
+  QLOO_DAILY_REQUEST_LIMIT: ${QLOO_DAILY_REQUEST_LIMIT:-}
+  QLOO_RATE_PER_SECOND: ${QLOO_RATE_PER_SECOND:-}
   # Production never replays recorded Qloo results.
   QLOO_REPLAY_FIXTURES: 'false'
   ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}

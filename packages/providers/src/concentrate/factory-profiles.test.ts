@@ -18,6 +18,8 @@ import { limits } from './test-fixtures';
 
 const QUAL_DIR = resolveFromWorkspace('fixtures/concentrate');
 const PINNED_VISION = 'anthropic/claude-haiku-5-5';
+/** Style design §B.2: the style reading pins the most accurate in-budget catalog model. */
+const PINNED_STYLE = 'anthropic/claude-sonnet-5-5';
 const PINNED_PROVIDER = 'anthropic';
 
 describe('factory catalog-pinned Concentrate profiles (offline)', () => {
@@ -37,10 +39,11 @@ describe('factory catalog-pinned Concentrate profiles (offline)', () => {
       'research_text',
       'vision_photo',
       'vision_photo_enrich',
+      'vision_style',
       'vision_video_frame',
     ]);
     for (const profile of Object.values(profiles)) {
-      expect(profile.model).toBe(PINNED_VISION);
+      expect(profile.model).toBe(profile.role === 'vision_style' ? PINNED_STYLE : PINNED_VISION);
       expect(profile.provider).toBe(PINNED_PROVIDER);
       expect(profile.requireZdr).toBe(true);
       expect(profile.providerZdrEligible).toBe(true);
@@ -69,6 +72,7 @@ describe('factory catalog-pinned Concentrate profiles (offline)', () => {
     expect(qualificationState(profiles.vision_photo!, QUAL_DIR)).toBe('catalog-compatible');
     expect(qualificationState(profiles.vision_photo_enrich!, QUAL_DIR)).toBe('catalog-compatible');
     expect(qualificationState(profiles.vision_video_frame!, QUAL_DIR)).toBe('catalog-compatible');
+    expect(qualificationState(profiles.vision_style!, QUAL_DIR)).toBe('catalog-compatible');
     expect(qualificationState(profiles.research_text!, QUAL_DIR)).toBe('qualified');
     expect(qualificationState(profiles.composer!, QUAL_DIR)).toBe('qualified');
     const gateway = createModelGateway(

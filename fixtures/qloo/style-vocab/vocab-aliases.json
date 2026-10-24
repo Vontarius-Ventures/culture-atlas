@@ -1,0 +1,5 @@
+{
+  "version": "svocab-1",
+  "note": "Reviewed aliases only (style design §C.2). Each entry maps a normalized claim name to a tag id that already exists in vocab.json, with the owner's approval and the reason. Empty until the owner reviews proposals; exact label matches need no alias.",
+  "aliases": []
+}
