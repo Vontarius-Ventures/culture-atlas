@@ -68,6 +68,9 @@ export class AudioAnalysis {
         generation: media.generation,
         requested_components: input.requested_components,
         selection: { ...input.selection, windows },
+        // A client-recognized song is part of what is asked for: requests with
+        // and without it are not the same analysis, so reuse must not blur them.
+        client_recognition: input.client_recognition ?? null,
       });
       const existing = await tx.query(
         `SELECT * FROM audio_analysis_requests
@@ -102,8 +105,8 @@ export class AudioAnalysis {
       const analysisId = randomUUID();
       const selection = { ...input.selection, windows };
       await tx.query(
-        `INSERT INTO audio_analysis_requests(id,account_id,asset_id,generation,contract_version,requested_components,selection,request_hash,state)
-         VALUES($1,$2,$3,$4,2,$5::jsonb,$6::jsonb,$7,'queued')`,
+        `INSERT INTO audio_analysis_requests(id,account_id,asset_id,generation,contract_version,requested_components,selection,client_recognition,request_hash,state)
+         VALUES($1,$2,$3,$4,2,$5::jsonb,$6::jsonb,$7::jsonb,$8,'queued')`,
         [
           analysisId,
           ctx.authority.accountId,
@@ -111,6 +114,7 @@ export class AudioAnalysis {
           media.generation,
           JSON.stringify(input.requested_components),
           JSON.stringify(selection),
+          input.client_recognition ? JSON.stringify(input.client_recognition) : null,
           fingerprint,
         ],
       );

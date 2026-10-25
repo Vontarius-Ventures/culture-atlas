@@ -449,17 +449,37 @@ public struct AnalyzeAudioRequest: Codable, Sendable, Equatable {
   public var expectedGeneration: Int
   public var requestedComponents: [String]
   public var selection: Selection
+  /// A song this phone recognized on-device (ShazamKit); optional hint the
+  /// server still grounds through its own catalog. Absent on other clients.
+  public var clientRecognition: ClientRecognizedSong?
 
-  public init(expectedGeneration: Int, startMS: Int, endMS: Int, requestedComponents: [String] = ["music_match"]) {
+  public init(
+    expectedGeneration: Int,
+    startMS: Int,
+    endMS: Int,
+    requestedComponents: [String] = ["music_match"],
+    clientRecognition: ClientRecognizedSong? = nil
+  ) {
     self.contractVersion = 2
     self.expectedGeneration = expectedGeneration
     self.requestedComponents = requestedComponents
     self.selection = Selection(startMS: startMS, endMS: endMS)
+    self.clientRecognition = clientRecognition
   }
 
   /// Music Mode explore: fingerprint/catalog match only. No transcripts.
-  public static func musicMatch(expectedGeneration: Int, startMS: Int, endMS: Int) -> AnalyzeAudioRequest {
-    AnalyzeAudioRequest(expectedGeneration: expectedGeneration, startMS: startMS, endMS: endMS)
+  public static func musicMatch(
+    expectedGeneration: Int,
+    startMS: Int,
+    endMS: Int,
+    clientRecognition: ClientRecognizedSong? = nil
+  ) -> AnalyzeAudioRequest {
+    AnalyzeAudioRequest(
+      expectedGeneration: expectedGeneration,
+      startMS: startMS,
+      endMS: endMS,
+      clientRecognition: clientRecognition
+    )
   }
 
   enum CodingKeys: String, CodingKey {
@@ -467,6 +487,7 @@ public struct AnalyzeAudioRequest: Codable, Sendable, Equatable {
     case contractVersion = "contract_version"
     case expectedGeneration = "expected_generation"
     case requestedComponents = "requested_components"
+    case clientRecognition = "client_recognition"
   }
 }
 

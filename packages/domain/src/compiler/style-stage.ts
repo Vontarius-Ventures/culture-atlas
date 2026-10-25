@@ -26,6 +26,7 @@ import { acceptedTags, bestFilterTag, mapSubjectTags, primaryStyleTag, tagLookup
 import { computeSwatches, PALETTE_SIZE, swatchIsBackground, swatchPresentInRegion, type Swatch } from '../style/palette';
 import { buildStyleReason, sharedClaims, type StyleMatch, type StyleMatchClaim } from '../style/reasons';
 import { affinityReason, entityProfile, genreFilterFor, rankCatalogue, scoreMatch, subjectProfile } from '../style/affinity';
+import { drinkKindOf, homeKindOf, homeVocabulary, rankHomeCatalogue, type HomeKind } from '../style/home-affinity';
 import { lowerFirst } from '../style/text';
 import { matchClaims, rankAffinity, type AffinityCandidate } from '../style/affinity-rail';
 import type { StoredStyleReading, StoredSubject } from '../style/types';
@@ -374,15 +375,23 @@ export class StyleStage {
   /**
    * smatch-1 for cross-domain cards: Qloo's own order, re-ranked by how well each result's own tags
    * match the reading (half and half), so a film tagged "Midcentury design history" or "Culinary
-   * cinema" rises for the room or the dish it echoes. Never drops a result.
+   * cinema" rises for the room or the dish it echoes. Never drops a result — unless the reading is
+   * the only signal (`dropStyleless`): then a result sharing none of its words is left out
+   * (measured: a bodybuilding label for a tennis court, an obscure thriller for a rustic cafe;
+   * empty beats junk).
    */
-  rerankCrossDomain<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[], styleShare = 0.5, options: { gateFashion?: boolean } = {}): T[] {
+  rerankCrossDomain<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[], styleShare = 0.5, options: { gateFashion?: boolean; dropStyleless?: boolean } = {}): T[] {
     // Wear cards for a garment pass the same product and tier gates as its rail (no couture house
     // next to a casual dress, no eyewear house for a jacket).
     const garment = options.gateFashion ? this.stored?.subjects.find((x) => x.category === 'fashion') : undefined;
     const q = garment ? subjectProfile(garment) : null;
-    const kept = q ? entities.filter((e) => !scoreMatch(q, entityProfile(e.tags ?? [])).gate) : entities;
-    const scored = this.crossDomainScores(kept);
+    const kept0 = q ? entities.filter((e) => !scoreMatch(q, entityProfile(e.tags ?? [])).gate) : entities;
+    let kept = kept0;
+    let scored = this.crossDomainScores(kept);
+    if (options.dropStyleless) {
+      kept = scored.filter((x) => x.style > 0).map((x) => x.e);
+      scored = this.crossDomainScores(kept);
+    }
     const best = Math.max(0, ...scored.map((x) => x.style));
     if (best <= 0 || kept.length < 2) return [...kept];
     return scored
@@ -923,14 +932,25 @@ export class StyleStage {
     const stored = this.stored!;
     const key = `more_like_this:${s.id}`;
     if (s.category === 'fashion' && !this.earlyBySubject.get(s.id)?.count) return this.buildFashionRail(s, anchors);
+    const interiorBrands = ctx.config.STYLE_INTERIOR_BRANDS === true;
+    // The home kind the reading's words name (chair, bowl, room, espresso), for the brand rail.
+    const homeKind: HomeKind | null = interiorBrands
+      ? s.category === 'interior'
+        ? homeKindOf(s)
+        : s.category === 'food'
+          ? drinkKindOf(s)
+          : null
+      : null;
+    const anchorIds = new Set(anchors.map((a) => a.entityId));
+    const homePool = homeKind ? rankHomeCatalogue(s, homeKind, { exclude: anchorIds, max: FASHION_EXEMPLARS }) : [];
     const accepted = acceptedTags(s);
     const F = bestFilterTag(s);
     // Exemplars must carry the subject's primary style tag (F, else its strongest mapped aesthetic).
     const primaryTag = primaryStyleTag(s);
     const exemplars =
       s.category === 'fashion' && !s.entity && primaryTag
-        ? selectExemplars(styleVocabulary().brands, accepted, primaryTag.id, { exclude: new Set(anchors.map((a) => a.entityId)) })
-        : [];
+        ? selectExemplars(styleVocabulary().brands, accepted, primaryTag.id, { exclude: anchorIds })
+        : homePool.map((x) => ({ id: x.id, name: x.name, score: x.score, popularity: 1, shared: [] as string[] }));
     const plan: RailPlan = planMoreLikeThis({
       subject: s,
       entity: s.entity,
@@ -938,8 +958,10 @@ export class StyleStage {
       accepted,
       exemplars,
       city,
-      interiorBrandsEnabled: ctx.config.STYLE_INTERIOR_BRANDS === true,
+      interiorBrandsEnabled: interiorBrands,
+      homeKind,
     });
+    if (plan.recipe === 'interior_brand' || plan.recipe === 'coffee_brand') return this.buildHomeRail(s, anchors, plan);
     const early = this.earlyBySubject.get(s.id);
     await this.trace('style:rail', { subject: s.id, recipe: plan.recipe, empty_reason: plan.emptyReason, exemplars: exemplars.length, filter_tag: F?.id ?? null, early: early?.count ?? 0 });
     if (!plan.primary) {
@@ -950,7 +972,6 @@ export class StyleStage {
     // smatch-1: reasons no longer cite the photo's palette: a place or film never shares it, and a
     // palette swatch can still be partly background, so the clause read as overlap it was not.
     const palette: string[] = [];
-    const anchorIds = new Set(anchors.map((a) => a.entityId));
     const clean = (list: readonly QlooEntity[], request: QlooInsightsRequest) =>
       list.filter((x) => !anchorIds.has(x.entity_id) && !(request.filterLocationQuery || request.signalLocationQuery ? outsideCity(x, (request.filterLocationQuery ?? request.signalLocationQuery)!) : false));
     // With an early entity rail, the primary entity call already ran: the style-constrained call is the secondary.
@@ -1086,6 +1107,57 @@ export class StyleStage {
     });
     if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
     await this.trace('style:rail', { subject: s.id, status: added ? 'ready' : 'empty', recipe: 'fashion_affinity', cards: added, gated: ranked.gated, timings: this.timings });
+  }
+
+  /**
+   * Home-brand rail (R-9, home-brands-1): "more like this" for an interior object, a room or
+   * a coffee drink. The reading's own words rank the harvested home-brand catalogue of the
+   * subject's industry (furniture, tableware, kitchenware, decor, ceramics, interior design,
+   * coffee); the top matches become entity SIGNALS for one industry-filtered, explainable
+   * insights call (probe: entity signal + industry filter returns coherent design brands; a
+   * tag-only signal returns junk). Every result is then gated and re-ranked by its OWN Qloo
+   * tags against the reading (smatch-1, no fashion gates); a card shares a style claim or
+   * it is not shown (empty beats junk). Reasons name the tag the result itself carries.
+   */
+  private async buildHomeRail(s: StoredSubject, anchors: readonly StyleAnchor[], plan: RailPlan): Promise<void> {
+    const stored = this.stored!;
+    const key = `more_like_this:${s.id}`;
+    const anchorIds = new Set(anchors.map((a) => a.entityId));
+    const signals = (plan.primary?.signalEntities ?? []).length;
+    await this.trace('style:rail', { subject: s.id, recipe: plan.recipe, signals, kind: plan.recipe === 'coffee_brand' ? 'coffee' : 'interior' });
+    if (!signals) {
+      await this.railStatus(key, 'empty', plan.emptyReason);
+      return;
+    }
+    await this.railStatus(key, 'running', null);
+    const a = await this.insights(`style:mlt:${s.id}`, plan.primary!, false, { subject_id: s.id, recipe: plan.recipe, list: 'taste' });
+    if (a) {
+      this.primary.resolve();
+      this.mark(`rail_primary_${s.id}`);
+    }
+    const q = subjectProfile(s);
+    const ranked = rankAffinity(q, [{ list: a?.entities ?? [], prior: true, fromEntity: false }], {
+      exclude: anchorIds,
+      fashion: false,
+      v: homeVocabulary(),
+    });
+    const providerQueryIds = [a?.providerQueryId].filter((x): x is string => !!x);
+    if (!ranked.candidates.length || !providerQueryIds.length) {
+      await this.railStatus(key, 'empty', a ? 'flat_or_empty' : 'qloo_unavailable');
+      await this.trace('style:rail', { subject: s.id, status: 'empty', recipe: plan.recipe, gated: ranked.gated });
+      return;
+    }
+    // Bridges for cross-domain recommend (C.5): the most on-style results, not Qloo's first.
+    for (const c of ranked.candidates.filter((x) => !x.via).slice(0, FASHION_BRIDGES))
+      this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, aesthetic: s.aesthetics.find((x) => !x.held && !x.retracted)?.name ?? null });
+    const added = await this.publishAffinityRail(s.id, ranked.candidates, {
+      entityName: null,
+      providerQueryIds,
+      isReplay: a?.isReplay ?? false,
+      rev: stored.rev,
+    });
+    if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
+    await this.trace('style:rail', { subject: s.id, status: added ? 'ready' : 'empty', recipe: plan.recipe, cards: added, gated: ranked.gated, timings: this.timings });
   }
 
   /** Inserts affinity rail cards (rail = more_like_this) with their own reasons and style_match. */

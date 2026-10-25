@@ -4,6 +4,8 @@ import { RRF_K } from './fusion';
 import type { AcceptedTag } from '../style/map-tags';
 import { mediaKind, tagNamespace } from '../style/map-tags';
 import type { Exemplar } from '../style/exemplars';
+import { HOME_INDUSTRY } from '../style/home-affinity';
+import type { HomeKind } from '../style/home-affinity';
 import type { StoredSubject } from '../style/types';
 
 /**
@@ -26,7 +28,9 @@ export type RailRecipe =
   | 'fashion_tag_only'
   | 'interior_city'
   | 'interior_entity'
+  | 'interior_brand'
   | 'food_city'
+  | 'coffee_brand'
   | 'place_city'
   | 'place_entity'
   | 'media_entity'
@@ -61,6 +65,8 @@ export interface PlanInput {
   city: string | null;
   /** R-9 / open item O-1: interior brand exemplars stay off until non-fashion brand tags are harvested. */
   interiorBrandsEnabled?: boolean;
+  /** The home kind the reading's words name (chair, bowl, room, espresso; null when none): the brand-rail industry. */
+  homeKind?: HomeKind | null;
 }
 
 const empty = (emptyReason: RailEmptyReason, recipe: RailRecipe | null = null): RailPlan => ({
@@ -133,7 +139,12 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
     }
     case 'interior': {
       const decor = firstTag(accepted, ['decor']);
-      if (city && decor)
+      // R-9: an object (a chair, a bowl, a lamp) is a brand question, not a place question: it
+      // gets the home-brand rail even with a city. A room keeps the place path when a city and
+      // a decor tag exist; without them the room's style still reaches home brands.
+      const kind = input.homeKind ?? null;
+      const objectLike = kind !== null && kind !== 'interior';
+      if (!objectLike && city && decor)
         return { recipe: 'interior_city', primary: { ...base('urn:entity:place'), filterTags: [decor], filterLocationQuery: city }, secondary: null, tagOnly: false, bridgeable: true, emptyReason: null, entity: null };
       if (entity && (entity.types.includes('urn:entity:place') || entity.types.includes('urn:entity:brand'))) {
         const type: QlooEntityType = entity.types.includes('urn:entity:place') ? 'urn:entity:place' : 'urn:entity:brand';
@@ -148,10 +159,49 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
           entity: e,
         };
       }
-      return empty(input.interiorBrandsEnabled ? 'no_signal' : 'no_city');
+      if (input.interiorBrandsEnabled) {
+        // The harvested home-brand catalogue (home-brands-1) supplies entity signals the reading
+        // itself picked (probe: entity signal + industry filter returns coherent design brands).
+        const signals = input.exemplars.map((x) => x.id);
+        if (kind && signals.length)
+          return {
+            recipe: 'interior_brand',
+            primary: { ...base('urn:entity:brand'), filterTags: [HOME_INDUSTRY[kind]], signalEntities: signals },
+            secondary: null,
+            tagOnly: false,
+            bridgeable: true,
+            emptyReason: null,
+            entity: null,
+          };
+        // Honest empty when no home brand shares the reading's style: an object's only
+        // question is brands (no_signal); a room's real question is places, so without
+        // a city the honest state is "Add a city" (with a city, the room genuinely
+        // found no style-matched brand: no_signal).
+        return empty(!city && !objectLike ? 'no_city' : 'no_signal');
+      }
+      return empty('no_city');
     }
     case 'food': {
-      if (!city) return empty('no_city');
+      const drink = input.homeKind === 'coffee' ? 'coffee' : null;
+      if (!city) {
+        // A coffee or tea drink is a brand question even without a place: coffee brands the
+        // reading matches (a dish keeps the honest "Add a city": its places need one).
+        if (drink && input.interiorBrandsEnabled) {
+          const signals = input.exemplars.map((x) => x.id);
+          if (signals.length)
+            return {
+              recipe: 'coffee_brand',
+              primary: { ...base('urn:entity:brand'), filterTags: [HOME_INDUSTRY.coffee], signalEntities: signals },
+              secondary: null,
+              tagOnly: false,
+              bridgeable: true,
+              emptyReason: null,
+              entity: null,
+            };
+          return empty('no_signal');
+        }
+        return empty('no_city');
+      }
       const genre = accepted.find((a) => a.primary && a.use !== 'reason' && a.id.startsWith('urn:tag:genre:place:restaurant'))?.id ?? null;
       const placeE = entity && entity.types.includes('urn:entity:place') ? entity : null;
       if (!genre && !placeE) return empty('no_signal');

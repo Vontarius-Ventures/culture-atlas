@@ -71,8 +71,9 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(recs.length).toBeGreaterThan(0);
     expect(recs.length).toBeLessThanOrEqual(12);
     for (const c of ['wear', 'play', 'watch', 'eat']) expect(recs.filter((r) => r.category === c).length).toBeLessThanOrEqual(3);
-    // A card named like a reference can only be that reference's own style direction (Wear).
-    for (const r of recs.filter((x) => view.references.some((ref) => ref.name === x.title))) expect(r.subtitle).toBe('Style direction');
+    // No card is ever named like a reference (the tag-as-card "style direction" fallback was
+    // removed: a tag is not a suggestion, and a same-named entity card would be a name collision).
+    for (const r of recs) expect(view.references.some((ref) => ref.name === r.title)).toBe(false);
     expect(recs.map((r) => r.title)).not.toContain('Ungrounded Dish');
     expect(recs.every((r) => r.is_example === false)).toBe(true);
     for (let i = 2; i < recs.length; i++) expect(recs[i]!.category === recs[i - 1]!.category && recs[i]!.category === recs[i - 2]!.category).toBe(false);

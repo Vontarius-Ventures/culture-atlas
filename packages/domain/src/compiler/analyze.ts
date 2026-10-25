@@ -1685,7 +1685,7 @@ export class CaptureCompiler {
       const res = call.value;
       const anchorIds = new Set(entityIds);
       const raw = res.data.entities.filter((e) => !anchorIds.has(e.entity_id));
-      const entities = this.style && topic ? this.style.topicFilms(raw) : this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { gateFashion: category === 'wear' }) : raw;
+      const entities = this.style && topic ? this.style.topicFilms(raw) : this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { gateFashion: category === 'wear', dropStyleless: entityIds.length === 0 }) : raw;
       if (bridges.length) this.recommendBridges.set(category, bridges);
       const providerQueryId = await recordProviderQuery(ctx.db, {
         parent: { analysisId: this.analysisId },
@@ -1765,9 +1765,7 @@ export class CaptureCompiler {
     const bridgeByEntity = new Map((append ? [] : (this.recommendBridges.get(category) ?? [])).map((b) => [b.entityId, b]));
     const kind = CATEGORY_ITEM_KIND[category];
 
-    type Payload =
-      | { source: 'insights'; candidate: CategoryCandidate }
-      | { source: 'style'; ref: ResolvedRef };
+    type Payload = { source: 'insights'; candidate: CategoryCandidate };
     const lists: RankedList<Payload>[] = [
       {
         source: `qloo:insights:${category}`,
@@ -1777,21 +1775,6 @@ export class CaptureCompiler {
         }),
       },
     ];
-    if (category === 'wear' && rec.candidates.length === 0) {
-      // Style directions the photo resembles, resolved to real Qloo tags: only a fashion tag (Qloo lists
-      // it on brands) and only when Qloo returned no brand at all. A decor or architecture tag ("Knotty
-      // Pine Paneling", "Mughal Architecture") is not something to wear, and a tag is not a suggestion
-      // next to real brands.
-      const styles = (append ? append.signals : refs).filter(
-        (r) =>
-          r.type === 'style' &&
-          r.qloo?.tagId &&
-          r.resolution === 'resolved' &&
-          r.providerQueryId &&
-          ((r.qloo.types ?? []).includes('urn:entity:brand') || /^urn:tag:(?:aesthetic_property|personal_style|fashion_segment|design_inspiration|cultural_relevance):/.test(r.qloo.tagId)),
-      );
-      lists.push({ source: 'qloo:tags:style', items: styles.map((r) => ({ key: `qloo_tag:${r.qloo!.tagId}`, originRefs: [r.referenceId], payload: { source: 'style' as const, ref: r } })) });
-    }
     const fused = reciprocalRankFusion(lists, { exclude: new Set([...excluded, ...usedKeys]) });
     const slots = LIMITS.recommendationsPerCategory - (append?.existing ?? 0);
     const picked = slots > 0 ? selectDiverse(fused, slots) : [];
@@ -1868,30 +1851,6 @@ export class CaptureCompiler {
             recId,
             bridge ? JSON.stringify({ subject_id: bridge.subjectId, claims: [], palette: [], via_entity: bridge.name, via: 'bridge', rail: 'cross_domain' }) : null,
           ]);
-        } else {
-          const r = p.payload.ref;
-          const itemId = await upsertDiscoveryItem(tx, this.owner, {
-            kind: 'style',
-            category: 'wear',
-            canonicalKey: p.key,
-            title: r.name,
-            displayMetadata: { subtitle: 'Style direction', example: Boolean(r.isReplay) },
-            externalIds: { qloo_tag: r.qloo!.tagId },
-            referenceId: r.referenceId,
-            resolvedAnchorIds: [r.referenceId],
-          });
-          await insertRecommendation(tx, {
-            analysisId: this.analysisId,
-            discoveryItemId: itemId,
-            category: 'wear',
-            rank: nextRank(),
-            title: r.name,
-            externalIds: { qloo_tag: r.qloo!.tagId },
-            displayReason: 'A style direction your photo resembles.',
-            origin: r.isReplay ? 'replay' : 'qloo',
-            providerQueryIds: [r.providerQueryId!],
-            contributingReferenceIds: [r.referenceId],
-          });
         }
         usedKeys.add(p.key);
       }

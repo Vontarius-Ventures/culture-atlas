@@ -98,12 +98,16 @@ extension AtlasAPI {
   }
 
   /// Music Mode explore: music_match only. Never sends speech/transcripts.
+  /// `recognized` is the song the phone identified on-device (ShazamKit), if
+  /// any: an optional hint the server still grounds through its own catalog.
   public func startMusicAnalysis(
-    mediaID: UUID, generation: Int, startMS: Int, endMS: Int, key: UUID = UUID()
+    mediaID: UUID, generation: Int, startMS: Int, endMS: Int, key: UUID = UUID(),
+    recognized: ClientRecognizedSong? = nil
   ) async throws -> AnalysisStatus {
     try await call(
       "POST", "/v2/media/\(mediaID.uuidString.lowercased())/analysis",
-      body: AnalyzeAudioRequest.musicMatch(expectedGeneration: generation, startMS: startMS, endMS: endMS),
+      body: AnalyzeAudioRequest.musicMatch(
+        expectedGeneration: generation, startMS: startMS, endMS: endMS, clientRecognition: recognized),
       idempotencyKey: key)
   }
 

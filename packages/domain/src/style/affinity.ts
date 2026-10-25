@@ -408,18 +408,28 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
 
 /** Tag families that describe style (matched), as opposed to price, audience, related brands or wiki categories. */
 function isStyleTag(id: string): boolean {
-  return /^urn:tag:(?:aesthetic_property|design_inspiration|cultural_relevance|personal_style|fashion_segment|material|signature_piece|style|theme|subgenre|decor|setting|ambience|keyword|genre:media|genre:music|genre:place)\b/.test(id) || /^urn:tag:genre:(?:qloo|media)/.test(id);
+  return /^urn:tag:(?:aesthetic_property|design_inspiration|cultural_relevance|personal_style|fashion_segment|material|signature_piece|signature_product|product_service|product_line|lifestyle|emotional_tone|consumption_context|core_value|interest_adjacency|style|theme|subgenre|decor|setting|ambience|keyword|genre:media|genre:music|genre:place)\b/.test(id) || /^urn:tag:genre:(?:qloo|media)/.test(id);
 }
 
 const TAG_W: Record<string, number> = {
   signature_piece: 1,
+  /** Home-brand families (home-brands-1): a named product ("Dutch Ovens") or an aesthetic word carries the match. */
+  signature_product: 1,
+  product_service: 0.9,
   design_inspiration: 0.9,
   cultural_relevance: 0.8,
   aesthetic_property: 0.8,
   personal_style: 0.8,
   fashion_segment: 0.7,
+  product_line: 0.7,
   material: 0.6,
   genre: 0.7,
+  lifestyle: 0.5,
+  emotional_tone: 0.5,
+  core_value: 0.5,
+  consumption_context: 0.4,
+  interest_adjacency: 0.4,
+  keyword: 0.6,
 };
 
 /**

@@ -1,5 +1,6 @@
 import type { QlooEntity } from '@culture-atlas/providers';
 import { entityProfile, scoreMatch, STRICT_KINDS, type MatchHit, type StyleMatchResult, type SubjectProfile } from './affinity';
+import type { StyleVocabulary } from './vocabulary';
 import type { StyleMatchClaim } from './reasons';
 
 /**
@@ -41,7 +42,7 @@ export const STRICT_FILL_TO = 4;
 export function rankAffinity(
   q: SubjectProfile,
   lists: readonly AffinityList[],
-  options: { exclude?: ReadonlySet<string>; entityLinked?: boolean; signalNames?: ReadonlyMap<string, string> } = {},
+  options: { exclude?: ReadonlySet<string>; entityLinked?: boolean; signalNames?: ReadonlyMap<string, string>; fashion?: boolean; v?: StyleVocabulary } = {},
 ): { candidates: AffinityCandidate[]; gated: Record<string, number> } {
   const byId = new Map<string, { entity: QlooEntity; prior: number; fromEntity: boolean }>();
   for (const l of lists)
@@ -59,7 +60,7 @@ export function rankAffinity(
   const scored: { entity: QlooEntity; prior: number; fromEntity: boolean; match: StyleMatchResult }[] = [];
   const weak: typeof scored = [];
   for (const x of byId.values()) {
-    const match = scoreMatch(q, entityProfile(x.entity.tags ?? []));
+    const match = scoreMatch(q, entityProfile(x.entity.tags ?? []), { fashion: options.fashion ?? true, v: options.v });
     if (match.gate) {
       gated[match.gate] = (gated[match.gate] ?? 0) + 1;
       continue;

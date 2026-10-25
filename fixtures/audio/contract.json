@@ -25,6 +25,20 @@
       "end_ms": 15000
     }
   },
+  "client_recognition_note": "iOS Music Mode when ShazamKit recognized the song on-device. Optional hint: the server still resolves the artist through its own catalog; other clients omit the field.",
+  "analysis_request_with_client_recognition": {
+    "contract_version": 2,
+    "expected_generation": 1,
+    "requested_components": ["music_match"],
+    "selection": { "start_ms": 0, "end_ms": 15000 },
+    "client_recognition": {
+      "vendor": "shazamkit",
+      "artist_name": "Fleetwood Mac",
+      "title": "Dreams",
+      "matched_at_ms": 4200,
+      "vendor_recording_id": "1234567"
+    }
+  },
   "evidence_example": {
     "id": "22222222-2222-4222-8222-222222222222",
     "modality": "audio",

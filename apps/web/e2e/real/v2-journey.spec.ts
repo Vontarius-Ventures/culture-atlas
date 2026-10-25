@@ -277,7 +277,9 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
   await test.step('sign up with an email link', async () => {
     await page.goto('/library');
     await expect(page.getByText('Your library is private.')).toBeVisible();
-    await page.getByRole('link', { name: 'Sign in' }).click();
+    // Signed-out pages show a header "Sign in" link and the library's empty
+    // state has its own CTA; scope to the page content so the locator stays strict.
+    await page.getByRole('main').getByRole('link', { name: 'Sign in' }).click();
     await expect(page).toHaveURL(/\/identity$/);
     await page.getByLabel('Email').fill(email);
     const started = Date.now();
@@ -452,7 +454,10 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
       data: { mode: 'sampled_video', expected_generation: detail.generation },
     });
     expect(refused.status()).toBe(503);
-    expect((await refused.json()).error.message).toBe('Exploration is temporarily unavailable.');
+    // The server refuses with its own state copy (unqualified/unconfigured is a
+    // server state, not an outage); the "temporarily unavailable" line above is
+    // the client's rendering of the analysis_unavailable state, not the API's.
+    expect((await refused.json()).error.message).toBe('Exploration is not available on this server yet.');
     // Nothing was invented: no analysis link appeared on the item.
     const after = await (await page.request.get(`/v2/media/${videoId}`)).json();
     expect(after.links.analysis ?? null).toBeNull();
@@ -543,7 +548,13 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
     });
     try {
       const tools = await client.listTools();
-      expect(tools).toEqual(expect.arrayContaining(['list_media', 'get_media', 'analyze_media']));
+      // tools/list only shows tools this connection may call: with media:read,
+      // collection and capture-command grants the media upload/analysis pair
+      // stays hidden (no media:write / media:analyze grant was given).
+      expect(tools).toEqual(expect.arrayContaining(['list_media', 'get_media', 'get_operation', 'request_capture']));
+      expect(tools).not.toContain('analyze_media');
+      expect(tools).not.toContain('begin_upload');
+      expect(tools).not.toContain('complete_upload');
       const listed = await client.callTool<{ items: Array<{ media: { id: string } }> }>(
         'list_media',
         {},
@@ -555,13 +566,19 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
         media_id: videoId,
       });
       expect(got.ok && got.data.media.id).toBe(videoId);
-      // No media:analyze grant: exploration is refused before anything is queued.
-      const analyze = await client.callTool('analyze_media', {
-        media_id: videoId,
-        idempotency_key: randomUUID(),
-        request: { mode: 'sampled_video', expected_generation: 1 },
+      // No media:analyze grant: exploration is refused before anything is queued,
+      // over the mirrored REST contract (the MCP tool itself is not advertised).
+      const agentDetail = await (await fetch(new URL(`/v2/media/${videoId}`, baseURL), { headers: auth })).json();
+      const analyze = await fetch(new URL(`/v2/media/${videoId}/analysis`, baseURL), {
+        method: 'POST',
+        headers: {
+          ...auth,
+          'content-type': 'application/json',
+          'idempotency-key': randomUUID(),
+        },
+        body: JSON.stringify({ mode: 'sampled_video', expected_generation: agentDetail.generation }),
       });
-      expect(analyze.ok).toBe(false);
+      expect(analyze.status).toBe(403);
     } finally {
       await client.close();
     }

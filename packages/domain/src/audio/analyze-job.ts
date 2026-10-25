@@ -13,6 +13,7 @@ import { enqueueJob } from '../jobs/queue';
 import type { Queryable } from '../db/pool';
 import { clipText, destinationFromQlooProperties, imageFromQlooProperties } from '../services/display';
 import { getTasteRevision } from '../services/taste';
+import type { ClientRecognizedSong } from '../schemas/audio';
 import { audioMatchDisplay, type AudioMatchDisplay } from './match-display';
 import { artistSeedsFromQlooEntities, queriesFromTranscript, searchQueryForHit } from './qloo-seeds';
 import {
@@ -74,11 +75,13 @@ interface AudioWork {
   deletedAt: Date | null;
   windows: { start_ms: number; end_ms: number }[];
   trackId: string | null;
+  /** Song the client recognized on-device (ShazamKit); a hint, Qloo still grounds it. */
+  clientRecognition: ClientRecognizedSong | null;
 }
 
 async function loadWork(db: Queryable, analysisId: string, accountId: string): Promise<AudioWork> {
   const { rows } = await db.query(
-    `SELECT a.id, a.asset_id, a.account_id, a.generation, a.selection, a.state AS analysis_state,
+    `SELECT a.id, a.asset_id, a.account_id, a.generation, a.selection, a.client_recognition, a.state AS analysis_state,
             m.duration_ms, m.original_key, m.content_type, m.deleted_at
        FROM audio_analysis_requests a
        JOIN media_assets m ON m.account_id=a.account_id AND m.id=a.asset_id
@@ -92,6 +95,7 @@ async function loadWork(db: Queryable, analysisId: string, accountId: string): P
     [accountId, row.asset_id, row.generation],
   );
   const selection = row.selection as { windows?: { start_ms: number; end_ms: number }[] };
+  const recognized = row.client_recognition as ClientRecognizedSong | null;
   return {
     analysisId: row.id,
     assetId: row.asset_id,
@@ -103,6 +107,7 @@ async function loadWork(db: Queryable, analysisId: string, accountId: string): P
     deletedAt: row.deleted_at,
     windows: selection.windows ?? [],
     trackId: track.rows[0]?.id ?? null,
+    clientRecognition: recognized && typeof recognized.artist_name === 'string' ? recognized : null,
   };
 }
 
@@ -288,9 +293,10 @@ export async function runAnalyzeAudio(
   const hit = identified.hits[0] ?? null;
   let seeds: { entity_id: string; entity_type: 'urn:entity:artist'; name: string; insights_eligible: true }[] = [];
   let resolution: 'resolved' | 'ambiguous' | 'unresolved' | null = null;
-  let method: 'fingerprint' | 'transcript' = 'fingerprint';
+  let method: 'fingerprint' | 'client_recognition' | 'transcript' = 'fingerprint';
   let transcriptText: string | null = null;
   let transcriptReason: string | null = null;
+  let clientReason: string | null = null;
   let seedEntity: QlooEntity | undefined;
   if (identified.status === 'matched' && hit) {
     const query = searchQueryForHit(hit);
@@ -302,6 +308,26 @@ export async function runAnalyzeAudio(
       seedEntity = found.find((e) => e.entity_id === seeds[0]?.entity_id);
     } else {
       resolution = 'unresolved';
+    }
+  }
+
+  // Client tier: a song the phone already recognized on-device (ShazamKit). The
+  // artist is still grounded by Qloo — the client hint alone is never a match,
+  // and only the artist that Qloo returned under the recognized name resolves.
+  if ((!seeds.length || resolution !== 'resolved') && work.clientRecognition) {
+    const query = work.clientRecognition.artist_name.trim();
+    if (query) {
+      const found = await searchArtists(ctx, query);
+      const mapped = artistSeedsFromQlooEntities(found, query);
+      method = 'client_recognition';
+      if (mapped.status === 'resolved' && mapped.seeds.length) {
+        seeds = mapped.seeds;
+        resolution = 'resolved';
+        seedEntity = found.find((e) => e.entity_id === seeds[0]?.entity_id);
+      } else {
+        resolution = mapped.status;
+        clientReason = mapped.status === 'ambiguous' ? 'ambiguous_artist' : 'no_matching_artist';
+      }
     }
   }
 
@@ -339,15 +365,17 @@ export async function runAnalyzeAudio(
   await ctx.ensureActive();
   const resolved = seeds.length > 0 && resolution === 'resolved';
   const qlooId = seeds[0]?.entity_id ?? null;
+  // The fingerprint tier reports its own evidence; the client-recognition and
+  // transcript tiers report the Qloo resolution of the name they heard.
   const evidenceState = resolved
     ? 'matched'
-    : method === 'transcript'
+    : method === 'fingerprint'
       ? resolution === 'ambiguous'
         ? 'ambiguous'
-        : 'no_match'
+        : evidenceStatus(identified)
       : resolution === 'ambiguous'
         ? 'ambiguous'
-        : evidenceStatus(identified);
+        : 'no_match';
   const evidenceId = randomUUID();
   await ctx.db.query(
     `INSERT INTO media_evidence(id,account_id,asset_id,generation,analysis_id,track_id,modality,relationship,start_ms,end_ms,method,status,qloo_entity_id,vendor_evidence)
@@ -365,11 +393,18 @@ export async function runAnalyzeAudio(
       evidenceState,
       qlooId,
       JSON.stringify({
-        vendor: hit?.vendor ?? (method === 'transcript' ? 'elevenlabs' : 'unavailable'),
-        vendor_recording_id: hit?.vendor_recording_id ?? null,
+        vendor:
+          hit?.vendor ??
+          (method === 'transcript'
+            ? 'elevenlabs'
+            : method === 'client_recognition'
+              ? (work.clientRecognition?.vendor ?? 'unknown_client')
+              : 'unavailable'),
+        vendor_recording_id: hit?.vendor_recording_id ?? work.clientRecognition?.vendor_recording_id ?? null,
         vendor_confidence: hit?.vendor_confidence ?? null,
         transcript: transcriptText,
         transcript_reason: transcriptReason,
+        client_recognition_reason: clientReason,
       }),
     ],
   );
@@ -397,7 +432,7 @@ export async function runAnalyzeAudio(
         publicMusicState(identified.status),
       ],
     );
-  } else if (resolved && method === 'transcript' && seeds[0]) {
+  } else if (resolved && method !== 'fingerprint' && seeds[0]) {
     recognitionId = randomUUID();
     await ctx.db.query(
       `INSERT INTO recognized_recordings(id,account_id,asset_id,generation,analysis_id,evidence_id,vendor,vendor_recording_id,title,artist_name,album_title,artist_catalog_id,album_catalog_id,match_status)
@@ -409,9 +444,9 @@ export async function runAnalyzeAudio(
         work.generation,
         work.analysisId,
         evidenceId,
-        'elevenlabs',
-        null,
-        null,
+        method === 'client_recognition' ? (work.clientRecognition?.vendor ?? 'shazamkit') : 'elevenlabs',
+        method === 'client_recognition' ? (work.clientRecognition?.vendor_recording_id ?? null) : null,
+        method === 'client_recognition' ? (work.clientRecognition?.title ?? null) : null,
         seeds[0].name,
         null,
         seeds[0].entity_id,
@@ -454,36 +489,50 @@ export async function runAnalyzeAudio(
     );
   }
 
+  // State settles per tier: a resolved match succeeds; when a tier that ran
+  // found nothing the component honestly answers no_result; everything a
+  // server cannot even run (no fingerprint provider, no transcription key)
+  // is unavailable. The client tier counts as a run: it used the phone's own
+  // recognition, so an unresolved hint is a real no_result, not unavailable.
+  const clientTried = work.clientRecognition !== null;
+  const serverSignalsUnavailable =
+    identified.status === 'unavailable' && (!transcription.enabled || transcriptReason === 'transcript_unavailable');
   const componentState = resolved
     ? 'succeeded'
-    : identified.status === 'unavailable' && (!transcription.enabled || transcriptReason === 'transcript_unavailable')
+    : serverSignalsUnavailable && !clientTried
       ? 'unavailable'
-      : identified.status === 'no_match' || (method === 'transcript' && !resolved)
+      : identified.status === 'no_match' || (method !== 'fingerprint' && !resolved)
         ? 'no_result'
         : identified.status === 'matched'
           ? 'succeeded'
           : 'succeeded';
   const jobState = resolved
     ? 'complete'
-    : identified.status === 'unavailable' &&
-        (!transcription.enabled || transcriptReason === 'transcript_unavailable')
+    : serverSignalsUnavailable && !clientTried
       ? 'partial'
       : identified.status === 'matched' && !qlooId
         ? 'partial'
         : identified.status === 'no_match' ||
             identified.status === 'matched' ||
             identified.status === 'ambiguous' ||
-            method === 'transcript'
+            method !== 'fingerprint'
           ? 'complete'
           : 'partial';
   const music = resolved
     ? 'identified'
     : publicMusicState(
-        method === 'transcript' && identified.status === 'unavailable' ? 'no_match' : identified.status,
+        method !== 'fingerprint' && identified.status === 'unavailable' ? 'no_match' : identified.status,
       );
-  // Fingerprinting and the transcript are separate signals: report each one's
-  // own reason (a missing recognizer is not why the transcript found nothing).
-  const componentReason = resolved ? null : method === 'transcript' ? transcriptReason : (identified.reason ?? transcriptReason);
+  // Fingerprinting, the client hint and the transcript are separate signals:
+  // report each one's own reason (a missing recognizer is not why the client
+  // hint or the transcript found nothing).
+  const componentReason = resolved
+    ? null
+    : method === 'transcript'
+      ? transcriptReason
+      : method === 'client_recognition'
+        ? clientReason
+        : (identified.reason ?? transcriptReason);
   let artist: {
     name: string;
     entity_id: string;
@@ -509,10 +558,29 @@ export async function runAnalyzeAudio(
     }
   }
   // What the result screen shows for a match: Qloo artist (name + Qloo image)
-  // and related artists from Qloo Insights. Absent unless resolved.
+  // and related artists from Qloo Insights. Absent unless resolved. The
+  // recording metadata shown is the recognizer's own: the server fingerprint
+  // hit, or the song the phone recognized on-device.
   let match: AudioMatchDisplay | null = null;
   if (resolved && seedEntity) {
-    match = await audioMatchDisplay(ctx, seedEntity, method === 'fingerprint' ? hit : null).catch(() => null);
+    const displayHit =
+      method === 'fingerprint'
+        ? hit
+        : method === 'client_recognition' && work.clientRecognition
+          ? {
+              vendor: work.clientRecognition.vendor,
+              vendor_recording_id: work.clientRecognition.vendor_recording_id ?? null,
+              title: work.clientRecognition.title ?? null,
+              artist_name: work.clientRecognition.artist_name,
+              album_title: null,
+              artist_catalog_id: null,
+              album_catalog_id: null,
+              start_ms: window.start_ms,
+              end_ms: window.end_ms,
+              vendor_confidence: null,
+            }
+          : null;
+    match = await audioMatchDisplay(ctx, seedEntity, displayHit).catch(() => null);
     await ctx.ensureActive();
   }
   const result = {
@@ -522,6 +590,7 @@ export async function runAnalyzeAudio(
         state: componentState,
         reason: componentReason,
         fingerprint_reason: identified.reason ?? null,
+        client_recognition_reason: clientReason,
         transcript_reason: transcriptReason,
       },
       speech_references: { state: 'not_requested', reason: 'music_mode_default_off' },

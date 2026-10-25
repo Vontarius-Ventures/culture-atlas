@@ -887,8 +887,10 @@ export class MockApi {
   }
 
   /**
-   * Endpoints the shared route contract does not list yet (E.4):
-   * POST /v1/captures/{id}/style/retry (202, then 409 retry_used) and PUT /v1/me/city (204).
+   * Routes with no contract payload of their own (E.4):
+   * POST /v1/captures/{id}/style/retry (202 StyleRetryResponse, then 409 retry_used)
+   * and PUT /v1/me/city (204). The mock keeps their behavior local because the
+   * shared dispatch is generic; response shapes still follow the contract.
    */
   styleRoute(
     method: string,
@@ -911,7 +913,10 @@ export class MockApi {
         };
       c.styleRetried = true;
       c.styleReadyAt = c.reads + 1;
-      return { status: 202, json: { capture_id: c.id, sections: { style: 'running' } } };
+      // Mirrors the service (StyleRetryResponse): a style_retry job is enqueued
+      // whose result is the capture; the reading flips to ready on the next read.
+      const job = this.newJob('style_retry', { type: 'capture', id: c.id });
+      return { status: 202, json: { job_id: job.id, sections: { style: 'running' } } };
     }
     if (path === '/v1/me/city' && method === 'PUT') {
       const city = (readBody() as { city?: unknown } | null)?.city;

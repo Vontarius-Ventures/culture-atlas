@@ -41,18 +41,56 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
     expect(plan({ accepted: [] }).emptyReason).toBe('no_signal');
   });
 
-  it('interior: places with the decor tag in the user city, else an honest no_city (no tag-only brand call)', () => {
+  it('interior: places with the decor tag in the user city; with brand rails off, an honest no_city', () => {
     const interior = storedSubject({ category: 'interior' });
     const decor = 'urn:tag:decor:qloo:japandi';
     expect(plan({ subject: interior, accepted: [tag(decor, { use: 'signal' })], city: 'Brooklyn, NY' }).primary).toEqual({ filterType: 'urn:entity:place', explainability: true, take: 20, filterTags: [decor], filterLocationQuery: 'Brooklyn, NY' });
     expect(plan({ subject: interior, accepted: [tag(decor)] })).toMatchObject({ primary: null, emptyReason: 'no_city' });
   });
 
-  it('food: restaurant-genre places in the city (filter.location.query); without a city no Qloo call', () => {
+  it('interior brand rails (home-brands-1): an object is a brand question even with a city; a room keeps places', () => {
+    const decor = 'urn:tag:decor:qloo:japandi';
+    const room = storedSubject({ category: 'interior', label: 'Quiet living room' });
+    const chair = storedSubject({ category: 'interior', label: 'Walnut lounge chair' });
+    const exemplars = [{ id: 'X1', name: 'a', score: 2, popularity: 1, shared: [] }];
+    // A room with a city and a decor tag still looks for places.
+    expect(plan({ subject: room, accepted: [tag(decor)], city: 'Brooklyn, NY', interiorBrandsEnabled: true, homeKind: 'interior' }).recipe).toBe('interior_city');
+    // A room without a city reaches home brands of its industry.
+    expect(plan({ subject: room, accepted: [], interiorBrandsEnabled: true, homeKind: 'interior', exemplars }).primary).toEqual({
+      filterType: 'urn:entity:brand',
+      explainability: true,
+      take: 20,
+      filterTags: ['urn:tag:industry:qloo:interior_design'],
+      signalEntities: ['X1'],
+    });
+    // An object (a chair) is a brand question even with a city and a decor tag.
+    expect(plan({ subject: chair, accepted: [tag(decor)], city: 'Brooklyn, NY', interiorBrandsEnabled: true, homeKind: 'furniture', exemplars }).recipe).toBe('interior_brand');
+    // No style signal the catalogue shares: an object's honest state is no brand matches;
+    // a room's honest state is its real question needs a city.
+    expect(plan({ subject: chair, accepted: [tag(decor)], interiorBrandsEnabled: true, homeKind: 'furniture' })).toMatchObject({ primary: null, emptyReason: 'no_signal' });
+    expect(plan({ subject: chair, accepted: [tag(decor)], city: 'Brooklyn, NY', interiorBrandsEnabled: true, homeKind: 'furniture' })).toMatchObject({ primary: null, emptyReason: 'no_signal' });
+    expect(plan({ subject: chair, accepted: [tag(decor)], interiorBrandsEnabled: true, homeKind: null })).toMatchObject({ primary: null, emptyReason: 'no_city' });
+    expect(plan({ subject: room, accepted: [], interiorBrandsEnabled: true, homeKind: 'interior' })).toMatchObject({ primary: null, emptyReason: 'no_city' });
+    expect(plan({ subject: room, accepted: [], city: 'Brooklyn, NY', interiorBrandsEnabled: true, homeKind: 'interior' })).toMatchObject({ primary: null, emptyReason: 'no_signal' });
+  });
+
+  it('food: restaurant-genre places in the city; a coffee drink without a city is a brand question, a dish keeps no_city', () => {
     const food = storedSubject({ category: 'food' });
     const genre = 'urn:tag:genre:place:restaurant:ramen';
     expect(plan({ subject: food, accepted: [tag(genre)], city: 'Los Angeles, CA' }).primary).toEqual({ filterType: 'urn:entity:place', explainability: true, take: 20, filterTags: [genre], filterLocationQuery: 'Los Angeles, CA' });
     expect(plan({ subject: food, accepted: [tag(genre)] })).toMatchObject({ primary: null, emptyReason: 'no_city' });
+    const espresso = storedSubject({ category: 'food', label: 'Espresso in a ceramic cup' });
+    const exemplars = [{ id: 'C1', name: 'a', score: 2, popularity: 1, shared: [] }];
+    expect(plan({ subject: espresso, interiorBrandsEnabled: true, homeKind: 'coffee', exemplars }).primary).toEqual({
+      filterType: 'urn:entity:brand',
+      explainability: true,
+      take: 20,
+      filterTags: ['urn:tag:industry:qloo:coffee'],
+      signalEntities: ['C1'],
+    });
+    expect(plan({ subject: espresso, interiorBrandsEnabled: true, homeKind: 'coffee' })).toMatchObject({ primary: null, emptyReason: 'no_signal' });
+    // A dish with brand rails on still needs a city: its places are the honest answer.
+    expect(plan({ subject: food, accepted: [tag(genre)], interiorBrandsEnabled: true, homeKind: null })).toMatchObject({ primary: null, emptyReason: 'no_city' });
   });
 
   it('media: the same type with the entity signal; without one, a style-tag movie filter at popularity 0.9', () => {

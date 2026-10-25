@@ -213,6 +213,13 @@ xcodegen generate
 open CultureAtlas.xcodeproj
 ```
 
+No iPhone at hand? The public build and its unit tests also run on the simulator:
+
+```sh
+xcodebuild -project CultureAtlas.xcodeproj -scheme CultureAtlas \
+  -destination 'platform=iOS Simulator,name=iPhone 17e' test
+```
+
 Both `Signing.xcconfig` and `LocalAPI.xcconfig` are gitignored. Don't commit them.
 
 In Xcode:

@@ -14,6 +14,7 @@ import type { JobRecord } from '../jobs/types';
 import { JobCancelledError } from '../jobs/handler';
 import { AudioLibrary } from './assets';
 import { AudioAnalysis } from './analysis';
+import { AnalyzeAudioRequest } from '../schemas/audio';
 import { createAnalyzeAudioHandler, runAnalyzeAudio, setAudioOriginalStorage } from './analyze-job';
 import { pcmWavBytes } from './wav';
 import { UnavailableMusicRecognition, type MusicRecognition } from './recognition';
@@ -556,5 +557,284 @@ describe('Explore authorizes analysis', () => {
     ).rejects.toBeInstanceOf(JobCancelledError);
     const evidence = await db.query(`SELECT id FROM media_evidence WHERE analysis_id=$1`, [requested.analysis_id]);
     expect(evidence.rows).toEqual([]);
+  });
+});
+
+describe('Client recognition (ShazamKit hint)', () => {
+  function requestWith(recognition?: Record<string, unknown>) {
+    return {
+      contract_version: 2,
+      expected_generation: 1,
+      requested_components: ['music_match'],
+      selection: { start_ms: 0, end_ms: 15_000 },
+      ...(recognition ? { client_recognition: recognition } : {}),
+    };
+  }
+
+  const shazamHint = {
+    vendor: 'shazamkit',
+    artist_name: 'Fleetwood Mac',
+    title: 'Dreams',
+    matched_at_ms: 4200,
+    vendor_recording_id: 'shazam-40339261',
+  };
+
+  /** Original bytes in memory, exactly as the worker reads them. */
+  async function originalStorage(assetId: string) {
+    const original = await db.query<{ original_key: string | null }>(
+      `SELECT original_key FROM media_assets WHERE id=$1`,
+      [assetId],
+    );
+    const storage = new MemoryObjectStorage();
+    if (original.rows[0]?.original_key) {
+      await storage.put(original.rows[0].original_key, wav(), { contentType: 'audio/wav' });
+    }
+    return storage;
+  }
+
+  async function claim(requested: { job_id: string }) {
+    return requireAudioJob(
+      (
+        await claimJobs(db, {
+          workerId: 'audio-test',
+          limit: 1,
+          leaseMs: 30_000,
+          ids: [requested.job_id],
+        })
+      )[0],
+    );
+  }
+
+  const fleetwoodQloo = new FakeQloo(
+    {
+      search: (query: string) =>
+        query.toLowerCase().includes('fleetwood')
+          ? [
+              {
+                entity_id: 'qloo-artist-fleetwood',
+                name: 'Fleetwood Mac',
+                types: ['urn:entity:artist'],
+                properties: {},
+                tags: [],
+              },
+            ]
+          : [],
+    },
+    { live: true },
+  );
+
+  it('resolves a client-recognized song through Qloo without any provider keys', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const requested = await f.analysis.request(kept.asset_id, requestWith(shazamHint), randomUUID());
+    const claimed = await claim(requested);
+    const storage = await originalStorage(kept.asset_id);
+    const outcome = await runAnalyzeAudio(jobCtx(f, claimed, { qloo: fleetwoodQloo, storage }), {
+      recognition: new UnavailableMusicRecognition('not_configured'),
+    });
+    expect(outcome.state).toBe('complete');
+    const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
+    const result = got.result as {
+      music: string;
+      qloo_seeds: { entity_id: string; name: string }[];
+      match: { title: string | null; artist: { entity_id: string; name: string } };
+      artist: { name: string } | null;
+    };
+    expect(result.music).toBe('identified');
+    expect(result.qloo_seeds).toEqual([
+      { entity_id: 'qloo-artist-fleetwood', entity_type: 'urn:entity:artist', name: 'Fleetwood Mac', insights_eligible: true },
+    ]);
+    // The title shown is the one the phone recognized; the artist is Qloo's.
+    expect(result.match).toMatchObject({
+      title: 'Dreams',
+      artist: { entity_id: 'qloo-artist-fleetwood', name: 'Fleetwood Mac' },
+    });
+    expect(result.artist).toMatchObject({ name: 'Fleetwood Mac' });
+    const evidence = await db.query<{ method: string; qloo_entity_id: string; vendor_evidence: { vendor: string; client_recognition_reason: null } }>(
+      `SELECT method, qloo_entity_id, vendor_evidence FROM media_evidence WHERE analysis_id=$1`,
+      [requested.analysis_id],
+    );
+    expect(evidence.rows).toEqual([
+      {
+        method: 'client_recognition',
+        qloo_entity_id: 'qloo-artist-fleetwood',
+        vendor_evidence: {
+          vendor: 'shazamkit',
+          vendor_recording_id: 'shazam-40339261',
+          vendor_confidence: null,
+          transcript: null,
+          transcript_reason: null,
+          client_recognition_reason: null,
+        },
+      },
+    ]);
+    // The recognized recording row keeps the client's own metadata.
+    const recordings = await db.query<{
+      vendor: string;
+      vendor_recording_id: string | null;
+      title: string | null;
+      artist_name: string;
+      artist_catalog_id: string | null;
+      match_status: string;
+    }>(`SELECT vendor, vendor_recording_id, title, artist_name, artist_catalog_id, match_status
+          FROM recognized_recordings WHERE analysis_id=$1`, [requested.analysis_id]);
+    expect(recordings.rows).toEqual([
+      {
+        vendor: 'shazamkit',
+        vendor_recording_id: 'shazam-40339261',
+        title: 'Dreams',
+        artist_name: 'Fleetwood Mac',
+        artist_catalog_id: 'qloo-artist-fleetwood',
+        match_status: 'identified',
+      },
+    ]);
+  });
+
+  it('never resolves from the hint alone: no Qloo match is an honest no_result', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const requested = await f.analysis.request(
+      kept.asset_id,
+      requestWith({ vendor: 'shazamkit', artist_name: 'TobyMac' }),
+      randomUUID(),
+    );
+    const claimed = await claim(requested);
+    const storage = await originalStorage(kept.asset_id);
+    // Qloo answers with a different artist only: the recognized name does not resolve.
+    const qloo = new FakeQloo(
+      {
+        search: () => [
+          { entity_id: 'qloo-artist-other', name: 'Someone Else', types: ['urn:entity:artist'], properties: {}, tags: [] },
+        ],
+      },
+      { live: true },
+    );
+    const outcome = await runAnalyzeAudio(jobCtx(f, claimed, { qloo, storage }), {
+      recognition: new UnavailableMusicRecognition('not_configured'),
+    });
+    expect(outcome.state).toBe('complete');
+    const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
+    const result = got.result as {
+      music: string;
+      qloo_seeds: unknown[];
+      components: { music_match: { state: string; reason: string | null; client_recognition_reason: string | null } };
+    };
+    expect(result.music).toBe('no_reliable_match');
+    expect(result.qloo_seeds).toEqual([]);
+    expect(result.components.music_match.state).toBe('no_result');
+    expect(result.components.music_match.client_recognition_reason).toBe('no_matching_artist');
+    expect(result.components.music_match.reason).toBe('no_matching_artist');
+    const evidence = await db.query<{ method: string; status: string }>(
+      `SELECT method, status FROM media_evidence WHERE analysis_id=$1`,
+      [requested.analysis_id],
+    );
+    expect(evidence.rows).toEqual([{ method: 'client_recognition', status: 'no_match' }]);
+    const recordings = await db.query(`SELECT id FROM recognized_recordings WHERE analysis_id=$1`, [
+      requested.analysis_id,
+    ]);
+    expect(recordings.rows).toEqual([]);
+  });
+
+  it('a server fingerprint match outranks the client hint', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const requested = await f.analysis.request(
+      kept.asset_id,
+      requestWith({ vendor: 'shazamkit', artist_name: 'TobyMac' }),
+      randomUUID(),
+    );
+    const claimed = await claim(requested);
+    const storage = await originalStorage(kept.asset_id);
+    const recognizer: MusicRecognition = {
+      async identify() {
+        return {
+          status: 'matched',
+          reason: null,
+          hits: [
+            {
+              vendor: 'test-recognizer',
+              vendor_recording_id: 'rec-1',
+              title: 'Test Take',
+              artist_name: 'Nina Simone',
+              album_title: 'An Album',
+              artist_catalog_id: 'vendor-artist-1',
+              album_catalog_id: 'vendor-album-1',
+              start_ms: 0,
+              end_ms: 15_000,
+              vendor_confidence: 0.99,
+            },
+          ],
+        };
+      },
+    };
+    const qloo = new FakeQloo(
+      {
+        search: (query: string) =>
+          query.toLowerCase().includes('nina')
+            ? [{ entity_id: 'qloo-artist-nina', name: 'Nina Simone', types: ['urn:entity:artist'], properties: {}, tags: [] }]
+            : [{ entity_id: 'qloo-artist-toby', name: 'TobyMac', types: ['urn:entity:artist'], properties: {}, tags: [] }],
+      },
+      { live: true },
+    );
+    const outcome = await runAnalyzeAudio(jobCtx(f, claimed, { qloo, storage }), { recognition: recognizer });
+    expect(outcome.state).toBe('complete');
+    const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
+    const result = got.result as { music: string; qloo_seeds: { entity_id: string }[] };
+    expect(result.music).toBe('identified');
+    expect(result.qloo_seeds).toEqual([{ entity_id: 'qloo-artist-nina', entity_type: 'urn:entity:artist', name: 'Nina Simone', insights_eligible: true }]);
+    const evidence = await db.query<{ method: string }>(`SELECT method FROM media_evidence WHERE analysis_id=$1`, [
+      requested.analysis_id,
+    ]);
+    expect(evidence.rows).toEqual([{ method: 'fingerprint' }]);
+  });
+
+  it('a resolved client hint skips the paid transcript tier', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const requested = await f.analysis.request(kept.asset_id, requestWith(shazamHint), randomUUID());
+    const claimed = await claim(requested);
+    const storage = await originalStorage(kept.asset_id);
+    let transcribed = 0;
+    const outcome = await runAnalyzeAudio(jobCtx(f, claimed, { qloo: fleetwoodQloo, storage }), {
+      recognition: new UnavailableMusicRecognition('not_configured'),
+      transcription: {
+        enabled: true,
+        reason: 'configured',
+        async transcribe() {
+          transcribed += 1;
+          return { text: 'That was Fleetwood Mac.', words: [] };
+        },
+      },
+    });
+    expect(outcome.state).toBe('complete');
+    expect(transcribed).toBe(0);
+    const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
+    expect((got.result as { music: string }).music).toBe('identified');
+  });
+
+  it('requests with and without a hint are different analyses', async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    const plain = await f.analysis.request(kept.asset_id, requestWith(), randomUUID());
+    const hinted = await f.analysis.request(kept.asset_id, requestWith(shazamHint), randomUUID());
+    expect(hinted.reused).toBe(false);
+    expect(hinted.analysis_id).not.toBe(plain.analysis_id);
+    const hintedAgain = await f.analysis.request(kept.asset_id, requestWith(shazamHint), randomUUID());
+    expect(hintedAgain.reused).toBe(true);
+    expect(hintedAgain.analysis_id).toBe(hinted.analysis_id);
+  });
+
+  it('validates the hint shape before anything is queued', () => {
+    // The service surfaces schema failures; the HTTP boundary maps them to
+    // invalid_input. The shape is closed: unknown vendors, blank names,
+    // oversized titles and extra fields never reach the queue.
+    expect(() => AnalyzeAudioRequest.parse(requestWith({ ...shazamHint, vendor: 'acrcloud' }))).toThrow();
+    expect(() => AnalyzeAudioRequest.parse(requestWith({ vendor: 'shazamkit', artist_name: '   ' }))).toThrow();
+    expect(() =>
+      AnalyzeAudioRequest.parse(requestWith({ vendor: 'shazamkit', artist_name: 'An Artist', title: 'x'.repeat(201) })),
+    ).toThrow();
+    expect(() => AnalyzeAudioRequest.parse(requestWith({ ...shazamHint, extra: true }))).toThrow();
+    expect(() => AnalyzeAudioRequest.parse(requestWith(shazamHint))).not.toThrow();
+    expect(() => AnalyzeAudioRequest.parse(requestWith())).not.toThrow();
   });
 });
