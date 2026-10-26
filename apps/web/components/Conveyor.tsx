@@ -221,7 +221,7 @@ export function Conveyor({
       const prev = layoutRef.current;
       layoutRef.current = next;
       setLayout(next);
-      const p = poolRef.current;
+      const p = pool;
       if (!canFlow(p.length, next.lanes, next.geo)) return;
       if (modelRef.current && prev && prev.lanes === next.lanes) {
         // Same lanes, new size: keep cards, rescale offsets to the new pitch.
@@ -250,7 +250,7 @@ export function Conveyor({
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [axis, columns, reduced, memoryKey, commit, showConveyor]);
+  }, [axis, columns, reduced, memoryKey, commit, showConveyor, pool]);
 
   // Remember the place on the way out (Back from a detail page keeps it).
   useEffect(() => {
