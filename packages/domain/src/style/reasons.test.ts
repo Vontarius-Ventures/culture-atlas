@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AcceptedTag } from './map-tags';
 import { selectExemplars } from './exemplars';
 import { REASON_MAX_CHARS, buildStyleReason, reasonAttributes, sharedClaims } from './reasons';
+import { storedAesthetic, storedSubject } from './test-support';
 
 const tag = (id: string, claimName: string, over: Partial<AcceptedTag> = {}): AcceptedTag => ({ id, slot: 'aesthetics', claimName, wording: 'asserted', weight: 1, primary: true, use: 'filter', ...over });
 const accepted: AcceptedTag[] = [
@@ -12,6 +13,29 @@ const accepted: AcceptedTag[] = [
 ];
 
 describe('per-card reasons from real overlap only (style design §C.4, sr-1)', () => {
+  it('revalidates cached overlaps against active source claims, including era', () => {
+    const cached = [
+      tag('work', 'Workwear'),
+      tag('heritage', 'American heritage', { slot: 'lineage' }),
+      tag('era', '1970s', { slot: 'era' }),
+      tag('classic', 'Classic'),
+    ];
+    const subject = storedSubject({
+      aesthetics: [storedAesthetic('Workwear', { held: true }), storedAesthetic('Classic')],
+      lineage: [storedAesthetic('American heritage', { retracted: true })],
+      era: { ...storedAesthetic('1970s', { retracted: true }), cue: 'cut' },
+    });
+    const ids = cached.map((c) => c.id);
+    expect(sharedClaims(cached, ids, subject).map((c) => c.name)).toEqual(['Classic']);
+    const reason = buildStyleReason({ claims: sharedClaims(cached, ids), subject, palette: [], via: 'overlap' });
+    expect(reason).toBe('Because of the classic look');
+    expect(buildStyleReason({ claims: sharedClaims(cached.slice(0, 3), ids), subject, palette: [], via: 'overlap' })).toBeNull();
+    const denim = storedSubject({
+      aesthetics: [storedAesthetic('Classic denim', { held: true })],
+      materials: [{ ...storedAesthetic('Denim'), texture: 'twill' }],
+    });
+    expect(sharedClaims([tag('a', 'Classic denim'), tag('b', 'Denim', { slot: 'materials', weight: 0.6 })], ['a', 'b'], denim).map((c) => c.name)).toEqual(['Denim']);
+  });
   it('names only the claims whose accepted tags are on the result, strongest slot first, once each', () => {
     const claims = sharedClaims(accepted, ['urn:tag:material:qloo:canvas', 'urn:tag:personal_style:qloo:workwear', 'urn:tag:keyword:qloo:boots']);
     expect(claims.map((c) => c.name)).toEqual(['Workwear', 'duck canvas']);

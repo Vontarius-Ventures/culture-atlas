@@ -67,13 +67,14 @@ import {
   type CaptureForCompile,
 } from './store';
 import { humanList, nameSimilarity, nameTokens, normalizeName, slugify } from './text';
-import { BRIDGE_WAIT_MS, BRIDGE_WAIT_NO_ANCHOR_MS, StyleStage, topicReason, type StyleBridge, type StyleCallOutput, type StylePlan } from './style-stage';
+import { BRIDGE_WAIT_MS, BRIDGE_WAIT_NO_ANCHOR_MS, StyleStage, type StyleBridge, type StyleCallOutput, type StylePlan } from './style-stage';
 import { normalizeStyleName } from '../style/vocabulary';
 import { artworkEvidence, bridgeTargets, entityAdjacency, referenceKeywords, suppressWearForArtwork, type AdjacencyEvidence } from '../style/adjacency';
 import { echoKey, echoNames } from '../style/affinity';
-import { dropStylelessFor } from '../style/cross-domain';
+import { activeSubject, discoveryClaims } from '../style/discovery-concepts';
+import { admitDiscovery, discoveryReason, namedWorkProof, planDiscovery, type CandidateProof } from '../style/discovery-evidence';
 import { homeKindOfReading, wearIndustryAllowed } from '../style/home-affinity';
-import { taggedTopicReason, type StyleTopicTag } from '../style/topic-tags';
+import type { StyleTopicTag } from '../style/topic-tags';
 import type { StoredSubject } from '../style/types';
 
 /**
@@ -246,6 +247,8 @@ interface CategoryCandidate {
   destination_url: string | null;
   /** TOPIC-1: the card's own reason when no reference or bridge explains it. */
   styleReason?: string | null;
+  /** Internal only: the relation and candidate-side evidence survive rank fusion. */
+  proof?: CandidateProof;
 }
 
 interface RecommendOutput {
@@ -1717,7 +1720,7 @@ export class CaptureCompiler {
     const { ctx } = this;
     const empty = (status: SectionStatus, reason: string): RecommendOutput => ({ category, status, providerQueryId: null, isReplay: false, candidates: [], reason });
     if (!insightsUsable) return empty('unavailable', 'qloo_unavailable');
-    const subjects = this.style?.reading?.subjects ?? [];
+    const subjects = (this.style?.reading?.subjects ?? []).map(activeSubject);
     // Eval r3, relevance cause 3: an artwork (a painting, an illustration, a poster of a person) is
     // a media question, not a brand question — wear never fires on the depicted clothing.
     if (category === 'wear' && suppressWearForArtwork(subjects)) return empty('skipped', 'artwork_subject');
@@ -1741,6 +1744,8 @@ export class CaptureCompiler {
     // A tag anchor signals a category only when Qloo lists the tag on that entity type (or does not say):
     // a cuisine tag used on places never steers fashion brands, artists or films (measured: "Ramen" -> brands).
     const target = CATEGORY_ENTITY_TYPE[category]!;
+    const intents = planDiscovery(subjects, target);
+    if (this.style?.reading && !intents.length) return empty('skipped', 'no_supported_relation');
     const anchorTags = anchors.filter((a) => a.qloo?.tagId && (!a.qloo.types?.length || a.qloo.types.includes(target))).map((a) => a.qloo!.tagId!);
     const tagIds = [...new Set([...anchorTags, ...styleTags.map((t) => t.id)])];
     // TOPIC-1: with no entity signals, films Qloo tags with the room's, building's or dish's topic are
@@ -1782,10 +1787,26 @@ export class CaptureCompiler {
     // a Vermeer is not adjacency.
     const baseEvidence = fineArt;
     const evidence = baseEvidence ? { ...baseEvidence, keywords: [...baseEvidence.keywords, ...referenceKeywords(refs.map((r) => r.name))] } : null;
-    const anchorIds = new Set(entityIds);
+    // Exclude every visual entity, not just the six signals that fit the request.
+    // Shared-title films are an explicit separate relation below.
+    const anchorIds = new Set([...entityIds, ...refs.flatMap((r) => r.qloo?.entityId ? [r.qloo.entityId] : []), ...subjects.flatMap((s) => s.entity ? [s.entity.id] : [])]);
+    const anchorNames = echoNames([...refs.map((r) => r.name), ...anchors.map((r) => r.name), ...subjects.flatMap((s) => [s.brand?.name ?? '', s.entity?.name ?? ''])]);
+    const plannedSubjects = new Set(intents.map((p) => p.subjectId));
+    const signalSubjects = new Map<string, string[]>();
+    for (const subject of subjects) {
+      if (subject.entity) signalSubjects.set(subject.entity.id, [subject.id]);
+      for (const anchor of anchors) {
+        if (anchor.qloo?.entityId && [subject.brand?.name, subject.entity?.name].some((name) => name && echoKey(name) === echoKey(anchor.name))) {
+          const linked = signalSubjects.get(anchor.qloo.entityId) ?? [];
+          signalSubjects.set(anchor.qloo.entityId, [...new Set([...linked, subject.id])]);
+        }
+      }
+    }
+    for (const bridge of usableBridges) signalSubjects.set(bridge.entityId, [...new Set([...(signalSubjects.get(bridge.entityId) ?? []), bridge.subjectId])]);
     try {
       let entities: QlooEntity[] = [];
       const reasons = new Map<string, string>();
+      const proofs = new Map<string, CandidateProof>();
       const providerQueryIds: string[] = [];
       let isReplay = false;
       let fill: RecommendOutput['fill'] = null;
@@ -1796,10 +1817,25 @@ export class CaptureCompiler {
         const raw = res.data.entities
           .filter((e) => !anchorIds.has(e.entity_id))
           .filter((e) => !evidence || entityAdjacency(e, evidence))
-          .filter((e) => !homeKind || wearIndustryAllowed(e, homeKind));
-        // Eval r3, judges' audience-overlap finding: a music or film card a fashion bridge pulled in
-        // stays only when its own tags share a style word with the reading (dropStylelessFor).
-        entities = this.style && topic ? this.style.topicFilms(raw) : this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { gateFashion: category === 'wear', dropStyleless: dropStylelessFor(category, entityIds.length, usableBridges.length), echoNames: this.crossDomainEchoNames(anchors, subjects) }) : raw;
+          .filter((e) => !homeKind || wearIndustryAllowed(e, homeKind))
+          .filter((e) => {
+            if (!restyle) return !anchorNames.has(echoKey(e.name));
+            const explained = e.query?.explainability ?? [];
+            const linkedSubjects = explained.flatMap((x) => signalSubjects.get(x.entity_id) ?? []);
+            const origin = topic ? 'topic' : explained.some((x) => usableBridges.some((b) => b.entityId === x.entity_id)) ? 'bridge' : 'anchor';
+            const proof = admitDiscovery(subjects, e, target, {
+              origin, subjectIds: linkedSubjects.length ? new Set(linkedSubjects) : plannedSubjects,
+              excludedIds: anchorIds, excludedNames: anchorNames, readingRev: this.style?.reading?.rev,
+            });
+            if (!proof) return false;
+            proofs.set(e.entity_id, proof);
+            reasons.set(e.entity_id, discoveryReason(proof, target));
+            return true;
+          });
+        // Admission is route-independent. Ranking cannot waive it or gate a secondary
+        // subject's candidates against the primary garment. About-subject proof is valid
+        // even when a film has no literal style words (architecture, food, ceramics).
+        entities = this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { echoNames: anchorNames }) : raw;
         const providerQueryId = await recordProviderQuery(ctx.db, {
           parent: { analysisId: this.analysisId },
           provider: 'qloo',
@@ -1820,15 +1856,20 @@ export class CaptureCompiler {
         const out = await this.topicFill(category, target, { anchors, refs, subjects, evidence, anchorIds });
         if (out) {
           const seen = new Set(entities.map((e) => e.entity_id));
+          let added = 0;
           for (const e of out.entities)
             if (!seen.has(e.entity_id)) {
               entities.push(e);
               seen.add(e.entity_id);
+              added++;
+              const reason = out.reasons.get(e.entity_id);
+              const proof = out.proofs.get(e.entity_id);
+              if (reason) reasons.set(e.entity_id, reason);
+              if (proof) proofs.set(e.entity_id, proof);
             }
-          for (const [id, reason] of out.reasons) reasons.set(id, reason);
           if (out.providerQueryId) providerQueryIds.push(out.providerQueryId);
           isReplay ||= out.isReplay;
-          fill = { tags: out.tags.map((t) => t.name), cards: out.entities.length };
+          fill = { tags: out.tags.map((t) => t.name), cards: added };
         }
       }
       // Eval r5, h61: a fine-art Watch rail leads with the film of the artwork's own title — the
@@ -1843,6 +1884,7 @@ export class CaptureCompiler {
           if (titled && !entities.some((e) => e.entity_id === titled.entity.entity_id) && !anchorIds.has(titled.entity.entity_id)) {
             entities.unshift(titled.entity);
             reasons.set(titled.entity.entity_id, titled.reason);
+            proofs.set(titled.entity.entity_id, namedWorkProof(subjects[0]!.id, titled.entity.entity_id, work.name, work.referenceId, work.relation === 'resembles' ? 'resembles' : 'asserted', this.style?.reading?.rev));
             if (titled.providerQueryId && !providerQueryIds.includes(titled.providerQueryId)) providerQueryIds.push(titled.providerQueryId);
             isReplay ||= titled.isReplay;
           }
@@ -1859,7 +1901,8 @@ export class CaptureCompiler {
         isReplay,
         fill,
         candidates: entities.map((e) => {
-          const styleReason = reasons.get(e.entity_id) ?? (topic ? topicReason(topic.topics, e.tags.map((t) => t.id), topic.subject.label) : null);
+          const styleReason = reasons.get(e.entity_id);
+          const proof = proofs.get(e.entity_id);
           return {
             entityId: e.entity_id,
             name: e.name,
@@ -1868,6 +1911,7 @@ export class CaptureCompiler {
             image: imageFromQlooProperties(e.properties, e.name),
             destination_url: destinationFromQlooProperties(e.properties),
             ...(styleReason ? { styleReason } : {}),
+            ...(proof ? { proof } : {}),
           };
         }),
       };
@@ -1913,10 +1957,12 @@ export class CaptureCompiler {
       evidence: AdjacencyEvidence | null;
       anchorIds: ReadonlySet<string>;
     },
-  ): Promise<{ entities: QlooEntity[]; reasons: ReadonlyMap<string, string>; tags: readonly StyleTopicTag[]; providerQueryId: string | null; isReplay: boolean } | null> {
+  ): Promise<{ entities: QlooEntity[]; reasons: ReadonlyMap<string, string>; proofs: ReadonlyMap<string, CandidateProof>; tags: readonly StyleTopicTag[]; providerQueryId: string | null; isReplay: boolean } | null> {
     const { ctx } = this;
     if (!this.style || this.budget.remaining('qloo') < 2 || this.pastSoftDeadline()) return null;
-    const tags = await this.style.topicTagsFor(target);
+    const tags = (await this.style.topicTagsFor(target)).filter((tag) =>
+      !!admitDiscovery(input.subjects, { entity_id: 'topic-resolution', tags: [{ id: tag.tagId, name: tag.name }] }, target, { origin: 'topic', ...(tag.subjectId ? { subjectIds: new Set([tag.subjectId]) } : {}) }),
+    );
     if (!tags.length) return null;
     const request = { filterType: target, filterTags: tags.map((t) => t.tagId), filterPopularityMin: TOPIC_POPULARITY_MIN, explainability: false, take: 20 };
     const tagIds = new Set(tags.map((t) => t.tagId));
@@ -1932,17 +1978,25 @@ export class CaptureCompiler {
       const res = call.value;
       // Only results whose own genre/theme tags carry the resolved tag, and that carry the same
       // evidence the main path demands (a fine-art subject's cards reference it or are about art).
+      const proofs = new Map<string, CandidateProof>();
       const entities = res.data.entities
         .filter((e) => !input.anchorIds.has(e.entity_id))
         .filter((e) => (e.tags ?? []).some((t) => tagIds.has(t.id)))
         .filter((e) => !input.evidence || entityAdjacency(e, input.evidence))
-        .filter((e) => !e.name || !echoes.has(echoKey(e.name)));
-      const reasons = new Map(
-        entities.map((e) => {
-          const tag = tags.find((t) => (e.tags ?? []).some((x) => x.id === t.tagId))!;
-          return [e.entity_id, taggedTopicReason(target, tag.name, tag.label)];
-        }),
-      );
+        .filter((e) => {
+          const proof = tags.flatMap((tag) => {
+            const proof = admitDiscovery(input.subjects, e, target, {
+              origin: 'topic', tagIds: new Set([tag.tagId]), excludedIds: input.anchorIds, excludedNames: echoes,
+              ...(tag.subjectId ? { subjectIds: new Set([tag.subjectId]) } : {}),
+              readingRev: this.style?.reading?.rev,
+            });
+            return proof ? [proof] : [];
+          })[0];
+          if (!proof) return false;
+          proofs.set(e.entity_id, proof);
+          return true;
+        });
+      const reasons = new Map(entities.map((e) => [e.entity_id, discoveryReason(proofs.get(e.entity_id)!, target)]));
       const providerQueryId = await recordProviderQuery(ctx.db, {
         parent: { analysisId: this.analysisId },
         provider: 'qloo',
@@ -1957,7 +2011,7 @@ export class CaptureCompiler {
         traceId: this.traceId,
         cacheTtlSeconds: PROVIDER_CACHE_TTL_SECONDS,
       });
-      return { entities, reasons, tags, providerQueryId, isReplay: res.is_replay };
+      return { entities, reasons, proofs, tags, providerQueryId, isReplay: res.is_replay };
     } catch (err) {
       if (isProviderError(err) && err.kind === 'aborted') throw err;
       const e = errorSummary(err);
@@ -2079,9 +2133,14 @@ export class CaptureCompiler {
     const lists: RankedList<Payload>[] = [
       {
         source: `qloo:insights:${category}`,
-        items: rec.candidates.map((c) => {
+        items: rec.candidates.filter((c) => {
+          if (!c.proof || c.proof.relation === 'shared_named_work') return true;
+          const subject = this.style?.reading?.subjects.find((s) => s.id === c.proof!.subjectId);
+          return !!subject && discoveryClaims(subject).some((claim) => claim.slot === c.proof!.claim.slot && claim.name === c.proof!.claim.name);
+        }).map((c) => {
           const contributors = c.explain.map((id) => refByEntity.get(id)).filter((r): r is ResolvedRef => !!r);
-          return { key: `qloo:${c.entityId}`, originRefs: (contributors.length ? contributors : anchors).map((r) => r.referenceId), payload: { source: 'insights' as const, candidate: c } };
+          const originRefs = [...new Set([...contributors.map((r) => r.referenceId), ...(c.proof?.referenceId ? [c.proof.referenceId] : [])])];
+          return { key: `qloo:${c.entityId}`, originRefs, payload: { source: 'insights' as const, candidate: c } };
         }),
       },
     ];
@@ -2149,14 +2208,19 @@ export class CaptureCompiler {
             // A card the reading's own topic words filled says the tag it carries — the
             // specific truth — even when a bridge also explains it; bridges and references
             // name the rest.
-            displayReason: c.styleReason ?? (bridge ? bridgeReason(bridge) : buildReason(contributors)),
+            displayReason: c.proof ? discoveryReason(c.proof, CATEGORY_ENTITY_TYPE[category]!) : c.styleReason ?? (bridge ? bridgeReason(bridge) : buildReason(contributors)),
             origin: rec.isReplay ? 'replay' : 'qloo',
             providerQueryIds: rec.providerQueryIds?.length ? [...rec.providerQueryIds] : rec.providerQueryId ? [rec.providerQueryId] : [],
             contributingReferenceIds: bridge ? [] : contributors.map((r) => r.referenceId),
           });
           await tx.query(`UPDATE recommendations SET rail = 'cross_domain', style_match = $2::jsonb WHERE id = $1`, [
             recId,
-            bridge ? JSON.stringify({ subject_id: bridge.subjectId, claims: [], palette: [], via_entity: bridge.name, via: 'bridge', rail: 'cross_domain' }) : null,
+            c.proof ? JSON.stringify({
+              subject_id: c.proof.subjectId,
+              claims: c.proof.claim.slot === 'label' ? [] : [{ slot: c.proof.claim.slot, name: c.proof.claim.name, wording: c.proof.claim.wording, tag_id: c.proof.candidateTags[0]?.id ?? '' }],
+              palette: [], via_entity: null, via: 'overlap', rail: 'cross_domain',
+              discovery_proof: c.proof,
+            }) : bridge ? JSON.stringify({ subject_id: bridge.subjectId, claims: [], palette: [], via_entity: bridge.name, via: 'bridge', rail: 'cross_domain' }) : null,
           ]);
         }
         usedKeys.add(p.key);

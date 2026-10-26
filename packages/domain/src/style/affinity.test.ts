@@ -114,11 +114,78 @@ describe('smatch-1 scoring', () => {
     const q = subjectProfile(tennis);
     const r = scoreMatch(q, entityProfile([tag(G('casual'), 'Casual'), tag('urn:tag:cultural_relevance:qloo:tennis_culture', 'Tennis Culture')]));
     const reason = affinityReason(r.hits)!;
-    expect(reason).toBe('Known for tennis culture, like the tennis whites look your photo resembles');
+    expect(reason).toBe('Known for tennis culture, a shared detail with your photo');
     expect(reason.length).toBeLessThanOrEqual(AFFINITY_REASON_MAX);
-    expect(matchClaims(r.hits).map((c) => c.name)).toEqual(['Tennis whites']);
+    expect(matchClaims(r.hits)).toEqual([]); // A tennis tag does not prove tennis whites.
     expect(affinityReason([], { entityName: 'Fixture Brand' })).toBe('Connected to Fixture Brand in your photo.');
     expect(affinityReason([])).toBeNull();
+  });
+});
+
+describe('bounded product and reason evidence', () => {
+  it('rejects backpack-only and unproven bag forms but keeps a diversified crossbody maker', () => {
+    const q = subjectProfile(storedSubject({ label: 'Tan leather crossbody bag' }));
+    const bag = tag(G('accessories:bags_and_leather'), 'Bags and Leather');
+    const piece = (name: string) => tag(`urn:tag:signature_piece:qloo:${name.toLowerCase().replaceAll(' ', '_')}`, name);
+    const backpack = ent('backpack', 'Pack House', [bag, piece('Leather Backpacks')]);
+    const generic = ent('generic', 'Generic Bag House', [bag]);
+    const diversified = ent('diversified', 'Diversified House', [bag, piece('Backpacks'), piece('Leather Crossbody Bags')]);
+    expect(scoreMatch(q, entityProfile(backpack.tags)).gate).toBe('incompatible_form');
+    expect(scoreMatch(q, entityProfile(generic.tags)).gate).toBe('unsupported_form');
+    expect(scoreMatch(q, entityProfile(diversified.tags)).gate).toBeNull();
+    const out = rankAffinity(q, [{ list: [backpack, generic, diversified], prior: true, fromEntity: false }]);
+    expect(out.candidates.map((c) => c.entity.entity_id)).toEqual(['diversified']);
+  });
+
+  it('does not fill a strict product rail with unsupported taste neighbours', () => {
+    const q = subjectProfile(storedSubject({ label: 'Crossbody bag' }));
+    const candidate = ent('weak', 'Unrelated House', [tag(G('accessories:bags_and_leather'), 'Bags and Leather'), tag('urn:tag:signature_piece:qloo:crossbody', 'Crossbody'), tag('urn:tag:personal_style:qloo:unrelated', 'Unrelated')]);
+    // A positive form is necessary but does not waive the absolute evidence bar.
+    const weak = { ...candidate, query: { explainability: [{ entity_id: 'seed', score: 0.9 }] } };
+    const out = rankAffinity(q, [{ list: [weak], prior: true, fromEntity: false }], { signalNames: new Map([['seed', 'Seed House']]), v: { ...styleVocabulary(), brands: [] } });
+    expect(out.candidates).toEqual([]);
+  });
+
+  it('equipment mislabeled fashion cannot score as clothing, while garments remain eligible', () => {
+    const brand = entityProfile([tag(G('casual'), 'Casual'), tag('urn:tag:cultural_relevance:qloo:tennis', 'Tennis')]);
+    const racket = subjectProfile(storedSubject({ label: 'Tennis racket', aesthetics: [storedAesthetic('Tennis')] }));
+    expect(racket.kind).toBe('apparel'); // Backward-compatible provider family.
+    expect(scoreMatch(racket, brand).gate).toBe('unsupported_product');
+    expect(rankCatalogue(racket)).toEqual([]);
+    for (const label of ['Tennis skirt', 'Wool coat', 'Cotton dress', 'Silk blouse', 'Linen trousers', 'Rain jacket', 'Tennis jersey']) {
+      expect(scoreMatch(subjectProfile(storedSubject({ label })), brand).gate, label).toBeNull();
+    }
+  });
+
+  it('does not equate contradictory cafe cultures or historical ceramic lineages', () => {
+    const q = subjectProfile(storedSubject({ category: 'food', label: 'Italian cafe', lineage: [storedAesthetic('Italian cafe culture')] }));
+    const mismatch = scoreMatch(q, entityProfile([tag('urn:tag:cultural_relevance:qloo:portuguese_cafe', 'Portuguese Cafe Culture')]), { fashion: false });
+    expect(affinityReason(mismatch.hits)).toBeNull();
+    expect(matchClaims(mismatch.hits)).toEqual([]);
+    const ceramics = subjectProfile(storedSubject({ category: 'interior', label: 'Persian ceramic bowl', lineage: [storedAesthetic('Persian ceramics')] }));
+    const broad = scoreMatch(ceramics, entityProfile([tag('urn:tag:keyword:qloo:ceramics', 'Ceramics')]), { fashion: false });
+    expect(affinityReason(broad.hits)).toBe('Known for ceramics, a shared detail with your photo');
+    expect(matchClaims(broad.hits)).toEqual([]);
+    const exact = scoreMatch(q, entityProfile([tag('urn:tag:cultural_relevance:qloo:italian_cafe', 'Italian Cafe Culture')]), { fashion: false });
+    expect(affinityReason(exact.hits)).toContain('Italian cafe culture');
+    expect(matchClaims(exact.hits).map((c) => c.name)).toEqual(['Italian cafe culture']);
+  });
+
+  it('held and retracted claims, including era, do not classify or explain a profile', () => {
+    const q = subjectProfile(storedSubject({
+      label: 'Cotton jacket',
+      aesthetics: [storedAesthetic('Italian couture', { held: true })],
+      lineage: [storedAesthetic('Japanese heritage', { retracted: true })],
+      era: { ...storedAesthetic('French luxury', { retracted: true }), cue: 'ornate trim' },
+      materials: [{ ...storedAesthetic('Silk', { held: true }), texture: 'smooth' }],
+      construction: [{ ...storedAesthetic('Crossbody', { retracted: true }), kind: 'sewn' }],
+    }));
+    expect(q.regions.size).toBe(0);
+    expect(q.tier).toBe('casual');
+    expect(q.form).toBeNull();
+    for (const token of ['italian', 'japanese', 'french', 'silk', 'crossbody']) expect(q.tokens.has(token)).toBe(false);
+    const hidden = scoreMatch(q, entityProfile([tag(G('casual'), 'Casual'), tag('urn:tag:cultural_relevance:qloo:japanese', 'Japanese Heritage')]));
+    expect(affinityReason(hidden.hits)).toBeNull();
   });
 });
 

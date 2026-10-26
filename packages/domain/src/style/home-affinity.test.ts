@@ -18,7 +18,7 @@ import {
 } from './home-affinity';
 import { homeBrands, setHomeBrandsForTesting, type HomeBrand } from './home-vocabulary';
 import { affinityReason, entityProfile, scoreMatch, subjectProfile } from './affinity';
-import { storedSubject } from './test-support';
+import { storedAesthetic, storedSubject } from './test-support';
 import type { StoredSubject } from './types';
 import type { QlooEntity } from '@culture-atlas/providers';
 
@@ -84,6 +84,18 @@ describe('home kind from the reading words (R-9)', () => {
   it('a food subject is a drink only for coffee words (a dish is a place question)', () => {
     expect(drinkKindOf(storedSubject({ category: 'food', label: 'Espresso in a ceramic cup' }))).toBe('coffee');
     expect(drinkKindOf(storedSubject({ category: 'food', label: 'Tonkotsu ramen bowl' }))).toBeNull();
+  });
+
+  it('held and retracted home cues do not choose retrieval industries', () => {
+    const hidden = storedSubject({
+      label: 'Unidentified object',
+      materials: [{ ...storedAesthetic('Porcelain', { retracted: true }), texture: 'smooth' }],
+      construction: [{ ...storedAesthetic('Espresso', { held: true }), kind: 'brewed' }],
+      aesthetics: [storedAesthetic('Tableware', { retracted: true })],
+    });
+    expect(homeKindOf(hidden)).toBeNull();
+    expect(drinkKindOf(hidden)).toBeNull();
+    expect(homeKindOf({ ...hidden, label: 'Walnut chair' })).toBe('furniture');
   });
 
   it('a sunroom without another room noun still reaches the home catalogue', () => {
@@ -272,7 +284,7 @@ describe('home rail candidate gates (eval r3, home-rail precision)', () => {
     const ev = evidenceOf(rejuvenation, midCentury);
     expect(ev.carries).toBe(true);
     expect(ev.hits.map((h) => h.token)).toEqual(expect.arrayContaining(['midcentury', 'modern']));
-    expect(affinityReason(ev.hits)).toBe('Known for Mid-Century modern revival, like the mid-century modern look in your photo');
+    expect(affinityReason(ev.hits)).toBe('Shares the mid-century modern look in your photo');
   });
 
   it('a K-Cup-only pod brand carries nothing for the espresso reading (empty beats junk)', () => {
@@ -299,7 +311,7 @@ describe('home rail candidate gates (eval r3, home-rail precision)', () => {
     const ev = evidenceOf(gevalia, espressoReading);
     expect(ev.carries).toBe(true);
     expect(ev.hits.some((h) => h.token === 'cup')).toBe(false); // the vessel word only reaches the compound
-    expect(affinityReason(ev.hits)).toBe('Known for espresso, like the Italian espresso bar look your photo resembles');
+    expect(affinityReason(ev.hits)).toBe('Known for espresso, a shared detail with your photo');
     expect(carried([gevalia], espressoReading, 'coffee').list.map((e) => e.name)).toEqual(['Gevalia Coffee']);
   });
 
@@ -337,7 +349,7 @@ describe('home rail candidate gates (eval r3, home-rail precision)', () => {
     ]);
     const buondiEv = evidenceOf(buondi, espressoReading);
     expect(buondiEv.carries).toBe(true);
-    expect(affinityReason(buondiEv.hits)).toBe('Known for espresso, like the Italian espresso bar look your photo resembles');
+    expect(affinityReason(buondiEv.hits)).toBe('Known for espresso, a shared detail with your photo');
     expect(carried([buondi], espressoReading, 'coffee').list.map((e) => e.name)).toEqual(['Buondi Caffe']);
 
     const villeroy = qloo('Villeroy & Boch', [
@@ -351,7 +363,7 @@ describe('home rail candidate gates (eval r3, home-rail precision)', () => {
     expect(homeRailGate(villeroy, 'ceramics')).toBeNull();
     const villeroyEv = evidenceOf(villeroy, ceramicsReading);
     expect(villeroyEv.carries).toBe(true);
-    expect(affinityReason(villeroyEv.hits)).toBe('Known for ceramics, like the islamic ceramics look your photo resembles');
+    expect(affinityReason(villeroyEv.hits)).toBe('Known for ceramics, a shared detail with your photo');
     expect(carried([villeroy], ceramicsReading, 'tableware').list.map((e) => e.name)).toEqual(['Villeroy & Boch']);
   });
 

@@ -1,6 +1,7 @@
 import type { QlooEntity } from '@culture-atlas/providers';
 import type { Category } from '../enums';
 import type { StoredSubject } from './types';
+import { activeClaim } from './discovery-concepts';
 
 /**
  * Cross-domain adjacency (eval r3, relevance cause 1 and 3): a More-like-this
@@ -22,13 +23,13 @@ const REPRODUCTION_RE = /\b(?:posters?|albums?|book covers?|movies?|films?|cinem
 
 /** True when the subject is an artwork, whatever category the reading filed it under (a painted garment is a painting). */
 export function isArtworkSubject(s: Pick<StoredSubject, 'label' | 'aesthetics' | 'lineage'>): boolean {
-  const text = [s.label, ...s.aesthetics.map((a) => a.name), ...s.lineage.map((l) => l.name)].join(' ; ');
+  const text = [s.label, ...s.aesthetics.filter(activeClaim).map((a) => a.name), ...s.lineage.filter(activeClaim).map((l) => l.name)].join(' ; ');
   return ARTWORK_RE.test(text);
 }
 
 /** True for a work of visual art (a painting or illustration), false for a reproduction of media (a film poster). */
 export function isFineArtSubject(s: Pick<StoredSubject, 'label' | 'aesthetics' | 'lineage'>): boolean {
-  const text = [s.label, ...s.aesthetics.map((a) => a.name), ...s.lineage.map((l) => l.name)].join(' ; ');
+  const text = [s.label, ...s.aesthetics.filter(activeClaim).map((a) => a.name), ...s.lineage.filter(activeClaim).map((l) => l.name)].join(' ; ');
   return ARTWORK_RE.test(text) && !REPRODUCTION_RE.test(text);
 }
 
@@ -44,7 +45,7 @@ const KEYWORD_STOP = new Set(
  * every result would share it by construction and pass as adjacency.
  */
 export function subjectKeywords(s: Pick<StoredSubject, 'label' | 'aesthetics' | 'lineage' | 'era'>): string[] {
-  const text = [s.label, ...s.aesthetics.map((a) => a.name), ...s.lineage.map((l) => l.name), s.era?.name ?? ''].join(' ; ');
+  const text = [s.label, ...s.aesthetics.filter(activeClaim).map((a) => a.name), ...s.lineage.filter(activeClaim).map((l) => l.name), activeClaim(s.era) ? s.era.name : ''].join(' ; ');
   return keywordWords(text);
 }
 

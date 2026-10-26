@@ -25,16 +25,16 @@ const film = (id: string, name: string, tags: readonly { id: string; name: strin
 const artist = (id: string, name: string, tags: readonly { id: string; name: string }[]) => ({ entity_id: id, name, types: ['urn:entity:artist'], properties: {}, tags: tags.map((t) => ({ ...t })) });
 
 describe('when a cross-domain card needs its own style evidence (eval r3, audience overlap)', () => {
-  it('the reading as the only signal, and a bridged play or watch card, need style evidence; wear and entity-signalled rails do not', () => {
+  it('anchor, bridge and tag-only routes all need candidate evidence, including Wear', () => {
     expect(dropStylelessFor('watch', 0, 0)).toBe(true);
     expect(dropStylelessFor('play', 0, 0)).toBe(true);
     expect(dropStylelessFor('wear', 0, 0)).toBe(true);
     // A garment's co-liked brand pulled music and film cards in: only style-shared cards stay.
     expect(dropStylelessFor('play', 3, 2)).toBe(true);
     expect(dropStylelessFor('watch', 3, 2)).toBe(true);
-    // Wear keeps Qloo's product-filtered order; an entity-signalled rail (no bridge) re-ranks without dropping.
-    expect(dropStylelessFor('wear', 3, 2)).toBe(false);
-    expect(dropStylelessFor('watch', 3, 0)).toBe(false);
+    // Anchor-only signals and Wear are not admission exemptions.
+    expect(dropStylelessFor('wear', 3, 2)).toBe(true);
+    expect(dropStylelessFor('watch', 3, 0)).toBe(true);
   });
 
   it('a bridged rail keeps only cards whose own tags share a style word with the reading', () => {
@@ -57,6 +57,13 @@ describe('when a cross-domain card needs its own style evidence (eval r3, audien
 });
 
 describe('TOPIC-1 films: only films whose own tags share a style claim (honest empty otherwise)', () => {
+  it('also keeps an explicit about-subject relation without pretending it is a style match', () => {
+    const interior = storedSubject({ category: 'interior', label: 'A furnished room' });
+    const architecture = film('A', 'Fixture Architecture Film', [{ id: 'urn:tag:theme:qloo:architecture', name: 'Architecture' }]);
+    const comedy = film('B', 'Fixture Comedy', [{ id: 'urn:tag:genre:media:comedy', name: 'Comedy' }]);
+    expect(topicFilms([interior], [comedy, architecture])).toEqual([architecture]);
+    expect(rerankCrossDomain([interior], [comedy, architecture], 0.5, { dropStyleless: true })).toEqual([architecture]);
+  });
   it('keeps the style-overlapping film and drops the popular film about something else', () => {
     const onStyle = film('A', 'Fixture Decay Film', [{ id: 'urn:tag:theme:qloo:decay', name: 'Decay' }, { id: 'urn:tag:genre:media:documentary', name: 'Documentary' }]);
     const offStyle = film('B', 'Fixture Blockbuster', [{ id: 'urn:tag:genre:media:action', name: 'Action' }]);

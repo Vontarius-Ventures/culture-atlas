@@ -23,17 +23,50 @@ import { storedAesthetic, storedSubject } from './test-support';
 
 const lineage = (name: string) => ({ name, certainty: 0.7, wording: 'resembles' as const, display: name, strength: null as never, corroborated_by: [], held: false, basis: 'visible' as const, region: null, qloo: null });
 
+describe('topic source sense survives lookup', () => {
+  it('permits an explicitly typed ceramics-to-pottery topic without asserting historical identity', () => {
+    const subject = storedSubject({ category: 'interior', label: 'Glazed ceramic bowls', aesthetics: [storedAesthetic('Persian ceramics', { wording: 'resembles' })] });
+    const plan = topicTagPlan([subject]);
+    const tag: QlooTag = { id: 'urn:tag:theme:qloo:pottery', name: 'Pottery', type: 'urn:tag:theme', parents: ['urn:entity:movie'] };
+    const results = new Map(plan.map((q) => [q.query, [tag]]));
+    expect(resolveTopicTags(plan, results, 'urn:entity:movie')).toMatchObject([{ subjectId: subject.id, name: 'Pottery' }]);
+    expect(resolveTopicTags(plan, results, 'urn:entity:artist')).toEqual([]);
+  });
+  const resolve = (name: string, sound: string) => {
+    const subject = storedSubject({ category: 'interior', label: 'Furnished room', aesthetics: [storedAesthetic(name)] });
+    const plan = topicTagPlan([subject]);
+    const tag: QlooTag = { id: `urn:tag:genre:music:qloo:${sound.toLowerCase()}`, name: sound, type: 'urn:tag:genre', parents: ['urn:entity:artist'] };
+    return resolveTopicTags(plan, new Map(plan.map((q) => [q.query, [tag]])), 'urn:entity:artist');
+  };
+  it('rejects real but unrelated music tags reached through visual words', () => {
+    expect(resolve('California modern', 'California')).toEqual([]);
+    expect(resolve('Warm minimalism', 'Minimalism')).toEqual([]);
+    expect(resolve('Rustic', 'Rustic')).toEqual([]);
+    expect(resolve('Playful eclectic', 'Eclectic')).toEqual([]);
+  });
+  it('keeps a real shared subculture tag and removes hidden reading words', () => {
+    const subject = storedSubject({
+      category: 'fashion', label: 'Denim jacket',
+      aesthetics: [storedAesthetic('Grunge'), storedAesthetic('Baroque', { held: true }), storedAesthetic('Romantic', { retracted: true })],
+    });
+    const plan = topicTagPlan([subject]);
+    expect(plan.every((q) => !q.reading.includes('baroque') && !q.reading.includes('romantic'))).toBe(true);
+    const tag: QlooTag = { id: 'urn:tag:genre:music:grunge', name: 'Grunge', type: 'urn:tag:genre', parents: ['urn:entity:artist'] };
+    expect(resolveTopicTags(plan, new Map([['grunge', [tag]]]), 'urn:entity:artist').map((t) => t.name)).toEqual(['Grunge']);
+  });
+});
+
 describe('TOPIC-1 fill: the reading\'s own words as /v2/tags queries', () => {
-  it('asks the head word of each claim first, then its modifiers, capped and de-duplicated', () => {
+  it('preserves compound concepts before bounded head-word fallbacks', () => {
     const motel = storedSubject({
       id: 's1',
       category: 'interior',
       label: 'Disused paneled motel room',
       aesthetics: [storedAesthetic('Abandoned decay', { wording: 'resembles' }), storedAesthetic('Roadside motel', { wording: 'resembles' })],
     });
-    // Heads before modifiers: a cap never trades the topic word for a qualifier.
-    expect(topicTagPlan([motel]).map((q) => q.query)).toEqual(['decay', 'motel']);
-    expect(topicTagPlan([motel], 4).map((q) => q.query)).toEqual(['decay', 'motel', 'abandoned', 'roadside']);
+    // Compounds retain the source sense, rather than losing it to a shared word.
+    expect(topicTagPlan([motel]).map((q) => q.query)).toEqual(['Abandoned decay', 'Roadside motel']);
+    expect(topicTagPlan([motel], 4).map((q) => q.query)).toEqual(['Abandoned decay', 'Roadside motel', 'decay', 'motel']);
     expect(TOPIC_TAG_QUERIES_MAX).toBeLessThanOrEqual(2);
   });
 
@@ -45,7 +78,7 @@ describe('TOPIC-1 fill: the reading\'s own words as /v2/tags queries', () => {
       aesthetics: [storedAesthetic('Italian espresso', { wording: 'resembles' }), storedAesthetic('Classic cafe', { wording: 'resembles' })],
       lineage: [lineage('Italian coffee bar')],
     });
-    expect(topicTagPlan([drink]).map((q) => q.query)).toEqual(['espresso', 'cafe']);
+    expect(topicTagPlan([drink]).map((q) => q.query)).toEqual(['Italian espresso', 'Italian coffee bar']);
     const varsity = storedSubject({
       id: 's1',
       category: 'fashion',
@@ -78,7 +111,7 @@ describe('TOPIC-1 fill: the reading\'s own words as /v2/tags queries', () => {
       storedSubject({ id: 's1', category: 'fashion', label: 'Sweet romantic dress', aesthetics: [storedAesthetic('Sweet romantic', { wording: 'resembles', held: true }), storedAesthetic('Ditsy floral')] }),
       storedSubject({ id: 's2', category: 'fashion', label: 'Classic leather bag', aesthetics: [storedAesthetic('Timeless')] }),
     ];
-    expect(topicTagPlan(two).map((q) => q.query)).toEqual(['floral', 'ditsy']);
+    expect(topicTagPlan(two).map((q) => q.query)).toEqual(['Ditsy floral', 'floral']);
     expect(topicTagPlan(two).map((q) => q.label)).toEqual(['Sweet romantic dress', 'Sweet romantic dress']);
   });
 

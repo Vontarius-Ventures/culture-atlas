@@ -188,6 +188,8 @@ export function swatchPresentInRegion(
   swatch: Pick<Swatch, 'lab'>,
   /** Every measured swatch: a pixel counts for the swatch it is nearest to. Omitted: distance only. */
   all: readonly Pick<Swatch, 'lab'>[] = [swatch],
+  /** Local feature evidence needs several matching pixels, not a single nearest-colour hit. */
+  minMatchingPixels = 1,
 ): boolean {
   const x0 = Math.max(0, Math.floor(region.x * width));
   const y0 = Math.max(0, Math.floor(region.y * height));
@@ -204,7 +206,7 @@ export function swatchPresentInRegion(
       const d = deltaE(lab, swatch.lab);
       if (d < PRESENCE_DELTA_E && all.every((other) => other === swatch || deltaE(lab, other.lab) >= d)) near++;
     }
-  return inside > 0 && near / inside >= PRESENCE_SHARE;
+  return inside > 0 && near >= minMatchingPixels && near / inside >= PRESENCE_SHARE;
 }
 
 /** Background test thresholds (BG-1): see swatchIsBackground. */
@@ -269,4 +271,45 @@ export function swatchIsBackground(
 ): boolean {
   const s = swatchShares(pixels, width, height, channels, region, swatch, all);
   return s.outsideArea >= BACKGROUND_OUTSIDE_MIN_AREA && s.outside >= BACKGROUND_OUTSIDE_SHARE && s.outside >= BACKGROUND_RATIO * s.inside;
+}
+
+/** Role-aware evidence validation; it never invents or substitutes a measured colour. */
+export type PaletteDecision = 'supported' | 'not_measured' | 'invalid_reference' | 'not_present' | 'background';
+export function paletteDecision(
+  pixels: Uint8Array | Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  subject: Region,
+  entry: { swatch: number; role?: 'dominant' | 'secondary' | 'accent'; evidence_ids?: string[] },
+  swatches: readonly Swatch[],
+  observations?: readonly { id: string; kind: string; region: Region | null; certainty: number }[],
+): PaletteDecision {
+  const swatch = swatches.find((s) => s.index === entry.swatch);
+  if (!swatch) return 'not_measured';
+  const linked = entry.evidence_ids?.map((id) => observations?.find((o) => o.id === id));
+  if (observations !== undefined || entry.evidence_ids !== undefined || entry.role !== undefined) {
+    if (!linked?.length || linked.some((o) => !o || o.kind === 'text' || o.certainty < 0.35)) return 'invalid_reference';
+  }
+  if (entry.role === 'accent' || entry.role === 'secondary') {
+    // Require >=4 matching pixels and >=8% local support.
+    // Accent boxes must be local, not a whole-subject box relabelled as an accent.
+    const regions = (linked ?? []).flatMap((o) => {
+      const r = o?.region;
+      if (!r || ![r.x, r.y, r.w, r.h].every(Number.isFinite) || r.w <= 0 || r.h <= 0 ||
+        r.x < subject.x || r.y < subject.y || r.x + r.w > subject.x + subject.w + 1e-6 ||
+        r.y + r.h > subject.y + subject.h + 1e-6 ||
+        (entry.role === 'accent' && r.w * r.h > subject.w * subject.h * 0.5)) return [];
+      const x0 = Math.max(0, Math.floor(r.x * width));
+      const x1 = Math.min(width, Math.ceil((r.x + r.w) * width));
+      const y0 = Math.max(0, Math.floor(r.y * height));
+      const y1 = Math.min(height, Math.ceil((r.y + r.h) * height));
+      return (x1 - x0) * (y1 - y0) >= 4 ? [r] : [];
+    });
+    if (!regions.length) return 'invalid_reference';
+    return regions.some((r) => swatchPresentInRegion(pixels, width, height, channels, r, swatch, swatches, 4))
+      ? 'supported' : 'not_present';
+  }
+  if (!swatchPresentInRegion(pixels, width, height, channels, subject, swatch, swatches)) return 'not_present';
+  return swatchIsBackground(pixels, width, height, channels, subject, swatch, swatches) ? 'background' : 'supported';
 }

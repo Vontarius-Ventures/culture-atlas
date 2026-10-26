@@ -31,6 +31,18 @@ const film = (name: string, tagNames: readonly string[] = []): QlooEntity => ({
 });
 
 describe('artwork detection (eval r3, relevance cause 3)', () => {
+  it('hidden/retracted art and era claims do not change subject classification or adjacency', () => {
+    const subject = storedSubject({
+      category: 'interior', label: 'Furnished room',
+      aesthetics: [storedAesthetic('Oil painting', { held: true })],
+      lineage: [storedAesthetic('Portraiture', { retracted: true })],
+      era: { ...painting.era!, name: 'Renaissance', retracted: true },
+    });
+    expect(isArtworkSubject(subject)).toBe(false);
+    expect(isFineArtSubject(subject)).toBe(false);
+    expect(subjectKeywords(subject)).not.toContain('renaissance');
+    expect(subjectKeywords(subject)).not.toContain('portraiture');
+  });
   it('a painting, an illustration or a poster of a person is an artwork whatever the reading filed it under', () => {
     expect(isArtworkSubject(painting)).toBe(true);
     expect(isArtworkSubject(storedSubject({ category: 'fashion', label: 'Head wrap and pearl earring illustration' }))).toBe(true);

@@ -2,6 +2,8 @@ import type { QlooTag } from '@culture-atlas/providers';
 import { isFineArtSubject } from './adjacency';
 import { lowerFirst } from './text';
 import type { StoredSubject } from './types';
+import { activeSubject, isMusicSubject, sharedCulture } from './discovery-concepts';
+import { admitDiscovery } from './discovery-evidence';
 
 /**
  * TOPIC-1 rail fill (eval r3, thin rails): the reading's OWN words — an
@@ -77,6 +79,8 @@ const TOPIC_STOP = new Set(
 
 interface TopicQuery {
   query: string;
+  /** Active subject snapshot preserves compound concept and source sense through resolution. */
+  subject?: StoredSubject;
   /** The subject whose words the query came from: its label names the photo in the reason. */
   label: string;
   /**
@@ -107,6 +111,7 @@ function textWords(text: string, minLength: number): string[] {
  * tag name says nothing about the photo (see style/adjacency.ts).
  */
 function readingWords(s: StoredSubject): readonly string[] {
+  s = activeSubject(s);
   return textWords(
     [
       s.label,
@@ -123,25 +128,25 @@ function readingWords(s: StoredSubject): readonly string[] {
 }
 
 /**
- * The reading's own words to search as topics, strongest first: the head word of each aesthetic
- * and lineage claim (its last topic word — "Roadside motel" -> motel), then the claim's other
- * words ("abandoned"), then era words. A fine-art subject asks for art itself first. Never the
+ * The reading's own compound concepts first, then bounded head-word fallbacks.
+ * The active source snapshot is retained so resolution cannot turn an architectural
+ * region into an artist's origin or a visual adjective into a sound. A fine-art subject asks for art itself first. Never the
  * label or the mood: those name the thing and the feeling, not what to watch or hear.
  */
 export function topicTagPlan(subjects: readonly StoredSubject[], max = TOPIC_TAG_QUERIES_MAX): readonly TopicQuery[] {
   const out: TopicQuery[] = [];
   const seen = new Set<string>();
+  subjects = subjects.map(activeSubject);
   const primary = subjects[0];
   // TOPIC-2: a period or school of another art form is only the reading's own topic when the
   // reading IS that art form — a work of fine art, or a music or film subject.
-  const ownArtSense = !!primary && (isFineArtSubject(primary) || primary.category === 'media');
   const add = (word: string, s: StoredSubject) => {
     if (seen.has(word)) return;
     seen.add(word);
-    out.push({ query: word, label: s.label, reading: readingWords(s) });
+    out.push({ query: word, label: s.label, reading: readingWords(s), subject: activeSubject(s) });
   };
-  const words = (text: string): string[] =>
-    textWords(text, 4).filter((w) => !TOPIC_STOP.has(w) && (ownArtSense || !AMBIGUOUS_TOPIC_TERMS.has(w)));
+  const words = (text: string, subject: StoredSubject): string[] =>
+    textWords(text, 4).filter((w) => !TOPIC_STOP.has(w) && (isFineArtSubject(subject) || subject.category === 'media' || !AMBIGUOUS_TOPIC_TERMS.has(w)));
   if (primary && isFineArtSubject(primary)) for (const q of ART_TOPIC_QUERIES) add(q, primary);
   const claims = (s: StoredSubject): readonly { name: string }[] => [
     ...s.aesthetics.filter((c) => !c.held && !c.retracted),
@@ -149,12 +154,15 @@ export function topicTagPlan(subjects: readonly StoredSubject[], max = TOPIC_TAG
   ];
   const shown = <T extends { held: boolean; retracted?: boolean }>(x: T | null | undefined): x is T => !!x && !x.held && !x.retracted;
   for (const s of subjects) {
-    // Every claim's head word first (the topics themselves: "decay", "motel"), then the modifiers
-    // ("abandoned", "roadside") — so a cap never trades a topic word for a qualifier.
-    const ws = claims(s).map((c) => words(c.name));
+    const ws = claims(s).map((c) => words(c.name, s));
+    // Preserve a compound before asking for its head: resolution retains the source sense.
+    for (const c of claims(s)) {
+      const list = words(c.name, s);
+      if (list.length >= 2) add(c.name.replace(/^(?:resembles?|suggests?)\s+/i, '').trim(), s);
+    }
     for (const list of ws) if (list.length) add(list.at(-1)!, s);
     for (const list of ws) for (const w of list) add(w, s);
-    if (shown(s.era)) for (const w of words(s.era.name)) add(w, s);
+    if (shown(s.era)) for (const w of words(s.era.name, s)) add(w, s);
     if (out.length >= max) return out.slice(0, max);
   }
   return out.slice(0, max);
@@ -163,6 +171,8 @@ export function topicTagPlan(subjects: readonly StoredSubject[], max = TOPIC_TAG
 /** A resolved Qloo tag the reading's own words found. */
 export interface StyleTopicTag {
   tagId: string;
+  /** Retained through fill so one subject cannot borrow another subject's lookup. */
+  subjectId?: string;
   /** The tag's own name, as Qloo returned it (the reason names it). */
   name: string;
   /** The reading subject whose words resolved to the tag. */
@@ -218,7 +228,7 @@ export function resolveTopicTags(
   const out: StyleTopicTag[] = [];
   const seen = new Set<string>();
   const railTag = RAIL_TAG_RE[targetType];
-  for (const { query, label, reading } of plan) {
+  for (const { query, label, reading, subject } of plan) {
     const supported = new Set(reading);
     for (const tag of results.get(query) ?? []) {
       if (!TOPIC_TAG_RE.test(tag.id) || seen.has(tag.id)) continue;
@@ -229,10 +239,19 @@ export function resolveTopicTags(
       // The tag's own name: a bare domain or medium noun says nothing, and a word the reading
       // never used is Qloo's sense of the word, not the photo's (a stop word adds no topic).
       const name = textWords(tag.name, 1);
-      if (!name.length || (name.length === 1 && GENERIC_TOPIC_TAGS.has(name[0]!))) continue;
-      if (name.some((w) => !supported.has(w) && !TOPIC_STOP.has(w))) continue;
+      const proof = subject ? admitDiscovery([subject], { entity_id: 'topic-resolution', tags: [tag] }, targetType, { origin: 'topic' }) : null;
+      if (subject && !proof) continue;
+      // An explicit directional relation may widen retrieval (ceramics -> pottery films),
+      // never the interpretation of the photo. Legacy plans retain exact-word acceptance.
+      const about = proof?.relation === 'about_subject';
+      if (!name.length || (!about && name.length === 1 && GENERIC_TOPIC_TAGS.has(name[0]!))) continue;
+      if (!about && name.some((w) => !supported.has(w) && !TOPIC_STOP.has(w))) continue;
+      if (!subject && targetType === 'urn:entity:artist' && !sharedCulture(reading.join(' '), tag.name) && !isMusicSubject({ category: 'media', label })) {
+        // Legacy query plans carry no category; never infer a musical sense from a visual word.
+        continue;
+      }
       seen.add(tag.id);
-      out.push({ tagId: tag.id, name: tag.name, label, popularity: tag.popularity ?? 0 });
+      out.push({ tagId: tag.id, name: tag.name, label, popularity: tag.popularity ?? 0, ...(subject ? { subjectId: subject.id } : {}) });
     }
   }
   return out

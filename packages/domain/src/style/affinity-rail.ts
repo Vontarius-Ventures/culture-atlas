@@ -1,5 +1,5 @@
 import type { QlooEntity } from '@culture-atlas/providers';
-import { echoKey, ECHO_PENALTY, entityProfile, scoreMatch, STRICT_KINDS, type MatchHit, type StyleMatchResult, type SubjectProfile } from './affinity';
+import { echoKey, ECHO_PENALTY, entityProfile, hitSupportsClaim, reasonHit, scoreMatch, STRICT_KINDS, type MatchHit, type StyleMatchResult, type SubjectProfile } from './affinity';
 import type { StyleVocabulary } from './vocabulary';
 import type { StyleMatchClaim } from './reasons';
 
@@ -36,7 +36,7 @@ export interface AffinityCandidate {
   via?: string;
 }
 
-/** FILL-1: a filtered product rail (shoes, bags, ...) is topped up to this many cards from Qloo's own taste order. */
+/** Legacy export only: evidence is never relaxed to fill a card quota. */
 export const STRICT_FILL_TO = 4;
 
 export function rankAffinity(
@@ -58,7 +58,6 @@ export function rankAffinity(
     });
   const gated: Record<string, number> = {};
   const scored: { entity: QlooEntity; prior: number; fromEntity: boolean; match: StyleMatchResult }[] = [];
-  const weak: typeof scored = [];
   for (const x of byId.values()) {
     const match = scoreMatch(q, entityProfile(x.entity.tags ?? []), { fashion: options.fashion ?? true, v: options.v });
     if (match.gate) {
@@ -79,9 +78,8 @@ export function rankAffinity(
     const linked = x.fromEntity && options.entityLinked;
     // A card shares a style claim of the reading, not only its product noun (unless the identified
     // brand in the photo links it).
-    if (rel < min || x.match.score < (linked ? 0 : MIN_ABSOLUTE) || (!linked && !x.match.styleHit && !STRICT_KINDS.includes(q.kind))) {
+    if (rel < min || x.match.score < (linked ? 0 : MIN_ABSOLUTE) || (!linked && (!reasonHit(x.match.hits) || (!x.match.styleHit && !STRICT_KINDS.includes(q.kind))))) {
       gated.weak = (gated.weak ?? 0) + 1;
-      weak.push(x);
       continue;
     }
     // Anchor-brand echo: down-ranked, never removed (a genuinely best echo may still show once).
@@ -90,21 +88,8 @@ export function rankAffinity(
     out.push({ entity: x.entity, match: x.match, fromEntity: x.fromEntity, score: (STYLE_SHARE * (Math.min(rel, REL_CAP) / REL_CAP) + (1 - STYLE_SHARE) * x.prior) * (echo ? ECHO_PENALTY : 1) });
   }
   out.sort((a, b) => b.score - a.score || a.entity.entity_id.localeCompare(b.entity.entity_id));
-  // FILL-1: a shoe or bag reading often has few style words; Qloo's taste list was already filtered to
-  // the product genre and signalled by the best-matching catalogue brands, so its own order tops the
-  // rail up, saying which matched brand it shares a taste with (explainability). Region-tied and gated
-  // results stay out.
-  if (STRICT_KINDS.includes(q.kind) && out.length < STRICT_FILL_TO && options.signalNames?.size) {
-    const fill = weak
-      .filter((x) => x.prior > 0 && x.match.regionFactor === 1)
-      .sort((a, b) => b.prior - a.prior)
-      .map((x) => ({ x, via: (x.entity.query?.explainability ?? []).map((e) => options.signalNames!.get(e.entity_id)).find((n): n is string => !!n) }))
-      .filter((f) => !!f.via);
-    for (const f of fill) {
-      if (out.length >= STRICT_FILL_TO) break;
-      out.push({ entity: f.x.entity, match: f.x.match, fromEntity: false, score: 0, via: f.via });
-    }
-  }
+  // A taste explanation proves a relationship to a signal brand, not the depicted
+  // product or style. Weak results never become cards merely to fill four slots.
   // Qloo sometimes lists one brand twice ("Hugo Boss" under two ids): keep the first by name.
   const deduped = out.filter((c) => {
     const k = c.entity.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
@@ -122,7 +107,7 @@ export function matchClaims(hits: readonly MatchHit[]): StyleMatchClaim[] {
   const seen = new Set<string>();
   const out: StyleMatchClaim[] = [];
   for (const h of hits) {
-    if (!CLAIM_SLOTS.has(h.slot)) continue;
+    if (!CLAIM_SLOTS.has(h.slot) || !hitSupportsClaim(h)) continue;
     const key = `${h.slot}:${h.claim}`;
     if (seen.has(key)) continue;
     seen.add(key);

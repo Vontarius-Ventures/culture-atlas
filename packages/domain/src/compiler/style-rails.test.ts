@@ -52,6 +52,16 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
     expect(plan({ subject: tee, accepted: [tag(F)] }).recipe).toBe('fashion_tag_only');
   });
 
+  it('a racket mislabeled fashion cannot create clothing retrieval or a clothing bridge', () => {
+    for (const label of ['Tennis racket', 'Tennis racquet with shoulder bag', 'Sports equipment', 'Unknown sporting object']) {
+      const subject = storedSubject({ label, aesthetics: [storedAesthetic('Tennis sportswear')] });
+      expect(plan({ subject, entity: BRAND, accepted: [tag(F)] }), label).toMatchObject({ primary: null, secondary: null, bridgeable: false, emptyReason: 'unsupported' });
+    }
+    for (const label of ['Pleated tennis skirt', 'Wool coat', 'Cotton dress', 'Linen trousers', 'Silk blouse']) {
+      expect(plan({ subject: storedSubject({ label }), entity: BRAND }).primary, label).not.toBeNull();
+    }
+  });
+
   it('interior: places with the decor tag in the user city; with brand rails off, an honest no_city', () => {
     const interior = storedSubject({ category: 'interior' });
     const decor = 'urn:tag:decor:qloo:japandi';

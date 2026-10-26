@@ -23,7 +23,7 @@ import type { Owner } from '../principal';
 import { destinationFromQlooProperties, imageFromQlooProperties } from '../services/display';
 import { selectExemplars } from '../style/exemplars';
 import { acceptedTags, bestFilterTag, mapSubjectTags, primaryStyleTag, tagLookupQueries, type AcceptedTag } from '../style/map-tags';
-import { computeSwatches, PALETTE_SIZE, swatchIsBackground, swatchPresentInRegion, type Swatch } from '../style/palette';
+import { computeSwatches, PALETTE_SIZE, paletteDecision, type Swatch } from '../style/palette';
 import { buildStyleReason, sharedClaims, type StyleMatch, type StyleMatchClaim } from '../style/reasons';
 import { affinityReason, genreFilterFor, rankCatalogue, subjectProfile } from '../style/affinity';
 import { echoNames } from '../style/affinity';
@@ -232,9 +232,9 @@ export function insideShare(a: { x: number; y: number; w: number; h: number }, b
   return area > 0 ? inter / area : 0;
 }
 
-/** Rail card item kind and category from the result's entity type. */
-function kindFor(types: readonly string[]): { kind: ItemKind; category: Category } | null {
-  if (types.includes('urn:entity:brand')) return { kind: 'brand', category: 'wear' };
+/** Brand is an entity type, not proof of apparel. Home brands stay on their subject rail. */
+export function styleRailCardKind(types: readonly string[], category?: StoredSubject['category']): { kind: ItemKind; category: Category | null } | null {
+  if (types.includes('urn:entity:brand')) return { kind: 'brand', category: category === 'fashion' ? 'wear' : category === 'food' ? 'eat' : null };
   if (types.includes('urn:entity:movie') || types.includes('urn:entity:tv_show')) return { kind: 'film', category: 'watch' };
   if (types.includes('urn:entity:artist')) return { kind: 'artist', category: 'play' };
   if (types.includes('urn:entity:place') || types.includes('urn:entity:destination')) return { kind: 'food', category: 'eat' };
@@ -614,14 +614,12 @@ export class StyleStage {
     const keepRegions = ctx.config.STYLE_SHOW_CLAIM_REGIONS === true;
     const subjects = guarded.reading.subjects.map((s) => {
       const px = this.pixels;
-      const inRegion = s.palette.filter((p) => {
-        const sw = swatches[p.swatch];
-        return !!sw && !!px && swatchPresentInRegion(px.data, px.width, px.height, px.channels, s.region, sw, swatches);
+      const present = new Set<number>();
+      s.palette.forEach((p, i) => {
+        const decision = px ? paletteDecision(px.data, px.width, px.height, px.channels, s.region, p, swatches, s.observations) : 'not_present';
+        if (decision === 'supported') present.add(p.swatch);
+        else dropped.push({ path: `subjects[${s.id}].palette[${i}]`, rule: `G-STYLE-PALETTE-${decision.toUpperCase()}` });
       });
-      // BG-1: a colour far more common around the subject than on it is the background (court, wall),
-      // unless it is the only colour left (a subject that blends into its setting keeps one swatch).
-      const own = inRegion.filter((p) => !(px && swatchIsBackground(px.data, px.width, px.height, px.channels, s.region, swatches[p.swatch]!, swatches)));
-      const present = new Set((own.length ? own : inRegion.slice(0, 1)).map((p) => p.swatch));
       return wordSubject({ subject: s, swatches: sent, presentSwatches: present, corroboration: evidence, keepClaimRegions: keepRegions }, dropped);
     });
     // Fashion maps from the vocabulary right away (0 requests), so the first publish already carries its tags.
@@ -1201,7 +1199,8 @@ export class StyleStage {
   ): Promise<number> {
     const { ctx } = this.host;
     const excluded = await this.host.excludedKeys();
-    const pool = ranked.filter((c) => kindFor(c.entity.types) && !excluded.has(`qloo:${c.entity.entity_id}`) && !this.host.usedKeys.has(`qloo:${c.entity.entity_id}`));
+    const subject = this.stored?.subjects.find((s) => s.id === subjectId);
+    const pool = ranked.filter((c) => styleRailCardKind(c.entity.types, subject?.category) && !excluded.has(`qloo:${c.entity.entity_id}`) && !this.host.usedKeys.has(`qloo:${c.entity.entity_id}`));
     const byId = new Map(pool.map((c) => [c.entity.entity_id, c]));
     const picked = selectRail(
       pool.map((c) => ({ entity: c.entity, sources: ['primary' as const], overlap: c.match.score, score: c.score })),
@@ -1214,7 +1213,7 @@ export class StyleStage {
       let rank = Math.max(1000, rows[0]?.next ?? 1000);
       for (const c of picked) {
         const e = c.entity;
-        const kc = kindFor(e.types)!;
+        const kc = styleRailCardKind(e.types, subject?.category)!;
         const viaEntity = !!o.entityName && c.fromEntity;
         const reason = c.via ? `Shares a taste with ${c.via}, a close match for this style` : affinityReason(c.match.hits, { entityName: viaEntity ? o.entityName : null });
         const claims: StyleMatchClaim[] = c.via ? [] : matchClaims(c.match.hits);
@@ -1289,7 +1288,8 @@ export class StyleStage {
   ): Promise<number> {
     const { ctx } = this.host;
     const excluded = await this.host.excludedKeys();
-    const pool = candidates.filter((c) => kindFor(c.entity.types) && !excluded.has(`qloo:${c.entity.entity_id}`) && !this.host.usedKeys.has(`qloo:${c.entity.entity_id}`));
+    const subject = this.stored?.subjects.find((s) => s.id === subjectId);
+    const pool = candidates.filter((c) => styleRailCardKind(c.entity.types, subject?.category) && !excluded.has(`qloo:${c.entity.entity_id}`) && !this.host.usedKeys.has(`qloo:${c.entity.entity_id}`));
     const slots = LIMITS.moreLikeThisPerSubject - (o.existing ?? 0);
     const picked = slots > 0 ? selectRail(pool, slots, o.echoNames ? { names: o.echoNames } : undefined) : [];
     let added = 0;
@@ -1298,9 +1298,9 @@ export class StyleStage {
       let rank = Math.max(1000, rows[0]?.next ?? 1000);
       for (const c of picked) {
         const e = c.entity;
-        const kc = kindFor(e.types)!;
-        const claims: StyleMatchClaim[] = sharedClaims(accepted, e.tags.map((t) => t.id));
-        const reason = buildStyleReason({ claims, palette: o.palette, via: o.via === 'exemplar' ? 'overlap' : o.via, entityName: o.entityName });
+        const kc = styleRailCardKind(e.types, subject?.category)!;
+        const claims: StyleMatchClaim[] = sharedClaims(accepted, e.tags.map((t) => t.id), subject);
+        const reason = buildStyleReason({ claims, subject, palette: o.palette, via: o.via === 'exemplar' ? 'overlap' : o.via, entityName: o.entityName });
         const match: StyleMatch = { subject_id: subjectId, claims, palette: claims.some((x) => x.slot === 'aesthetics') ? o.palette.slice(0, 2) : [], via_entity: o.via === 'entity' ? o.entityName : null, via: o.via, rail: 'more_like_this' };
         const itemKey = `qloo:${e.entity_id}`;
         const itemId = await upsertDiscoveryItem(tx, this.host.owner, {

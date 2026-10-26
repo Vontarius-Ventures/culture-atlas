@@ -3,6 +3,8 @@ import type { StoredSubject } from './types';
 import { normalizeStyleName, styleVocabulary, type ExemplarBrand, type StyleVocabulary } from './vocabulary';
 import { lowerFirst } from './text';
 import { moodContradicts, moodFamiliesOf, MOOD_CONTRADICTION_FACTOR, type MoodFamily } from './mood';
+import { activeEvidence, fashionProductEligible, productFormGate, productFormOf, productFormsIn, type ProductForm } from './product-evidence';
+export { fashionProductEligible, productFormGate, productFormOf } from './product-evidence';
 
 /**
  * Style affinity smatch-1: how closely a real Qloo entity's own tags match
@@ -167,7 +169,7 @@ export type ProductKind = 'apparel' | 'jeans' | 'tailoring' | 'dress' | 'footwea
 
 const KIND_WORDS: readonly [ProductKind, RegExp][] = [
   ['footwear', /\b(?:sneakers?|trainers?|shoes?|boots?|loafers?|heels?|pumps|sandals?|slippers?|mules?|clogs?|espadrilles?|brogues?|oxfords?|derbys?|slides?|flip[\s-]?flops?|footwear|stilettos?|wedges?|flats)\b/i],
-  ['bag', /\b(?:bags?|handbags?|totes?|crossbody|clutch(?:es)?|backpacks?|purses?|satchels?|wallets?|duffels?|pouch(?:es)?)\b/i],
+  ['bag', /\b(?:bags?|handbags?|totes?|cross[\s-]?body|clutch(?:es)?|backpacks?|rucksacks?|knapsacks?|purses?|satchels?|wallets?|card[\s-]?holders?|duff[el]{2}s?|weekenders?|holdalls?|pouch(?:es)?)\b/i],
   ['jewelry', /\b(?:necklaces?|rings?|earrings?|bracelets?|pendants?|bangles?|brooch(?:es)?|jewell?e?ry|chokers?|anklets?)\b/i],
   ['eyewear', /\b(?:sunglasses|glasses|eyewear|spectacles|shades|frames)\b/i],
   ['watch', /\b(?:watch(?:es)?|wristwatch(?:es)?|timepieces?|chronographs?)\b/i],
@@ -325,6 +327,9 @@ interface QueryToken {
 export interface SubjectProfile {
   tokens: Map<string, QueryToken>;
   kind: ProductKind;
+  /** Optional for compatibility with hand-built profiles; derived profiles always carry both. */
+  form?: ProductForm | null;
+  fashionEligible?: boolean;
   tier: 'casual' | 'dressy' | 'open';
   regions: Set<string>;
   label: string;
@@ -375,7 +380,7 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
       tokens.set(t, { ...next, weight: Math.max(prev.weight, w), level: named || next.slot === 'label' ? 'name' : 'feature' });
     }
   };
-  const shown = <T extends { held: boolean; retracted?: boolean }>(xs: readonly T[]) => xs.filter((x) => !x.held && !x.retracted);
+  const shown = activeEvidence;
   const w = (c: { wording: string; certainty: number }) => (c.wording === 'asserted' ? 1 : 0.8) * Math.min(1, 0.5 + c.certainty / 2);
   add(subject.label, SLOT_W.label, 'label', subject.label, 'asserted');
   for (const a of shown(subject.aesthetics)) {
@@ -395,7 +400,7 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
     subject.label,
     ...shown(subject.aesthetics).flatMap((a) => [a.name, ...a.defining_features]),
     ...shown(subject.lineage).map((l) => l.name),
-    subject.era && !subject.era.held ? subject.era.name : '',
+    subject.era && !subject.era.held && !subject.era.retracted ? subject.era.name : '',
     ...shown(subject.materials).map((m) => m.name),
     ...shown(subject.construction).map((c) => c.name),
   ].join(' ; ');
@@ -404,6 +409,8 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
   return {
     tokens,
     kind,
+    form: kind === 'bag' || kind === 'footwear' ? productFormOf(subject) : null,
+    fashionEligible: fashionProductEligible(subject),
     tier: readingTier(text),
     regions: new Set(regionsOf(text)),
     label: subject.label,
@@ -463,6 +470,8 @@ export interface EntityProfile {
   tokens: Map<string, EntityWord[]>;
   /** The entity's material tag names. */
   materials: string[];
+  /** Concrete products in the candidate's own product tags, not its taste neighbours. */
+  forms?: readonly ProductForm[];
   families: Families;
   price: string | null;
   regions: Set<string>;
@@ -512,6 +521,7 @@ export function entityProfile(tags: readonly EntityTagLike[]): EntityProfile {
   return {
     tokens,
     materials,
+    forms: [...new Set(tags.filter((t) => /^urn:tag:(?:signature_piece|signature_product|product_service|product_line|genre:brand):/.test(t.id)).flatMap((t) => productFormsIn(t.name || t.id.split(':').pop()!.replace(/_/g, ' '))))],
     families: familiesOf(genres),
     price,
     regions: new Set([...regionsOf(regionText.join(' ; ')), ...(ethnic ? ['traditional'] : [])]),
@@ -645,7 +655,8 @@ export function scoreMatch(q: SubjectProfile, e: EntityProfile, options: { fashi
   const score = raw / (1 + 0.04 * Math.sqrt(e.tokens.size));
   let gate: string | null = null;
   if (options.fashion !== false) {
-    gate = productGate(q.kind, e.families, e.materials);
+    gate = q.fashionEligible === false ? 'unsupported_product' : productGate(q.kind, e.families, e.materials);
+    if (!gate) gate = productFormGate(q.form, e.forms ?? []);
     if (!gate && e.kids && !q.kids) gate = 'kidswear';
     if (!gate && q.tier === 'casual' && (e.bridalOrCouture || e.price === '$$$$')) gate = 'tier';
   }
@@ -743,17 +754,28 @@ const REASON_SLOTS: readonly MatchSlot[] = ['aesthetics', 'lineage', 'era', 'mat
 
 /** The hit a reason names: the strongest whose subject side is a shown claim or the label. */
 export function reasonHit(hits: readonly MatchHit[]): MatchHit | null {
-  // A tag the reading covers at least half of ("Tennis Court") before a one-word coincidence
-  // ("Tie Me Bag" for a tie): the reason must read as the same thing, not a shared word.
+  // At least one complete side must be supported. A partial "cafe" hit cannot
+  // establish Portuguese/Italian equivalence. A complete generic Cafe claim
+  // can still support cafe adjacency, without naming the unsupported qualifier.
   const claim = (h: MatchHit) => REASON_SLOTS.includes(h.slot) && h.slot !== 'label';
+  const supported = (h: MatchHit) => {
+    const words = styleTokens(h.claim);
+    const tag = styleTokens(h.label);
+    return h.contribution > 0 && (h.coverage === 1 || (h.level === 'name' && words.length > 0 && words.every((w) => tag.includes(w))));
+  };
   return (
-    hits.find((h) => claim(h) && h.level === 'name' && h.coverage >= 0.5) ??
-    hits.find((h) => h.slot === 'label' && h.coverage >= 0.5) ??
-    hits.find((h) => claim(h) && h.coverage >= 0.5) ??
-    hits.find((h) => claim(h)) ??
-    hits.find((h) => REASON_SLOTS.includes(h.slot)) ??
+    hits.find((h) => supported(h) && claim(h) && h.level === 'name') ??
+    hits.find((h) => supported(h) && h.slot === 'label') ??
+    hits.find((h) => supported(h) && claim(h)) ??
     null
   );
+}
+
+/** A shared word supports the whole displayed claim only when all its words are present. */
+export function hitSupportsClaim(h: MatchHit): boolean {
+  const claim = styleTokens(h.claim);
+  const tag = styleTokens(h.label);
+  return h.level === 'name' && claim.length > 0 && claim.every((t) => tag.includes(t)) && h.coverage === 1 && h.contribution > 0;
 }
 
 /** A Qloo tag label mid-sentence: Title Case words lowered, proper adjectives kept ("Tennis Culture" -> "tennis culture"). */
@@ -779,6 +801,16 @@ function claimPhrase(h: MatchHit): string {
 export function affinityReason(hits: readonly MatchHit[], options: { entityName?: string | null } = {}): string | null {
   const h = reasonHit(hits);
   if (!h) return options.entityName ? `Connected to ${options.entityName} in your photo.` : null;
+  if (h.coverage < 1) {
+    const shared = `Shares ${claimPhrase(h)} ${h.wording === 'resembles' ? 'your photo resembles' : 'in your photo'}`;
+    return shared.length <= AFFINITY_REASON_MAX ? shared : `Shares ${tagPhrase(h.token)} details with your photo`;
+  }
+  // Category/material adjacency is useful, but cannot inherit the source claim's
+  // unsupported cultural or historical qualifiers. Name the proven tag, not the claim.
+  if (!hitSupportsClaim(h)) {
+    const adjacent = `Known for ${tagPhrase(h.label.trim())}, a shared detail with your photo`;
+    return adjacent.length <= AFFINITY_REASON_MAX ? adjacent : `Shares ${tagPhrase(h.token)} details with your photo`;
+  }
   const tag = h.label.trim();
   const tail = h.wording === 'resembles' && h.slot !== 'label' ? 'your photo resembles' : 'in your photo';
   const phrase = claimPhrase(h);

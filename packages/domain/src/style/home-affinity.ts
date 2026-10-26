@@ -1,6 +1,7 @@
 import type { QlooEntity } from '@culture-atlas/providers';
 import type { StoredSubject } from './types';
-import { entityProfile, familiesOf, scoreMatch, styleTokens, subjectProfile, wordWeight, type EntityTagLike, type MatchHit, type MatchSlot, type StyleMatchResult, type SubjectProfile } from './affinity';
+import { entityProfile, familiesOf, reasonHit, scoreMatch, styleTokens, subjectProfile, wordWeight, type EntityTagLike, type MatchHit, type StyleMatchResult, type SubjectProfile } from './affinity';
+import { activeEvidence } from './product-evidence';
 import { MIN_ABSOLUTE } from './affinity-rail';
 import type { StyleVocabulary, VocabEntry } from './vocabulary';
 import { HOME_BRANDS_VERSION, homeBrands, type HomeBrand } from './home-vocabulary';
@@ -41,7 +42,7 @@ const WORDS: Record<HomeKind, RegExp> = {
 
 /** The kind of home thing a subject is, from its own words (label first, then materials, construction, aesthetics). */
 export function homeKindOf(subject: Pick<StoredSubject, 'label' | 'materials' | 'construction' | 'aesthetics'>): HomeKind | null {
-  const text = [subject.label, ...subject.materials.map((m) => m.name), ...subject.construction.map((c) => c.name), ...subject.aesthetics.map((a) => a.name)].join(' ; ');
+  const text = [subject.label, ...activeEvidence(subject.materials).map((m) => m.name), ...activeEvidence(subject.construction).map((c) => c.name), ...activeEvidence(subject.aesthetics).map((a) => a.name)].join(' ; ');
   for (const kind of ['tableware', 'kitchenware', 'furniture', 'decor', 'coffee'] as const) if (WORDS[kind].test(text)) return kind;
   if (WORDS.ceramics.test(text)) return 'ceramics';
   if (WORDS.interior.test(text)) return 'interior';
@@ -50,7 +51,7 @@ export function homeKindOf(subject: Pick<StoredSubject, 'label' | 'materials' | 
 
 /** Whether a FOOD subject is a drink (coffee and tea are brands; a dish without a city stays a place question). */
 export function drinkKindOf(subject: Pick<StoredSubject, 'label' | 'materials' | 'construction' | 'aesthetics'>): HomeKind | null {
-  const text = [subject.label, ...subject.materials.map((m) => m.name), ...subject.construction.map((c) => c.name)].join(' ; ');
+  const text = [subject.label, ...activeEvidence(subject.materials).map((m) => m.name), ...activeEvidence(subject.construction).map((c) => c.name)].join(' ; ');
   return WORDS.coffee.test(text) ? 'coffee' : null;
 }
 
@@ -332,9 +333,6 @@ export function homeRailGate(entity: Pick<QlooEntity, 'entity_id' | 'tags'>, kin
   return row && row.industry_ids.includes(HOME_INDUSTRY[kind]) ? null : 'industry';
 }
 
-/** The slots whose claims a reason may name (the same slots affinityReason picks from). */
-const HOME_REASON_SLOTS: readonly MatchSlot[] = ['aesthetics', 'lineage', 'era', 'materials', 'construction', 'label'];
-
 /** A word this rare in the home catalogue, when it also names the candidate, is its own brand name. */
 const SELF_NAME_WEIGHT = 2;
 
@@ -409,7 +407,7 @@ export function homeEvidence(match: StyleMatchResult, entity: Pick<QlooEntity, '
   const all = match.hits.reduce((t, h) => t + h.contribution, 0);
   const kept = hits.reduce((t, h) => t + h.contribution, 0);
   const score = match.score * (all > 0 ? kept / all : 0);
-  return { hits, score, carries: score >= MIN_ABSOLUTE && hits.some((h) => HOME_REASON_SLOTS.includes(h.slot)) };
+  return { hits, score, carries: score >= MIN_ABSOLUTE && reasonHit(hits) !== null };
 }
 
 export interface HomeRailCarry {

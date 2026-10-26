@@ -1,5 +1,5 @@
 import { lowerFirst } from './text';
-import type { GuardedStyleSubject, StyleSwatch } from '@culture-atlas/providers';
+import { uniqueStyleFeatures, type GuardedStyleSubject, type StyleSwatch, type StyleClaimEvidence } from '@culture-atlas/providers';
 import { normalizeStyleName } from './vocabulary';
 import type {
   CorroborationSource,
@@ -19,10 +19,11 @@ import type {
  * Server-decided wording (style design §A.2, amended R-8 and R-16a). The model
  * reports certainty and evidence only; these rules decide asserted vs
  * "resembles" and drop the rest. Versioned: changing a bar bumps sw-N.
- * The sw-1 bars are the design's starting values; R-8 fits them on the
- * style-v1 tune split before holdout (docs/style-eval.md).
+ * sw-2 keeps the sw-1 certainty bars but counts distinct guarded features;
+ * v2 features come from the linked observation ledger. Legacy feature prose
+ * is deduplicated too, including the stage-2 assertion upgrade path.
  */
-export const STYLE_WORDING_VERSION = 'sw-1';
+export const STYLE_WORDING_VERSION = 'sw-2';
 
 export const WORDING = {
   aesthetic: { assert: 0.85, assertCorroborated: 0.75, assertSameFamily: 0.8, floor: 0.4, minFeatures: 2 },
@@ -147,8 +148,11 @@ export function wordSubject(input: WordSubjectInput, dropped: { path: string; ru
     region: null,
     qloo: null,
   });
+  const evidenceMeta = (claim: StyleClaimEvidence): StyleClaimEvidence =>
+    claim.evidence_ids === undefined ? {} : { evidence_ids: [...claim.evidence_ids] };
   const aesthetics: StoredAesthetic[] = [];
-  s.aesthetics.forEach((a, i) => {
+  s.aesthetics.forEach((raw, i) => {
+    const a = { ...raw, defining_features: uniqueStyleFeatures(raw.defining_features) };
     const cb = corroboratedBy(a.name, a.tag_query, ev);
     if (vetoed(a.name)) return void dropped.push({ path: `${sp}.aesthetics[${i}]`, rule: 'G-VETO' });
     const wording = aestheticWording({ certainty: a.certainty, basis: a.evidence.basis, features: a.defining_features.length, resemblesOnly: a.resembles_only }, cb, ev.sameFamily);
@@ -157,6 +161,7 @@ export function wordSubject(input: WordSubjectInput, dropped: { path: string; ru
     const hold = a.held && !(cb.includes('stage2') || (cb.includes('qloo_entity') && a.defining_features.length >= 2)) ? a.held : undefined;
     aesthetics.push({
       ...base(a.name, a.certainty, wording, wording === 'asserted' ? DISPLAY.asserted(a.name) : DISPLAY.resembles(a.name), a.evidence.basis, strengthFor(wording, a.certainty), cb, hold),
+      ...evidenceMeta(a),
       region: input.keepClaimRegions ? a.evidence.region : null,
       defining_features: a.defining_features,
       tag_query: a.tag_query,
@@ -169,7 +174,7 @@ export function wordSubject(input: WordSubjectInput, dropped: { path: string; ru
     if (!w) dropped.push({ path: `${sp}.era`, rule: 'G-LOWCERT' });
     else {
       const cb = corroboratedBy(s.era.name, null, ev);
-      era = { ...base(s.era.name, s.era.certainty, w, DISPLAY.era(s.era.name), s.era.basis, null, cb, s.era.held && !cb.includes('stage2') ? s.era.held : undefined), cue: s.era.cue };
+      era = { ...evidenceMeta(s.era), ...base(s.era.name, s.era.certainty, w, DISPLAY.era(s.era.name), s.era.basis, null, cb, s.era.held && !cb.includes('stage2') ? s.era.held : undefined), cue: s.era.cue };
     }
   }
   const lineage: StoredClaim[] = [];
@@ -177,25 +182,26 @@ export function wordSubject(input: WordSubjectInput, dropped: { path: string; ru
     const w = vetoed(l.name) ? null : eraLineageWording(l);
     if (!w) return void dropped.push({ path: `${sp}.lineage[${i}]`, rule: 'G-LOWCERT' });
     const cb = corroboratedBy(l.name, null, ev);
-    lineage.push(base(l.name, l.certainty, w, w === 'asserted' ? DISPLAY.asserted(l.name) : DISPLAY.resembles(l.name), l.basis, null, cb, l.held && !cb.includes('stage2') ? l.held : undefined));
+    lineage.push({ ...evidenceMeta(l), ...base(l.name, l.certainty, w, w === 'asserted' ? DISPLAY.asserted(l.name) : DISPLAY.resembles(l.name), l.basis, null, cb, l.held && !cb.includes('stage2') ? l.held : undefined) });
   });
   const materials: StoredMaterial[] = [];
   s.materials.forEach((m, i) => {
     const w = materialWording(m);
     if (!w) return void dropped.push({ path: `${sp}.materials[${i}]`, rule: 'G-LOWCERT' });
-    materials.push({ ...base(m.name, m.certainty, w, w === 'asserted' ? DISPLAY.asserted(m.name) : DISPLAY.looksLike(m.name), m.basis, strengthFor(w, m.certainty), corroboratedBy(m.name, m.tag_query, ev)), texture: m.texture, tag_query: m.tag_query });
+    materials.push({ ...evidenceMeta(m), ...base(m.name, m.certainty, w, w === 'asserted' ? DISPLAY.asserted(m.name) : DISPLAY.looksLike(m.name), m.basis, strengthFor(w, m.certainty), corroboratedBy(m.name, m.tag_query, ev)), texture: m.texture, tag_query: m.tag_query });
   });
   const construction: StoredConstruction[] = [];
   s.construction.forEach((c, i) => {
     const w = constructionWording(c);
     if (!w) return void dropped.push({ path: `${sp}.construction[${i}]`, rule: 'G-LOWCERT' });
-    construction.push({ ...base(c.name, c.certainty, w, w === 'asserted' ? DISPLAY.asserted(c.name) : DISPLAY.looksLike(c.name), c.basis, strengthFor(w, c.certainty), []), kind: c.kind });
+    construction.push({ ...evidenceMeta(c), ...base(c.name, c.certainty, w, w === 'asserted' ? DISPLAY.asserted(c.name) : DISPLAY.looksLike(c.name), c.basis, strengthFor(w, c.certainty), []), kind: c.kind });
   });
   const details: StoredDetail[] = [];
   s.details.forEach((d, i) => {
     const w = constructionWording({ certainty: d.certainty, basis: d.evidence.basis });
     if (!w) return void dropped.push({ path: `${sp}.details[${i}]`, rule: 'G-LOWCERT' });
     details.push({
+      ...evidenceMeta(d),
       ...base(d.text, d.certainty, w, w === 'asserted' ? DISPLAY.asserted(d.text) : DISPLAY.looksLike(d.text), d.evidence.basis, strengthFor(w, d.certainty), []),
       region: input.keepClaimRegions ? d.evidence.region : null,
       text: d.text,
@@ -205,19 +211,20 @@ export function wordSubject(input: WordSubjectInput, dropped: { path: string; ru
   s.mood.forEach((m, i) => {
     const w = moodWording(m);
     if (!w) return void dropped.push({ path: `${sp}.mood[${i}]`, rule: 'G-LOWCERT' });
-    mood.push(base(m.name, m.certainty, w, DISPLAY.mood(m.name), 'visible', null, []));
+    mood.push({ ...evidenceMeta(m), ...base(m.name, m.certainty, w, DISPLAY.mood(m.name), 'visible', null, []) });
   });
   const palette: StoredPalette[] = [];
   s.palette.forEach((p, i) => {
     const sw = input.swatches.find((x) => x.index === p.swatch);
     if (!sw || !input.presentSwatches.has(p.swatch)) return void dropped.push({ path: `${sp}.palette[${i}]`, rule: 'G-STYLE-PALETTE' });
-    palette.push({ swatch: p.swatch, name: p.name, hex: sw.hex, display: upperFirst(p.name), wording: 'asserted' });
+    palette.push({ ...(p.role !== undefined ? { role: p.role } : {}), ...(p.evidence_ids !== undefined ? { evidence_ids: [...p.evidence_ids] } : {}), swatch: p.swatch, name: p.name, hex: sw.hex, display: upperFirst(p.name), wording: 'asserted' });
   });
   return {
     id: s.id,
     category: s.category,
     label: s.label,
     region: s.region,
+    ...(s.observations !== undefined ? { observations: s.observations.map((o) => ({ ...o, region: o.region ? { ...o.region } : null })) } : {}),
     aesthetics,
     era,
     lineage,
@@ -244,6 +251,7 @@ export function rewordAfterStage2(subject: StoredSubject, ev: CorroborationEvide
   const retracted: string[] = [];
   const sp = `subjects[${subject.id}]`;
   subject.aesthetics.forEach((a, i) => {
+    a.defining_features = uniqueStyleFeatures(a.defining_features);
     const path = `${sp}.aesthetics[${i}]`;
     if (ev.vetoed?.has(normalizeStyleName(a.name)) && !a.retracted) {
       a.retracted = true;

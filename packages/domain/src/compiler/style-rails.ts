@@ -1,7 +1,7 @@
 import type { QlooEntity, QlooInsightsRequest, QlooEntityType } from '@culture-atlas/providers';
 import { FASHION_BRAND_TAG } from './grounding';
 import { RRF_K } from './fusion';
-import { echoKey, ECHO_CAP } from '../style/affinity';
+import { echoKey, ECHO_CAP, fashionProductEligible } from '../style/affinity';
 import { isArtworkSubject } from '../style/adjacency';
 import type { AcceptedTag } from '../style/map-tags';
 import { mediaKind, tagNamespace } from '../style/map-tags';
@@ -113,7 +113,7 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
       // Eval r3, relevance cause 3: an artwork the reading filed under fashion (a painting or
       // poster of a person) is a media question, not a brand question — its depicted clothing
       // never becomes a wear rail. The honest state is the unsupported empty.
-      if (isArtworkSubject(subject)) return empty('unsupported');
+      if (isArtworkSubject(subject) || !fashionProductEligible(subject)) return empty('unsupported');
       const personal = firstTag(accepted, ['personal_style']);
       if (entity && entity.types.includes('urn:entity:brand')) {
         const primary: QlooInsightsRequest = {

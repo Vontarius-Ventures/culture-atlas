@@ -1,5 +1,7 @@
 import type { Category } from '../enums';
 import type { StoredSubject } from './types';
+import { activeSubject } from './discovery-concepts';
+import { admitDiscovery } from './discovery-evidence';
 import { COLOR_WORDS, echoKey, ECHO_CAP, ECHO_PENALTY, entityProfile, REGION_WORDS, scoreMatch, subjectProfile, type MatchHit, type MatchSlot, type StyleMatchResult } from './affinity';
 
 /**
@@ -25,17 +27,12 @@ export interface CrossDomainOptions {
 }
 
 /**
- * When a cross-domain card is only real with its own style evidence. True when the
- * reading is the only signal at all (no entity signals: measured, a bodybuilding
- * label for a tennis court), and — eval r3, judges' audience-overlap finding — when
- * a fashion bridge fed the rail: a music or film card a garment's co-liked brand
- * pulled in stays only when its own tags name a style word of the reading, so
- * "Crazy Rich Asians" on four different outfits and reggaeton for a varsity jacket
- * no longer ride brand-audience overlap. Wear keeps Qloo's product-filtered order.
+ * Candidate-side proof is required on all discovery routes. The legacy signal counts
+ * remain in the signature for style-stage callers, but are no longer exemptions.
  */
-export function dropStylelessFor(category: Category, signalled: number, bridged: number): boolean {
-  if (signalled === 0) return true;
-  return bridged > 0 && (category === 'play' || category === 'watch');
+export function dropStylelessFor(category: Category, _signalled: number, _bridged: number): boolean {
+  // A signal's origin never waives candidate-side proof. Includes the second Wear rail.
+  return category === 'wear' || category === 'play' || category === 'watch';
 }
 
 /**
@@ -53,9 +50,9 @@ export function rerankCrossDomain<T extends { entity_id: string; name?: string; 
 ): T[] {
   // Wear cards for a garment pass the same product and tier gates as its rail (no couture house
   // next to a casual dress, no eyewear house for a jacket).
-  const garment = options.gateFashion ? subjects.find((x) => x.category === 'fashion') : undefined;
-  const q = garment ? subjectProfile(garment) : null;
-  const kept0 = q ? entities.filter((e) => !scoreMatch(q, entityProfile(e.tags ?? [])).gate) : entities;
+  const garments = options.gateFashion ? subjects.filter((x) => x.category === 'fashion').map((s) => subjectProfile(activeSubject(s))) : [];
+  // A candidate may match the second subject; never gate every candidate against the first.
+  const kept0 = garments.length ? entities.filter((e) => garments.some((q) => !scoreMatch(q, entityProfile(e.tags ?? [])).gate)) : entities;
   // Eval r4 (h71): a play or watch card is a music or film entity, so a genre/period word of the
   // same spelling is not garment style evidence; a wear card is a garment brand whose own tags are.
   const periodGuard = !options.gateFashion;
@@ -65,7 +62,11 @@ export function rerankCrossDomain<T extends { entity_id: string; name?: string; 
     // A real style claim, not any shared word (eval r5): a card matching only a feature or
     // detail word ("ribbed" of a trim, "oil" of a medium) carried `style > 0` and stayed on
     // bridge-fed rails; only a word a shown claim or the label names keeps a card.
-    kept = scored.filter((x) => x.styleHit).map((x) => x.e);
+    kept = scored.filter((x) => {
+      const types = (x.e as T & { types?: string[] }).types;
+      const target = options.gateFashion ? 'urn:entity:brand' : types?.includes('urn:entity:artist') ? 'urn:entity:artist' : 'urn:entity:movie';
+      return !!admitDiscovery(subjects, x.e, target);
+    }).map((x) => x.e);
     scored = crossDomainScores(subjects, kept, { periodGuard });
   }
   const best = Math.max(0, ...scored.map((x) => x.style));
@@ -117,11 +118,13 @@ function dedupeByName<T extends { name?: string }>(entities: readonly T[]): T[] 
  * about something else.
  */
 export function topicFilms<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(subjects: readonly StoredSubject[], entities: readonly T[]): T[] {
-  const scored = crossDomainScores(subjects, entities).filter((x) => x.styleHit);
+  const proofs = new Map(entities.map((e) => [e.entity_id, admitDiscovery(subjects, e, 'urn:entity:movie')]));
+  const about = (e: T) => proofs.get(e.entity_id)?.relation === 'about_subject';
+  const scored = crossDomainScores(subjects, entities).filter((x) => proofs.get(x.e.entity_id) && (x.styleHit || about(x.e)));
   const best = Math.max(0, ...scored.map((x) => x.style));
-  if (best < TOPIC_MIN_SCORE) return [];
+  if (best < TOPIC_MIN_SCORE) return scored.filter((x) => about(x.e)).map((x) => x.e);
   return scored
-    .filter((x) => x.style >= Math.max(TOPIC_MIN_SCORE, TOPIC_MIN_RELATIVE * best))
+    .filter((x) => about(x.e) || x.style >= Math.max(TOPIC_MIN_SCORE, TOPIC_MIN_RELATIVE * best))
     .map((x) => ({ ...x, score: TOPIC_STYLE_SHARE * (x.style / best) + (1 - TOPIC_STYLE_SHARE) / (1 + x.i / 5) }))
     .sort((a, b) => b.score - a.score || a.i - b.i)
     .map((x) => x.e);
@@ -199,7 +202,7 @@ export function crossDomainScores<T extends { entity_id: string; tags?: { id: st
   entities: readonly T[],
   options: CrossDomainScoreOptions = {},
 ): CrossDomainScore<T>[] {
-  const profiles = subjects.map((x) => subjectProfile(x));
+  const profiles = subjects.map((x) => subjectProfile(activeSubject(x)));
   return entities.map((e, i) => {
     const prof = entityProfile(e.tags ?? []);
     let style = 0;

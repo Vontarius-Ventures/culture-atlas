@@ -120,4 +120,34 @@ describe('server-decided wording sw-1 (style design §A.2, R-8)', () => {
     const { out } = word(guardedSubject({ category: 'food', aesthetics: [aesthetic('Japanese ramen-ya', 0.6)] }));
     expect(out.aesthetics[0]!.display).toBe('Resembles Japanese ramen-ya');
   });
+
+  it('retains internal evidence and local colour geometry with public claim regions disabled', () => {
+    const region = { x: 0.2, y: 0.2, w: 0.1, h: 0.1 };
+    const { out } = word(guardedSubject({
+      observations: [{ id: 'o1', kind: 'surface', text: 'brown canvas trim', certainty: 0.9, region }],
+      aesthetics: [aesthetic('Workwear', 0.9, { evidence_ids: ['o1'], evidence: { basis: 'visible', region } })],
+      materials: [{ name: 'Canvas', texture: 'woven', certainty: 0.9, basis: 'visible', tag_query: null, evidence_ids: ['o1'] }],
+      details: [{ text: 'brown canvas trim', certainty: 0.9, evidence: { basis: 'visible', region }, evidence_ids: ['o1'] }],
+      palette: [{ swatch: 0, name: 'brown', role: 'accent', evidence_ids: ['o1'] }],
+    }));
+    expect(out.aesthetics[0]!.region).toBeNull();
+    expect(out.details[0]!.region).toBeNull();
+    expect(out.observations?.[0]?.region).toEqual(region);
+    expect(out.aesthetics[0]!.evidence_ids).toEqual(['o1']);
+    expect(out.materials[0]!.evidence_ids).toEqual(['o1']);
+    expect(out.details[0]!.evidence_ids).toEqual(['o1']);
+    expect(out.palette[0]).toMatchObject({ role: 'accent', evidence_ids: ['o1'], hex: '#7B5A3A' });
+  });
+
+  it('does not assert duplicate defining features or gain assertion through later corroboration', () => {
+    const { out } = word(guardedSubject({
+      aesthetics: [aesthetic('Workwear', 0.99, { defining_features: ['canvas shell', 'Canvas shell!'] })],
+    }));
+    expect(out.aesthetics[0]?.defining_features).toEqual(['canvas shell']);
+    expect(out.aesthetics[0]?.wording).toBe('resembles');
+    rewordAfterStage2(out, { ...NO_CORROBORATION, stage2: new Set(['workwear']) });
+    expect(out.aesthetics[0]?.wording).toBe('resembles');
+    expect(out.observations).toBeUndefined();
+    expect(out.aesthetics[0]?.evidence_ids).toBeUndefined();
+  });
 });

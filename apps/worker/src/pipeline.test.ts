@@ -103,7 +103,10 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(page.overview).toBe('Vintage Racing is a test reference.');
     expect(page.claims.filter((c) => c.claim_type === 'factual').every((c) => c.source_ids.length > 0)).toBe(true);
     expect(page.sources[0]!.url).toMatch(/^https:\/\/en\.wikipedia\.org\/wiki\//);
-    expect(page.related.length).toBeGreaterThan(0);
+    // Qloo returned no explainability linking these cards to the racing tag.
+    // Sending a reference as a query signal is not proof that every result is related to it.
+    expect(page.related).toEqual([]);
+    expect(rows.filter((r) => r.origin === 'qloo').every((r) => r.contributing_reference_ids.length === 0)).toBe(true);
 
     // Uploading never changes taste.
     const { rows: prefs } = await db.query('SELECT 1 FROM preference_events WHERE owner_session_id = $1', [(ctx.principal as { sessionId: string }).sessionId]);

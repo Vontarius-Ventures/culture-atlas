@@ -151,7 +151,7 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     expect(a.section_statuses['more_like_this:s1']).toBe('ready');
     expect(Object.values(a.section_statuses)).not.toContain('running');
     expect(a.style_reading_version).toBe('atlas_style_reading_v1');
-    expect(a.style_reading).toMatchObject({ schema: 'atlas_style_reading_v1', wording_version: 'sw-1', guard_version: 'guard-v18', vocab_version: 'svocab-1', model: { role: 'vision_style', model: 'fake-style', experimental: false } });
+    expect(a.style_reading).toMatchObject({ schema: 'atlas_style_reading_v1', wording_version: 'sw-2', guard_version: 'guard-v19', vocab_version: 'svocab-1', model: { role: 'vision_style', model: 'fake-style', experimental: false } });
 
     const { rows: rail } = await db.query<{ title: string; rail: string; subject_id: string; display_reason: string | null; style_match: { claims: { name: string; tag_id: string }[] }; provider_query_ids: string[] }>(
       `SELECT title, rail, subject_id, display_reason, style_match, provider_query_ids FROM recommendations WHERE analysis_id = $1 AND rail = 'more_like_this' ORDER BY rank`,
@@ -381,7 +381,13 @@ describe('TOPIC-1: a room with nothing else to signal gets films Qloo tags with 
     const watch = view.rails!.find((r) => r.key === 'watch')!;
     // Only a film whose own tags echo the reading ("Midcentury modern") is shown; a film that shares only
     // the topic ("Design") is not a match. The reason names the film's own theme.
-    expect(watch.cards.map((c) => [c.title, c.reason])).toEqual([['Fixture Modern House', 'A film about architecture, for the teak sideboard room in your photo']]);
+    expect(watch.cards.map((c) => [c.title, c.reason])).toEqual([['Fixture Modern House', 'A film tagged Architecture; exploring a topic connected to Teak sideboard room']]);
+    const a = await analysisRow(capture_id);
+    const { rows: proofs } = await db.query<{ style_match: { discovery_proof: { subjectId: string; relation: string; candidateTags: { id: string; label: string }[] } }; contributing_reference_ids: string[] }>(
+      `SELECT style_match, contributing_reference_ids FROM recommendations WHERE analysis_id = $1 AND category = 'watch'`, [a.id],
+    );
+    expect(proofs[0]!.style_match.discovery_proof).toMatchObject({ subjectId: 's1', relation: 'about_subject', candidateTags: [{ id: 'urn:tag:theme:qloo:architecture', label: 'Architecture' }] });
+    expect(proofs[0]!.contributing_reference_ids).toEqual([]);
     // A decor style tag is never a Wear card.
     expect(view.recommendations.filter((r) => r.category === 'wear')).toEqual([]);
   });

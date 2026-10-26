@@ -1,4 +1,4 @@
-import type { StyleBox, StyleCategory } from '@culture-atlas/providers';
+import type { StyleBox, StyleCategory, StyleObservation } from '@culture-atlas/providers';
 
 /** Claim slots of a style subject (A.1). */
 export type StyleSlot = 'aesthetics' | 'era' | 'lineage' | 'materials' | 'construction' | 'palette' | 'mood' | 'details';
@@ -22,6 +22,8 @@ export interface ClaimQloo {
 }
 
 export interface StoredClaim {
+  /** Guarded observation references; absent on legacy readings. */
+  evidence_ids?: string[];
   name: string;
   certainty: number;
   wording: Wording;
@@ -56,6 +58,8 @@ export interface StoredDetail extends StoredClaim {
   text: string;
 }
 export interface StoredPalette {
+  role?: 'dominant' | 'secondary' | 'accent';
+  evidence_ids?: string[];
   swatch: number;
   name: string;
   hex: string;
@@ -64,6 +68,8 @@ export interface StoredPalette {
 }
 
 export interface StoredSubject {
+  /** Internal evidence regions survive the public region visibility flag. */
+  observations?: StyleObservation[];
   id: string;
   category: StyleCategory;
   label: string;

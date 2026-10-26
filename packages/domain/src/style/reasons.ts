@@ -1,5 +1,7 @@
 import { lowerFirst } from './text';
 import type { AcceptedTag } from './map-tags';
+import type { StoredSubject } from './types';
+import { activeEvidence } from './product-evidence';
 
 /**
  * Per-card reasons from REAL tag overlap only (style design §C.4, template
@@ -32,8 +34,17 @@ export interface StyleMatch {
 
 const and = (xs: readonly string[]) => (xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
 
+/** Revalidate cached overlap against the currently published reading when available. */
+export function activeStyleClaims<T extends Pick<StyleMatchClaim, 'slot' | 'name'>>(claims: readonly T[], subject?: StoredSubject): T[] {
+  if (!subject) return [...claims]; // Legacy callers supply already-active accepted tags.
+  return claims.filter((claim) => {
+    const source = claim.slot === 'era' ? (subject.era ? [subject.era] : []) : subject[claim.slot];
+    return activeEvidence(source).some((c) => c.name === claim.name);
+  });
+}
+
 /** Claims the result shares with the subject, strongest slot first, one entry per claim. */
-export function sharedClaims(accepted: readonly AcceptedTag[], resultTagIds: readonly string[]): StyleMatchClaim[] {
+export function sharedClaims(accepted: readonly AcceptedTag[], resultTagIds: readonly string[], subject?: StoredSubject): StyleMatchClaim[] {
   const tags = new Set(resultTagIds);
   const byClaim = new Map<string, StyleMatchClaim & { weight: number; primary: boolean }>();
   for (const t of accepted) {
@@ -42,7 +53,7 @@ export function sharedClaims(accepted: readonly AcceptedTag[], resultTagIds: rea
     const prev = byClaim.get(key);
     if (!prev || (!prev.primary && t.primary)) byClaim.set(key, { slot: t.slot, name: t.claimName, wording: t.wording, tag_id: t.id, weight: t.weight, primary: t.primary });
   }
-  const sorted = [...byClaim.values()].sort((a, b) => b.weight - a.weight);
+  const sorted = activeStyleClaims([...byClaim.values()], subject).sort((a, b) => b.weight - a.weight);
   // "Classic denim" already says "denim": a claim whose words are inside a stronger claim's adds nothing.
   const fold = (x: string) => ` ${x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `;
   const kept = sorted.filter((c, i) => !sorted.some((o, j) => j < i && fold(o.name).includes(fold(c.name))));
@@ -51,6 +62,8 @@ export function sharedClaims(accepted: readonly AcceptedTag[], resultTagIds: rea
 
 export interface ReasonInput {
   claims: readonly StyleMatchClaim[];
+  /** Optional source to revalidate cached claims after a hold or retraction. */
+  subject?: StoredSubject;
   /** The subject's palette color names, used only alongside a shared aesthetic. */
   palette: readonly string[];
   via: ReasonVia;
@@ -78,7 +91,7 @@ function render(claims: readonly StyleMatchClaim[], palette: readonly string[], 
  * connects it (an honest absence; never a guessed reason).
  */
 export function buildStyleReason(input: ReasonInput): string | null {
-  const claims = input.claims.slice(0, 2);
+  const claims = activeStyleClaims(input.claims, input.subject).slice(0, 2);
   if (!claims.length) {
     if (input.via === 'entity' && input.entityName) return `Connected to ${input.entityName} in your photo.`.slice(0, REASON_MAX_CHARS);
     return null;
