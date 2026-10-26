@@ -105,7 +105,7 @@ describe('TOPIC-1 fill: resolved tags', () => {
     { query: 'decay', label, reading },
   ];
 
-  it('keeps only genre/subgenre/theme tags the target entity type carries', () => {
+  it('keeps only topical tags the target entity type carries', () => {
     const results = new Map<string, QlooTag[]>([
       ['motel', [tag('urn:tag:decor:qloo:motel', 'Motel', ['urn:entity:place']), tag('urn:tag:theme:qloo:roadside_motel', 'Roadside Motel', ['urn:entity:movie', 'urn:entity:tv_show'], 0.5)]],
       ['decay', [tag('urn:tag:theme:qloo:decay', 'Decay', ['urn:entity:movie'], 0.9)]],
@@ -189,5 +189,19 @@ describe('TOPIC-1 fill: the card reason names the tag the result carries', () =>
     expect(long.length).toBeLessThanOrEqual(90);
     expect(long).toMatch(/^A film tagged Roadside Motel/);
     for (const text of [taggedTopicReason('urn:entity:movie', 'Painting', 'X')]) expect(text).not.toMatch(/culture atlas|qloo|score/i);
+  });
+});
+
+describe('TOPIC-1 fill: Qloo\'s keyword namespace (eval r5, h56)', () => {
+  const tag = (id: string, name: string, parents: string[] = [], popularity?: number): QlooTag => ({ id, name, type: id.split(':').slice(0, 3).join(':'), parents, popularity });
+  const label = 'Disused paneled motel room';
+  const reading = ['disused', 'paneled', 'motel', 'room', 'abandoned', 'decay', 'roadside'];
+  const plan = [{ query: 'decay', label, reading }];
+
+  it('the movie-side home of a topical word fills ("Decay" lives in keyword; no genre/subgenre/theme tag exists)', () => {
+    const results = new Map<string, QlooTag[]>([['decay', [tag('urn:tag:keyword:qloo:decay', 'Decay', ['urn:entity:tv_show', 'urn:entity:movie'])]]]);
+    expect(resolveTopicTags(plan, results, 'urn:entity:movie').map((t) => t.tagId)).toEqual(['urn:tag:keyword:qloo:decay']);
+    // A rail of people still needs a tag that names a sound.
+    expect(resolveTopicTags(plan, results, 'urn:entity:artist')).toEqual([]);
   });
 });

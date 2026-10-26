@@ -66,7 +66,7 @@ import {
   upsertReference,
   type CaptureForCompile,
 } from './store';
-import { humanList, normalizeName, slugify } from './text';
+import { humanList, nameSimilarity, nameTokens, normalizeName, slugify } from './text';
 import { BRIDGE_WAIT_MS, BRIDGE_WAIT_NO_ANCHOR_MS, StyleStage, topicReason, type StyleBridge, type StyleCallOutput, type StylePlan } from './style-stage';
 import { normalizeStyleName } from '../style/vocabulary';
 import { artworkEvidence, bridgeTargets, entityAdjacency, referenceKeywords, suppressWearForArtwork, type AdjacencyEvidence } from '../style/adjacency';
@@ -259,6 +259,14 @@ interface RecommendOutput {
   reason?: string;
   /** TOPIC-1 fill trace: the tags the reading's own words resolved to, and how many cards they filled. */
   fill?: { tags: readonly string[]; cards: number } | null;
+}
+
+/** Eval r5, h61: the film of the artwork's own title — a real Qloo search result, with the truthful reason. */
+interface TitleFilmResult {
+  entity: QlooEntity;
+  reason: string;
+  providerQueryId: string | null;
+  isReplay: boolean;
 }
 
 interface Correction {
@@ -1651,7 +1659,10 @@ export class CaptureCompiler {
         const existing = counts.get(category) ?? 0;
         const categorySignals = signals.filter((r) => r.suggestedCategories.includes(category) || r.suggestedCategories.length === 0);
         if (existing >= LIMITS.recommendationsPerCategory || categorySignals.length === 0 || this.pastSoftDeadline()) continue;
-        const rec = await ctx.runStage<RecommendOutput>(`enrich:recommend:${category}`, () => this.recommend(category, categorySignals, insightsUsable));
+        // Stage 2 appends with stage 1's evidence (FAST-02 keeps it append-only): the fine-art
+        // gate reads the artwork's references, so a late, reference-signalled call cannot
+        // publish cards the main gates would have dropped.
+        const rec = await ctx.runStage<RecommendOutput>(`enrich:recommend:${category}`, () => this.recommend(category, categorySignals, insightsUsable, [], resolved.refs));
         const added = await this.composeCategory(rec, resolved.refs, order, excluded, usedKeys, { signals: categorySignals, existing });
         if (added) appended[category] = added;
       }
@@ -1702,8 +1713,14 @@ export class CaptureCompiler {
     const usableBridges = bridges.filter((b) => bridgeTargets(b.subjectCategory).includes(category));
     const bridgeIds = usableBridges.map((b) => b.entityId).filter((id) => !anchorEntityIds.includes(id));
     const entityIds = [...new Set([...anchorEntityIds, ...bridgeIds])].slice(0, 6);
-    // C.5: the style reading's accepted tags join only when type-compatible with the target (rule 4).
-    const styleTags = this.style?.signalTagsFor(CATEGORY_ENTITY_TYPE[category]!) ?? [];
+    // Eval r5, relevance (h61): a fine-art Watch rail never signals through the style vocabulary's
+    // mapped tags — a painting's "Moody" co-likers are generic mood-mates ("The Crack-Up" for a
+    // Vermeer-style portrait), and the fine-art gate below already demands each card reference the
+    // artwork or be about art, which a mood tag's co-likers never do. Resolved tag anchors still
+    // signal; the honest wider surfaces are the artwork's own title (the same-title film below)
+    // and the art-topic fill. C.5 keeps the reading's type-compatible tags as signals everywhere else.
+    const fineArt = category === 'watch' ? artworkEvidence(subjects) : null;
+    const styleTags = fineArt ? [] : (this.style?.signalTagsFor(CATEGORY_ENTITY_TYPE[category]!) ?? []);
     // A tag anchor signals a category only when Qloo lists the tag on that entity type (or does not say):
     // a cuisine tag used on places never steers fashion brands, artists or films (measured: "Ramen" -> brands).
     const target = CATEGORY_ENTITY_TYPE[category]!;
@@ -1746,7 +1763,7 @@ export class CaptureCompiler {
     // themselves — they reference the artwork (the reading's words, or its identified references,
     // in the entity's own name, tags or properties) or they are about art. "The Dark Knight" for
     // a Vermeer is not adjacency.
-    const baseEvidence = category === 'watch' ? artworkEvidence(subjects) : null;
+    const baseEvidence = fineArt;
     const evidence = baseEvidence ? { ...baseEvidence, keywords: [...baseEvidence.keywords, ...referenceKeywords(refs.map((r) => r.name))] } : null;
     const anchorIds = new Set(entityIds);
     try {
@@ -1795,6 +1812,23 @@ export class CaptureCompiler {
           if (out.providerQueryId) providerQueryIds.push(out.providerQueryId);
           isReplay ||= out.isReplay;
           fill = { tags: out.tags.map((t) => t.name), cards: out.entities.length };
+        }
+      }
+      // Eval r5, h61: a fine-art Watch rail leads with the film of the artwork's own title — the
+      // one card that is about the subject by name (the reading named the work, Qloo's search
+      // returned the film, and the reason claims only the shared title).
+      if (baseEvidence) {
+        const work = [...refs]
+          .filter((r) => r.type === 'work' && r.certainty >= 0.5 && nameTokens(r.name).length >= 2)
+          .sort((a, b) => b.certainty - a.certainty)[0];
+        if (work) {
+          const titled = await this.titleFilm(work);
+          if (titled && !entities.some((e) => e.entity_id === titled.entity.entity_id) && !anchorIds.has(titled.entity.entity_id)) {
+            entities.unshift(titled.entity);
+            reasons.set(titled.entity.entity_id, titled.reason);
+            if (titled.providerQueryId && !providerQueryIds.includes(titled.providerQueryId)) providerQueryIds.push(titled.providerQueryId);
+            isReplay ||= titled.isReplay;
+          }
         }
       }
       if (usableBridges.length) this.recommendBridges.set(category, usableBridges);
@@ -1929,6 +1963,76 @@ export class CaptureCompiler {
     }
   }
 
+  /**
+   * Eval r5, h61: the film of the artwork's own title. The reading named the work it resembles
+   * ("Girl with a Pearl Earring") and Qloo's search returns the real film of that name — never
+   * invented, only returned, and never claimed to be about the painting: the reason says exactly
+   * what is true, a shared title. One bounded search per named work; null when Qloo has no
+   * closely-named film or the capability, budget or soft deadline says no.
+   */
+  private titleFilm(work: ResolvedRef): Promise<TitleFilmResult | null> {
+    const cached = this.titleFilms.get(work.name);
+    if (cached) return cached;
+    const out = this.titleFilmUncached(work);
+    this.titleFilms.set(work.name, out);
+    return out;
+  }
+
+  private async titleFilmUncached(work: ResolvedRef): Promise<TitleFilmResult | null> {
+    const { ctx } = this;
+    if (!isUsable(ctx.providers.qloo.capability().search) || this.budget.remaining('qloo') === 0 || this.pastSoftDeadline()) return null;
+    const counter = attemptCounter();
+    const started = Date.now();
+    try {
+      const call = await this.qlooCall('recommend:title', (o) =>
+        ctx.providers.qloo.searchEntities({ query: work.name, types: ['urn:entity:movie'], take: 5 }, { ...o, onAttempt: counter.observer }),
+      );
+      const res = call.value;
+      // The film must carry the work's own name (equal normalized names, or the same name words:
+      // "The Girl with a Pearl Earring" is the same title, "Pearl Earring Blues" is not).
+      const match =
+        res.data.find((e) => e.name && e.types.includes('urn:entity:movie') && nameSimilarity(e.name, work.name) === 1) ?? null;
+      const providerQueryId = await recordProviderQuery(ctx.db, {
+        parent: { analysisId: this.analysisId },
+        provider: 'qloo',
+        operation: 'search',
+        request: res.request,
+        results: match ? [{ rank: 1, entity_id: match.entity_id, name: match.name, types: match.types }] : [],
+        status: match ? 'ok' : 'empty',
+        httpStatus: res.status,
+        durationMs: res.duration_ms,
+        isReplay: res.is_replay,
+        queryContext: { stage: 'recommend:title', category: 'watch', work_reference: work.name, attempts: call.attempts },
+        traceId: this.traceId,
+        cacheTtlSeconds: PROVIDER_CACHE_TTL_SECONDS,
+      });
+      if (!match) return null;
+      const head = `A film sharing its title with ${work.name}`;
+      const full = work.relation === 'resembles' ? `${head}, the work your photo resembles` : `${head}, the work in your photo`;
+      const reason = full.length <= 90 ? full : head.length <= 90 ? head : `${head.slice(0, 89).trimEnd()}…`;
+      return { entity: match, reason, providerQueryId, isReplay: res.is_replay };
+    } catch (err) {
+      if (isProviderError(err) && err.kind === 'aborted') throw err;
+      const e = errorSummary(err);
+      const attempts = (err as { attempts?: number }).attempts ?? counter.count();
+      if (e.code !== 'budget_exhausted' || attempts > 0) {
+        await recordProviderQuery(ctx.db, {
+          parent: { analysisId: this.analysisId },
+          provider: 'qloo',
+          operation: 'search',
+          request: { query: work.name, types: ['urn:entity:movie'] },
+          status: 'error',
+          errorCode: e.code,
+          httpStatus: e.status,
+          durationMs: Date.now() - started,
+          queryContext: { stage: 'recommend:title', category: 'watch', attempts },
+          traceId: this.traceId,
+        });
+      }
+      return null;
+    }
+  }
+
   private rankFor(order: readonly Category[], category: Category, position: number): number {
     return position * CATEGORIES.length + Math.max(0, order.indexOf(category));
   }
@@ -2025,7 +2129,10 @@ export class CaptureCompiler {
             rank: nextRank(),
             title: c.name,
             externalIds: { qloo: c.entityId },
-            displayReason: bridge ? bridgeReason(bridge) : (c.styleReason ?? buildReason(contributors)),
+            // A card the reading's own topic words filled says the tag it carries — the
+            // specific truth — even when a bridge also explains it; bridges and references
+            // name the rest.
+            displayReason: c.styleReason ?? (bridge ? bridgeReason(bridge) : buildReason(contributors)),
             origin: rec.isReplay ? 'replay' : 'qloo',
             providerQueryIds: rec.providerQueryIds?.length ? [...rec.providerQueryIds] : rec.providerQueryId ? [rec.providerQueryId] : [],
             contributingReferenceIds: bridge ? [] : contributors.map((r) => r.referenceId),
@@ -2045,6 +2152,9 @@ export class CaptureCompiler {
 
   /** Bridges used by each category's recommend call (C.5), for the bridge reason. */
   private readonly recommendBridges = new Map<string, readonly StyleBridge[]>();
+
+  /** Same-title film searches, one per named work (eval r5, h61): whichever rail asks first pays once. */
+  private readonly titleFilms = new Map<string, Promise<TitleFilmResult | null>>();
 
   /**
    * Brand names the analysis itself already surfaced (eval r3, cause 4): brand anchors (reference

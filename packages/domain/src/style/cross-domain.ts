@@ -62,14 +62,17 @@ export function rerankCrossDomain<T extends { entity_id: string; name?: string; 
   let kept = kept0;
   let scored = crossDomainScores(subjects, kept, { periodGuard });
   if (options.dropStyleless) {
-    kept = scored.filter((x) => x.style > 0).map((x) => x.e);
+    // A real style claim, not any shared word (eval r5): a card matching only a feature or
+    // detail word ("ribbed" of a trim, "oil" of a medium) carried `style > 0` and stayed on
+    // bridge-fed rails; only a word a shown claim or the label names keeps a card.
+    kept = scored.filter((x) => x.styleHit).map((x) => x.e);
     scored = crossDomainScores(subjects, kept, { periodGuard });
   }
   const best = Math.max(0, ...scored.map((x) => x.style));
-  if (best <= 0 || kept.length < 2) return capEchoes([...kept], options.echoNames);
+  if (best <= 0 || kept.length < 2) return dedupeByName(capEchoes([...kept], options.echoNames));
   const echo = (e: T) => !!options.echoNames?.size && !!e.name && options.echoNames.has(echoKey(e.name));
   let echoes = 0;
-  return scored
+  const out = scored
     .map((x) => ({ ...x, score: (styleShare * (x.style / best) + (1 - styleShare) / (1 + x.i / 5)) * (echo(x.e) ? ECHO_PENALTY : 1) }))
     .sort((a, b) => b.score - a.score || a.i - b.i)
     .filter((x) => {
@@ -80,6 +83,7 @@ export function rerankCrossDomain<T extends { entity_id: string; name?: string; 
       return true;
     })
     .map((x) => x.e);
+  return dedupeByName(out);
 }
 
 /** The echo cap for the degenerate paths (no style signal to re-rank by): keep the best, cut repeats. */
@@ -90,6 +94,18 @@ export function capEchoes<T extends { entity_id: string; name?: string }>(entiti
     if (!e.name || !echoNames.has(echoKey(e.name))) return true;
     if (echoes >= ECHO_CAP) return false;
     echoes++;
+    return true;
+  });
+}
+
+/** Two Qloo entities can share one name (eval r5: two "Dunhill" brand ids on one rail): the best-ranked stays, later same-name ids go. */
+function dedupeByName<T extends { name?: string }>(entities: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return entities.filter((e) => {
+    if (!e.name) return true;
+    const key = echoKey(e.name);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }

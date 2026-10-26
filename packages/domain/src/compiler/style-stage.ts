@@ -29,7 +29,7 @@ import { affinityReason, genreFilterFor, rankCatalogue, subjectProfile } from '.
 import { echoNames } from '../style/affinity';
 import { bridgeTargets, entityAdjacency, mediaArtworkGate } from '../style/adjacency';
 import { type CrossDomainOptions, rerankCrossDomain, topicFilms } from '../style/cross-domain';
-import { drinkKindOf, homeKindOf, homeVocabulary, rankHomeCatalogue, type HomeKind } from '../style/home-affinity';
+import { drinkKindOf, homeKindOf, homeRailCarry, homeVocabulary, rankHomeCatalogue, type HomeKind } from '../style/home-affinity';
 import { lowerFirst } from '../style/text';
 import { resolveTopicTags, topicTagPlan, type StyleTopicTag } from '../style/topic-tags';
 import { matchClaims, rankAffinity, type AffinityCandidate } from '../style/affinity-rail';
@@ -972,7 +972,7 @@ export class StyleStage {
       interiorBrandsEnabled: interiorBrands,
       homeKind,
     });
-    if (plan.recipe === 'interior_brand' || plan.recipe === 'coffee_brand') return this.buildHomeRail(s, anchors, plan);
+    if (plan.recipe === 'interior_brand' || plan.recipe === 'coffee_brand') return this.buildHomeRail(s, anchors, plan, homeKind!);
     const early = this.earlyBySubject.get(s.id);
     await this.trace('style:rail', { subject: s.id, recipe: plan.recipe, empty_reason: plan.emptyReason, exemplars: exemplars.length, filter_tag: F?.id ?? null, early: early?.count ?? 0 });
     if (!plan.primary) {
@@ -1133,16 +1133,22 @@ export class StyleStage {
    * subject's industry (furniture, tableware, kitchenware, decor, ceramics, interior design,
    * coffee); the top matches become entity SIGNALS for one industry-filtered, explainable
    * insights call (probe: entity signal + industry filter returns coherent design brands; a
-   * tag-only signal returns junk). Every result is then gated and re-ranked by its OWN Qloo
-   * tags against the reading (smatch-1, no fashion gates); a card shares a style claim or
-   * it is not shown (empty beats junk). Reasons name the tag the result itself carries.
+   * tag-only signal returns junk). A result may only be a card when it itself belongs to the
+   * depicted industry's catalogue (its own tags carry a recorded industry of the kind's family,
+   * or its harvested catalogue row does) and its own product families are not a fashion house's
+   * (eval r3 precision: the coffee-filtered pages return streetwear and bridal houses). What it
+   * shares with the reading must be real evidence — not a compound product token ("cup" inside
+   * "K-Cup Coffee Pods") and not the brand naming itself ("Café União" for a sugar house) — and
+   * that evidence alone must clear the rail's own bar (empty beats junk). Every result is then
+   * re-ranked by its OWN Qloo tags against the reading (smatch-1, no fashion gates); reasons
+   * name the tag the result itself carries.
    */
-  private async buildHomeRail(s: StoredSubject, anchors: readonly StyleAnchor[], plan: RailPlan): Promise<void> {
+  private async buildHomeRail(s: StoredSubject, anchors: readonly StyleAnchor[], plan: RailPlan, kind: HomeKind): Promise<void> {
     const stored = this.stored!;
     const key = `more_like_this:${s.id}`;
     const anchorIds = new Set(anchors.map((a) => a.entityId));
     const signals = (plan.primary?.signalEntities ?? []).length;
-    await this.trace('style:rail', { subject: s.id, recipe: plan.recipe, signals, kind: plan.recipe === 'coffee_brand' ? 'coffee' : 'interior' });
+    await this.trace('style:rail', { subject: s.id, recipe: plan.recipe, signals, kind });
     if (!signals) {
       await this.railStatus(key, 'empty', plan.emptyReason);
       return;
@@ -1154,22 +1160,29 @@ export class StyleStage {
       this.mark(`rail_primary_${s.id}`);
     }
     const q = subjectProfile(s);
-    const ranked = rankAffinity(q, [{ list: a?.entities ?? [], prior: true, fromEntity: false }], {
+    const { list: carried, evidence, gated } = homeRailCarry(a?.entities ?? [], q, kind);
+    const ranked = rankAffinity(q, [{ list: carried, prior: true, fromEntity: false }], {
       exclude: anchorIds,
       fashion: false,
       v: homeVocabulary(),
       echoNames: subjectEchoNames(s, anchors),
     });
+    // Reasons, claims and ordering carry the real shared evidence only (K-Cup pods, brand-named
+    // lines and fashion houses are gone before any of this is shown).
+    const candidates = ranked.candidates.map((c) => {
+      const ev = evidence.get(c.entity.entity_id)!;
+      return { ...c, match: { ...c.match, hits: [...ev.hits], score: ev.score } };
+    });
     const providerQueryIds = [a?.providerQueryId].filter((x): x is string => !!x);
-    if (!ranked.candidates.length || !providerQueryIds.length) {
+    if (!candidates.length || !providerQueryIds.length) {
       await this.railStatus(key, 'empty', a ? 'flat_or_empty' : 'qloo_unavailable');
-      await this.trace('style:rail', { subject: s.id, status: 'empty', recipe: plan.recipe, gated: ranked.gated });
+      await this.trace('style:rail', { subject: s.id, status: 'empty', recipe: plan.recipe, gated: { ...gated, ...ranked.gated } });
       return;
     }
     // Bridges for cross-domain recommend (C.5): the most on-style results, not Qloo's first.
-    for (const c of ranked.candidates.filter((x) => !x.via).slice(0, FASHION_BRIDGES))
+    for (const c of candidates.filter((x) => !x.via).slice(0, FASHION_BRIDGES))
       this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, subjectCategory: s.category, aesthetic: s.aesthetics.find((x) => !x.held && !x.retracted)?.name ?? null });
-    const added = await this.publishAffinityRail(s.id, ranked.candidates, {
+    const added = await this.publishAffinityRail(s.id, candidates, {
       entityName: null,
       providerQueryIds,
       isReplay: a?.isReplay ?? false,
@@ -1177,7 +1190,7 @@ export class StyleStage {
       echoNames: subjectEchoNames(s, anchors),
     });
     if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
-    await this.trace('style:rail', { subject: s.id, status: added ? 'ready' : 'empty', recipe: plan.recipe, cards: added, gated: ranked.gated, timings: this.timings });
+    await this.trace('style:rail', { subject: s.id, status: added ? 'ready' : 'empty', recipe: plan.recipe, cards: added, gated: { ...gated, ...ranked.gated }, timings: this.timings });
   }
 
   /** Inserts affinity rail cards (rail = more_like_this) with their own reasons and style_match. */

@@ -127,3 +127,26 @@ describe('a genre or period word is not fashion style evidence (eval r4, h71)', 
     expect(crossDomainScores([salon], [ensemble], { periodGuard: true })[0]!.styleHit).toBe(true);
   });
 });
+
+describe('a gated card needs a real style claim, and one name shows once (eval r5)', () => {
+  it('a feature word alone ("ribbed" of a trim) scores but claims nothing, and is dropped', () => {
+    const dress = storedSubject({
+      id: 's1',
+      category: 'fashion',
+      label: 'Midi dress',
+      aesthetics: [storedAesthetic('Sweet romantic', { wording: 'resembles', defining_features: ['contrast ribbed trim'] })],
+    });
+    const trim = film('B', 'Fixture Trim Film', [{ id: 'urn:tag:keyword:qloo:ribbed', name: 'Ribbed' }]);
+    const scored = crossDomainScores([dress], [trim], { periodGuard: true })[0]!;
+    expect(scored.style).toBeGreaterThan(0);
+    expect(scored.styleHit).toBe(false);
+    expect(rerankCrossDomain([dress], [trim], 0.5, { dropStyleless: true })).toEqual([]);
+  });
+
+  it('two Qloo entities of one name show once (eval r5: two "Dunhill" ids on one wear rail)', () => {
+    const suit = storedSubject({ id: 's1', category: 'fashion', label: 'Navy suit', aesthetics: [storedAesthetic('Tailored')] });
+    const a = film('A1', 'Fixture Dunhill', [{ id: 'urn:tag:genre:brand:fashion:formalwear', name: 'Formalwear' }]);
+    const b = film('A2', 'Fixture Dunhill', [{ id: 'urn:tag:genre:brand:fashion:formalwear', name: 'Formalwear' }]);
+    expect(rerankCrossDomain([suit], [a, b], 0.5, { gateFashion: true }).map((e) => e.name)).toEqual(['Fixture Dunhill']);
+  });
+});

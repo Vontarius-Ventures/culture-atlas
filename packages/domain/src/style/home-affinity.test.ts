@@ -1,7 +1,25 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { homeKindOf, drinkKindOf, homeKindOfReading, HOME_INDUSTRY, rankHomeCatalogue, WEAR_INDUSTRIES, wearIndustryAllowed } from './home-affinity';
+import {
+  homeKindOf,
+  drinkKindOf,
+  homeKindOfReading,
+  HOME_INDUSTRY,
+  HOME_RAIL_INDUSTRIES,
+  homeEvidence,
+  homeFamilyGenreAllowed,
+  homeRailCarry,
+  homeRailGate,
+  homeVocabulary,
+  rankHomeCatalogue,
+  tokenStandsAloneInLabel,
+  WEAR_INDUSTRIES,
+  wearIndustryAllowed,
+  type HomeKind,
+} from './home-affinity';
 import { homeBrands, setHomeBrandsForTesting, type HomeBrand } from './home-vocabulary';
+import { affinityReason, entityProfile, scoreMatch, subjectProfile } from './affinity';
 import { storedSubject } from './test-support';
+import type { StoredSubject } from './types';
 import type { QlooEntity } from '@culture-atlas/providers';
 
 /**
@@ -146,5 +164,204 @@ describe('home-brand exemplars (smatch-1 over the home catalogue)', () => {
       expect(row.industry_ids).toContain('urn:tag:industry:qloo:furniture');
     }
     expect(rankHomeCatalogue(storedSubject({ category: 'interior', label: 'Something plain' }), 'furniture')).toEqual([]);
+  });
+});
+
+describe('home rail candidate gates (eval r3, home-rail precision)', () => {
+  /**
+   * Tag ids and names are verbatim from fixtures/qloo/home-brands (the recorded Qloo
+   * responses); no tag is invented. The subjects are the recorded style readings of the
+   * live r3 photos (h16 espresso, 05 ceramics): the rails that returned the fashion house
+   * and the K-Cup/sugar reasons this gate exists to remove.
+   */
+  const claim = (name: string, over: Partial<StoredSubject['lineage'][number]> = {}): StoredSubject['lineage'][number] => ({
+    name,
+    certainty: 0.9,
+    wording: 'asserted',
+    display: name,
+    strength: 'clear',
+    corroborated_by: [],
+    held: false,
+    basis: 'visible',
+    region: null,
+    qloo: null,
+    tag_query: null,
+    ...over,
+  });
+  const espressoReading: StoredSubject = storedSubject({
+    id: 's1',
+    category: 'food',
+    label: 'Espresso in ceramic cup',
+    aesthetics: [
+      { ...claim('Italian espresso bar', { wording: 'resembles', certainty: 0.8 }), defining_features: [] },
+      { ...claim('Cafe', { wording: 'resembles', certainty: 0.8 }), defining_features: [] },
+    ],
+    materials: [{ ...claim('Glazed ceramic'), texture: 'glossy' }],
+    construction: [{ ...claim('Demitasse cup with saucer'), kind: 'thrown' }],
+    lineage: [claim('Italian coffee culture', { wording: 'resembles' })],
+  });
+  const ceramicsReading: StoredSubject = storedSubject({
+    id: 's1',
+    category: 'interior',
+    label: 'Slip-painted ceramic bowls',
+    aesthetics: [
+      { ...claim('islamic ceramics', { wording: 'resembles', certainty: 0.7 }), defining_features: [] },
+      { ...claim('artisanal', { wording: 'resembles', certainty: 0.7 }), defining_features: [] },
+    ],
+    materials: [{ ...claim('Glazed ceramic'), texture: 'glossy' }],
+  });
+  const qloo = (name: string, tags: readonly { id: string; name: string }[], id = 'E-1'): QlooEntity => ({ entity_id: id, name, types: ['urn:entity:brand'], properties: {}, tags: [...tags] });
+  const evidenceOf = (e: QlooEntity, subject: StoredSubject) => homeEvidence(scoreMatch(subjectProfile(subject), entityProfile(e.tags ?? []), { fashion: false, v: homeVocabulary() }), e);
+  const carried = (list: readonly QlooEntity[], subject: StoredSubject, kind: HomeKind) => homeRailCarry(list, subjectProfile(subject), kind);
+
+  it('a fashion house is never a home rail card or signal, even when Qloo also tags it the depicted industry', () => {
+    // The bridal-gown house the live ceramics rail returned: its own tags say tableware too.
+    const luisa = qloo('Luisa Beccaria', [
+      { id: 'urn:tag:industry:qloo:tableware', name: 'Tableware' },
+      { id: 'urn:tag:industry:qloo:fashion_apparel', name: 'Fashion & Apparel' },
+      { id: 'urn:tag:genre:brand:fashion', name: 'Fashion' },
+      { id: 'urn:tag:genre:brand:fashion:formalwear', name: 'Formalwear' },
+      { id: 'urn:tag:keyword:qloo:artisanal', name: 'Artisanal' },
+    ]);
+    expect(homeRailGate(luisa, 'tableware')).toBe('fashion_house');
+    // The streetwear label the live espresso rail returned, with the depicted industry and real coffee tags of its own.
+    const kitsune = qloo('Maison Kitsuné', [
+      { id: 'urn:tag:industry:qloo:coffee', name: 'Coffee' },
+      { id: 'urn:tag:product_service:qloo:coffee_beans', name: 'Coffee Beans' },
+      { id: 'urn:tag:lifestyle:qloo:cafe_culture', name: 'Cafe Culture' },
+      { id: 'urn:tag:genre:brand:fashion', name: 'Fashion' },
+      { id: 'urn:tag:genre:brand:fashion:casual', name: 'Casual' },
+    ]);
+    expect(homeRailGate(kitsune, 'coffee')).toBe('fashion_house');
+    expect(carried([luisa, kitsune], ceramicsReading, 'tableware').gated).toEqual({ fashion_house: 2 });
+    // A brand whose genres name home products too is not a fashion house (fashion:home_accessories is recorded).
+    expect(homeFamilyGenreAllowed(['urn:tag:genre:brand:fashion', 'urn:tag:genre:brand:fashion:home_accessories'])).toBe(true);
+    expect(homeFamilyGenreAllowed(['urn:tag:genre:brand:household'])).toBe(true);
+    // Signals are gated the same way: the exemplar pool of a kind never includes a fashion house.
+    setHomeBrandsForTesting(
+      population([
+        brand({ id: 'B-FASHION', name: 'Fixture Bridal House', industry_ids: ['urn:tag:industry:qloo:tableware'], genre_ids: ['urn:tag:genre:brand:fashion', 'urn:tag:genre:brand:fashion:formalwear'], style_tags: [{ id: 'urn:tag:keyword:qloo:artisanal', name: 'Artisanal' }] }),
+        brand({ id: 'B-GOOD', name: 'Fixture Tableware', industry_ids: ['urn:tag:industry:qloo:tableware'], style_tags: [{ id: 'urn:tag:keyword:qloo:artisanal', name: 'Artisanal' }] }),
+      ]),
+    );
+    expect(rankHomeCatalogue(ceramicsReading, 'tableware').map((x) => x.id)).toEqual(['B-GOOD']);
+  });
+
+  it('a result whose own tags name no industry of the depicted kind is gated (industry), unless its catalogue row proves it', () => {
+    const eyewear = qloo('Fixture Eyewear House', [{ id: 'urn:tag:industry:qloo:jewelry', name: 'Jewelry' }, { id: 'urn:tag:keyword:qloo:artisanal', name: 'Artisanal' }]);
+    expect(homeRailGate(eyewear, 'tableware')).toBe('industry');
+    expect(homeRailGate(eyewear, 'coffee')).toBe('industry');
+    // A thin response tag set still proves membership through the harvested catalogue row.
+    setHomeBrandsForTesting(population([brand({ id: 'B-VB', name: 'Fixture Porcelain', industry_ids: ['urn:tag:industry:qloo:tableware'] })]));
+    expect(homeRailGate(qloo('Fixture Porcelain', [{ id: 'urn:tag:genre:brand:household', name: 'Household' }], 'B-VB'), 'tableware')).toBeNull();
+  });
+
+  it('the demitasse "cup" does not carry a K-Cup brand: a compound product token is not evidence', () => {
+    expect(tokenStandsAloneInLabel('cup', 'K-Cup Coffee Pods')).toBe(false);
+    expect(tokenStandsAloneInLabel('coffee', 'K-Cup Coffee Pods')).toBe(true);
+    expect(tokenStandsAloneInLabel('cafe', 'Café União')).toBe(true);
+    expect(tokenStandsAloneInLabel('ceramic', 'Ceramics')).toBe(true);
+    expect(tokenStandsAloneInLabel('painted', 'Hand-Painted Details')).toBe(false);
+    // A hyphenated compound the reading itself writes is real evidence, not a compound leak:
+    // the live sunroom rail's top card cites "Mid-Century Modern Revival" for a mid-century reading.
+    const rejuvenation = qloo('Rejuvenation', [
+      { id: 'urn:tag:industry:qloo:furniture', name: 'Furniture' },
+      { id: 'urn:tag:industry:qloo:retail', name: 'Retail' },
+      { id: 'urn:tag:cultural_relevance:qloo:mid_century_modern_revival', name: 'Mid-Century Modern Revival' },
+    ]);
+    const ev = evidenceOf(rejuvenation, midCentury);
+    expect(ev.carries).toBe(true);
+    expect(ev.hits.map((h) => h.token)).toEqual(expect.arrayContaining(['midcentury', 'modern']));
+    expect(affinityReason(ev.hits)).toBe('Known for Mid-Century modern revival, like the mid-century modern look in your photo');
+  });
+
+  it('a K-Cup-only pod brand carries nothing for the espresso reading (empty beats junk)', () => {
+    const keurig = qloo('Keurig', [
+      { id: 'urn:tag:industry:qloo:coffee', name: 'Coffee' },
+      { id: 'urn:tag:industry:qloo:food_beverage', name: 'Food & Beverage' },
+      { id: 'urn:tag:product_service:qloo:k_cup_pods', name: 'K-Cup Pods' },
+    ]);
+    const ev = evidenceOf(keurig, espressoReading);
+    expect(ev.carries).toBe(false);
+    const gate = carried([keurig], espressoReading, 'coffee');
+    expect(gate.list).toEqual([]);
+    expect(gate.gated).toEqual({ evidence: 1 });
+  });
+
+  it('a coffee brand with real espresso evidence carries, and its reason names espresso, not the pods', () => {
+    // Gevalia's own tags: a real Espresso product and the K-Cup pods (the live rail's K-Cup reason).
+    const gevalia = qloo('Gevalia Coffee', [
+      { id: 'urn:tag:industry:qloo:coffee', name: 'Coffee' },
+      { id: 'urn:tag:industry:qloo:food_beverage', name: 'Food & Beverage' },
+      { id: 'urn:tag:product_service:qloo:espresso', name: 'Espresso' },
+      { id: 'urn:tag:product_service:qloo:k_cup_coffee_pods', name: 'K-Cup Coffee Pods' },
+    ]);
+    const ev = evidenceOf(gevalia, espressoReading);
+    expect(ev.carries).toBe(true);
+    expect(ev.hits.some((h) => h.token === 'cup')).toBe(false); // the vessel word only reaches the compound
+    expect(affinityReason(ev.hits)).toBe('Known for espresso, like the Italian espresso bar look your photo resembles');
+    expect(carried([gevalia], espressoReading, 'coffee').list.map((e) => e.name)).toEqual(['Gevalia Coffee']);
+  });
+
+  it('a sugar house whose coffee tags are its own name is not an espresso card', () => {
+    // União's recorded tags: the depicted coffee industry, but its coffee products are Café União.
+    const uniao = qloo('União', [
+      { id: 'urn:tag:industry:qloo:coffee', name: 'Coffee' },
+      { id: 'urn:tag:industry:qloo:confectionery', name: 'Confectionery' },
+      { id: 'urn:tag:industry:qloo:food_beverage', name: 'Food & Beverage' },
+      { id: 'urn:tag:signature_product:qloo:cafe_uniao', name: 'Café União' },
+      { id: 'urn:tag:product_line:qloo:cafe_espresso_uniao', name: 'Café Espresso União' },
+      { id: 'urn:tag:cultural_relevance:qloo:coffee_culture', name: 'Coffee Culture' },
+      { id: 'urn:tag:lifestyle:qloo:morning_coffee_ritual', name: 'Morning Coffee Ritual' },
+      { id: 'urn:tag:keyword:qloo:sugar', name: 'Sugar' },
+    ]);
+    // It belongs to the depicted industry — the evidence is what disqualifies it: the brand
+    // naming itself is not independent evidence, and "coffee" alone is below the rail's bar.
+    expect(homeRailGate(uniao, 'coffee')).toBeNull();
+    const ev = evidenceOf(uniao, espressoReading);
+    expect(ev.hits.map((h) => h.label)).not.toContain('Café União');
+    expect(ev.hits.map((h) => h.label)).not.toContain('Café Espresso União');
+    expect(ev.carries).toBe(false);
+    expect(carried([uniao], espressoReading, 'coffee').gated).toEqual({ evidence: 1 });
+  });
+
+  it('valid espresso and ceramics brands carry their readings (good matches preserved)', () => {
+    const buondi = qloo('Buondi Caffe', [
+      { id: 'urn:tag:industry:qloo:coffee', name: 'Coffee' },
+      { id: 'urn:tag:industry:qloo:food_beverage', name: 'Food & Beverage' },
+      { id: 'urn:tag:genre:brand:dining', name: 'Dining' },
+      { id: 'urn:tag:genre:brand:food_and_beverage', name: 'Food & Beverage' },
+      { id: 'urn:tag:product_service:qloo:espresso', name: 'Espresso' },
+      { id: 'urn:tag:product_service:qloo:coffee_beans', name: 'Coffee Beans' },
+      { id: 'urn:tag:cultural_relevance:qloo:portuguese_cafe_culture', name: 'Portuguese Cafe Culture' },
+    ]);
+    const buondiEv = evidenceOf(buondi, espressoReading);
+    expect(buondiEv.carries).toBe(true);
+    expect(affinityReason(buondiEv.hits)).toBe('Known for espresso, like the Italian espresso bar look your photo resembles');
+    expect(carried([buondi], espressoReading, 'coffee').list.map((e) => e.name)).toEqual(['Buondi Caffe']);
+
+    const villeroy = qloo('Villeroy & Boch', [
+      { id: 'urn:tag:industry:qloo:tableware', name: 'Tableware' },
+      { id: 'urn:tag:industry:qloo:ceramics', name: 'Ceramics' },
+      { id: 'urn:tag:industry:qloo:home_goods', name: 'Home Goods' },
+      { id: 'urn:tag:genre:brand:household', name: 'Household' },
+      { id: 'urn:tag:keyword:qloo:ceramics', name: 'Ceramics' },
+    ]);
+    expect(homeRailGate(villeroy, 'tableware')).toBeNull();
+    expect(homeRailGate(villeroy, 'ceramics')).toBeNull();
+    const villeroyEv = evidenceOf(villeroy, ceramicsReading);
+    expect(villeroyEv.carries).toBe(true);
+    expect(affinityReason(villeroyEv.hits)).toBe('Known for ceramics, like the islamic ceramics look your photo resembles');
+    expect(carried([villeroy], ceramicsReading, 'tableware').list.map((e) => e.name)).toEqual(['Villeroy & Boch']);
+  });
+
+  it('every home-rail industry id is one the harvested catalogue recorded (no invented tag evidence)', () => {
+    const recorded = new Set(homeBrands().flatMap((b) => b.industry_ids));
+    for (const ids of Object.values(HOME_RAIL_INDUSTRIES))
+      for (const id of ids) {
+        expect(id).toMatch(/^urn:tag:industry:qloo:[a-z0-9_]+$/);
+        expect(recorded.has(id)).toBe(true);
+      }
+    for (const kind of Object.keys(HOME_RAIL_INDUSTRIES) as HomeKind[]) expect(HOME_RAIL_INDUSTRIES[kind]).toContain(HOME_INDUSTRY[kind]);
   });
 });

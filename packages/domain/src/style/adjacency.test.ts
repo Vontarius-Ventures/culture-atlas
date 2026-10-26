@@ -108,4 +108,13 @@ describe('cross-domain bridge adjacency (eval r3, relevance cause 1)', () => {
     expect(entityAdjacency(film('Fight Club', ['Serene', '20th century', 'Dark']), evidence)).toBe(false);
     expect(referenceKeywords(['Girl with a Pearl Earring'])).toEqual(['girl', 'pearl', 'earring']);
   });
+
+  it('generic art-medium words alone are not adjacency (eval r5, h61)', () => {
+    const evidence = artworkEvidence([painting])!;
+    // A film whose only shared words are "painting" and "portrait" is about art at best, not this painting.
+    expect(entityAdjacency(film('Fixture Noir', ['Painting', 'Portrait', 'Forger']), evidence)).toBe(false);
+    // One distinctive shared word carries it (the analysis's own references are the artwork's identity).
+    const withRefs = { ...evidence, keywords: [...evidence.keywords, ...referenceKeywords(['Girl with a Pearl Earring'])] };
+    expect(entityAdjacency(film('Fixture Pearl Study', ['Painting']), withRefs)).toBe(true);
+  });
 });

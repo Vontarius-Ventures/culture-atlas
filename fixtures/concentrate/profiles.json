@@ -164,7 +164,7 @@
     "reasoningEffort": "low",
     "role": "vision_style",
     "version": "style-1",
-    "maxOutputTokens": 1100,
+    "maxOutputTokens": 2000,
     "maxInputTokens": 17000,
     "maxInputBytes": 17000,
     "image": {
@@ -177,6 +177,6 @@
     "promptVersion": "vlm-style-v1",
     "schemaVersion": "atlas_style_reading_v1",
     "qualificationArtifactId": "vs-style1-sonnet55-low-pending",
-    "reservationMicros": 47798
+    "reservationMicros": 56798
   }
 ]

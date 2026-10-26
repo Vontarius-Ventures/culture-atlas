@@ -110,14 +110,26 @@ function entityWords(entity: Pick<QlooEntity, 'name' | 'tags'>, topicOnly = fals
   return words;
 }
 
+/** Art-medium words carried by anything about art ("painting", "portrait", "oil"): never distinctive evidence. */
+const GENERIC_ART_WORDS: ReadonlySet<string> = new Set(
+  `art arts artist artists painter painters painting paintings portrait portraits portraiture
+   artwork artworks museum museums gallery galleries sculptor sculptors curator curators oil`
+    .split(/\s+/)
+    .filter(Boolean),
+);
+
 /**
  * Whether a real Qloo entity carries the evidence that it is about this subject (never invented,
  * only read). Keywords count from two shared words up — one common word ("pearl" in "Pearl
- * Harbor" for a pearl-earring painting) is a coincidence, not adjacency.
+ * Harbor" for a pearl-earring painting) is a coincidence, not adjacency — and at least one shared
+ * word must be distinctive (eval r5, h61): generic art-medium words ("painting", "portrait", "oil")
+ * are carried by anything about art, so two of them alone say "about art" at best, never "about
+ * this subject". The topic path below carries the about-art case.
  */
 export function entityAdjacency(entity: Pick<QlooEntity, 'name' | 'tags'>, evidence: AdjacencyEvidence): boolean {
   const words = entityWords(entity);
-  if (evidence.keywords.filter((k) => words.has(k)).length >= 2) return true;
+  const shared = evidence.keywords.filter((k) => words.has(k));
+  if (shared.length >= 2 && shared.some((k) => !GENERIC_ART_WORDS.has(k))) return true;
   const topics = entityWords(entity, true);
   return evidence.topics.some((k) => topics.has(k));
 }

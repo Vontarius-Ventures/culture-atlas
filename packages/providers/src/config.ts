@@ -92,9 +92,12 @@ const BaseProviderConfigSchema = z.object({
   /**
    * Largest worst-case cost (USD) one style call may reserve (R-12). The
    * reservation is computed from catalog prices; a profile whose worst case
-   * exceeds this cap gets no runner (readiness reason spend_cap).
+   * exceeds this cap gets no runner (readiness reason spend_cap). The default
+   * covers the raised style output cap (STYLE_MAX_OUTPUT_TOKENS 2000): with the
+   * committed Sonnet prices and the profile's input/image bounds that worst case
+   * is $0.056798, so a lower value silently removes the style role.
    */
-  STYLE_MAX_CALL_USD: z.coerce.number().positive().default(0.05),
+  STYLE_MAX_CALL_USD: z.coerce.number().positive().default(0.06),
   NODE_ENV: optional,
   MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),

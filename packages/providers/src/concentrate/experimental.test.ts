@@ -16,7 +16,7 @@ const styleProfile: ModelProfile = {
   version: 'style-1',
   promptVersion: 'vlm-style-v1',
   schemaVersion: 'atlas_style_reading_v1',
-  maxOutputTokens: 1100,
+  maxOutputTokens: 2000,
   maxInputTokens: 17_000,
   maxInputBytes: 17_000,
   image: { maxBytes: 350_000, maxPixels: 1_048_576, maxDimension: 1024, maxCount: 1 },
@@ -91,11 +91,11 @@ describe('ANALYSIS_EXPERIMENTAL_ROLES (style design §D.1)', () => {
   });
 
   it('computes the style reservation from catalog prices and refuses a role over STYLE_MAX_CALL_USD (R-12)', async () => {
-    // (17000 input + 1399 image tokens) x $2/M + 1100 x $10/M = $0.047798.
-    expect(catalogReservationMicros(styleProfile, priced(2, 10), 1100)).toBe(47_798);
+    // (17000 input + 1399 image tokens) x $2/M + 2000 x $10/M = $0.056798.
+    expect(catalogReservationMicros(styleProfile, priced(2, 10), 2000)).toBe(56_798);
     expect(catalogReservationMicros(styleProfile, null)).toBeNull();
     const ok = gateway({ ANALYSIS_EXPERIMENTAL_ROLES: 'vision_style' });
-    expect(ok.runners.vision_style?.profile.reservationMicros).toBe(47_798);
+    expect(ok.runners.vision_style?.profile.reservationMicros).toBe(56_798);
     const capped = gateway({ ANALYSIS_EXPERIMENTAL_ROLES: 'vision_style', STYLE_MAX_CALL_USD: '0.04' });
     expect(capped.runners.vision_style).toBeUndefined();
     expect((await capped.readiness()).vision_style).toMatchObject({ access: 'spend_cap', state: 'unavailable' });

@@ -34,7 +34,22 @@ export const STYLE_PROMPT_VERSION = 'vlm-style-v3';
 export const STYLE_GUARD_VERSION = 'guard-v18';
 /** §B.2: the style call reads a larger image than stage 1 (fine material and construction). */
 export const STYLE_MAX_DIMENSION = 1024;
-export const STYLE_MAX_OUTPUT_TOKENS = 1100;
+/**
+ * Output cap for the style call, raised 1100 -> 2000 after a golden-v5 eval call
+ * (h29, `vision_style` on `anthropic/claude-sonnet-5-5`) ended
+ * `incomplete_response` with `output_tokens` exactly 1100: the cap was hit and
+ * the strict-JSON reading was never written. The profile runs
+ * `reasoningEffort: "low"`, and hidden reasoning tokens are drawn from the same
+ * `max_output_tokens` budget, so 1100 had to cover reasoning + JSON. A reading
+ * that fills the prompt's own per-slot limits (STYLE_LIMITS) is ~2.4k tokens, so
+ * 1100 was below what the schema permits. The cap only removes the truncation
+ * cliff; it never forces extra output. It stays bounded by the profile's
+ * worst-case reservation (catalogReservationMicros) under STYLE_MAX_CALL_USD.
+ * The enrichment role was raised the same way (1200 -> 1600) for the same
+ * reason. A `length`/`incomplete` stop remains a failed call: there is no
+ * repair and no automatic retry.
+ */
+export const STYLE_MAX_OUTPUT_TOKENS = 2000;
 export const STYLE_TIMEOUT_MS = 18_000;
 
 export const STYLE_CATEGORIES = ['fashion', 'interior', 'food', 'place', 'media', 'other'] as const;

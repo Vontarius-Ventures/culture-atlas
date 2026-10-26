@@ -22,8 +22,14 @@ import type { StoredSubject } from './types';
  * names a sound (h56, h61). See the constants and `resolveTopicTags` below.
  */
 
-/** Tag namespaces that say what a work is ABOUT (a genre or theme), as opposed to plot keywords. */
-export const TOPIC_TAG_RE = /^urn:tag:(?:genre|subgenre|theme)(?::|$)/;
+/**
+ * Tag namespaces that say what a work is ABOUT. Qloo keeps a movie-side topical tag for a
+ * reading's own word in `keyword` (eval r5, h56: "Decay" — no genre/subgenre/theme tag exists
+ * there), and a fill card must itself CARRY the resolved tag, which is what makes a keyword tag
+ * topical evidence here. The adjacency gate (style/adjacency.ts) keeps rejecting keyword tags:
+ * there one art word among a blockbuster's hundreds of plot keywords is a coincidence.
+ */
+export const TOPIC_TAG_RE = /^urn:tag:(?:genre|subgenre|theme|keyword)(?::|$)/;
 
 /**
  * TOPIC-2 (eval r4, h71): words whose Qloo genre or theme is a PERIOD or SCHOOL of another art
