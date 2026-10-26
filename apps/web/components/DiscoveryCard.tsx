@@ -22,6 +22,8 @@ export interface DiscoveryCardProps {
   headingLevel?: 'h2' | 'h3';
   /** Optional quiet line under the title (e.g. the category in the "While we look" strip). */
   meta?: string;
+  /** Server reason (style rails: "Because of the workwear cut and duck canvas"); 2 lines max. */
+  reason?: string;
 }
 
 /** Attractive text treatment when no licensed image is available. */
@@ -108,6 +110,7 @@ export function DiscoveryCard({
   priority,
   headingLevel = 'h3',
   meta,
+  reason,
 }: DiscoveryCardProps) {
   const Heading = headingLevel;
   const selected = selection?.selected ?? false;
@@ -130,6 +133,7 @@ export function DiscoveryCard({
         <span>{meta ?? KIND_LABELS[card.kind]}</span>
         {card.is_example && <span className="card__example">Example result</span>}
       </p>
+      {reason && <p className="card__reason">{reason}</p>}
       {onSave && (
         <button
           type="button"

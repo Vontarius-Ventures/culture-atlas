@@ -393,7 +393,7 @@ export class MediaAnalysisRun {
    */
   async defer(
     lease: CaptureLease,
-    input: { reason: 'ai_paused' | 'rate_limited'; until: Date },
+    input: { reason: 'ai_paused' | 'rate_limited' | 'daily_limit'; until: Date },
   ): Promise<void> {
     await this.ctx.db.transaction(async (tx) => {
       await this.analysis.workerRow(tx, lease);
@@ -464,6 +464,8 @@ export class MediaAnalysisRun {
       observation?: VlmAnalysis;
       model?: string;
       result: Record<string, unknown>;
+      /** Style design §D.1: the reading ran on an unqualified (experimental) role; clients label it. */
+      experimental?: boolean;
       /** Capture-owned display image already written by the worker under `captureId`'s prefix. */
       captureId?: string;
       display?: { objectKey: string; sha256: string; width: number; height: number };
@@ -564,7 +566,7 @@ export class MediaAnalysisRun {
       }
       const updated = await tx.query<{ started_by_installation_id: string | null }>(
         `UPDATE media_analysis_requests SET state=$3,capture_id=$4,error_code=$5,observation=$6::jsonb,
-           observation_model=$7,result=$8::jsonb,waiting_reason=NULL,completed_at=$9
+           observation_model=$7,result=$8::jsonb,waiting_reason=NULL,completed_at=$9,experimental=$10
          WHERE account_id=$1 AND id=$2 RETURNING started_by_installation_id`,
         [
           lease.account_id,
@@ -576,6 +578,7 @@ export class MediaAnalysisRun {
           input.model ?? null,
           JSON.stringify(input.result),
           this.ctx.now(),
+          input.experimental === true,
         ],
       );
       await tx.query(

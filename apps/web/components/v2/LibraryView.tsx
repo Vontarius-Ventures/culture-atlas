@@ -22,11 +22,12 @@ import { UploadStatusBar } from './UploadStatusBar';
 import { useUploads } from './uploads-client';
 import { V2Icon } from './V2Icon';
 
-type Filter = 'all' | 'photo' | 'video' | 'uploading';
+type Filter = 'all' | 'photo' | 'video' | 'audio' | 'uploading';
 const FILTERS: Array<{ value: Filter; label: string }> = [
   { value: 'all', label: CORRECTIONS.allFilter },
   { value: 'photo', label: 'Photos' },
   { value: 'video', label: 'Videos' },
+  { value: 'audio', label: 'Audio' },
   { value: 'uploading', label: 'Uploading' },
 ];
 const IN_FLIGHT = ['pending_upload', 'verifying', 'processing'] as const;
@@ -205,7 +206,7 @@ export function LibraryView() {
       <div className="v2-head">
         <div>
           <h1 className="v2-title">Your library</h1>
-          <p className="v2-subtitle">Photos and videos you have kept.</p>
+          <p className="v2-subtitle">Photos, videos and audio you have kept.</p>
         </div>
         {state !== 'signed-out' && uploadButton}
       </div>
@@ -295,7 +296,9 @@ export function LibraryView() {
                   ? 'Nothing kept yet.'
                   : filter === 'uploading'
                     ? 'Nothing is uploading.'
-                    : `No ${filter === 'photo' ? 'photos' : 'videos'} yet.`}
+                    : `No ${
+                        filter === 'photo' ? 'photos' : filter === 'audio' ? 'audio' : 'videos'
+                      } yet.`}
               </h2>
               <p className="v2-empty__body">
                 {filter === 'uploading'
@@ -450,14 +453,16 @@ function MediaCard({
             {m.status === 'ready'
               ? m.kind === 'video'
                 ? 'Video'
-                : 'Photo'
+                : m.kind === 'audio'
+                  ? 'Recording'
+                  : 'Photo'
               : statusLabel(m.status, m.kind)}
           </span>
         )}
-        {m.kind === 'video' && m.status === 'ready' && (
+        {(m.kind === 'video' || m.kind === 'audio') && m.status === 'ready' && (
           <>
             <span className="media-card__play" aria-hidden="true">
-              <V2Icon name="play" size={16} />
+              <V2Icon name={m.kind === 'video' ? 'play' : 'volume'} size={16} />
             </span>
             {m.duration_ms && (
               <span className="media-card__duration">{formatDuration(m.duration_ms)}</span>
@@ -492,6 +497,10 @@ function MediaCard({
           >
             {title}
           </button>
+        ) : m.kind === 'audio' ? (
+          // The web media detail is photo/video only for now; a recording lists
+          // and deletes here, but does not open yet.
+          <span>{title}</span>
         ) : (
           <Link className="media-card__link" href={href}>
             {title}

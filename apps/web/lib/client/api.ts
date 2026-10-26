@@ -167,10 +167,69 @@ export class ApiClient {
     return () => this.listeners.delete(listener);
   }
 
+  /**
+   * Like `request`, but validates the response with `schema` instead of the
+   * route contract's response schema. Used for additive fields the shared
+   * contract does not carry yet (style reading, rails; lib/client/style.ts).
+   */
+  requestAs<N extends RouteName, S extends Schema>(
+    name: N,
+    schema: S,
+    options: RequestOptions<N>,
+  ): Promise<z.output<S>> {
+    return this.request(name, options, false, schema) as Promise<z.output<S>>;
+  }
+
+  /**
+   * JSON call to a /v1 endpoint that is not in the route contract yet
+   * (POST /v1/captures/{id}/style/retry, PUT /v1/me/city). Same session,
+   * CSRF and error handling as `request`; the response body is returned unparsed.
+   */
+  async send(
+    method: 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    options: { body?: unknown; idempotencyKey?: string } = {},
+    retriedCsrf = false,
+  ): Promise<unknown> {
+    const session = await this.getSession();
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      [CSRF_HEADER]: session.csrf_token,
+    };
+    if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey;
+    let body: string | undefined;
+    if (options.body !== undefined) {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify(options.body);
+    }
+    let res: Response;
+    try {
+      res = await this.fetchImpl(this.baseUrl + path, {
+        method,
+        headers,
+        body,
+        credentials: 'same-origin',
+      });
+    } catch {
+      throw new ApiError(0, OFFLINE);
+    }
+    if (!res.ok) {
+      const errBody = await readError(res);
+      if (errBody.code === 'csrf_failed' && !retriedCsrf) {
+        await this.refreshSession();
+        return this.send(method, path, options, true);
+      }
+      throw new ApiError(res.status, errBody);
+    }
+    if (res.status === 204) return undefined;
+    return res.json().catch(() => undefined);
+  }
+
   async request<N extends RouteName>(
     name: N,
     options: RequestOptions<N>,
     retriedCsrf = false,
+    responseOverride?: Schema,
   ): Promise<ResponseOf<N>> {
     const contract = ROUTES[name] as Contract<N> & {
       params?: Schema;
@@ -245,13 +304,13 @@ export class ApiClient {
       const errBody = await readError(res);
       if (errBody.code === 'csrf_failed' && !retriedCsrf) {
         await this.refreshSession();
-        return this.request(name, options, true);
+        return this.request(name, options, true, responseOverride);
       }
       throw new ApiError(res.status, errBody);
     }
     if (res.status === 204 || contract.response === null) return undefined as ResponseOf<N>;
     const data: unknown = await res.json().catch(() => undefined);
-    const parsed = (contract.response as Schema).safeParse(data);
+    const parsed = (responseOverride ?? (contract.response as Schema)).safeParse(data);
     if (!parsed.success) {
       console.error(
         `[api] ${contract.method} ${contract.path} response did not match the contract`,

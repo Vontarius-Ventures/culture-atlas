@@ -103,9 +103,11 @@ public struct AnalysisResultResponse: Codable, Sendable, Equatable {
   public var waitingReason: String?
   public var errorCode: String?
   public var result: AnalysisResult?
+  /// Present when the reading came from an experimental (unqualified) role.
+  public var experimental: ExperimentalLabel?
 
   enum CodingKeys: String, CodingKey {
-    case state, result
+    case state, result, experimental
     case analysisID = "analysis_id"
     case resultURL = "result_url"
     case captureID = "capture_id"
@@ -122,6 +124,7 @@ public struct AnalysisResultResponse: Codable, Sendable, Equatable {
     waitingReason = try c.decodeIfPresent(String.self, forKey: .waitingReason)
     errorCode = try c.decodeIfPresent(String.self, forKey: .errorCode)
     result = try? c.decodeIfPresent(AnalysisResult.self, forKey: .result)
+    experimental = c.lenient(ExperimentalLabel.self, forKey: .experimental)
   }
 
   public var finished: Bool { state == .complete || state == .partial }
@@ -159,13 +162,19 @@ public struct AnalysisResult: Codable, Sendable, Equatable {
   public var seeds: [Seed]
   public var reading: String?
   public var note: String?
+  /// Compact style preview (chips and swatches); nil until the style section is ready.
+  public var style: StylePreview?
 
   enum CodingKeys: String, CodingKey {
-    case candidates, music, reading, note
+    case candidates, music, reading, note, style
     case seeds = "qloo_seeds"
   }
 
-  public init(candidates: [Candidate] = [], music: String? = nil, seeds: [Seed] = [], reading: String? = nil, note: String? = nil) {
+  public init(
+    candidates: [Candidate] = [], music: String? = nil, seeds: [Seed] = [], reading: String? = nil, note: String? = nil,
+    style: StylePreview? = nil
+  ) {
+    self.style = style
     self.candidates = candidates
     self.music = music
     self.seeds = seeds
@@ -180,6 +189,7 @@ public struct AnalysisResult: Codable, Sendable, Equatable {
     seeds = (try? c.decodeIfPresent([Seed].self, forKey: .seeds)) ?? []
     reading = try? c.decodeIfPresent(String.self, forKey: .reading)
     note = try? c.decodeIfPresent(String.self, forKey: .note)
+    style = c.lenient(StylePreview.self, forKey: .style)
   }
 
   /// Plain-language music outcome; never claims a match the server did not make.

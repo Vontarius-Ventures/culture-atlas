@@ -125,14 +125,19 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
     }
   }
 
-  /// Screen 20: Explore music. Speech is never requested.
-  func exploreMusic(assetID: UUID, startMS: Int, endMS: Int) async -> Bool {
+  /// Screen 20: Explore music. Speech is never requested. `recognized` is the
+  /// song the phone already recognized on-device, if any: a hint the server
+  /// still grounds through its own catalog.
+  func exploreMusic(
+    assetID: UUID, startMS: Int, endMS: Int, recognized: ClientRecognizedSong? = nil
+  ) async -> Bool {
     guard let account = await sessions.currentAccountID else { return false }
     exploring.insert(assetID)
     do {
       let media = try await api.media(assetID)
       let status = try await api.startMusicAnalysis(
-        mediaID: assetID, generation: media.generation, startMS: startMS, endMS: endMS)
+        mediaID: assetID, generation: media.generation, startMS: startMS, endMS: endMS,
+        recognized: recognized)
       rememberAnalysis(status.analysisID, for: assetID)
       await store.watch(
         WatchedAnalysis(mediaID: assetID, analysisID: status.analysisID, startedAt: Date(), kind: .audio),

@@ -68,9 +68,45 @@ const BaseProviderConfigSchema = z.object({
    * NODE_ENV=production.
    */
   CONCENTRATE_DEMO_ALLOW_ROLES: optional,
+  /**
+   * Production experimental mode (style design §D.1): comma-separated model
+   * roles allowed to dispatch UNQUALIFIED in any NODE_ENV (only when their
+   * profile is catalog-compatible), always marked experimental so every
+   * client labels the result. Separate from CONCENTRATE_DEMO_ALLOW_ROLES,
+   * which stays refused in production.
+   */
+  ANALYSIS_EXPERIMENTAL_ROLES: optional,
+  /**
+   * Static kill switch for ANALYSIS_EXPERIMENTAL_ROLES ("false"/"0" turns every
+   * experimental runner off). The runtime switch is the feature flag
+   * experimental_analysis_enabled (feature_flag_kills), checked per job.
+   */
+  ANALYSIS_EXPERIMENTAL_ENABLED: z
+    .enum(['true', 'false', '1', '0'])
+    .default('true')
+    .transform((v) => v === 'true' || v === '1'),
+  /** Daily spend bucket (USD) for experimental roles, inside MODEL_DAILY_SPEND_LIMIT_USD. */
+  ANALYSIS_EXPERIMENTAL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().default(5),
+  /** Experimental analyses (jobs using an experimental role) per account per UTC day. */
+  ANALYSIS_EXPERIMENTAL_ACCOUNT_DAILY: z.coerce.number().int().positive().default(20),
+  /**
+   * Largest worst-case cost (USD) one style call may reserve (R-12). The
+   * reservation is computed from catalog prices; a profile whose worst case
+   * exceeds this cap gets no runner (readiness reason spend_cap). The default
+   * covers the raised style output cap (STYLE_MAX_OUTPUT_TOKENS 2000): with the
+   * committed Sonnet prices and the profile's input/image bounds that worst case
+   * is $0.056798, so a lower value silently removes the style role.
+   */
+  STYLE_MAX_CALL_USD: z.coerce.number().positive().default(0.06),
   NODE_ENV: optional,
   MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
+  /**
+   * Unsettled attempts reserve worst-case cost here until billing is
+   * reconciled. Low caps can stall multi-photo runs even when actual spend is
+   * small. Non-production defaults to $5; production stays unset/fail-closed
+   * unless an operator explicitly configures a ceiling.
+   */
   MODEL_MAX_UNKNOWN_SPEND_USD: z.coerce.number().positive().optional(),
   ACCOUNT_DAILY_MEDIA_ANALYSES: z.coerce.number().int().positive().default(50),
   FEATHERLESS_API_KEY: optional,
@@ -106,6 +142,12 @@ const BaseProviderConfigSchema = z.object({
   QLOO_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
   /** Qloo requests in flight at once per process (shared by every caller; the hackathon key throttles bursts). */
   QLOO_MAX_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(3),
+  /** Minimum gap between two Qloo dispatches in one process (style design R-11; a 429 hit at the 11th call in a second). */
+  QLOO_MIN_SPACING_MS: z.coerce.number().int().min(0).max(5_000).default(120),
+  /** Qloo requests per UTC day for the shared key across processes (R-11); past it, rails are an honest empty. */
+  QLOO_DAILY_REQUEST_LIMIT: z.coerce.number().int().positive().default(1500),
+  /** Cross-process token-bucket rate for the shared key, tokens per second (R-11). */
+  QLOO_RATE_PER_SECOND: z.coerce.number().positive().max(10).default(8),
   /** Allow recorded fixtures as labeled "Example result" when Qloo is unavailable. */
   QLOO_REPLAY_FIXTURES: z
     .enum(['true', 'false', '1', '0'])
@@ -146,6 +188,11 @@ const BaseProviderConfigSchema = z.object({
 
 export const ProviderConfigSchema = BaseProviderConfigSchema.transform((c) => ({
   ...c,
+  // Unsettled attempts hold their worst-case reservation against this ceiling;
+  // low caps can stall multi-photo runs despite small actual spend. Keep
+  // eval/dev usable without weakening production's explicit-ceiling requirement.
+  MODEL_MAX_UNKNOWN_SPEND_USD:
+    c.MODEL_MAX_UNKNOWN_SPEND_USD ?? (c.NODE_ENV === 'production' ? undefined : 5),
   VLM_MODEL: c.VLM_MODEL ?? DEFAULT_MODELS[c.LLM_PROVIDER].vlm,
   RESEARCH_MODEL: c.RESEARCH_MODEL ?? DEFAULT_MODELS[c.LLM_PROVIDER].text,
 }));

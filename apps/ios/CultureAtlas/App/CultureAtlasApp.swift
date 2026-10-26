@@ -48,22 +48,38 @@ struct CultureAtlasApp: App {
 
   var body: some Scene {
     WindowGroup {
-      RootView()
-        .environmentObject(controller)
-        .environmentObject(onboarding)
-        .environmentObject(notices)
-        // Designed on warm paper only (Android uses lightColorScheme too):
-        // pinning light keeps ink text on ivory in system dark mode.
-        .preferredColorScheme(.light)
-        .task { await controller.launch() }
-        // Email sign-in callback and Meta AI registration return both arrive here.
-        .onOpenURL { url in Task { await controller.handle(url: url) } }
-        .onChange(of: scenePhase) { _, phase in
-          Task { await controller.scenePhaseChanged(phase) }
-          if controller.signedInAccount != nil {
-            if phase == .active { notices.sceneActive() } else if phase == .background { notices.sceneBackground() }
-          }
-        }
+      #if DEBUG
+      if StyleFixture.isRequested {
+        StyleFixtureScreen()
+          .environmentObject(controller)
+          .environmentObject(onboarding)
+          .environmentObject(notices)
+          .preferredColorScheme(.light)
+      } else {
+        app
+      }
+      #else
+      app
+      #endif
     }
+  }
+
+  private var app: some View {
+    RootView()
+      .environmentObject(controller)
+      .environmentObject(onboarding)
+      .environmentObject(notices)
+      // Designed on warm paper only (Android uses lightColorScheme too):
+      // pinning light keeps ink text on ivory in system dark mode.
+      .preferredColorScheme(.light)
+      .task { await controller.launch() }
+      // Email sign-in callback and Meta AI registration return both arrive here.
+      .onOpenURL { url in Task { await controller.handle(url: url) } }
+      .onChange(of: scenePhase) { _, phase in
+        Task { await controller.scenePhaseChanged(phase) }
+        if controller.signedInAccount != nil {
+          if phase == .active { notices.sceneActive() } else if phase == .background { notices.sceneBackground() }
+        }
+      }
   }
 }

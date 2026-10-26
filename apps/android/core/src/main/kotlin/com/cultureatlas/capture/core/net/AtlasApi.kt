@@ -150,6 +150,16 @@ class AtlasApi(val http: AtlasHttp, val sessions: SessionManager) {
 
     companion object {
         /**
+         * Style reading and rails (design E.4): the compiled capture, the one-time style retry
+         * and the explicit city for place rails. Added to the native allow-list by the style
+         * contract; until the server bridges them they fail with `scope_denied` and the result
+         * screen keeps showing what `/v2` returned. Declared first: [ONBOARDING_OPERATIONS] uses it.
+         */
+        val STYLE_OPERATIONS: Set<String> = setOf(
+            "GET /v1/captures/{id}", "POST /v1/captures/{id}/style/retry", "PUT /v1/me/city",
+        )
+
+        /**
          * The /v1 owner routes this client calls with its installation session
          * (native owner bridge, fixtures/native-contract/onboarding.json). The
          * server refuses the installation token on every other /v1 route.
@@ -163,6 +173,6 @@ class AtlasApi(val http: AtlasHttp, val sessions: SessionManager) {
             "GET /v1/captures/{id}",
             "GET /v1/collections", "POST /v1/collections",
             "GET /v1/collections/{id}", "PUT /v1/collections/{id}/items/{item_id}",
-        )
+        ) + STYLE_OPERATIONS
     }
 }

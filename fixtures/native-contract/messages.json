@@ -503,7 +503,8 @@
           "taste_seed_enabled": true,
           "fast_analysis_two_stage": false,
           "while_we_look_enabled": true,
-          "analysis_verifier_enabled": false
+          "analysis_verifier_enabled": false,
+          "experimental_analysis_enabled": false
         },
         "limits": {
           "photo_max_bytes": 15728640,
@@ -1458,6 +1459,784 @@
           "play"
         ],
         "job_id": null
+      }
+    },
+    "capture_style_response": {
+      "direction": "response",
+      "route": "GET /v1/captures/{id}",
+      "schema": "schemas.CaptureResponse",
+      "body": {
+        "id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+        "source": "upload",
+        "status": "ready",
+        "received_at": "2026-10-23T18:00:00.000Z",
+        "captured_at": null,
+        "image": null,
+        "focus": {
+          "kind": "whole"
+        },
+        "is_example": false,
+        "discovery_item_id": null,
+        "saved": false,
+        "analysis": {
+          "id": "d7e8f90a-1b2c-4d3e-8f40-516273849506",
+          "version": 1,
+          "title": "Canvas work jacket",
+          "interpretation": "A rugged canvas jacket stood out.",
+          "sections": {
+            "observations": "complete",
+            "references": "complete",
+            "research": "complete",
+            "style": "ready",
+            "wear": "complete",
+            "play": "skipped",
+            "watch": "skipped",
+            "eat": "skipped"
+          },
+          "question": null,
+          "warnings": [],
+          "created_at": "2026-10-23T18:00:00.000Z",
+          "experimental": {
+            "label": "Experimental",
+            "note": "Photo and video readings are experimental. They can miss or misread details."
+          }
+        },
+        "references": [],
+        "recommendations": [
+          {
+            "id": "1b2c3d4e-5f60-4172-8384-95a6b7c8d9e0",
+            "kind": "brand",
+            "category": "wear",
+            "title": "Red Wing",
+            "subtitle": null,
+            "image": null,
+            "is_example": false,
+            "saved": false,
+            "saved_item_id": null,
+            "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
+            "evidence_available": true,
+            "reason": "Shares a taste with Dickies, from your workwear rail",
+            "style_match": {
+              "subject_id": "s1",
+              "attributes": [],
+              "palette": [],
+              "via": "Dickies",
+              "experimental": true
+            }
+          }
+        ],
+        "available_categories": [
+          "wear"
+        ],
+        "job_id": null,
+        "style_reading": {
+          "version": "atlas_style_reading_v1",
+          "summary": "A heavyweight canvas work jacket with a rugged, utilitarian look.",
+          "swatches": [
+            {
+              "index": 0,
+              "hex": "#7B5A3A",
+              "share": 0.31
+            },
+            {
+              "index": 3,
+              "hex": "#2B2A28",
+              "share": 0.18
+            }
+          ],
+          "subjects": [
+            {
+              "id": "s1",
+              "category": "fashion",
+              "label": "Canvas work jacket",
+              "region": {
+                "x": 0.18,
+                "y": 0.1,
+                "w": 0.6,
+                "h": 0.78
+              },
+              "aesthetics": [
+                {
+                  "name": "Workwear",
+                  "wording": "asserted",
+                  "display": "Workwear",
+                  "strength": "clear",
+                  "region": null,
+                  "features": [
+                    "duck canvas shell",
+                    "corduroy collar"
+                  ]
+                },
+                {
+                  "name": "Heritage",
+                  "wording": "resembles",
+                  "display": "Resembles heritage",
+                  "strength": "likely",
+                  "region": null,
+                  "features": [
+                    "triple-stitched seams"
+                  ]
+                }
+              ],
+              "era": {
+                "name": "1950s–1970s American",
+                "display": "Suggests the 1950s–1970s American",
+                "wording": "resembles"
+              },
+              "lineage": [
+                {
+                  "name": "American heritage workwear",
+                  "display": "Resembles American heritage workwear",
+                  "wording": "resembles"
+                }
+              ],
+              "materials": [
+                {
+                  "name": "duck canvas",
+                  "texture": "stiff, matte, slightly faded",
+                  "wording": "asserted",
+                  "display": "Duck canvas",
+                  "strength": "clear",
+                  "region": null
+                }
+              ],
+              "construction": [
+                {
+                  "name": "boxy, hip-length cut",
+                  "kind": "silhouette",
+                  "wording": "asserted",
+                  "display": "Boxy, hip-length cut",
+                  "strength": "clear",
+                  "region": null
+                }
+              ],
+              "palette": [
+                {
+                  "swatch": 0,
+                  "name": "tobacco brown",
+                  "hex": "#7B5A3A",
+                  "display": "Tobacco brown"
+                }
+              ],
+              "mood": [
+                {
+                  "name": "rugged",
+                  "display": "Feels rugged"
+                }
+              ],
+              "details": [
+                {
+                  "text": "metal snap closures at the cuffs",
+                  "display": "Metal snap closures at the cuffs",
+                  "wording": "asserted",
+                  "strength": "clear",
+                  "region": null
+                }
+              ],
+              "brand": null,
+              "qloo_links": [],
+              "rail": "more_like_this:s1"
+            }
+          ],
+          "retracted": []
+        },
+        "rails": [
+          {
+            "key": "more_like_this:s1",
+            "kind": "more_like_this",
+            "title": "More like this",
+            "subtitle": "Workwear · duck canvas",
+            "subject_id": "s1",
+            "status": "ready",
+            "empty_message": null,
+            "caption": "From an experimental reading",
+            "cards": [
+              {
+                "id": "f90a1b2c-3d4e-4f50-8162-738495a6b7c8",
+                "kind": "brand",
+                "category": "wear",
+                "title": "Dickies",
+                "subtitle": null,
+                "image": null,
+                "is_example": false,
+                "saved": false,
+                "saved_item_id": null,
+                "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
+                "evidence_available": true,
+                "reason": "Because of the workwear and duck canvas and the tobacco brown palette",
+                "style_match": {
+                  "subject_id": "s1",
+                  "attributes": [
+                    "Workwear",
+                    "duck canvas"
+                  ],
+                  "palette": [
+                    "tobacco brown"
+                  ],
+                  "via": null,
+                  "experimental": true
+                }
+              },
+              {
+                "id": "0a1b2c3d-4e5f-4061-9273-8495a6b7c8d9",
+                "kind": "brand",
+                "category": "wear",
+                "title": "Filson",
+                "subtitle": null,
+                "image": null,
+                "is_example": false,
+                "saved": false,
+                "saved_item_id": null,
+                "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
+                "evidence_available": true,
+                "reason": "For the workwear and heritage look your photo resembles",
+                "style_match": {
+                  "subject_id": "s1",
+                  "attributes": [
+                    "Workwear",
+                    "Heritage"
+                  ],
+                  "palette": [
+                    "tobacco brown"
+                  ],
+                  "via": null,
+                  "experimental": true
+                }
+              }
+            ]
+          },
+          {
+            "key": "wear",
+            "kind": "cross_domain",
+            "title": "Wear",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "ready",
+            "empty_message": null,
+            "caption": "From an experimental reading",
+            "cards": [
+              {
+                "id": "1b2c3d4e-5f60-4172-8384-95a6b7c8d9e0",
+                "kind": "brand",
+                "category": "wear",
+                "title": "Red Wing",
+                "subtitle": null,
+                "image": null,
+                "is_example": false,
+                "saved": false,
+                "saved_item_id": null,
+                "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
+                "evidence_available": true,
+                "reason": "Shares a taste with Dickies, from your workwear rail",
+                "style_match": {
+                  "subject_id": "s1",
+                  "attributes": [],
+                  "palette": [],
+                  "via": "Dickies",
+                  "experimental": true
+                }
+              }
+            ]
+          },
+          {
+            "key": "play",
+            "kind": "cross_domain",
+            "title": "Play",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "empty",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          },
+          {
+            "key": "watch",
+            "kind": "cross_domain",
+            "title": "Watch",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "empty",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          },
+          {
+            "key": "eat",
+            "kind": "cross_domain",
+            "title": "Eat",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "empty",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          }
+        ]
+      }
+    },
+    "capture_style_running_response": {
+      "direction": "response",
+      "route": "GET /v1/captures/{id}",
+      "schema": "schemas.CaptureResponse",
+      "body": {
+        "id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+        "source": "upload",
+        "status": "processing",
+        "received_at": "2026-10-23T18:00:00.000Z",
+        "captured_at": null,
+        "image": null,
+        "focus": {
+          "kind": "whole"
+        },
+        "is_example": false,
+        "discovery_item_id": null,
+        "saved": false,
+        "analysis": {
+          "id": "d7e8f90a-1b2c-4d3e-8f40-516273849506",
+          "version": 1,
+          "title": "Canvas work jacket",
+          "interpretation": "A rugged canvas jacket stood out.",
+          "sections": {
+            "observations": "complete",
+            "references": "complete",
+            "research": "complete",
+            "style": "running",
+            "wear": "running",
+            "play": "skipped",
+            "watch": "skipped",
+            "eat": "skipped"
+          },
+          "question": null,
+          "warnings": [],
+          "created_at": "2026-10-23T18:00:00.000Z",
+          "experimental": {
+            "label": "Experimental",
+            "note": "Photo and video readings are experimental. They can miss or misread details."
+          }
+        },
+        "references": [],
+        "recommendations": [],
+        "available_categories": [],
+        "job_id": "b5c6d7e8-f90a-4b1c-8d2e-3f4051627384",
+        "style_reading": null,
+        "rails": [
+          {
+            "key": "wear",
+            "kind": "cross_domain",
+            "title": "Wear",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "running",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          }
+        ]
+      }
+    },
+    "capture_style_no_city_response": {
+      "direction": "response",
+      "route": "GET /v1/captures/{id}",
+      "schema": "schemas.CaptureResponse",
+      "body": {
+        "id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+        "source": "upload",
+        "status": "ready",
+        "received_at": "2026-10-23T18:00:00.000Z",
+        "captured_at": null,
+        "image": null,
+        "focus": {
+          "kind": "whole"
+        },
+        "is_example": false,
+        "discovery_item_id": null,
+        "saved": false,
+        "analysis": {
+          "id": "d7e8f90a-1b2c-4d3e-8f40-516273849506",
+          "version": 1,
+          "title": "Canvas work jacket",
+          "interpretation": "A rugged canvas jacket stood out.",
+          "sections": {
+            "observations": "complete",
+            "references": "complete",
+            "research": "complete",
+            "style": "ready",
+            "wear": "complete",
+            "play": "skipped",
+            "watch": "skipped",
+            "eat": "skipped"
+          },
+          "question": null,
+          "warnings": [],
+          "created_at": "2026-10-23T18:00:00.000Z",
+          "experimental": {
+            "label": "Experimental",
+            "note": "Photo and video readings are experimental. They can miss or misread details."
+          }
+        },
+        "references": [],
+        "recommendations": [
+          {
+            "id": "1b2c3d4e-5f60-4172-8384-95a6b7c8d9e0",
+            "kind": "brand",
+            "category": "wear",
+            "title": "Red Wing",
+            "subtitle": null,
+            "image": null,
+            "is_example": false,
+            "saved": false,
+            "saved_item_id": null,
+            "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
+            "evidence_available": true,
+            "reason": "Shares a taste with Dickies, from your workwear rail",
+            "style_match": {
+              "subject_id": "s1",
+              "attributes": [],
+              "palette": [],
+              "via": "Dickies",
+              "experimental": true
+            }
+          }
+        ],
+        "available_categories": [
+          "wear"
+        ],
+        "job_id": null,
+        "style_reading": {
+          "version": "atlas_style_reading_v1",
+          "summary": "A heavyweight canvas work jacket with a rugged, utilitarian look.",
+          "swatches": [
+            {
+              "index": 0,
+              "hex": "#7B5A3A",
+              "share": 0.31
+            },
+            {
+              "index": 3,
+              "hex": "#2B2A28",
+              "share": 0.18
+            }
+          ],
+          "subjects": [
+            {
+              "id": "s1",
+              "category": "interior",
+              "label": "Low walnut sideboard",
+              "region": {
+                "x": 0.18,
+                "y": 0.1,
+                "w": 0.6,
+                "h": 0.78
+              },
+              "aesthetics": [
+                {
+                  "name": "Japandi",
+                  "wording": "resembles",
+                  "display": "Resembles japandi",
+                  "strength": "likely",
+                  "region": null,
+                  "features": [
+                    "low, clean-lined form",
+                    "pale oak and walnut"
+                  ]
+                }
+              ],
+              "era": {
+                "name": "1950s–1970s American",
+                "display": "Suggests the 1950s–1970s American",
+                "wording": "resembles"
+              },
+              "lineage": [
+                {
+                  "name": "American heritage workwear",
+                  "display": "Resembles American heritage workwear",
+                  "wording": "resembles"
+                }
+              ],
+              "materials": [
+                {
+                  "name": "duck canvas",
+                  "texture": "stiff, matte, slightly faded",
+                  "wording": "asserted",
+                  "display": "Duck canvas",
+                  "strength": "clear",
+                  "region": null
+                }
+              ],
+              "construction": [
+                {
+                  "name": "boxy, hip-length cut",
+                  "kind": "silhouette",
+                  "wording": "asserted",
+                  "display": "Boxy, hip-length cut",
+                  "strength": "clear",
+                  "region": null
+                }
+              ],
+              "palette": [
+                {
+                  "swatch": 0,
+                  "name": "tobacco brown",
+                  "hex": "#7B5A3A",
+                  "display": "Tobacco brown"
+                }
+              ],
+              "mood": [
+                {
+                  "name": "rugged",
+                  "display": "Feels rugged"
+                }
+              ],
+              "details": [
+                {
+                  "text": "metal snap closures at the cuffs",
+                  "display": "Metal snap closures at the cuffs",
+                  "wording": "asserted",
+                  "strength": "clear",
+                  "region": null
+                }
+              ],
+              "brand": null,
+              "qloo_links": [],
+              "rail": "more_like_this:s1"
+            }
+          ],
+          "retracted": []
+        },
+        "rails": [
+          {
+            "key": "more_like_this:s1",
+            "kind": "more_like_this",
+            "title": "More like this",
+            "subtitle": "Japandi",
+            "subject_id": "s1",
+            "status": "empty",
+            "empty_message": "Add a city to see places with this style.",
+            "caption": null,
+            "cards": []
+          },
+          {
+            "key": "wear",
+            "kind": "cross_domain",
+            "title": "Wear",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "ready",
+            "empty_message": null,
+            "caption": "From an experimental reading",
+            "cards": [
+              {
+                "id": "1b2c3d4e-5f60-4172-8384-95a6b7c8d9e0",
+                "kind": "brand",
+                "category": "wear",
+                "title": "Red Wing",
+                "subtitle": null,
+                "image": null,
+                "is_example": false,
+                "saved": false,
+                "saved_item_id": null,
+                "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
+                "evidence_available": true,
+                "reason": "Shares a taste with Dickies, from your workwear rail",
+                "style_match": {
+                  "subject_id": "s1",
+                  "attributes": [],
+                  "palette": [],
+                  "via": "Dickies",
+                  "experimental": true
+                }
+              }
+            ]
+          },
+          {
+            "key": "play",
+            "kind": "cross_domain",
+            "title": "Play",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "empty",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          },
+          {
+            "key": "watch",
+            "kind": "cross_domain",
+            "title": "Watch",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "empty",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          },
+          {
+            "key": "eat",
+            "kind": "cross_domain",
+            "title": "Eat",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "empty",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          }
+        ]
+      }
+    },
+    "capture_style_failed_response": {
+      "direction": "response",
+      "route": "GET /v1/captures/{id}",
+      "schema": "schemas.CaptureResponse",
+      "body": {
+        "id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+        "source": "upload",
+        "status": "partial",
+        "received_at": "2026-10-23T18:00:00.000Z",
+        "captured_at": null,
+        "image": null,
+        "focus": {
+          "kind": "whole"
+        },
+        "is_example": false,
+        "discovery_item_id": null,
+        "saved": false,
+        "analysis": {
+          "id": "d7e8f90a-1b2c-4d3e-8f40-516273849506",
+          "version": 1,
+          "title": "Canvas work jacket",
+          "interpretation": "A rugged canvas jacket stood out.",
+          "sections": {
+            "observations": "complete",
+            "references": "complete",
+            "research": "complete",
+            "style": "failed",
+            "wear": "running",
+            "play": "skipped",
+            "watch": "skipped",
+            "eat": "skipped"
+          },
+          "question": null,
+          "warnings": [],
+          "created_at": "2026-10-23T18:00:00.000Z",
+          "experimental": {
+            "label": "Experimental",
+            "note": "Photo and video readings are experimental. They can miss or misread details."
+          }
+        },
+        "references": [],
+        "recommendations": [],
+        "available_categories": [],
+        "job_id": null,
+        "style_reading": null,
+        "rails": [
+          {
+            "key": "wear",
+            "kind": "cross_domain",
+            "title": "Wear",
+            "subtitle": null,
+            "subject_id": null,
+            "status": "running",
+            "empty_message": null,
+            "caption": null,
+            "cards": []
+          }
+        ]
+      }
+    },
+    "style_retry_response": {
+      "direction": "response",
+      "route": "POST /v1/captures/{id}/style/retry",
+      "schema": "schemas.StyleRetryResponse",
+      "body": {
+        "job_id": "b5c6d7e8-f90a-4b1c-8d2e-3f4051627384",
+        "sections": {
+          "style": "running"
+        }
+      }
+    },
+    "style_retry_used_error": {
+      "direction": "response",
+      "route": "POST /v1/captures/{id}/style/retry",
+      "schema": null,
+      "body": {
+        "code": "conflict",
+        "message": "This style reading was already retried.",
+        "retryable": false,
+        "request_id": "f0a1b2c3-d4e5-4f60-8172-8394a5b6c7d8",
+        "details": {
+          "reason": "retry_used"
+        }
+      }
+    },
+    "me_city_request": {
+      "direction": "request",
+      "route": "PUT /v1/me/city",
+      "schema": "schemas.SetCityRequest",
+      "body": {
+        "city": "Los Angeles, CA"
+      }
+    },
+    "me_city_clear_request": {
+      "direction": "request",
+      "route": "PUT /v1/me/city",
+      "schema": "schemas.SetCityRequest",
+      "body": {
+        "city": null
+      }
+    },
+    "me_city_response": {
+      "direction": "response",
+      "route": "PUT /v1/me/city",
+      "schema": null,
+      "body": null
+    },
+    "analysis_style_response": {
+      "direction": "response",
+      "route": "GET /v2/media/{id}/analysis/{analysisId}",
+      "schema": "schemas.AnalyzeMediaResponse",
+      "body": {
+        "analysis_id": "a4b5c6d7-e8f9-4a0b-9c1d-2e3f40516273",
+        "job_id": "b5c6d7e8-f90a-4b1c-8d2e-3f4051627384",
+        "state": "complete",
+        "reused": false,
+        "result_url": "/captures/c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+        "capture_id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+        "waiting_reason": null,
+        "error_code": null,
+        "experimental": {
+          "label": "Experimental",
+          "note": "Photo and video readings are experimental. They can miss or misread details."
+        },
+        "result": {
+          "mode": "photo",
+          "note": null,
+          "frames": [
+            {
+              "frame_id": null,
+              "timestamp_ms": null,
+              "state": "complete"
+            }
+          ],
+          "candidates": [],
+          "reading": "quick",
+          "style": {
+            "status": "ready",
+            "summary": "A heavyweight canvas work jacket with a rugged, utilitarian look.",
+            "aesthetics": [
+              {
+                "subject_id": "s1",
+                "display": "Workwear",
+                "wording": "asserted"
+              }
+            ],
+            "swatches": [
+              "#7B5A3A",
+              "#2B2A28"
+            ],
+            "frame_index": null
+          }
+        }
       }
     }
   }

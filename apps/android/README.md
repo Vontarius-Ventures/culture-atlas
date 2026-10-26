@@ -75,6 +75,29 @@ glasses capture is unavailable. A Bluetooth headset is labeled as a headset,
 never as glasses, unless a verified glasses microphone route exists (this
 store build does not claim one).
 
+## Style reading and rails (experimental)
+
+Built to `prp/2026-10-23-style-analysis/design.md` (F.1 / F.4). The result screen
+(`AnalysisResultScreen`) polls `GET /v1/captures/{id}` every 1.5 s until every
+section and rail is terminal, and shows:
+
+- **Style reading** card (`ui/StyleScreens.kt`): the `Experimental` badge (tap for
+  the note), summary, subject tabs, aesthetic chips (solid = asserted, dashed =
+  resembles; strength only as an accessibility state), measured palette, details
+  (first three, then "Show all details"), mood and "Qloo also links". Tapping a
+  claim with a region dims the photo outside it (`styleRegionOverlay`).
+- **Rails** in server order: More like this per subject, then Wear / Play / Watch /
+  Eat, each card with its server reason. Empty rails stay empty (`style.rail_empty`
+  or the server message); `style.no_city` offers **Add city** (`PUT /v1/me/city`).
+- **Try again** on a failed reading (`POST /v1/captures/{id}/style/retry`, once).
+- Older analyses (no `sections`, no `rails`) render the old suggestions row.
+
+All wording comes from server `display` strings or the D.4 copy (`StyleCopy`);
+`core/…/result/StyleReader.kt` drops a resemblance that has no display string
+rather than wording it on the phone. Wire examples for tests live in
+`apps/android/fixtures/style/` (hand-written to the design contract until the
+shared `fixtures/native-contract/messages.json#capture_style` lands).
+
 ## Remaining Play / device gates
 
 These are not done here and must not be inferred from source landing:

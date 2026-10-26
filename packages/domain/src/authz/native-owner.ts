@@ -47,6 +47,10 @@ export const NATIVE_OWNER_OPERATIONS: ReadonlySet<string> = new Set([
   'POST /v1/collections',
   'GET /v1/collections/{id}',
   'PUT /v1/collections/{id}/items/{item_id}',
+  // Style design §E.4: "Try again" on a failed style reading and the user's city
+  // (GET /v1/captures/{id} above also carries the style reading and rails).
+  'POST /v1/captures/{id}/style/retry',
+  'PUT /v1/me/city',
 ]);
 
 export function isNativeOwnerOperation(op: Pick<OperationPolicy, 'method' | 'path'>): boolean {

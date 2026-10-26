@@ -25,4 +25,6 @@ tasks.test {
         "atlas.fixtures",
         rootProject.projectDir.resolve("../../fixtures/native-contract").canonicalPath,
     )
+    // Style reading wire examples (design E.2/E.3), shared with the :app screen tests.
+    systemProperty("atlas.style.fixtures", rootProject.projectDir.resolve("fixtures/style").canonicalPath)
 }

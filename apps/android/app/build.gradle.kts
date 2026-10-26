@@ -98,6 +98,8 @@ android {
             it.systemProperty("robolectric.graphicsMode", "NATIVE")
             // Screenshots are written to build/outputs/roborazzi for review; they are not golden files.
             it.systemProperty("roborazzi.test.record", "true")
+            // Style reading wire examples (design E.2/E.3), shared with :core tests.
+            it.systemProperty("atlas.style.fixtures", rootProject.projectDir.resolve("fixtures/style").canonicalPath)
         }
     }
 }

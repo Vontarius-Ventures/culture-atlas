@@ -26,6 +26,11 @@ import type { Focus, ReferenceSummary } from '../schemas/common';
 import type { UploadResponse } from '../schemas/uploads';
 import { iso } from '../util/time';
 import { loadCards, mayViewCaptureImage, resolveImage, type CardRecommendationContext } from './cards';
+import { buildRails, styleReadingDto } from './style-dto';
+import { STYLE_COPY } from '../schemas/style';
+import type { StyleMatch } from '../style/reasons';
+import type { StoredStyleReading } from '../style/types';
+import type { DiscoveryCard } from '../schemas/common';
 import { bumpTasteRevision, rebuildTasteProfile } from './taste';
 
 /**
@@ -485,10 +490,31 @@ interface AnalysisRow {
   clarifying_question: NonNullable<CaptureResponse['analysis']>['question'];
   warnings: { code: string; message: string }[];
   created_at: Date;
+  style_reading: StoredStyleReading | null;
+  experimental: boolean;
 }
 
-const ANALYSIS_SECTION_NAMES = new Set(['observations', 'references', 'research', ...CATEGORIES]);
-const SECTION_STATUS_NAMES = new Set(['pending', 'running', 'complete', 'partial', 'failed', 'skipped', 'unavailable']);
+const ANALYSIS_SECTION_NAMES = new Set(['observations', 'references', 'research', 'style', ...CATEGORIES]);
+const SECTION_STATUS_NAMES = new Set(['pending', 'running', 'complete', 'partial', 'failed', 'skipped', 'unavailable', 'ready', 'empty', 'held']);
+
+/** The label and note every client shows for an experimental analysis (style design §D.3/§D.4). */
+export const EXPERIMENTAL_LABEL = { label: STYLE_COPY.experimental.badge, note: STYLE_COPY.experimental.note } as const;
+
+/** A card's "Why this?" style fields (C.4), from the recommendation row. */
+function cardStyle(display_reason: string | null, match: StyleMatch | null, experimental: boolean): Pick<DiscoveryCard, 'reason' | 'style_match'> {
+  return {
+    reason: display_reason,
+    style_match: match
+      ? {
+          subject_id: match.subject_id ?? null,
+          attributes: [...new Set(match.claims.map((c) => c.name))],
+          palette: match.palette,
+          via: match.via_entity ?? null,
+          experimental,
+        }
+      : null,
+  };
+}
 
 function exclusionFilterSql(owner: Owner, itemAlias: string, param: number): string {
   const col = owner.kind === 'account' ? 'owner_account_id' : 'owner_session_id';
@@ -572,9 +598,12 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
   let analysis: CaptureResponse['analysis'] = null;
   let references: ReferenceSummary[] = [];
   let recommendations: CaptureResponse['recommendations'] = [];
+  let styleReading: CaptureResponse['style_reading'] = null;
+  let rails: CaptureResponse['rails'];
   if (capture.active_analysis_id) {
     const { rows } = await ctx.db.query<AnalysisRow>(
-      `SELECT id, version, title, interpretation, section_statuses, clarifying_question, warnings, created_at
+      `SELECT id, version, title, interpretation, section_statuses, clarifying_question, warnings, created_at,
+              style_reading, experimental
          FROM analyses WHERE id = $1`,
       [capture.active_analysis_id],
     );
@@ -591,19 +620,53 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
         question: capture.focus.kind === 'whole' ? (a.clarifying_question ?? null) : null,
         warnings: Array.isArray(a.warnings) ? a.warnings : [],
         created_at: iso(a.created_at),
+        experimental: a.experimental ? { ...EXPERIMENTAL_LABEL } : null,
       };
       references = await loadAnalysisReferences(ctx.db, a.id);
       const ownerParam = owner.kind === 'account' ? owner.accountId : owner.sessionId;
-      const { rows: recs } = await ctx.db.query<{ id: string; discovery_item_id: string; origin: CardRecommendationContext['origin']; display_reason: string | null; rank: number }>(
-        `SELECT DISTINCT ON (r.discovery_item_id) r.id, r.discovery_item_id, r.origin, r.display_reason, r.rank
+      const { rows: recs } = await ctx.db.query<{
+        id: string;
+        discovery_item_id: string;
+        origin: CardRecommendationContext['origin'];
+        display_reason: string | null;
+        rank: number;
+        rail: 'more_like_this' | 'cross_domain' | null;
+        subject_id: string | null;
+        style_match: StyleMatch | null;
+      }>(
+        `SELECT DISTINCT ON (r.discovery_item_id) r.id, r.discovery_item_id, r.origin, r.display_reason, r.rank,
+                r.rail, r.subject_id, r.style_match
            FROM recommendations r JOIN discovery_items di ON di.id = r.discovery_item_id
-          WHERE r.analysis_id = $1 AND ${exclusionFilterSql(owner, 'di', 2)}
-          ORDER BY r.discovery_item_id, r.rank`,
+          WHERE r.analysis_id = $1 AND r.hidden_at IS NULL AND ${exclusionFilterSql(owner, 'di', 2)}
+          ORDER BY r.discovery_item_id, (r.rail = 'more_like_this') DESC, r.rank`,
         [a.id, ownerParam],
       );
-      const ordered = [...recs].sort((x, y) => x.rank - y.rank).slice(0, LIMITS.recommendationsPerAnalysis);
-      const context = new Map<string, CardRecommendationContext>(ordered.map((r) => [r.discovery_item_id, { id: r.id, origin: r.origin, display_reason: r.display_reason }]));
-      recommendations = await loadCards(ctx, ordered.map((r) => r.discovery_item_id), { recommendations: context });
+      const sorted = [...recs].sort((x, y) => x.rank - y.rank);
+      // Old clients: `recommendations` stays cross-domain only (<= 12); the style rails are additive.
+      const crossDomain = sorted.filter((r) => r.rail !== 'more_like_this').slice(0, LIMITS.crossDomainRecommendationsMax);
+      const mlt = sorted.filter((r) => r.rail === 'more_like_this');
+      const context = new Map<string, CardRecommendationContext>(sorted.map((r) => [r.discovery_item_id, { id: r.id, origin: r.origin, display_reason: r.display_reason }]));
+      const cards = await loadCards(ctx, [...crossDomain, ...mlt].map((r) => r.discovery_item_id), { recommendations: context });
+      const cardById = new Map(cards.map((c) => [c.id, c]));
+      const withStyle = (r: (typeof sorted)[number]): DiscoveryCard | null => {
+        const card = cardById.get(r.discovery_item_id);
+        return card ? { ...card, ...cardStyle(r.display_reason, r.style_match, a.experimental) } : null;
+      };
+      recommendations = crossDomain.map(withStyle).filter((c): c is DiscoveryCard => !!c);
+      const stored = a.style_reading && a.section_statuses?.style === 'ready' ? a.style_reading : null;
+      styleReading = stored ? styleReadingDto(stored, { showClaimRegions: ctx.config.STYLE_SHOW_CLAIM_REGIONS === true }) : null;
+      const bySubject = new Map<string, DiscoveryCard[]>();
+      for (const r of mlt) {
+        const c = withStyle(r);
+        if (!c || !r.subject_id) continue;
+        bySubject.set(r.subject_id, [...(bySubject.get(r.subject_id) ?? []), c]);
+      }
+      const byCategory = new Map<Category, DiscoveryCard[]>();
+      for (const c of recommendations) if (c.category) byCategory.set(c.category, [...(byCategory.get(c.category) ?? []), c]);
+      // An analysis made before the style stage existed has no `style` section: no rails, so
+      // clients keep rendering `recommendations` (and never poll sections that will not arrive).
+      const styleEra = a.section_statuses?.style !== undefined || mlt.length > 0;
+      if (styleEra) rails = buildRails({ stored, sections: a.section_statuses ?? {}, moreLikeThis: bySubject, crossDomain: byCategory, experimental: a.experimental });
     }
   }
 
@@ -627,6 +690,8 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
     recommendations,
     available_categories: available,
     job_id: jobRes.rows[0]?.id ?? null,
+    style_reading: styleReading,
+    ...(rails ? { rails } : {}),
   };
 }
 
@@ -674,7 +739,7 @@ export async function listCaptures(ctx: ServiceContext, query: CapturesQuery): P
       references = (await loadAnalysisReferences(ctx.db, row.active_analysis_id)).map((r) => ({ id: r.id, name: r.name, type: r.type }));
       const recs = await ctx.db.query<{ discovery_item_id: string }>(
         `SELECT r.discovery_item_id FROM recommendations r JOIN discovery_items di ON di.id = r.discovery_item_id
-          WHERE r.analysis_id = $1 AND ${exclusionFilterSql(owner, 'di', 2)}
+          WHERE r.analysis_id = $1 AND r.hidden_at IS NULL AND ${exclusionFilterSql(owner, 'di', 2)}
           GROUP BY r.discovery_item_id ORDER BY min(r.rank) LIMIT $3`,
         [row.active_analysis_id, ownerParam, LIMITS.recommendationsPerAnalysis],
       );

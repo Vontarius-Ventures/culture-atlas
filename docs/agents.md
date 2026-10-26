@@ -129,7 +129,7 @@ Every scope below is accepted by `POST /v2/agent-connections` and the OAuth cons
 | `media:analyze` | Explicitly request analysis of permitted media (never automatic). |
 | `devices:command` | Request capture on an explicitly granted, locally armed phone. |
 
-### MCP tools (30, catalog 2.2.0)
+### MCP tools (30, catalog 2.3.0)
 
 | Tool | Scopes | Returns | What it does |
 | --- | --- | --- | --- |

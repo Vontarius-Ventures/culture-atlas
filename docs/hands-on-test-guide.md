@@ -152,6 +152,11 @@ You record (or pick a WAV), then **Keep**, which stores it privately in your lib
    - **A non-WAV file:** a clear "Use a WAV file" message.
 8. **On the iPhone** (after section B is set up): Capture, then **Music**, then Record, Stop, **Keep**, then **Explore music**. You should get the same match card and feed result as on the web; on iOS the result opens in the in-app result sheet.
 9. **On Android:** Capture, then Music. You should get the same result on the native result screen.
+10. **Library Audio filter.** After step 4 the recording is in your library. Open `<APP_BASE_URL>/library` and press **Audio**:
+    - the recording is listed with its title and its real length ("Recording · 0:02");
+    - **All**, **Photos** and **Videos** keep listing photos and videos only, exactly as before. The Audio chip asks the server a separate question: `GET /v2/library?kind=audio`;
+    - with no recording kept, the Audio page says **No audio yet.**;
+    - **Select** and **Delete** on the Audio page remove a recording from every device, like the other chips.
 
 ### What correct storage looks like (SQL)
 
@@ -187,7 +192,7 @@ The recording bytes live under `$STORAGE_LOCAL_DIR/capture-v2/…`.
 
 - **No fingerprinting:** there is no licensed fingerprint vendor, so a song with no spoken artist name ends in "no match" by design.
 - **Search phrases:** whole sentences are never sent to Qloo. Only extracted name phrases are.
-- **Library:** audio recordings do not appear in the server library grid on iOS or Android, because the server lists photos and videos only. They show as local rows.
+- **Phone grids:** the iOS and Android libraries do not ask the server for audio yet, so recordings still show as local rows there. The web library lists them with the **Audio** filter (step 10 above), and a recording's title does not open a web detail page yet.
 - **Simulator mic:** iOS microphone recording fails on the simulator. The real-phone behaviour is unverified, and the iOS app logs the recorder's reason.
 
 ---
@@ -211,6 +216,13 @@ EOF
 #   ATLAS_API_HOST = <random>.trycloudflare.com
 xcodegen generate
 open CultureAtlas.xcodeproj
+```
+
+No iPhone at hand? The public build and its unit tests also run on the simulator:
+
+```sh
+xcodebuild -project CultureAtlas.xcodeproj -scheme CultureAtlas \
+  -destination 'platform=iOS Simulator,name=iPhone 17e' test
 ```
 
 Both `Signing.xcconfig` and `LocalAPI.xcconfig` are gitignored. Don't commit them.

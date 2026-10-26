@@ -9,7 +9,9 @@ export type ModelRole =
   /** Stage-2 background photo enrichment (spec amendment 2.2). */
   | 'vision_photo_enrich'
   /** Independent background verifier after stage 2 (docs/requalification-plan.md); off by default. */
-  | 'vision_verify';
+  | 'vision_verify'
+  /** Style reading (prp/2026-10-23-style-analysis §B.2), parallel to stage 1. */
+  | 'vision_style';
 export interface ModelIdentity {
   accountId: string;
   jobId: string;

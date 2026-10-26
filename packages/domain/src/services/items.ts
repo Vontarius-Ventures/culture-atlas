@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { STYLE_COPY } from '../schemas/style';
 import { hasWholeLibrary, requireScopes } from '../authz';
 import type { ServiceContext } from '../context';
 import type { Queryable } from '../db/pool';
@@ -59,6 +60,9 @@ interface RecRow {
   display_reason: string | null;
   source_ids: string[];
   destination_url: string | null;
+  /** Style design §E.2: the style overlap behind a capture-rail card, and whether its analysis was experimental. */
+  style_match: { subject_id: string | null; claims: { name: string }[]; palette: string[]; via_entity: string | null } | null;
+  experimental: boolean | null;
 }
 
 async function loadItem(db: Queryable, id: string): Promise<ItemRow> {
@@ -103,7 +107,7 @@ async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: st
     planGrant = `AND pl.selected_item_ids <@ ARRAY${members}`;
   }
   const { rows } = await ctx.db.query<RecRow>(
-    `SELECT r.id, r.origin, r.display_reason, r.source_ids, r.destination_url
+    `SELECT r.id, r.origin, r.display_reason, r.source_ids, r.destination_url, r.style_match, a.experimental
        FROM recommendations r
        LEFT JOIN analyses a ON a.id = r.analysis_id
        LEFT JOIN captures c ON c.id = a.capture_id
@@ -307,6 +311,18 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
     related_job_id: relatedJobId,
     collection_ids: collectionIds,
     capture_id: item.capture_id,
+    // Style design §E.2 / §D.4: "Why this?" shows the shared style attributes and, for a card from an
+    // experimental reading, the experimental line.
+    style_match: rec?.style_match
+      ? {
+          subject_id: rec.style_match.subject_id ?? null,
+          attributes: [...new Set(rec.style_match.claims.map((c) => c.name))],
+          palette: rec.style_match.palette ?? [],
+          via: rec.style_match.via_entity ?? null,
+          experimental: rec.experimental === true,
+        }
+      : null,
+    experimental_line: rec?.experimental ? STYLE_COPY.experimental.why_line : null,
   };
 }
 

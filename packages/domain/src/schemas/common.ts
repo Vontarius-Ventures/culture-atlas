@@ -74,6 +74,21 @@ export const DiscoveryCard = z.object({
   recommendation_id: Uuid.nullable(),
   /** True when "Why this?" has a reason and/or sources to show. */
   evidence_available: z.boolean(),
+  /** The card's reason (display_reason, <= 90 chars) in capture rails; null when none (style design §C.4). */
+  reason: z.string().max(200).nullable().optional(),
+  /** The style overlap behind the reason; null outside capture rails (style design §C.4). */
+  style_match: z
+    .object({
+      subject_id: z.string().nullable(),
+      /** The style attributes (the claims' own names) the card shares with the photo. */
+      attributes: z.array(z.string()),
+      palette: z.array(z.string()),
+      /** The identified entity or bridge it came through, when that is the connection. */
+      via: z.string().nullable(),
+      experimental: z.boolean(),
+    })
+    .nullable()
+    .optional(),
 });
 export type DiscoveryCard = z.infer<typeof DiscoveryCard>;
 

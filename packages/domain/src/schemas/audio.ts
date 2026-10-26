@@ -121,12 +121,29 @@ export const AudioSelection = z
   .strict()
   .refine((s) => s.start_ms < s.end_ms, { message: 'Selection start must precede end.' });
 
+/**
+ * A song the client recognized on-device before asking for analysis (iOS:
+ * ShazamKit). It is a hint, never a result: the job resolves the artist only
+ * through Qloo search, exactly like the fingerprint and transcript tiers.
+ */
+export const ClientRecognizedSong = z
+  .object({
+    vendor: z.literal('shazamkit'),
+    artist_name: z.string().trim().min(1).max(120),
+    title: z.string().trim().max(200).nullable().optional(),
+    matched_at_ms: z.number().int().nonnegative().nullable().optional(),
+    vendor_recording_id: z.string().trim().max(120).nullable().optional(),
+  })
+  .strict();
+export type ClientRecognizedSong = z.infer<typeof ClientRecognizedSong>;
+
 export const AnalyzeAudioRequest = z
   .object({
     contract_version: z.literal(2),
     expected_generation: Revision,
     requested_components: z.array(AudioAnalysisComponent).min(1).max(3),
     selection: AudioSelection,
+    client_recognition: ClientRecognizedSong.optional(),
   })
   .strict();
 export type AnalyzeAudioRequest = z.infer<typeof AnalyzeAudioRequest>;

@@ -32,16 +32,37 @@ import {
   SOURCE_LABELS,
   statusLabel,
 } from './media-format';
-import { CollectionPicker, ConfirmDelete, FlowHeader, SignInPanel, V2Notice } from './parts';
+import {
+  CollectionPicker,
+  ConfirmDelete,
+  ExperimentalBadge,
+  FlowHeader,
+  SignInPanel,
+  V2Notice,
+} from './parts';
+import { analysisExperimental, type ExperimentalLabel } from '@/lib/client/style';
 import { EXPLORE_WAITING, exploreFailureMessage, exploreState } from './explore-state';
 import { loadCapabilities } from './uploads-client';
 import { V2Icon } from './V2Icon';
 
 type Load =
   | { state: 'loading' }
-  | { state: 'ready'; item: MediaDetail }
+  | { state: 'ready'; item: DetailItem }
   | { state: 'error'; message: string; missing?: boolean }
   | { state: 'signed-out' };
+
+/**
+ * Reference 07 is a photo/video detail. Music Mode recordings are kept
+ * separately, and their schema_version 2 detail never parses as this shape;
+ * an audio row (if one ever arrives) shows the error state, never a photo.
+ */
+type DetailItem = MediaDetail & {
+  media: Omit<MediaDetail['media'], 'kind'> & { kind: 'photo' | 'video' };
+};
+
+function isPhotoVideoDetail(item: MediaDetail): item is DetailItem {
+  return item.media.kind !== 'audio';
+}
 
 /** Video/photo detail (reference 07). */
 /** A result opened from a library item remembers it (Back to photo, Library tab stays lit). */
@@ -65,6 +86,8 @@ export function MediaDetailView({ id }: { id: string }) {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [analysisReady, setAnalysisReady] = useState<boolean | null>(null);
+  // D.3/D.4: photo and video readings run unqualified in production and say so.
+  const [experimental, setExperimental] = useState<ExperimentalLabel | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [exploring, setExploring] = useState(false);
@@ -86,6 +109,10 @@ export function MediaDetailView({ id }: { id: string }) {
   const fetchItem = useCallback(async () => {
     try {
       const item = await mediaApi.media(id);
+      if (!isPhotoVideoDetail(item)) {
+        setLoad({ state: 'error', message: 'This item could not load.' });
+        return null;
+      }
       setLoad({ state: 'ready', item });
       return item;
     } catch (err) {
@@ -108,7 +135,10 @@ export function MediaDetailView({ id }: { id: string }) {
     }
     void Promise.resolve().then(fetchItem);
     loadCapabilities()
-      .then((c) => setAnalysisReady(c.availability.analysis?.available ?? false))
+      .then((c) => {
+        setAnalysisReady(c.availability.analysis?.available ?? false);
+        setExperimental(analysisExperimental(c.availability.analysis));
+      })
       .catch(() => setAnalysisReady(null));
   }, [session, isAccount, fetchItem]);
 
@@ -367,6 +397,14 @@ export function MediaDetailView({ id }: { id: string }) {
               Save to collection
             </button>
           </div>
+          {(analysis?.experimental ?? experimental) && (
+            <div className="detail__experimental">
+              <ExperimentalBadge
+                label={(analysis?.experimental ?? experimental)!.label}
+                note={(analysis?.experimental ?? experimental)!.note}
+              />
+            </div>
+          )}
           <div id="explore-why" className="detail-status" aria-live="polite">
             {m.status !== 'ready' && (
               <p className="muted">Exploring is available once this {m.kind} is ready.</p>

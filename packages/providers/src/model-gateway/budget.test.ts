@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { loadProviderConfig } from '../config';
 import { identity, limits, profile, response } from '../concentrate/test-fixtures';
 import { MemorySpendStore, ModelSpendLedger } from './budget';
 
 describe('AI-02 budget accounting, no inference', () => {
+  it('defaults the unknown-spend ceiling to $5 outside production and keeps production fail-closed', () => {
+    expect(loadProviderConfig({}).MODEL_MAX_UNKNOWN_SPEND_USD).toBe(5);
+    expect(loadProviderConfig({ NODE_ENV: 'development' }).MODEL_MAX_UNKNOWN_SPEND_USD).toBe(5);
+    expect(loadProviderConfig({ NODE_ENV: 'test' }).MODEL_MAX_UNKNOWN_SPEND_USD).toBe(5);
+    expect(loadProviderConfig({ NODE_ENV: 'production' }).MODEL_MAX_UNKNOWN_SPEND_USD).toBeUndefined();
+    expect(
+      loadProviderConfig({
+        NODE_ENV: 'production',
+        MODEL_MAX_UNKNOWN_SPEND_USD: '1',
+      }).MODEL_MAX_UNKNOWN_SPEND_USD,
+    ).toBe(1);
+  });
   it('counts reserved attempts against global, account and potential-unknown caps', async () => {
     const store = new MemorySpendStore();
     const ledger = new ModelSpendLedger(store, {
@@ -33,6 +46,22 @@ describe('AI-02 budget accounting, no inference', () => {
     await ledger.reserve({ ...identity, accountId: 'other' }, profile);
     await expect(ledger.reconcile(a, 20)).resolves.toBeUndefined();
     await expect(ledger.reconcile(a, 0)).rejects.toThrow('Conflicting');
+  });
+  it('names an exhausted unknown-spend limit and explains worst-case reservations', async () => {
+    const ledger = new ModelSpendLedger(new MemorySpendStore(), {
+      ...limits,
+      dailyMicros: 10_000,
+      accountDailyMicros: 10_000,
+      maxUnknownMicros: 100,
+    });
+    await ledger.reserve(identity, profile);
+    await expect(
+      ledger.reserve({ ...identity, attemptKey: 'another-attempt' }, profile),
+    ).rejects.toMatchObject({
+      kind: 'budget_exhausted',
+      message:
+        'Analysis budget exhausted: MODEL_MAX_UNKNOWN_SPEND_USD limit reached. Worst-case reservations for in-flight and unknown-cost attempts count against MODEL_MAX_UNKNOWN_SPEND_USD until actual billing is reconciled.',
+    });
   });
   it('keeps old-day unresolved charges counted across midnight and restart', async () => {
     let now = Date.parse('2026-10-15T23:59:59Z');

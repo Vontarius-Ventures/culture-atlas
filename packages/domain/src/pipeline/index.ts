@@ -8,6 +8,7 @@ import { replacePlanSection } from './replace-plan-section';
 import { sensorPoll } from './sensor-poll';
 import { interestExpand } from './interest-expand';
 import { tasteSeed } from './taste-seed';
+import { styleRetry } from './style-retry';
 
 /** JobType -> handler. apps/worker dispatches through this map. */
 export const JOB_HANDLERS: JobHandlerMap = {
@@ -20,4 +21,5 @@ export const JOB_HANDLERS: JobHandlerMap = {
   taste_seed: tasteSeed,
   interest_expand: interestExpand,
   analyze_audio: analyzeAudio,
+  style_retry: styleRetry,
 };

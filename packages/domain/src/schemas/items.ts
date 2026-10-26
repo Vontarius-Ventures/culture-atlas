@@ -32,6 +32,10 @@ export const ItemDetailResponse = z.object({
   collection_ids: z.array(Uuid),
   /** For kind=capture: the capture id to open the capture result. */
   capture_id: Uuid.nullable(),
+  /** Style design §E.2: the style attributes this card shares with the photo (capture rails only). */
+  style_match: DiscoveryCard.shape.style_match.optional(),
+  /** Style design §D.4 `experimental.why_line`, for a card from an experimental reading. */
+  experimental_line: z.string().nullable().optional(),
 });
 export type ItemDetailResponse = z.infer<typeof ItemDetailResponse>;
 

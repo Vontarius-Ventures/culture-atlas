@@ -59,6 +59,13 @@ final class CaptureController: ObservableObject {
   /// Created on first camera use so Music Mode never initializes a capture session.
   lazy var camera = PhoneCamera()
   let music = MusicCapture()
+  /// On-device song recognition for Music Mode (ShazamKit when the build
+  /// carries the xcframework; otherwise every call answers "no hint").
+  private let songRecognizer = SongRecognizerFactory.make()
+  /// Songs recognized this session, keyed by draft id. In-memory only: losing
+  /// the hint (restart, missing framework) just means the server uses its own
+  /// fingerprint and transcript tiers.
+  private var recognizedSongs: [UUID: ClientRecognizedSong] = [:]
   /// Music Mode Explore: start analysis after the audio draft commits.
   var afterCommittedExplore: ((DraftRecord) async -> Void)?
   private var finishingExplores = false
@@ -377,6 +384,7 @@ final class CaptureController: ObservableObject {
       draft.sourceRoute = result.inputRoute.rawValue
       draft.source = result.inputRoute == .glassesMicrophone ? .glassesMicrophone : .phoneMicrophone
       try draftStore.ingest(plaintext: url, into: &draft)
+      recognizeSongInBackground(draft)
       reloadDrafts()
       return draft
     } catch {
@@ -384,6 +392,29 @@ final class CaptureController: ObservableObject {
       try? draftStore.delete(draft)
       message = (error as? LocalizedError)?.errorDescription ?? "Recording could not be saved."
       return nil
+    }
+  }
+
+  /// The song this phone recognized for a Music Mode draft, when it did and
+  /// the build carries a recognizer (ShazamKit). A hint only: the server
+  /// still resolves the artist through its own catalog.
+  func recognizedSong(for draftID: UUID) -> ClientRecognizedSong? {
+    recognizedSongs[draftID]
+  }
+
+  /// Best-effort on-device recognition, off the review flow: the hint is
+  /// ready by explore time or simply absent (the server's own tiers then run).
+  /// The decrypted preview file is the same one playback uses.
+  private func recognizeSongInBackground(_ draft: DraftRecord) {
+    guard draft.kind == .audio, !draft.interrupted else { return }
+    let id = draft.id
+    Task { [songRecognizer, draftStore] in
+      guard let url = try? draftStore.openForPlayback(draft) else { return }
+      let song = await songRecognizer.recognize(fileURL: url)
+      try? FileManager.default.removeItem(at: url)
+      if let song, !song.artistName.isEmpty {
+        recognizedSongs[id] = song
+      }
     }
   }
 

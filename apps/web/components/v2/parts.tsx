@@ -7,6 +7,7 @@ import { api } from '@/lib/client/api';
 import { useAsyncEffect } from '@/lib/client/hooks';
 import { Dialog } from '../Dialog';
 import { Icon } from '../Icon';
+import { ExperimentalNote } from '../style/ExperimentalNote';
 import { COPY } from './copy';
 import { mediaApi, mediaErrorMessage } from './media-api';
 
@@ -41,8 +42,20 @@ export function FlowHeader({
   );
 }
 
-/** "Experimental" label that links to the plain explanation of what it means. */
-export function ExperimentalBadge({ quiet }: { quiet?: boolean }) {
+/**
+ * "Experimental" label. With a `note` (photo and video readings, D.4) it is a
+ * button that opens the plain explanation of what experimental means.
+ */
+export function ExperimentalBadge({
+  quiet,
+  label,
+  note,
+}: {
+  quiet?: boolean;
+  label?: string;
+  note?: string;
+}) {
+  if (note) return <ExperimentalNote label={label ?? COPY['capture.experimental']} note={note} />;
   return (
     <span className={`badge-experimental${quiet ? ' badge-experimental--quiet' : ''}`}>
       {COPY['capture.experimental']}

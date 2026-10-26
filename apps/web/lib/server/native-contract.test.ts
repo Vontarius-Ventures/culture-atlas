@@ -1594,6 +1594,7 @@ describe('native owner bridge and push registration through the real handlers', 
     createCollection: 'collection_create_request',
     addCollectionItem: 'collection_add_item_request',
     discoverRelated: 'related_discovery_request',
+    setCity: 'me_city_request',
   };
   const responseMessage: Record<string, string> = {
     getOnboardingCatalog: 'onboarding_catalog_response',
@@ -1610,11 +1611,13 @@ describe('native owner bridge and push registration through the real handlers', 
     getDiscoveries: 'discoveries_response',
     getItem: 'item_detail_response',
     discoverRelated: 'related_discovery_response',
-    getCapture: 'capture_detail_response',
     listCollections: 'collections_list_response',
     createCollection: 'collection_create_response',
     getCollection: 'collection_detail_response',
     addCollectionItem: 'collection_add_item_response',
+    getCapture: 'capture_style_response',
+    retryStyle: 'style_retry_response',
+    setCity: 'me_city_response',
   };
   const pickId = '6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20';
   type Operation = keyof typeof schemas.ROUTES;

@@ -10,6 +10,22 @@ export const MediaSource = z.enum([
   'upload',
   'legacy_sensor',
 ]);
+/**
+ * Kinds a media row or library filter can name (amendment 2.3): Music Mode
+ * recordings are kept as `kind='audio'` (POST /v2/media/audio) and carry the
+ * microphone sources below. The owner library lists audio rows only when a
+ * client asks for the kind, so legacy photo/video pages never change.
+ */
+export const LibraryMediaKind = z.enum(['photo', 'video', 'audio']);
+export const LibraryMediaSource = z.enum([
+  'browser_camera',
+  'phone_camera',
+  'meta_glasses',
+  'upload',
+  'legacy_sensor',
+  'browser_microphone',
+  'phone_microphone',
+]);
 export const MediaStatus = z.enum([
   'pending_upload',
   'verifying',
@@ -92,13 +108,15 @@ export const MediaAsset = z
   .object({
     schema_version: z.literal(1),
     id: CaptureV2Uuid,
-    kind: MediaKind,
-    source: MediaSource,
+    kind: LibraryMediaKind,
+    source: LibraryMediaSource,
     status: MediaStatus,
     analysis_status: z.enum(['not_requested', 'queued', 'running', 'complete', 'failed']),
     created_at: DateTime,
     title: z.string().nullable().optional(),
-    duration_ms: z.number().int().positive().max(120000).optional(),
+    // Audio rows (uploaded recordings) run to 600000 ms; the database keeps
+    // photo/video at 120000 ms.
+    duration_ms: z.number().int().positive().max(600000).optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
     audio_present: z.boolean().optional(),
@@ -158,11 +176,15 @@ export const AnalyzeMediaResponse = z.object({
   waiting_reason: z.string().nullable().optional(),
   /** Safe failure classification for a failed request (never a provider payload). */
   error_code: z.string().nullable().optional(),
+  /** Style design §E.3: the label every client shows; null when the reading ran on qualified roles. */
+  experimental: z.object({ label: z.string(), note: z.string() }).nullable().optional(),
+  /** Frame-cited vision summary; `style` is the compact style preview (E.3) once the reading is ready. */
+  result: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export const MediaLibraryQuery = z.object({
-  kind: MediaKind.optional(),
+  kind: LibraryMediaKind.optional(),
   status: MediaStatus.exclude(['deleted']).optional(),
-  source: MediaSource.optional(),
+  source: LibraryMediaSource.optional(),
   cursor: z.string().max(512).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
@@ -329,7 +351,16 @@ export const CaptureCapabilitiesResponse = z.object({
   }),
   availability: z.record(
     z.string(),
-    z.object({ available: z.boolean(), reasons: z.array(z.string()) }),
+    z.object({
+      available: z.boolean(),
+      reasons: z.array(z.string()),
+      /** Style design §D.3: present when the reading runs on an unqualified (experimental) role. */
+      experimental: z.boolean().optional(),
+      label: z.string().optional(),
+      note: z.string().optional(),
+      reason: z.string().optional(),
+      message: z.string().optional(),
+    }),
   ),
 });
 

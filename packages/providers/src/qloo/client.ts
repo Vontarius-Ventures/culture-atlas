@@ -68,6 +68,18 @@ export interface QlooHttpOptions {
    * API key (QLOO_MAX_CONCURRENCY, default 3), shared by every Qloo caller.
    */
   limiter?: ConcurrencyLimiter;
+  /**
+   * Cross-process admission for the shared key (style design R-11): a token
+   * bucket and a daily request limit kept in Postgres. Called once per HTTP
+   * attempt while holding a limiter slot; throws ProviderError
+   * 'budget_exhausted' past the daily limit.
+   */
+  gate?: QlooRateGate;
+}
+
+/** Cross-process admission for one Qloo key (implemented over Postgres by the domain runtime). */
+export interface QlooRateGate {
+  acquire(signal?: AbortSignal): Promise<void>;
 }
 
 type QueryValue = string | number | boolean | readonly string[] | undefined | null;
@@ -84,7 +96,7 @@ function kindForStatus(status: number): ProviderErrorKind {
 /** Default Qloo requests in flight per process and key (the hackathon key throttles bursts). */
 export const DEFAULT_QLOO_CONCURRENCY = 3;
 
-function keyFingerprint(apiKey: string): string {
+export function keyFingerprint(apiKey: string): string {
   return createHash('sha256').update(apiKey).digest('hex').slice(0, 12);
 }
 
@@ -161,7 +173,13 @@ export class QlooHttpProvider implements QlooProvider {
 
     // Each HTTP attempt holds one slot of the shared limiter; queueing does not eat the timeout.
     const attempt = (n: number): Promise<QlooResponse<T>> =>
-      this.limiter.run(() => attemptOnce(n), { signal: options?.signal, provider: 'qloo' });
+      this.limiter.run(
+        async () => {
+          await this.options.gate?.acquire(options?.signal);
+          return attemptOnce(n);
+        },
+        { signal: options?.signal, provider: 'qloo' },
+      );
     const attemptOnce = async (n: number): Promise<QlooResponse<T>> => {
       const started = Date.now();
       const sig = attemptSignal(options?.signal, timeoutMs);
@@ -192,7 +210,9 @@ export class QlooHttpProvider implements QlooProvider {
         }
         if (!res.ok) {
           const kind = kindForStatus(res.status);
-          const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'));
+          // A 429 backs off at least 1100 ms (style design R-11: the key allows 10 requests per second).
+          const parsedRetry = parseRetryAfter(res.headers.get('retry-after'));
+          const retryAfterMs = kind === 'rate_limited' ? Math.max(parsedRetry ?? 0, 1100) : parsedRetry;
           if (kind === 'auth') this.observe(op, 'unavailable', 'access_denied', `HTTP ${res.status}`);
           throw new ProviderError('qloo', kind, `qloo ${op} failed with HTTP ${res.status}`, { status: res.status, retryAfterMs });
         }
@@ -275,7 +295,7 @@ export class QlooHttpProvider implements QlooProvider {
   }
 
   async insights(req: QlooInsightsRequest, options?: CallOptions): Promise<QlooResponse<QlooInsightsResult>> {
-    if (!req.signalEntities?.length && !req.signalTags?.length && !req.signalLocationQuery) {
+    if (!req.signalEntities?.length && !req.signalTags?.length && !req.signalLocationQuery && !req.filterTags?.length && !req.filterLocationQuery) {
       throw new ProviderError('qloo', 'bad_request', 'insights requires at least one signal');
     }
     const weighted = req.signalTags?.some((t) => t.weight !== undefined);
@@ -291,6 +311,8 @@ export class QlooHttpProvider implements QlooProvider {
           ? [...(req.signalTags ?? [])].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).map((t) => t.id)
           : req.signalTags?.map((t) => t.id),
         'signal.location.query': req.signalLocationQuery,
+        'filter.location.query': req.filterLocationQuery,
+        'filter.popularity.min': req.filterPopularityMin,
         'filter.results.entities': req.filterResultsEntities,
         'filter.tags': req.filterTags,
         'filter.tag.types': req.filterTagTypes,
@@ -353,6 +375,7 @@ function readRateLimit(headers: Headers): QlooResponse<unknown>['rate_limit'] {
  * replay provider whose every response has is_replay=true ("Example result").
  */
 export function createQlooProvider(config: ProviderConfig, options: Partial<Omit<QlooHttpOptions, 'apiKey' | 'baseUrl' | 'timeoutMs'>> = {}): QlooProvider {
+  // Every process spaces dispatches at least QLOO_MIN_SPACING_MS apart (R-11).
   if (!config.QLOO_API_KEY) {
     if (config.QLOO_REPLAY_FIXTURES) {
       const replay = createReplayQloo(config.QLOO_REPLAY_DIR ? resolveFromWorkspace(config.QLOO_REPLAY_DIR) : undefined);
@@ -360,6 +383,6 @@ export function createQlooProvider(config: ProviderConfig, options: Partial<Omit
     }
     return new UnavailableQloo('not_configured');
   }
-  const limiter = sharedLimiter(`qloo:${config.QLOO_API_URL}:${keyFingerprint(config.QLOO_API_KEY)}`, config.QLOO_MAX_CONCURRENCY);
+  const limiter = sharedLimiter(`qloo:${config.QLOO_API_URL}:${keyFingerprint(config.QLOO_API_KEY)}`, config.QLOO_MAX_CONCURRENCY, config.QLOO_MIN_SPACING_MS);
   return new QlooHttpProvider({ apiKey: config.QLOO_API_KEY, baseUrl: config.QLOO_API_URL, timeoutMs: config.QLOO_TIMEOUT_MS, limiter, ...options });
 }

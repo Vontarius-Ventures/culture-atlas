@@ -44,6 +44,13 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(view.analysis).toMatchObject({ version: 1, title: 'Vintage racing references', interpretation: WITH_FOOD, warnings: [] });
     expect(view.analysis!.sections).toMatchObject({ observations: 'complete', references: 'complete', research: 'complete', wear: 'complete', play: 'complete', watch: 'complete', eat: 'complete' });
     expect(view.job_id).toBeNull();
+    expect(view.rails).toBeDefined();
+    // An analysis from before the style stage (no style section): no rails, so clients render
+    // `recommendations` as before and never poll for sections that will not arrive.
+    await ctx.db.query(`UPDATE analyses SET section_statuses = section_statuses - 'style' WHERE id = $1`, [view.analysis!.id]);
+    const legacy = await captures.getCapture(ctx, { id: capture_id });
+    expect(legacy.rails).toBeUndefined();
+    expect(legacy.recommendations.length).toBe(view.recommendations.length);
 
     // Guardrails (quality plan §4): this single full reading has no stage 2, so the brand it read
     // (a held claim in a two-stage reading) is dropped before resolution, never published.
@@ -64,8 +71,9 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(recs.length).toBeGreaterThan(0);
     expect(recs.length).toBeLessThanOrEqual(12);
     for (const c of ['wear', 'play', 'watch', 'eat']) expect(recs.filter((r) => r.category === c).length).toBeLessThanOrEqual(3);
-    // A card named like a reference can only be that reference's own style direction (Wear).
-    for (const r of recs.filter((x) => view.references.some((ref) => ref.name === x.title))) expect(r.subtitle).toBe('Style direction');
+    // No card is ever named like a reference (the tag-as-card "style direction" fallback was
+    // removed: a tag is not a suggestion, and a same-named entity card would be a name collision).
+    for (const r of recs) expect(view.references.some((ref) => ref.name === r.title)).toBe(false);
     expect(recs.map((r) => r.title)).not.toContain('Ungrounded Dish');
     expect(recs.every((r) => r.is_example === false)).toBe(true);
     for (let i = 2; i < recs.length; i++) expect(recs[i]!.category === recs[i - 1]!.category && recs[i]!.category === recs[i - 2]!.category).toBe(false);
@@ -95,7 +103,10 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(page.overview).toBe('Vintage Racing is a test reference.');
     expect(page.claims.filter((c) => c.claim_type === 'factual').every((c) => c.source_ids.length > 0)).toBe(true);
     expect(page.sources[0]!.url).toMatch(/^https:\/\/en\.wikipedia\.org\/wiki\//);
-    expect(page.related.length).toBeGreaterThan(0);
+    // Qloo returned no explainability linking these cards to the racing tag.
+    // Sending a reference as a query signal is not proof that every result is related to it.
+    expect(page.related).toEqual([]);
+    expect(rows.filter((r) => r.origin === 'qloo').every((r) => r.contributing_reference_ids.length === 0)).toBe(true);
 
     // Uploading never changes taste.
     const { rows: prefs } = await db.query('SELECT 1 FROM preference_events WHERE owner_session_id = $1', [(ctx.principal as { sessionId: string }).sessionId]);
@@ -185,8 +196,8 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     await runJobs(ctx, [job_id]);
     const view = await captures.getCapture(ctx, { id: capture_id });
     expect(view.recommendations.filter((r) => r.category === 'play' || r.category === 'watch')).toHaveLength(0);
-    // Wear may still show the resolved style direction (a real returned tag).
-    expect(view.recommendations.filter((r) => r.category === 'wear').map((r) => r.title)).toEqual(['Vintage Racing']);
+    // A resolved style tag is not a suggestion (smatch-1): a non-fashion style tag ("style:qloo") never becomes a Wear card.
+    expect(view.recommendations.filter((r) => r.category === 'wear').map((r) => r.title)).toEqual([]);
   });
 
   it('enforces the per-job Qloo request budget and skips lower-priority work', async () => {

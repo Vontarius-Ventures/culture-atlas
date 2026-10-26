@@ -7,6 +7,7 @@ import type { ObjectStorage } from './storage/types';
 import type { TextModelProvider } from './text/types';
 import type { VlmEnricher, VlmProvider } from './vlm/types';
 import type { VlmVerifier } from './vlm/verify';
+import type { VlmStyleReader } from './vlm/style';
 
 /**
  * Placeholder implementations used when a provider is not configured or its
@@ -64,6 +65,18 @@ export class UnavailableVlmEnricher implements VlmEnricher {
     return unavailable(this.reason);
   }
   async enrichImage(): Promise<never> {
+    return fail('vlm', this.reason);
+  }
+}
+
+/** The style reading without a dispatchable vision_style role (qualified or experimental); never a fallback model. */
+export class UnavailableVlmStyleReader implements VlmStyleReader {
+  readonly id = 'vlm-style:unavailable';
+  constructor(private readonly reason: CapabilityReason = 'not_configured') {}
+  capability(): CapabilityEntry {
+    return unavailable(this.reason);
+  }
+  async readStyle(): Promise<never> {
     return fail('vlm', this.reason);
   }
 }

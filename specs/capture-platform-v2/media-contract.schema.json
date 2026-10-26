@@ -23,7 +23,8 @@
     "kind": {
       "enum": [
         "photo",
-        "video"
+        "video",
+        "audio"
       ]
     },
     "source": {
@@ -32,7 +33,9 @@
         "phone_camera",
         "meta_glasses",
         "upload",
-        "legacy_sensor"
+        "legacy_sensor",
+        "browser_microphone",
+        "phone_microphone"
       ]
     },
     "status": {
@@ -66,8 +69,7 @@
     },
     "duration_ms": {
       "type": "integer",
-      "minimum": 1,
-      "maximum": 120000
+      "minimum": 1
     },
     "width": {
       "type": "integer",
@@ -98,6 +100,32 @@
           "duration_ms",
           "audio_present"
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "audio"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "duration_ms": {
+            "maximum": 600000
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "duration_ms": {
+            "maximum": 120000
+          }
+        }
       }
     }
   ]

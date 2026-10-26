@@ -77,6 +77,14 @@ const PATHS = {
     </>
   ),
   crop: <path d="M6 2.5V14h11.5M2.5 6H14v11.5" />,
+  /** Style reading: highlight where a detail is in the photo. */
+  locate: (
+    <>
+      <circle cx="10" cy="10" r="5.5" />
+      <circle cx="10" cy="10" r="1.5" />
+      <path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3" />
+    </>
+  ),
   copy: (
     <>
       <rect x="7" y="7" width="9.5" height="9.5" rx="1.5" />

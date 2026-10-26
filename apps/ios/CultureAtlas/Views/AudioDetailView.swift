@@ -169,7 +169,11 @@ struct AudioDetailView: View {
   private func explore(assetID: UUID) async {
     guard let selection = clampedSelection() else { return }
     exploring = true
-    let started = await notices.exploreMusic(assetID: assetID, startMS: selection.startMS, endMS: selection.endMS)
+    // The on-device recognized song (ShazamKit), when the phone found one:
+    // a hint the server still grounds through its own catalog.
+    let recognized = controller.recognizedSong(for: live.id)
+    let started = await notices.exploreMusic(
+      assetID: assetID, startMS: selection.startMS, endMS: selection.endMS, recognized: recognized)
     exploring = false
     if !started {
       controller.message = "Exploring isn't available right now. Your recording is safe in your library."

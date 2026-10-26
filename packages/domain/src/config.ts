@@ -89,6 +89,19 @@ export const DomainConfigSchema = z.object({
    * is qualified; the kill switch analysis_verifier_enabled turns it off.
    */
   ANALYSIS_VERIFIER_ENABLED: z.string().optional(),
+  /**
+   * Style design R-15: regions on individual style claims (aesthetics,
+   * details) are sent only once the M-G box-accuracy metric passes; subject
+   * regions are always sent. Default off.
+   */
+  STYLE_SHOW_CLAIM_REGIONS: bool(false),
+  /**
+   * Open item O-1 (R-9), resolved: interior, craft-object and coffee-drink
+   * "More like this" brand rails run on the harvested home-brand catalogue
+   * (home-brands-1, real Qloo brand pages). Set false to turn them off (the
+   * empty message then asks for a city again).
+   */
+  STYLE_INTERIOR_BRANDS: bool(true),
   FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()

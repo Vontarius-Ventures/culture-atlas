@@ -322,7 +322,15 @@ data class CommandAck(
 // Capabilities, errors, agents
 
 @Serializable
-data class Availability(val available: Boolean, val reasons: List<String>)
+data class Availability(
+    val available: Boolean,
+    val reasons: List<String> = emptyList(),
+    /** Photo/video readings run on an unqualified (experimental) role; clients must label them. */
+    val experimental: Boolean = false,
+    val label: String? = null,
+    val note: String? = null,
+    val reason: String? = null,
+)
 
 @Serializable
 data class Capabilities(

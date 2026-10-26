@@ -352,6 +352,17 @@ private fun DraftRow(controller: AppController, notices: ReadyNoticeCenter, draf
                                 }
                             }
                         }) { Text("Explore this photo") }
+                        // Readings run on an unqualified role: say so before the user starts one (D.4).
+                        if (photoAnalysis.experimental) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                ExperimentalTag(photoAnalysis.label ?: CapabilityGate.EXPERIMENTAL_BADGE)
+                                Text(
+                                    photoAnalysis.note ?: CapabilityGate.EXPERIMENTAL_NOTE,
+                                    color = AtlasColors.muted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                 }
                 if (draft.kind == MediaKind.AUDIO && assetId != null) {

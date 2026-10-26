@@ -31,9 +31,33 @@ export type MediaDetail = z.infer<typeof MediaDetailResponse>;
 export type MediaLibrary = z.infer<typeof MediaLibraryResponse>;
 export type UploadResponse = z.infer<typeof MediaUploadResponse>;
 export type PartInstruction = z.infer<typeof UploadPartInstruction>;
-export type Capabilities = z.infer<typeof CaptureCapabilitiesResponse>;
+/**
+ * Capabilities with the D.3 analysis label fields (`experimental`, `label`,
+ * `note`, `reason`), which the shared contract does not carry yet.
+ */
+const AvailabilityEntry = z.object({
+  available: z.boolean(),
+  reasons: z.array(z.string()),
+  experimental: z.boolean().optional().catch(undefined),
+  label: z.string().max(40).optional().catch(undefined),
+  note: z.string().max(240).optional().catch(undefined),
+  reason: z.string().max(64).optional().catch(undefined),
+  message: z.string().max(240).optional().catch(undefined),
+});
+const WebCapabilities = CaptureCapabilitiesResponse.extend({
+  availability: z.record(z.string(), AvailabilityEntry),
+});
+export type Capabilities = z.infer<typeof WebCapabilities>;
 export type CaptureDevice = z.infer<typeof CaptureDeviceResponse>;
-export type AnalysisResponse = z.infer<typeof AnalyzeMediaResponse>;
+/** E.3: the top-level `experimental` label rides along on the analysis status. */
+const WebAnalysisResponse = AnalyzeMediaResponse.extend({
+  experimental: z
+    .object({ label: z.string().max(40), note: z.string().max(240) })
+    .nullable()
+    .optional()
+    .catch(null),
+});
+export type AnalysisResponse = z.infer<typeof WebAnalysisResponse>;
 
 const OFFLINE: ApiErrorBody = {
   code: 'offline',
@@ -167,10 +191,11 @@ function qs(query: Record<string, string | number | undefined | null>): string {
 
 export const mediaApi = {
   capabilities: (signal?: AbortSignal) =>
-    v2('/v2/capabilities', { schema: CaptureCapabilitiesResponse, signal }),
+    v2('/v2/capabilities', { schema: WebCapabilities, signal }),
   library: (
     query: {
-      kind?: 'photo' | 'video';
+      /** 'audio' lists Music Mode recordings (kept via POST /v2/media/audio). */
+      kind?: 'photo' | 'video' | 'audio';
       status?: string;
       source?: string;
       cursor?: string | null;
@@ -208,17 +233,17 @@ export const mediaApi = {
       method: 'POST',
       body: body,
       idempotencyKey,
-      schema: AnalyzeMediaResponse,
+      schema: WebAnalysisResponse,
     }),
   cancelAnalysis: (id: string, analysisId: string) =>
     v2(`/v2/media/${encodeURIComponent(id)}/analysis/${encodeURIComponent(analysisId)}`, {
       method: 'DELETE',
       body: {},
-      schema: AnalyzeMediaResponse,
+      schema: WebAnalysisResponse,
     }),
   analysis: (id: string, analysisId: string, signal?: AbortSignal) =>
     v2(`/v2/media/${encodeURIComponent(id)}/analysis/${encodeURIComponent(analysisId)}`, {
-      schema: AnalyzeMediaResponse,
+      schema: WebAnalysisResponse,
       signal,
     }),
   createUpload: (body: CreateMediaUploadRequest, idempotencyKey: string) =>

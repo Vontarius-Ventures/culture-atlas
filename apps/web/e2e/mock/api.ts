@@ -22,6 +22,15 @@ import type {
   SensorConnectionDto,
 } from '@culture-atlas/domain/schemas';
 import { CAPTURE_RECS, FEED_SEED, resetIds, SAMPLE_CAPTURES, uid, type SeedItem } from './data';
+import { splitStyledCapture, StyledCaptureResponse } from '../../lib/client/style';
+import {
+  EXPERIMENTAL,
+  MORE_LIKE_THIS_SEEDS,
+  styleMatchFor,
+  styleReading,
+  WHY_LINE,
+  type StyleMode,
+} from './style';
 import { OnboardingMock, type OnboardingMockOptions } from './onboarding';
 
 export interface MockOptions {
@@ -51,6 +60,19 @@ export interface MockOptions {
   onboardingOnSignUp?: boolean;
   /** The feed is the account's personal snapshot (not the labeled example feed). */
   personalFeed?: boolean;
+  /**
+   * Style reading + rails (prp/2026-10-23-style-analysis E.2). Unset: an older
+   * analysis with no `sections.style`, no `style_reading` and no `rails`.
+   */
+  style?: StyleMode;
+  /** Capture reads after the job completes while the style section is still running (default 0). */
+  stylePollsToReady?: number;
+  /** Reads before a `retract` reading applies its stage-2 veto (default 2). */
+  pollsToRetract?: number;
+  /** The analysis carries the experimental label (default true when `style` is set). */
+  experimental?: boolean;
+  /** POST /v1/captures/{id}/style/retry fails with 409 retry_used. */
+  styleRetryUsed?: boolean;
 }
 
 interface JobRecord {
@@ -79,6 +101,14 @@ interface CaptureRecord {
   sections: NonNullable<CaptureResponse['analysis']>['sections'];
   title: string;
   interpretation: string;
+  /** More-like-this card ids for subject s1. */
+  mlt: string[];
+  /** GET /v1/captures/{id} reads since the job completed. */
+  reads: number;
+  styleMode: StyleMode | null;
+  styleRetried: boolean;
+  /** Read count at which a retried style reading becomes ready. */
+  styleReadyAt: number;
 }
 
 interface CollectionRecord {
@@ -123,6 +153,8 @@ export class MockApi {
   referenceId = uid();
   failures = new Map<string, { status: number; code: string; message: string }>();
   onboarding: OnboardingMock;
+  /** PUT /v1/me/city (C.6). */
+  city: string | null = null;
 
   constructor(opts: MockOptions = {}) {
     resetIds();
@@ -354,6 +386,11 @@ export class MockApi {
       sections: {},
       title: s?.title ?? 'Vintage racing',
       interpretation: s?.interpretation ?? 'A few vintage racing references stood out.',
+      mlt: [],
+      reads: 0,
+      styleMode: this.opts.style ?? null,
+      styleRetried: false,
+      styleReadyAt: this.opts.stylePollsToReady ?? 0,
     };
     const own = this.addCard(
       {
@@ -399,6 +436,15 @@ export class MockApi {
       for (let i = 0; i < 3; i++)
         for (const c of ['wear', 'play', 'watch', 'eat']) if (byCat(c)[i]) mixed.push(byCat(c)[i]!);
       capture.recs = mixed;
+      capture.reads = 0;
+      capture.mlt = [];
+      if (capture.styleMode && !this.opts.noSubject) {
+        for (const seed of MORE_LIKE_THIS_SEEDS) {
+          const card = this.addCard(seed, Boolean(capture.sample));
+          this.cards.set(card.id, { ...card, recommendation_id: uid() });
+          capture.mlt.push(card.id);
+        }
+      }
       capture.references = this.opts.noSubject
         ? []
         : [
@@ -430,6 +476,103 @@ export class MockApi {
     });
     capture.jobId = job.id;
     return job;
+  }
+
+  /** Style section status for a capture read (E.2 / B.4 progression). */
+  styleStatus(c: CaptureRecord): string | null {
+    if (!c.styleMode || !c.ready) return null;
+    if (c.reads < c.styleReadyAt) return 'running';
+    switch (c.styleMode) {
+      case 'failed':
+        return c.styleRetried ? 'ready' : 'failed';
+      case 'empty':
+        return 'empty';
+      case 'limit':
+      case 'paused':
+        return 'held';
+      default:
+        return 'ready';
+    }
+  }
+
+  /** Additive E.2 fields layered over the base capture DTO. */
+  styledCaptureDto(c: CaptureRecord) {
+    const dto = this.captureDto(c);
+    const status = this.styleStatus(c);
+    if (status === null || !dto.analysis) return dto;
+    const retracted =
+      c.styleMode === 'retract' && c.reads >= (this.opts.pollsToRetract ?? 2);
+    const experimental = this.opts.experimental === false ? null : EXPERIMENTAL;
+    const railStatus = status === 'running' ? 'running' : status === 'ready' ? 'ready' : 'empty';
+    // R-6: a card whose only overlap was a retracted claim is hidden.
+    const mltCards = c.mlt
+      .filter((id) => !this.hidden.has(id))
+      .filter((id) => !(retracted && this.seeds.get(id)?.key === 'mlt-3'))
+      .map((id) => {
+        const seed = MORE_LIKE_THIS_SEEDS.find((m) => m.key === this.seeds.get(id)?.key)!;
+        return {
+          ...this.card(id),
+          reason: seed.reason,
+          style_match: styleMatchFor(seed),
+        };
+      });
+    const cross = (['wear', 'play', 'watch', 'eat'] as const).map((cat) => {
+      const cards = dto.recommendations
+        .filter((r) => r.category === cat)
+        .map((r) => ({ ...r, reason: this.seeds.get(r.id)?.reason ?? null, style_match: null }));
+      const titles = { wear: 'Wear', play: 'Play', watch: 'Watch', eat: 'Eat' } as const;
+      return {
+        key: cat,
+        kind: 'cross_domain',
+        title: titles[cat],
+        subtitle: null,
+        subject_id: null,
+        status: cards.length > 0 ? 'ready' : 'empty',
+        empty_message: null,
+        cards,
+      };
+    });
+    return {
+      ...dto,
+      analysis: {
+        ...dto.analysis,
+        sections: { ...dto.analysis.sections, style: status },
+        experimental,
+        ...(c.styleMode === 'paused'
+          ? { waiting_reason: 'ai_paused' }
+          : c.styleMode === 'limit'
+            ? { waiting_reason: 'daily_limit' }
+            : {}),
+      },
+      style_reading: status === 'ready' ? styleReading({ retracted }) : null,
+      rails:
+        status === 'ready' || status === 'running'
+          ? [
+              {
+                key: 'more_like_this:s1',
+                kind: 'more_like_this',
+                title: 'More like this',
+                subtitle: 'Sportswear · nylon shell',
+                subject_id: 's1',
+                status: railStatus,
+                empty_message: null,
+                cards: status === 'ready' ? mltCards : [],
+              },
+              {
+                key: 'more_like_this:s2',
+                kind: 'more_like_this',
+                title: 'More like this',
+                subtitle: 'Resembles mid-century modern',
+                subject_id: 's2',
+                status: status === 'ready' ? 'empty' : 'running',
+                empty_message:
+                  status === 'ready' && !this.city ? 'Add a city to see places with this style.' : null,
+                cards: [],
+              },
+              ...cross,
+            ]
+          : cross,
+    };
   }
 
   captureDto(c: CaptureRecord): CaptureResponse {
@@ -648,6 +791,21 @@ export class MockApi {
     const url = new URL(req.url());
     const method = req.method();
     this.log.push({ method, path: url.pathname, search: url.search });
+    const styleRoute = this.styleRoute(method, url.pathname, () => {
+      try {
+        return req.postDataJSON() as unknown;
+      } catch {
+        return null;
+      }
+    });
+    if (styleRoute) {
+      if (method !== 'GET' && req.headers()['x-csrf-token'] !== this.session.csrf)
+        return route.fulfill({
+          status: 403,
+          json: { code: 'csrf_failed', message: 'Refresh and try again.', retryable: false, request_id: 'mock' },
+        });
+      return route.fulfill(styleRoute);
+    }
     const match = this.match(method, url.pathname);
     if (!match)
       return route.fulfill({
@@ -712,7 +870,10 @@ export class MockApi {
       });
     const status = result.status ?? contract.status;
     if (contract.response === null || status === 204) return route.fulfill({ status: 204 });
-    const check = contract.response.safeParse(result.json);
+    if (name === 'getCapture') this.checkStyled(result.json);
+    const check = (name === 'getCapture' ? StyledCaptureResponse : contract.response).safeParse(
+      result.json,
+    );
     if (!check.success) {
       throw new Error(
         `Mock response for ${name} violates the contract: ${JSON.stringify(check.error.issues.slice(0, 3))}`,
@@ -723,6 +884,62 @@ export class MockApi {
       json: result.json,
       headers: name === 'getSession' ? { 'set-cookie': 'ca_session=mock; Path=/' } : {},
     });
+  }
+
+  /**
+   * Routes with no contract payload of their own (E.4):
+   * POST /v1/captures/{id}/style/retry (202 StyleRetryResponse, then 409 retry_used)
+   * and PUT /v1/me/city (204). The mock keeps their behavior local because the
+   * shared dispatch is generic; response shapes still follow the contract.
+   */
+  styleRoute(
+    method: string,
+    path: string,
+    readBody: () => unknown,
+  ): { status: number; json?: unknown } | null {
+    const retry = /^\/v1\/captures\/([^/]+)\/style\/retry$/.exec(path);
+    if (retry && method === 'POST') {
+      const c = this.captures.get(decodeURIComponent(retry[1]!));
+      if (!c) return { status: 404, json: { code: 'not_found', message: 'Not found.', retryable: false, request_id: 'mock' } };
+      if (c.styleRetried || this.opts.styleRetryUsed)
+        return {
+          status: 409,
+          json: {
+            code: 'retry_used',
+            message: 'This photo’s style was already read again.',
+            retryable: false,
+            request_id: 'mock',
+          },
+        };
+      c.styleRetried = true;
+      c.styleReadyAt = c.reads + 1;
+      // Mirrors the service (StyleRetryResponse): a style_retry job is enqueued
+      // whose result is the capture; the reading flips to ready on the next read.
+      const job = this.newJob('style_retry', { type: 'capture', id: c.id });
+      return { status: 202, json: { job_id: job.id, sections: { style: 'running' } } };
+    }
+    if (path === '/v1/me/city' && method === 'PUT') {
+      const city = (readBody() as { city?: unknown } | null)?.city;
+      if (city !== null && (typeof city !== 'string' || city.trim().length === 0 || city.length > 80))
+        return { status: 400, json: { code: 'invalid_input', message: 'Enter a city.', retryable: false, request_id: 'mock' } };
+      this.city = typeof city === 'string' ? city.trim() : null;
+      return { status: 204 };
+    }
+    return null;
+  }
+
+  /** The style fixture must survive the web's lenient parse intact (no silently dropped claims). */
+  checkStyled(json: unknown) {
+    const raw = json as { style_reading?: { subjects: Array<{ aesthetics: unknown[] }> } | null; rails?: Array<{ cards: unknown[] }> };
+    const { extras } = splitStyledCapture(json);
+    const count = (r: { subjects: Array<{ aesthetics: unknown[] }> } | null | undefined) =>
+      r ? r.subjects.reduce((n, s) => n + s.aesthetics.length, 0) : 0;
+    if (raw.style_reading && count(raw.style_reading) !== count(extras.reading))
+      throw new Error('Mock style_reading lost claims in the web parse: fixture drift.');
+    const cards = (rails: Array<{ cards: unknown[] }> | null | undefined) =>
+      (rails ?? []).reduce((n, r) => n + r.cards.length, 0);
+    if (raw.rails && cards(raw.rails) !== cards(extras.rails))
+      throw new Error('Mock rails lost cards in the web parse: fixture drift.');
   }
 
   match(method: string, path: string): [RouteName, Record<string, string>] | null {
@@ -876,6 +1093,15 @@ export class MockApi {
               .filter((c) => c.members.some((m) => m.item_id === card.id))
               .map((c) => c.id),
             capture_id: capture?.id ?? null,
+            ...(() => {
+              const mlt = MORE_LIKE_THIS_SEEDS.find((m) => m.key === seed.key);
+              return mlt && this.opts.style
+                ? {
+                    style_match: styleMatchFor(mlt),
+                    experimental_line: this.opts.experimental === false ? null : WHY_LINE,
+                  }
+                : {};
+            })(),
           },
         };
       }
@@ -917,7 +1143,9 @@ export class MockApi {
       case 'getCapture': {
         const c = this.captures.get(params.id!);
         if (!c) return { error: 'not_found', status: 404, message: 'Not found.' };
-        return { json: this.captureDto(c) };
+        const json = this.styledCaptureDto(c);
+        if (c.ready) c.reads += 1;
+        return { json };
       }
       case 'correctCapture': {
         const c = this.captures.get(params.id!);

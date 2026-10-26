@@ -77,6 +77,8 @@ public struct HTTPTransport: Sendable {
     let response = try await send(
       baseURL: baseURL, method: method, path: path, query: query, body: encoded, bearer: bearer,
       idempotencyKey: idempotencyKey, expectedAccount: expectedAccount, timeout: timeout)
+    // 204 No Content (and an empty 202) carry no JSON body.
+    if response.data.isEmpty, let empty = EmptyBody() as? Result { return empty }
     do {
       return try AtlasJSON.decoder().decode(Result.self, from: response.data)
     } catch {

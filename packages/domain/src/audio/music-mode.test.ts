@@ -163,10 +163,18 @@ describe('audio analysis contract', () => {
   it('matches the committed audio contract fixture', () => {
     const fixture = JSON.parse(
       readFileSync(new URL('../../../../fixtures/audio/contract.json', import.meta.url), 'utf8'),
-    ) as { analysis_request: unknown; audio_asset: { camera_active: boolean; speech_analysis: string } };
+    ) as {
+      analysis_request: unknown;
+      analysis_request_with_client_recognition: { client_recognition: { vendor: string; artist_name: string } };
+      audio_asset: { camera_active: boolean; speech_analysis: string };
+    };
     expect(fixture.audio_asset.camera_active).toBe(false);
     expect(fixture.audio_asset.speech_analysis).toBe('off');
     expect(AnalyzeAudioRequest.parse(fixture.analysis_request).requested_components).toEqual(['music_match']);
+    // The optional ShazamKit hint parses as part of the same contract, and
+    // the plain request stays valid without it.
+    const hinted = AnalyzeAudioRequest.parse(fixture.analysis_request_with_client_recognition);
+    expect(hinted.client_recognition).toMatchObject({ vendor: 'shazamkit', artist_name: 'Fleetwood Mac' });
   });
 
   it('accepts the schema_version 2 music_match example and rejects speech in Music Mode', () => {

@@ -116,6 +116,11 @@ public enum CapabilityGate {
   public struct PhotoAnalysis: Equatable, Sendable {
     public var available: Bool
     public var message: String
+    /// The server runs photo and video readings as experimental (design D.3).
+    /// When true the capture button and results always show the label.
+    public var experimental: Bool = false
+    public var label: String? = nil
+    public var note: String? = nil
   }
 
   public static func photoAnalysis(_ capabilities: Capabilities?) -> PhotoAnalysis {
@@ -124,10 +129,21 @@ public enum CapabilityGate {
     }
     let analysis = capabilities.availability["analysis"]
     let flaggedOff = capabilities.flags["concentrate_analysis_enabled"] == false
+    let experimental = analysis?.experimental == true || analysis?.reason == "experimental_production"
+    let label = experimental ? nonEmpty(analysis?.label) ?? StyleCopy.experimentalBadge : nil
+    let note = experimental ? nonEmpty(analysis?.note) ?? StyleCopy.experimentalNote : nil
     if analysis?.available == false || (analysis == nil && flaggedOff) {
-      return PhotoAnalysis(available: false, message: photoAnalysisMessage(reasons: analysis?.reasons ?? []))
+      // The kill switch reports reason "paused": the photo is safe and is read when it's back.
+      let message = analysis?.reason == "paused"
+        ? StyleCopy.paused : photoAnalysisMessage(reasons: analysis?.reasons ?? [])
+      return PhotoAnalysis(available: false, message: message, experimental: experimental, label: label, note: note)
     }
-    return PhotoAnalysis(available: true, message: "")
+    return PhotoAnalysis(available: true, message: "", experimental: experimental, label: label, note: note)
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+    return value
   }
 
   /// User-facing copy. Never mentions models, providers or qualification:

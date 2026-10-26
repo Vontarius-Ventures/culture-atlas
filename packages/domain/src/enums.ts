@@ -54,6 +54,8 @@ export const JOB_TYPES = [
   'interest_expand',
   /** Amendment 2.3 Music Mode: explicit Explore of a private audio asset. */
   'analyze_audio',
+  /** Style design §D.2: "Try again" re-runs only the style reading and its rails (once per analysis). */
+  'style_retry',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;
@@ -135,13 +137,19 @@ export const PLAN_SECTIONS = ['film', 'food', 'music'] as const;
 export const PlanSection = z.enum(PLAN_SECTIONS);
 export type PlanSection = z.infer<typeof PlanSection>;
 
-/** Section status used by analyses and plan versions. */
-export const SECTION_STATUSES = ['pending', 'running', 'complete', 'partial', 'failed', 'skipped', 'unavailable'] as const;
+/**
+ * Section status used by analyses and plan versions. The style section and
+ * the style rails (prp/2026-10-23-style-analysis §B.4, R-16c) use
+ * pending -> running -> ready | empty | failed | held; the older sections keep
+ * complete/partial/skipped/unavailable. Clients treat any status they do not
+ * know as terminal.
+ */
+export const SECTION_STATUSES = ['pending', 'running', 'complete', 'partial', 'failed', 'skipped', 'unavailable', 'ready', 'empty', 'held'] as const;
 export const SectionStatus = z.enum(SECTION_STATUSES);
 export type SectionStatus = z.infer<typeof SectionStatus>;
 
 /** Analysis section names, published progressively. */
-export const ANALYSIS_SECTIONS = ['observations', 'references', 'research', 'wear', 'play', 'watch', 'eat'] as const;
+export const ANALYSIS_SECTIONS = ['observations', 'references', 'research', 'style', 'wear', 'play', 'watch', 'eat'] as const;
 export const AnalysisSection = z.enum(ANALYSIS_SECTIONS);
 export type AnalysisSection = z.infer<typeof AnalysisSection>;
 
@@ -164,7 +172,14 @@ export const LIMITS = {
   planMinItems: 2,
   planMaxItems: 5,
   recommendationsPerCategory: 3,
-  recommendationsPerAnalysis: 12,
+  /** 12 cross-domain cards plus up to 8 More-like-this cards (style design §C.5). */
+  recommendationsPerAnalysis: 20,
+  /** Cross-domain cards an analysis returns in `recommendations` (old clients). */
+  crossDomainRecommendationsMax: 12,
+  /** More-like-this cards per style subject; not counted against recommendationsPerCategory. */
+  moreLikeThisPerSubject: 8,
+  /** Style subjects with a rail (atlas_style_reading_v1 allows at most 2). */
+  styleSubjectsMax: 2,
   initialRenderedRecommendations: 6,
   relatedCachedMax: 6,
   /** Amendment 2.2: Qloo resolution is capped at 5 candidates per analysis (stage 1 reads 3-5). */
@@ -176,11 +191,14 @@ export const LIMITS = {
    * enrichment + two verifier checks (vision_verify, off by default; round 3:
    * one before the first section publishes, one before stage 2 publishes).
    * The verifier's calls are reserved separately and only when it is enabled.
+   * Style design §B.2: plus the vision_style reading (a new product surface,
+   * not a retry), reserved at job start with the others.
    */
-  visionCallsPerAnalysis: 4,
+  visionCallsPerAnalysis: 5,
   anchorsMax: 5,
   researchedReferencesMax: 5,
-  qlooRequestsPerJob: 12,
+  /** Style design §C.7: resolve 5, style tags 4, More-like-this 4, cross-domain 3, eat 1, retry 1. */
+  qlooRequestsPerJob: 18,
   providerRetriesPerStage: 2,
   analysisDeadlineMs: 60_000,
   clarifyingChoicesMax: 3,

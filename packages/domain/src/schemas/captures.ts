@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { AnalysisSection, CaptureSource, CaptureStatus, Category, ReferenceType, SectionStatus } from '../enums';
 import { DiscoveryCard, Focus, Image, ReferenceSummary, Timestamp, Uuid } from './common';
+import { AnalysisExperimental, RailDto, StyleReadingDto } from './style';
+export * from './style';
 
 /**
  * POST /v1/captures
@@ -78,6 +80,8 @@ export const AnalysisSummary = z.object({
   question: ClarifyingQuestion.nullable(),
   warnings: z.array(z.object({ code: z.string(), message: z.string() })),
   created_at: Timestamp,
+  /** Style design §D.3: the label every client shows; null when the analysis ran on qualified roles only. */
+  experimental: AnalysisExperimental.nullable().optional(),
 });
 export type AnalysisSummary = z.infer<typeof AnalysisSummary>;
 
@@ -102,6 +106,10 @@ export const CaptureResponse = z.object({
   available_categories: z.array(Category),
   /** Active job for this capture, if any (poll GET /v1/jobs/{id}). */
   job_id: Uuid.nullable(),
+  /** Style design §E.2: the guarded style reading; null until sections.style is "ready". */
+  style_reading: StyleReadingDto.nullable().optional(),
+  /** Style design §E.2: rails in display order (More like this per subject, then cross-domain). */
+  rails: z.array(RailDto).optional(),
 });
 export type CaptureResponse = z.infer<typeof CaptureResponse>;
 

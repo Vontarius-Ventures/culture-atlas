@@ -363,6 +363,10 @@ struct MediaDetailView: View {
         Text("We look for what's in the photo and use it to grow your feed. Nothing is invented.")
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
+        if analysis.experimental {
+          ExperimentalNotice(label: ExperimentalLabel(
+            label: analysis.label ?? StyleCopy.experimentalBadge, note: analysis.note ?? StyleCopy.experimentalNote))
+        }
       }
     }
   }
@@ -422,13 +426,29 @@ struct AnalysisResultView: View {
   /// The compiled capture (`GET /v1/captures/{id}`): references + Qloo cards.
   @State private var capture: CaptureResultResponse?
   @State private var openedCard: DiscoveryCard?
+  @State private var styleModel: CaptureStyleViewModel?
+  @State private var styleHighlight: StyleRegion?
 
   private var isAudio: Bool { route.kind == .audio }
 
+  /// The label for this reading: the analysis's own, else the server's
+  /// capabilities (production experimental mode).
+  private var experimentalLabel: ExperimentalLabel? {
+    if isAudio { return nil }
+    if let label = result?.experimental { return label }
+    let gate = CapabilityGate.photoAnalysis(controller.capabilities)
+    guard gate.experimental else { return nil }
+    return ExperimentalLabel(label: gate.label ?? StyleCopy.experimentalBadge, note: gate.note ?? StyleCopy.experimentalNote)
+  }
+
   var body: some View {
+    ScrollViewReader { reader in
     ScrollView {
       VStack(alignment: .leading, spacing: 20) {
         header
+        if let experimentalLabel {
+          ExperimentalNotice(label: experimentalLabel)
+        }
         if let result {
           if result.stillWorking {
             AnalysisLookingBanner()
@@ -443,7 +463,23 @@ struct AnalysisResultView: View {
             musicResult(result.result ?? AnalysisResult())
           } else {
             photoResult(result.result ?? AnalysisResult())
-            if let capture { captureSuggestions(capture) }
+            if let styleModel {
+              // Style-era capture (rails present): the style reading and rails replace the
+              // plain suggestions row; older analyses keep the compiled suggestions.
+              StyleOrSuggestions(model: styleModel) {
+                if let capture { captureSuggestions(capture, includeCards: false) }
+                CaptureStyleSection(
+                  model: styleModel, highlight: $styleHighlight, baseURL: controller.api.baseURL,
+                  scrollProxy: reader, setCity: { [api = controller.api] city in try await api.setCity(city) })
+              } fallback: {
+                if let capture { captureSuggestions(capture) }
+                else if let preview = result.result?.style { StylePreviewView(preview: preview) }
+              }
+            } else if let capture {
+              captureSuggestions(capture)
+            } else if let preview = result.result?.style {
+              StylePreviewView(preview: preview)
+            }
           }
           if result.finished {
             nextSteps
@@ -462,6 +498,7 @@ struct AnalysisResultView: View {
       .animation(AtlasMotion.spring, value: result)
       .animation(AtlasMotion.spring, value: capture)
     }
+    }
     .background(AtlasTheme.ivory.ignoresSafeArea())
     .navigationDestination(item: $openedCard) { card in FeedCardDetail(card: card) }
     .navigationTitle(isAudio ? "Your music" : "Your photo")
@@ -470,6 +507,26 @@ struct AnalysisResultView: View {
       ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
     }
     .task { await load() }
+    .task(id: result?.captureID) { await loadStyle() }
+  }
+
+  /// Once the capture exists, load its full style reading and rails
+  /// (`GET /v1/captures/{id}`), polling every 1.5 s until terminal.
+  private func loadStyle() async {
+    guard !isAudio, let captureID = result?.captureID else { return }
+    let api = controller.api
+    let model = styleModel ?? CaptureStyleViewModel(
+      load: { try await api.capture(captureID) },
+      retry: { try await api.retryStyle(captureID: captureID) },
+      waitingReason: result?.waitingReason)
+    if styleModel == nil { styleModel = model }
+    await model.run()
+  }
+
+  private var photoAspect: Double? {
+    if let aspect = styleModel?.imageAspect { return aspect }
+    guard let w = media?.media.width, let h = media?.media.height, w > 0, h > 0 else { return nil }
+    return Double(w) / Double(h)
   }
 
   @ViewBuilder private var header: some View {
@@ -496,6 +553,9 @@ struct AnalysisResultView: View {
                       authorize: controller.api.imageAuthorizer) {
             AtlasTheme.quiet
           }
+        }
+        .overlay {
+          StyleRegionOverlay(region: styleHighlight, imageAspect: photoAspect) { styleHighlight = nil }
         }
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .shadow(color: .black.opacity(0.08), radius: 14, y: 6)
@@ -537,7 +597,7 @@ struct AnalysisResultView: View {
 
   /// Sourced references and the recommendations made from them, exactly as
   /// the server compiled them (never filled in on the phone).
-  @ViewBuilder private func captureSuggestions(_ capture: CaptureResultResponse) -> some View {
+  @ViewBuilder private func captureSuggestions(_ capture: CaptureResultResponse, includeCards: Bool = true) -> some View {
     if capture.references.isEmpty == false {
       VStack(alignment: .leading, spacing: 8) {
         Text("References").font(.footnote.weight(.semibold)).foregroundStyle(AtlasTheme.muted)
@@ -554,7 +614,7 @@ struct AnalysisResultView: View {
       }
       .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
-    if capture.recommendations.isEmpty == false {
+    if includeCards, capture.recommendations.isEmpty == false {
       VStack(alignment: .leading, spacing: 10) {
         Text("Suggestions from this photo").font(.system(.title3, design: .serif))
         ScrollView(.horizontal, showsIndicators: false) {
@@ -671,6 +731,17 @@ extension AnalysisResultView {
       }
       try? await Task.sleep(nanoseconds: 3_000_000_000)
     }
+  }
+}
+
+/// Re-renders when the observed style model learns whether this capture has rails.
+private struct StyleOrSuggestions<Style: View, Fallback: View>: View {
+  @ObservedObject var model: CaptureStyleViewModel
+  @ViewBuilder var style: () -> Style
+  @ViewBuilder var fallback: () -> Fallback
+
+  var body: some View {
+    if model.capture?.rails != nil { style() } else { fallback() }
   }
 }
 

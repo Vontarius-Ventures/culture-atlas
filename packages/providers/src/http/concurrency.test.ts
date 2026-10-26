@@ -67,7 +67,8 @@ describe('Qloo shares one in-flight cap across callers', () => {
       active -= 1;
       return new Response(JSON.stringify({ success: true, results: { entities: [] } }), { status: 200 });
     }) as typeof fetch;
-    const config = loadProviderConfig({ QLOO_API_KEY: `limiter-test-${Date.now()}`, QLOO_MAX_CONCURRENCY: '3' });
+    // Spacing off here: this test is about the in-flight cap (spacing has its own test).
+    const config = loadProviderConfig({ QLOO_API_KEY: `limiter-test-${Date.now()}`, QLOO_MAX_CONCURRENCY: '3', QLOO_MIN_SPACING_MS: '0' });
     const a = createQlooProvider(config, { fetch: fetchImpl }) as QlooHttpProvider;
     const b = createQlooProvider(config, { fetch: fetchImpl }) as QlooHttpProvider;
     expect(a.limiter).toBe(b.limiter);

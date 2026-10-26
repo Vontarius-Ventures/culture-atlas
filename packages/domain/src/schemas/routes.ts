@@ -73,6 +73,10 @@ export const ROUTES = {
   getCapture: { method: 'GET', path: '/v1/captures/{id}', auth: 'any', scopes: ['captures:read'], params: IdParams, response: Cap.CaptureResponse, status: 200, idempotent: false, mcpTool: 'get_capture' },
   correctCapture: { method: 'POST', path: '/v1/captures/{id}/corrections', auth: 'any', scopes: ['captures:write'], params: IdParams, body: Cap.CorrectionRequest, response: Cap.CorrectionResponse, status: 202, idempotent: true },
   deleteCapture: { method: 'DELETE', path: '/v1/captures/{id}', auth: 'any', scopes: ['captures:write'], params: IdParams, response: null, status: 204, idempotent: true },
+  // Style design §D.2 / §E.4: "Try again" re-runs only the failed style reading (once; 409 retry_used after).
+  retryStyle: { method: 'POST', path: '/v1/captures/{id}/style/retry', auth: 'any', scopes: ['captures:write'], params: IdParams, response: Cap.StyleRetryResponse, status: 202, idempotent: true, extension: true },
+  // Style design §C.6: the user's own city for place rails (free text, never inferred).
+  setCity: { method: 'PUT', path: '/v1/me/city', auth: 'account', scopes: ['preferences:write'], body: Cap.SetCityRequest, response: null, status: 204, idempotent: true, extension: true },
   getReference: { method: 'GET', path: '/v1/references/{id}', auth: 'any', scopes: [], params: IdParams, query: R.ReferenceQuery, response: R.ReferenceResponse, status: 200, idempotent: false, mcpTool: 'explore_reference' },
   recordPreference: { method: 'POST', path: '/v1/preferences', auth: 'any', scopes: ['taste:write'], body: Pref.PreferenceRequest, response: Pref.PreferenceResponse, status: 200, idempotent: true, mcpTool: 'record_preference' },
   listSaved: { method: 'GET', path: '/v1/saved', auth: 'any', scopes: ['taste:read'], query: Pref.SavedQuery, response: Pref.SavedListResponse, status: 200, idempotent: false, mcpTool: 'list_saved' },

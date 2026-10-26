@@ -87,7 +87,16 @@ export function normalizeTag(value: unknown): QlooTag | null {
   const name = parsed.data.name;
   if (!id || !name) return null;
   const parents = (parsed.data.parents ?? [])
-    .map((p) => (typeof p === 'string' ? p : typeof p === 'object' && p && 'id' in p ? String((p as { id: unknown }).id) : null))
+    .map((p) =>
+      typeof p === 'string'
+        ? p
+        : typeof p === 'object' && p && 'id' in p
+          ? String((p as { id: unknown }).id)
+          : // /v2/tags lists the entity types a tag is used on as parents: [{ type: 'urn:entity:place' }].
+            typeof p === 'object' && p && 'type' in p && typeof (p as { type: unknown }).type === 'string'
+            ? (p as { type: string }).type
+            : null,
+    )
     .filter((p): p is string => !!p);
   const tag: QlooTag = { id, name, type: parsed.data.type ?? parsed.data.subtype ?? 'urn:tag', parents: parents.length ? parents : undefined };
   if (typeof parsed.data.popularity === 'number') tag.popularity = parsed.data.popularity;

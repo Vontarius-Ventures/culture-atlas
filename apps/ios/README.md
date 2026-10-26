@@ -66,6 +66,26 @@ target only. Copy `Config/Signing.xcconfig.example` to the gitignored
 
 `AtlasCaptureTests` reads `fixtures/native-contract` from the test bundle.
 
+## Style reading (experimental)
+
+Photo results show the server's **style reading** (aesthetic chips, measured
+palette, era, materials, construction, details, mood) and the rails it drives
+(**More like this** per subject, then Wear / Play / Watch / Eat), per
+`prp/2026-10-23-style-analysis/design.md` section F. The app loads
+`GET /v1/captures/{id}` and polls every 1.5 s until every section and rail is
+terminal (`AtlasCapture/Style/CaptureStyleViewModel.swift`). Every claim's text
+is the server's `display` string; an uncertain claim without one is dropped,
+never shown bare. Readings from unqualified roles carry the `Experimental`
+badge and note (analysis screen, reading header, capture button, rail caption,
+"Why this").
+
+Fixture preview (Debug builds only), for screenshots without a server:
+
+```sh
+SIMCTL_CHILD_ATLAS_STYLE_FIXTURE_IMAGE="$PWD/../web/public/samples/outfit.jpg" \
+  xcrun simctl launch <device> com.aomg.cultureatlas -AtlasStyleFixture [-AtlasStyleFixtureHighlight]
+```
+
 ## Music Mode
 
 Capture → **Music** (screen 19). Audio-only: camera stays off, no
@@ -81,6 +101,38 @@ is requested on Record. If camera permission is denied, Music Mode still works
    not colour alone. Playback never autoplays with sound.
 3. **Keep** stores an encrypted local draft. **Explore music** (screen 20)
    authorizes upload and `music_match` analysis. Speech stays off.
+
+## On-device song recognition (ShazamKit, optional)
+
+When the recording finishes, the app tries to recognize the song on-device in
+the background (`AtlasCapture/Audio/ShazamSongRecognizer.swift`). A recognized
+song becomes the `client_recognition` hint on the analyze request — the artist
+name and title the vendor returned, nothing else: no audio, transcript, or
+confidence leaves the phone. The hint never decides the match: the server
+searches its own catalog for the recognized artist and only a catalog result
+resolves (the same rule as the fingerprint and transcript tiers). When it
+resolves, the paid transcription tier is skipped; when it does not, everything
+behaves exactly as before. Android and the web do not send the hint; the field
+is optional on the contract.
+
+**The repo builds and tests without the framework.** Apple distributes ShazamKit
+behind developer sign-in, so the xcframework is never vendored. All ShazamKit
+code sits behind `#if canImport(SHShazamKit)`
+(`SongRecognizerFactory.isShazamKitAvailable` reports which build you have);
+CI and simulator runs compile the unavailable path, and
+`ClientRecognizedSongTests` covers the wire shape and the honest no-hint
+answer.
+
+To enable it in your own build:
+
+1. Download ShazamKit from developer.apple.com (Apple ID required).
+2. Drag `ShazamKit.xcframework` into the Xcode project → the **AtlasCapture**
+   target (which owns the recognizer) → *Frameworks, Libraries, and Embedded
+   Content* → **Embed & Sign**.
+3. Re-run `xcodegen generate` **after** adding it to `project.yml`
+   (`dependencies: - framework: path/to/ShazamKit.xcframework`) so the checked-in
+   project stays reproducible; `canImport(SHShazamKit)` then compiles the
+   recognizer in.
 
 ## Remaining physical-device and store gates
 
