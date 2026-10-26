@@ -1647,7 +1647,20 @@ export class CaptureCompiler {
     const signals = newRefs.filter(
       (r) => r.qloo && (r.resolution === 'resolved' || r.resolution === 'user_confirmed') && !nonAnchor.has(candidateNameKey(r.candidateName)),
     );
-    if (signals.length) {
+    // A fine-art work can be held by stage 1 and first published from stage 2. Keep its
+    // same-title film path alive even when the work itself has no Qloo entity/tag signal.
+    const styleSubjects = this.style?.reading?.subjects ?? [];
+    const titleFilmWorks = artworkEvidence(styleSubjects)
+      ? newRefs.filter(
+          (r) =>
+            r.type === 'work' &&
+            r.resolution !== 'rejected' &&
+            !nonAnchor.has(candidateNameKey(r.candidateName)) &&
+            r.certainty >= 0.5 &&
+            nameTokens(r.name).length >= 2,
+        )
+      : [];
+    if (signals.length || titleFilmWorks.length) {
       const { rows } = await ctx.db.query<{ category: Category; n: number }>(
         `SELECT category, COUNT(*)::int AS n FROM recommendations
           WHERE analysis_id = $1 AND category IS NOT NULL AND rail IS DISTINCT FROM 'more_like_this' GROUP BY category`,
@@ -1658,6 +1671,10 @@ export class CaptureCompiler {
       for (const category of order.filter((c): c is (typeof QLOO_CATEGORIES)[number] => (QLOO_CATEGORIES as readonly string[]).includes(c))) {
         const existing = counts.get(category) ?? 0;
         const categorySignals = signals.filter((r) => r.suggestedCategories.includes(category) || r.suggestedCategories.length === 0);
+        if (category === 'watch') {
+          for (const work of titleFilmWorks)
+            if (!categorySignals.some((r) => r.referenceId === work.referenceId)) categorySignals.push(work);
+        }
         if (existing >= LIMITS.recommendationsPerCategory || categorySignals.length === 0 || this.pastSoftDeadline()) continue;
         // Stage 2 appends with stage 1's evidence (FAST-02 keeps it append-only): the fine-art
         // gate reads the artwork's references, so a late, reference-signalled call cannot

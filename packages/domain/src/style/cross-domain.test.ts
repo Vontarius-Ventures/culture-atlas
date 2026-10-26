@@ -150,3 +150,59 @@ describe('a gated card needs a real style claim, and one name shows once (eval r
     expect(rerankCrossDomain([suit], [a, b], 0.5, { gateFashion: true }).map((e) => e.name)).toEqual(['Fixture Dunhill']);
   });
 });
+
+/**
+ * Eval r6: on a garment reading, a film or music card's plot and sound keywords share words with
+ * the reading in another sense. Tag labels mirror the measured classes (nationality, nightclub,
+ * black-and-white, release decade, mood, garment-noun keywords, a folded synonym, a place name).
+ */
+describe('a film or music keyword in another sense is not garment style evidence (eval r6)', () => {
+  const claim = (name: string) => storedAesthetic(name, { wording: 'resembles' });
+  const jacket = storedSubject({
+    id: 's1',
+    category: 'fashion',
+    label: 'Leather varsity bomber jacket',
+    aesthetics: [storedAesthetic('Varsity')],
+    lineage: [claim('American collegiate sportswear')],
+    mood: [claim('polished')],
+  });
+  const tennis = storedSubject({
+    id: 's1',
+    category: 'fashion',
+    label: 'Tennis skort outfit',
+    aesthetics: [storedAesthetic('Tennis whites'), storedAesthetic('Athletic')],
+    lineage: [claim('Club tennis dress')],
+    era: { ...claim('2010s'), cue: 'cut' },
+  });
+  const sneaker = storedSubject({ id: 's1', category: 'fashion', label: 'Black slip-on sneakers', aesthetics: [storedAesthetic('Smart-casual sneaker')] });
+  const tee = storedSubject({ id: 's1', category: 'fashion', label: 'Cropped tee', materials: [{ ...claim('Jersey'), texture: 'soft knit' }] });
+  const kept = (s: ReturnType<typeof storedSubject>, cards: ReturnType<typeof film>[]) => rerankCrossDomain([s], cards, 0.5, { dropStyleless: true }).map((e) => e.entity_id);
+
+  it('drops nationality, nightclub, palette, decade and mood collisions from a bridged rail', () => {
+    expect(kept(jacket, [artist('A', 'Fixture Pop Singer', [{ id: 'urn:tag:keyword:qloo:american', name: 'American' }])])).toEqual([]);
+    expect(kept(jacket, [film('B', 'Fixture Abroad Film', [{ id: 'urn:tag:keyword:qloo:american_abroad', name: 'American abroad' }])])).toEqual([]);
+    expect(kept(jacket, [artist('C', 'Fixture Polished Pop', [{ id: 'urn:tag:style:qloo:polished', name: 'Polished' }])])).toEqual([]);
+    expect(kept(tennis, [artist('D', 'Fixture Club Rapper', [{ id: 'urn:tag:keyword:qloo:club_ready', name: 'Club-Ready Rap Anthems' }])])).toEqual([]);
+    expect(kept(tennis, [film('E', 'Fixture Monochrome Film', [{ id: 'urn:tag:keyword:qloo:bw_scene', name: 'Black and white scene' }])])).toEqual([]);
+    expect(kept(tennis, [film('F', 'Fixture Recent Film', [{ id: 'urn:tag:keyword:qloo:2010s', name: '2010s' }])])).toEqual([]);
+  });
+
+  it('drops a match reached only by folding, or by a place of the same spelling', () => {
+    expect(kept(sneaker, [film('A', 'Fixture Family Drama', [{ id: 'urn:tag:keyword:qloo:kicked_out', name: 'Mother kicks her son out of the house' }])])).toEqual([]);
+    expect(kept(tee, [film('B', 'Fixture Crime Film', [{ id: 'urn:tag:keyword:qloo:new_jersey', name: 'New jersey' }])])).toEqual([]);
+  });
+
+  it('keeps a card whose own tag writes a style, lineage or material word of the reading', () => {
+    const skate = film('A', 'Fixture Skate Film', [{ id: 'urn:tag:keyword:qloo:sneakers', name: 'Sneakers' }]);
+    const sport = film('B', 'Fixture Sports Film', [{ id: 'urn:tag:keyword:qloo:athletic_training', name: 'Athletic training' }]);
+    const campus = film('C', 'Fixture Campus Film', [{ id: 'urn:tag:theme:qloo:varsity', name: 'Varsity' }]);
+    expect(kept(sneaker, [skate])).toEqual(['A']);
+    expect(kept(tennis, [sport])).toEqual(['B']);
+    expect(kept(jacket, [campus])).toEqual(['C']);
+  });
+
+  it('is scoped to cross-domain cards: a wear rail\'s brand tags still match by these words', () => {
+    const brand = film('A', 'Fixture Heritage Brand', [{ id: 'urn:tag:style:qloo:american', name: 'American' }]);
+    expect(crossDomainScores([jacket], [brand], { periodGuard: false })[0]!.styleHit).toBe(true);
+  });
+});

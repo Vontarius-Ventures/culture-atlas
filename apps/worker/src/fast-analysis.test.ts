@@ -15,6 +15,8 @@ import {
   type VlmEnrichResult,
   type VlmProvider,
   type VlmResult,
+  type VlmStyleReader,
+  type VlmStyleResult,
 } from '@culture-atlas/providers';
 import { FakeQloo } from '@culture-atlas/providers/testing';
 import { CATALOG, accountCtx, anonCtx, fakeQloo, runJobs, testJpeg, vlmFixture, world } from './test-world';
@@ -104,6 +106,43 @@ class ScriptedEnricher implements VlmEnricher {
   }
 }
 
+class PaintingStyleReader implements VlmStyleReader {
+  readonly id = 'vlm-style:fake-painting';
+  capability() {
+    return AVAILABLE;
+  }
+  async readStyle(): Promise<VlmStyleResult> {
+    return {
+      reading: {
+        schema: 'atlas_style_reading_v1',
+        usable: true,
+        unusable_reason: null,
+        summary: 'A Baroque oil portrait painting.',
+        subjects: [
+          {
+            id: 's1',
+            category: 'media',
+            label: 'Baroque oil portrait painting',
+            region: { x: 0, y: 0, w: 1, h: 1 },
+            aesthetics: [],
+            era: null,
+            lineage: [],
+            materials: [],
+            construction: [],
+            palette: [],
+            mood: [],
+            details: [],
+            brand: null,
+          },
+        ],
+      },
+      model: 'fake-style',
+      durationMs: 1,
+      image: { width: 640, height: 480 },
+    };
+  }
+}
+
 /** The fixture Qloo, plus one extra film that only a mid-century signal returns. */
 function qlooWithEnrichmentFilm(): FakeQloo {
   return new FakeQloo(
@@ -121,6 +160,20 @@ function qlooWithEnrichmentFilm(): FakeQloo {
           };
         return { entities: CATALOG.insights[req.filterType] ?? [], tags: [] };
       },
+    },
+    { live: true },
+  );
+}
+
+function qlooWithArtworkTitleFilm(): FakeQloo {
+  return new FakeQloo(
+    {
+      search: (query, types) =>
+        query.toLowerCase() === 'girl with a pearl earring' && types?.includes('urn:entity:movie')
+          ? [{ entity_id: 'FIXTURE-MOVIE-PEARL', name: 'Girl with a Pearl Earring', types: ['urn:entity:movie'], properties: {}, tags: [] }]
+          : [],
+      tags: (query) => CATALOG.tags[query.toLowerCase()] ?? [],
+      insights: () => ({ entities: [], tags: [] }),
     },
     { live: true },
   );
@@ -148,6 +201,61 @@ async function stageTrace(jobId: string, name: string) {
 }
 
 describe('two-stage photo reading (FAST-02)', () => {
+  it('adds a same-title film when stage 2 first publishes a fine-art work reference', async () => {
+    // The h61 shape: stage 1 holds the title (capitalized title words are brand-like) and a
+    // supported second reading publishes it as a resemblance, after the main Watch call ran.
+    const quick = VlmQuickRead.parse({
+      title: 'A painted portrait',
+      interpretation: 'A painted portrait of a figure in a blue head wrap.',
+      candidates: [
+        { name: 'Girl with a Pearl Earring', type: 'work', relation: 'resembles', certainty: 0.85, domain: 'art', evidence: 'distinctive_form', evidence_text: null, tag_query: null },
+      ],
+      quality: { usable: true, issue: null },
+    });
+    const enricher = new ScriptedEnricher(async () =>
+      VlmEnrichment.parse({
+        observations: [{ text: 'Blue head wrap', kind: 'garment' }],
+        visible_text: [],
+        regions: [],
+        uncertainty: { overall: 'low', notes: [] },
+        competing_subjects: [],
+        illegible_text_present: false,
+        confirmed: [{ name: 'Girl with a Pearl Earring', rationale: 'Pose, head wrap and earring match', verdict: 'supported' }],
+        additional_candidates: [],
+      }),
+    );
+    const { providers } = world({
+      overrides: {
+        vlm: new QuickVlm(quick),
+        vlmEnrich: enricher,
+        vlmStyle: new PaintingStyleReader(),
+        qloo: qlooWithArtworkTitleFilm(),
+      },
+    });
+    const ctx = await accountCtx(providers);
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+
+    const view = await captures.getCapture(ctx, { id: capture_id });
+    const film = view.recommendations.find((r) => r.category === 'watch' && r.title === 'Girl with a Pearl Earring');
+    expect(film?.reason).toBe('A film sharing its title with Girl with a Pearl Earring, the work your photo resembles');
+    expect(await stageTrace(job_id, 'enrich')).toMatchObject({ status: 'complete', appended: { watch: 1 } });
+    const { rows } = await db.query<{ status: string; query_context: { stage: string }; results: { entity_id: string }[] }>(
+      `SELECT pq.status, pq.query_context, pq.results FROM provider_queries pq
+        JOIN analyses a ON a.id = pq.analysis_id
+        WHERE a.capture_id = $1 AND pq.provider = 'qloo' AND pq.operation = 'search'
+          AND pq.query_context->>'stage' = 'recommend:title'`,
+      [capture_id],
+    );
+    expect(rows).toEqual([
+      {
+        status: 'ok',
+        query_context: expect.objectContaining({ stage: 'recommend:title', category: 'watch', work_reference: 'Girl with a Pearl Earring' }),
+        results: [expect.objectContaining({ entity_id: 'FIXTURE-MOVIE-PEARL', name: 'Girl with a Pearl Earring' })],
+      },
+    ]);
+  });
+
   it('stage 2 adds reasons, evidence and references without reordering or removing published cards', async () => {
     let captureId = '';
     let before: Awaited<ReturnType<typeof recRows>> = [];

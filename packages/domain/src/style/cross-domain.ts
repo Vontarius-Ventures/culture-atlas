@@ -1,6 +1,6 @@
 import type { Category } from '../enums';
 import type { StoredSubject } from './types';
-import { echoKey, ECHO_CAP, ECHO_PENALTY, entityProfile, scoreMatch, subjectProfile, type StyleMatchResult } from './affinity';
+import { COLOR_WORDS, echoKey, ECHO_CAP, ECHO_PENALTY, entityProfile, REGION_WORDS, scoreMatch, subjectProfile, type MatchHit, type MatchSlot, type StyleMatchResult } from './affinity';
 
 /**
  * Cross-domain re-ranking (eval r3), pure and deterministic: how the reading
@@ -149,6 +149,29 @@ export const PERIOD_STYLE_WORDS: ReadonlySet<string> = new Set(
    brutalist brutalism constructivist constructivism`.split(/\s+/).filter(Boolean),
 );
 
+/**
+ * Eval r6 (h28, h29, h47, h48, h71): a film or music tag is mostly a plot, cast or sound keyword, so
+ * most words it shares with a garment reading are another sense of the word — "American" (a
+ * nationality, from "American collegiate sportswear"), "Club-Ready Rap" (from "Club tennis dress"),
+ * "Black and white scene" (a palette), "2010s" (a release decade), "Polished" (a mood), "Suit and
+ * tie" or "Heart on sleeve" (a garment noun or a construction word). Only a word of the reading's
+ * own aesthetic, lineage or material claim, written in the tag itself ("Sneakers", "Satin"), is
+ * garment style evidence on such a card. A word reached by folding ("kicks" -> sneaker) is not.
+ */
+const CLAIM_SLOTS: ReadonlySet<MatchSlot> = new Set(['aesthetics', 'lineage', 'materials']);
+// "american" is folded into, but not listed in, REGION_WORDS (it is the catalogue's default market).
+const SENSE_COLLISION_WORDS: ReadonlySet<string> = new Set(['american', 'club', 'jersey']);
+
+function isCrossDomainClaimHit(h: MatchHit): boolean {
+  if (h.level !== 'name' || !CLAIM_SLOTS.has(h.slot)) return false;
+  const t = h.token;
+  if (COLOR_WORDS.has(t) || REGION_WORDS.has(t) || PERIOD_STYLE_WORDS.has(t) || SENSE_COLLISION_WORDS.has(t) || /\d/.test(t)) return false;
+  return h.label
+    .toLowerCase()
+    .split(/[^\p{L}]+/u)
+    .some((w) => w.length >= 3 && (w.startsWith(t) || (t.startsWith(w) && w.length >= 4)));
+}
+
 /** Strike a match's genre/period hits and re-derive the score and style claim from what is left. */
 function withoutPeriodWords(m: StyleMatchResult): { score: number; styleHit: boolean } {
   if (!m.hits.some((h) => PERIOD_STYLE_WORDS.has(h.token))) return { score: m.score, styleHit: m.styleHit };
@@ -185,10 +208,11 @@ export function crossDomainScores<T extends { entity_id: string; tags?: { id: st
       const m = scoreMatch(profiles[s]!, prof, { fashion: false });
       // A garment reading's cross-domain (music/film) evidence must be a style word, not a genre or
       // period term of the same spelling (eval r4, h71: Beethoven/Schubert/Brahms for a mint dress).
-      const kept = options.periodGuard && subjects[s]!.category === 'fashion' ? withoutPeriodWords(m) : m;
+      const garment = options.periodGuard && subjects[s]!.category === 'fashion';
+      const kept = garment ? withoutPeriodWords(m) : m;
       if (kept.score > style) {
         style = kept.score;
-        styleHit = kept.styleHit;
+        styleHit = kept.styleHit && (!garment || m.hits.some(isCrossDomainClaimHit));
       }
     }
     return { e, i, style, styleHit };

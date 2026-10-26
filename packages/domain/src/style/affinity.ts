@@ -141,7 +141,7 @@ const REGION_FOLD: Record<string, string> = {
   america: 'american',
   usa: 'american',
 };
-const REGION_WORDS = new Set([...vlmLexicons.NATIONALITIES, ...Object.keys(REGION_FOLD), 'scandinavian', 'mediterranean']);
+export const REGION_WORDS: ReadonlySet<string> = new Set([...vlmLexicons.NATIONALITIES, ...Object.keys(REGION_FOLD), 'scandinavian', 'mediterranean']);
 
 /** Region keys a text names ("Brazilian Fashion" -> brazilian; "Middle Eastern Luxury" -> middle_eastern). */
 export function regionsOf(text: string): string[] {
@@ -335,7 +335,7 @@ export interface SubjectProfile {
 }
 
 /** Colour words describe the photo's palette, which brands rarely share: they count for little. */
-const COLOR_WORDS = new Set(
+export const COLOR_WORDS: ReadonlySet<string> = new Set(
   'black white grey gray red blue navy green yellow orange pink purple brown beige tan cream ivory gold silver olive khaki teal mint aqua burgundy maroon crimson charcoal camel ecru'.split(' '),
 );
 const COLOR_CAP = 0.12;
