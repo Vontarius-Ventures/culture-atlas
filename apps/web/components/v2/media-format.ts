@@ -4,9 +4,16 @@
  * these checks only reject obviously unsupported files before bytes move.
  */
 
-export type MediaKind = 'photo' | 'video';
+/** Media kinds: 'audio' is a Music Mode recording (amendment 2.3). */
+export type MediaKind = 'photo' | 'video' | 'audio';
 export type MediaSource =
-  'browser_camera' | 'phone_camera' | 'meta_glasses' | 'upload' | 'legacy_sensor';
+  | 'browser_camera'
+  | 'phone_camera'
+  | 'meta_glasses'
+  | 'upload'
+  | 'legacy_sensor'
+  | 'browser_microphone'
+  | 'phone_microphone';
 export type MediaStatus =
   'pending_upload' | 'verifying' | 'processing' | 'ready' | 'failed' | 'deleted';
 
@@ -64,6 +71,8 @@ export const SOURCE_LABELS: Record<MediaSource, string> = {
   meta_glasses: 'Meta glasses',
   upload: 'Upload',
   legacy_sensor: 'World Sensor',
+  browser_microphone: 'Browser microphone',
+  phone_microphone: 'Phone microphone',
 };
 
 /** Preparation status in words (never color alone). Library readiness is not analysis. */
@@ -74,11 +83,19 @@ export function statusLabel(status: MediaStatus, kind: MediaKind): string {
     case 'verifying':
       return 'Checking file';
     case 'processing':
-      return kind === 'video' ? 'Preparing video' : 'Preparing photo';
+      return kind === 'video'
+        ? 'Preparing video'
+        : kind === 'audio'
+          ? 'Preparing recording'
+          : 'Preparing photo';
     case 'ready':
       return 'Ready';
     case 'failed':
-      return kind === 'video' ? 'Video could not be prepared' : 'Photo could not be prepared';
+      return kind === 'video'
+        ? 'Video could not be prepared'
+        : kind === 'audio'
+          ? 'Recording could not be prepared'
+          : 'Photo could not be prepared';
     case 'deleted':
       return 'Deleted';
   }
@@ -139,7 +156,8 @@ export const ACCEPT_MEDIA = 'image/jpeg,image/png,image/webp,video/mp4,video/qui
 
 export interface FileCheck {
   ok: boolean;
-  kind: MediaKind | null;
+  /** The file chooser adds photos and videos; Music Mode keeps recordings separately. */
+  kind: 'photo' | 'video' | null;
   contentType: string | null;
   /** Per-item reason when the file is rejected before upload. */
   reason: string | null;
@@ -164,7 +182,7 @@ export function checkMediaFile(
   if (mime && mime !== byExt && !(byExt === 'video/quicktime' && mime === 'video/mp4'))
     return reject('The file name does not match its contents. Export it again and retry.');
   const contentType = mime && Object.values(TYPE_BY_EXTENSION).includes(mime) ? mime : byExt;
-  const kind: MediaKind = contentType.startsWith('image/') ? 'photo' : 'video';
+  const kind: 'photo' | 'video' = contentType.startsWith('image/') ? 'photo' : 'video';
   if (file.size <= 0) return reject('This file is empty.');
   const max = kind === 'photo' ? limits.photo_max_bytes : limits.video_max_bytes;
   if (file.size > max)
@@ -175,7 +193,11 @@ export function checkMediaFile(
     );
   return { ok: true, kind, contentType, reason: null };
 
-  function reject(reason: string, k: MediaKind | null = null, ct: string | null = null): FileCheck {
+  function reject(
+    reason: string,
+    k: 'photo' | 'video' | null = null,
+    ct: string | null = null,
+  ): FileCheck {
     return { ok: false, kind: k, contentType: ct, reason };
   }
 }
@@ -224,10 +246,11 @@ export function mediaTitle(m: { title?: string | null; kind: MediaKind; created_
     month: 'short',
     day: 'numeric',
   });
-  return `${m.kind === 'video' ? 'Video' : 'Photo'} from ${date}`;
+  const noun = m.kind === 'video' ? 'Video' : m.kind === 'audio' ? 'Recording' : 'Photo';
+  return `${noun} from ${date}`;
 }
 
-/** "Meta glasses · Video · 0:42" / "Phone camera · Ready". */
+/** "Meta glasses · Video · 0:42" / "Phone camera · Ready" / "Phone microphone · Recording · 0:15". */
 export function mediaMeta(m: {
   kind: MediaKind;
   source: MediaSource;
@@ -235,8 +258,8 @@ export function mediaMeta(m: {
   duration_ms?: number;
 }): string {
   const parts = [SOURCE_LABELS[m.source]];
-  if (m.kind === 'video' && m.status === 'ready') {
-    parts.push('Video');
+  if ((m.kind === 'video' || m.kind === 'audio') && m.status === 'ready') {
+    parts.push(m.kind === 'video' ? 'Video' : 'Recording');
     if (m.duration_ms) parts.push(formatDuration(m.duration_ms));
   } else parts.push(statusLabel(m.status, m.kind));
   return parts.join(' · ');

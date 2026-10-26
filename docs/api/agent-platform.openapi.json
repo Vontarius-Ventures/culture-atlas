@@ -327,7 +327,8 @@
               "type": "string",
               "enum": [
                 "photo",
-                "video"
+                "video",
+                "audio"
               ]
             }
           },
@@ -355,7 +356,9 @@
                 "phone_camera",
                 "meta_glasses",
                 "upload",
-                "legacy_sensor"
+                "legacy_sensor",
+                "browser_microphone",
+                "phone_microphone"
               ]
             }
           },
@@ -416,7 +419,8 @@
                                 "type": "string",
                                 "enum": [
                                   "photo",
-                                  "video"
+                                  "video",
+                                  "audio"
                                 ]
                               },
                               "source": {
@@ -426,7 +430,9 @@
                                   "phone_camera",
                                   "meta_glasses",
                                   "upload",
-                                  "legacy_sensor"
+                                  "legacy_sensor",
+                                  "browser_microphone",
+                                  "phone_microphone"
                                 ]
                               },
                               "status": {
@@ -464,7 +470,7 @@
                               "duration_ms": {
                                 "type": "integer",
                                 "exclusiveMinimum": 0,
-                                "maximum": 120000
+                                "maximum": 600000
                               },
                               "width": {
                                 "type": "integer",
@@ -727,7 +733,8 @@
                           "type": "string",
                           "enum": [
                             "photo",
-                            "video"
+                            "video",
+                            "audio"
                           ]
                         },
                         "source": {
@@ -737,7 +744,9 @@
                             "phone_camera",
                             "meta_glasses",
                             "upload",
-                            "legacy_sensor"
+                            "legacy_sensor",
+                            "browser_microphone",
+                            "phone_microphone"
                           ]
                         },
                         "status": {
@@ -775,7 +784,7 @@
                         "duration_ms": {
                           "type": "integer",
                           "exclusiveMinimum": 0,
-                          "maximum": 120000
+                          "maximum": 600000
                         },
                         "width": {
                           "type": "integer",

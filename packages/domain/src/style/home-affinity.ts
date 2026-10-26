@@ -1,3 +1,4 @@
+import type { QlooEntity } from '@culture-atlas/providers';
 import type { StoredSubject } from './types';
 import { entityProfile, scoreMatch, subjectProfile, type EntityTagLike } from './affinity';
 import type { StyleVocabulary, VocabEntry } from './vocabulary';
@@ -118,4 +119,37 @@ export function rankHomeCatalogue(
     out.push({ id: b.id, name: b.name, score: m.score });
   }
   return out.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id)).slice(0, options.max ?? 6);
+}
+
+/**
+ * The home kind of a READING's primary subject (interior words, or a coffee drink): what the
+ * photo is actually about for brand questions (eval r3, relevance cause 5).
+ */
+export function homeKindOfReading(subjects: readonly Pick<StoredSubject, 'category' | 'label' | 'materials' | 'construction' | 'aesthetics'>[]): HomeKind | null {
+  const s = subjects[0];
+  if (!s) return null;
+  if (s.category === 'interior') return homeKindOf(s);
+  if (s.category === 'food') return drinkKindOf(s);
+  return null;
+}
+
+/**
+ * The industries a Wear rail may show for a home kind (eval r3, cause 5): an espresso machine or
+ * a coffee drink gets coffee and kitchenware brands only — never the eyewear and jewelry houses
+ * a coffee brand's co-likers pull in. Other kinds keep their own industry.
+ */
+export const WEAR_INDUSTRIES: Record<HomeKind, readonly string[]> = {
+  coffee: [HOME_INDUSTRY.coffee, HOME_INDUSTRY.kitchenware],
+  kitchenware: [HOME_INDUSTRY.kitchenware, HOME_INDUSTRY.coffee],
+  furniture: [HOME_INDUSTRY.furniture],
+  tableware: [HOME_INDUSTRY.tableware],
+  decor: [HOME_INDUSTRY.decor],
+  ceramics: [HOME_INDUSTRY.ceramics],
+  interior: [HOME_INDUSTRY.interior],
+};
+
+/** Whether a real Qloo brand entity itself carries one of the allowed industry tags. */
+export function wearIndustryAllowed(entity: Pick<QlooEntity, 'tags'>, kind: HomeKind): boolean {
+  const allowed = new Set(WEAR_INDUSTRIES[kind]);
+  return (entity.tags ?? []).some((t) => allowed.has(t.id));
 }

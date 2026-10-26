@@ -8,7 +8,7 @@
  * Records carry the owning account id; the engine never shows or resumes a
  * record for any other signed-in account.
  */
-import type { MediaKind, MediaStatus } from './media-format';
+import type { MediaStatus } from './media-format';
 
 export type UploadPhase =
   | 'queued'
@@ -32,7 +32,8 @@ export interface UploadEntry {
   client_capture_id: string;
   account_id: string;
   filename: string;
-  kind: MediaKind;
+  /** The byte-transfer queue carries photos and videos; recordings keep through POST /v2/media/audio. */
+  kind: 'photo' | 'video';
   content_type: string;
   source: 'browser_camera' | 'upload';
   byte_size: number;

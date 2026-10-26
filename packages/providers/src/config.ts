@@ -98,6 +98,12 @@ const BaseProviderConfigSchema = z.object({
   NODE_ENV: optional,
   MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
+  /**
+   * Unsettled attempts reserve worst-case cost here until billing is
+   * reconciled. Low caps can stall multi-photo runs even when actual spend is
+   * small. Non-production defaults to $5; production stays unset/fail-closed
+   * unless an operator explicitly configures a ceiling.
+   */
   MODEL_MAX_UNKNOWN_SPEND_USD: z.coerce.number().positive().optional(),
   ACCOUNT_DAILY_MEDIA_ANALYSES: z.coerce.number().int().positive().default(50),
   FEATHERLESS_API_KEY: optional,
@@ -179,6 +185,11 @@ const BaseProviderConfigSchema = z.object({
 
 export const ProviderConfigSchema = BaseProviderConfigSchema.transform((c) => ({
   ...c,
+  // Unsettled attempts hold their worst-case reservation against this ceiling;
+  // low caps can stall multi-photo runs despite small actual spend. Keep
+  // eval/dev usable without weakening production's explicit-ceiling requirement.
+  MODEL_MAX_UNKNOWN_SPEND_USD:
+    c.MODEL_MAX_UNKNOWN_SPEND_USD ?? (c.NODE_ENV === 'production' ? undefined : 5),
   VLM_MODEL: c.VLM_MODEL ?? DEFAULT_MODELS[c.LLM_PROVIDER].vlm,
   RESEARCH_MODEL: c.RESEARCH_MODEL ?? DEFAULT_MODELS[c.LLM_PROVIDER].text,
 }));

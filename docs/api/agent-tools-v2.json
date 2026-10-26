@@ -1,6 +1,6 @@
 {
   "schema_version": "2.1",
-  "catalog_version": "2.2.0",
+  "catalog_version": "2.3.0",
   "tools": [
     {
       "name": "list_media",
@@ -16,7 +16,8 @@
             "type": "string",
             "enum": [
               "photo",
-              "video"
+              "video",
+              "audio"
             ]
           },
           "status": {
@@ -36,7 +37,9 @@
               "phone_camera",
               "meta_glasses",
               "upload",
-              "legacy_sensor"
+              "legacy_sensor",
+              "browser_microphone",
+              "phone_microphone"
             ]
           },
           "cursor": {

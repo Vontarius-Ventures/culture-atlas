@@ -604,14 +604,19 @@ export class MediaIntake {
       media: {
         schema_version: 1 as const,
         id,
-        kind: m.kind as 'photo' | 'video',
+        kind: m.kind as 'photo' | 'video' | 'audio',
         source: m.source,
         status: m.status,
         analysis_status: m.analysis_status,
         created_at: m.created_at.toISOString(),
         title: m.title,
         ...(m.width ? { width: m.width, height: m.height } : {}),
-        ...(m.duration_ms ? { duration_ms: m.duration_ms, audio_present: m.audio_present } : {}),
+        ...(m.duration_ms ? { duration_ms: m.duration_ms } : {}),
+        // A video row states whether it carries sound; audio rows have no such
+        // flag (their detail is schema_version 2), so null is simply omitted.
+        ...(m.audio_present !== null && m.audio_present !== undefined
+          ? { audio_present: m.audio_present }
+          : {}),
       },
       generation: m.generation,
       revision: m.revision,
@@ -664,9 +669,12 @@ export class MediaIntake {
         throw new AppError('invalid_input');
     }
     const { rows } = await this.ctx.db.query(
+      // Amendment 2.3: the page lists photos and videos only, unless the client
+      // asks for a kind (audio = Music Mode recordings); legacy clients never
+      // meet a row they do not know.
       `SELECT id,created_at FROM media_assets WHERE account_id=$1 AND deleted_at IS NULL
-       AND kind IN ('photo','video')
-       AND ($2::text IS NULL OR kind=$2) AND ($3::text IS NULL OR status=$3) AND ($4::text IS NULL OR source=$4)
+       AND (($2::text IS NULL AND kind IN ('photo','video')) OR kind=$2)
+       AND ($3::text IS NULL OR status=$3) AND ($4::text IS NULL OR source=$4)
        AND ($5::timestamptz IS NULL OR (created_at,id)<($5,$6::uuid))
        ORDER BY created_at DESC,id DESC LIMIT $7`,
       [

@@ -26,6 +26,8 @@ import { acceptedTags, bestFilterTag, mapSubjectTags, primaryStyleTag, tagLookup
 import { computeSwatches, PALETTE_SIZE, swatchIsBackground, swatchPresentInRegion, type Swatch } from '../style/palette';
 import { buildStyleReason, sharedClaims, type StyleMatch, type StyleMatchClaim } from '../style/reasons';
 import { affinityReason, entityProfile, genreFilterFor, rankCatalogue, scoreMatch, subjectProfile } from '../style/affinity';
+import { echoKey, echoNames, ECHO_CAP, ECHO_PENALTY } from '../style/affinity';
+import { bridgeTargets, entityAdjacency, mediaArtworkGate } from '../style/adjacency';
 import { drinkKindOf, homeKindOf, homeVocabulary, rankHomeCatalogue, type HomeKind } from '../style/home-affinity';
 import { lowerFirst } from '../style/text';
 import { matchClaims, rankAffinity, type AffinityCandidate } from '../style/affinity-rail';
@@ -106,6 +108,8 @@ export interface StyleBridge {
   entityId: string;
   name: string;
   subjectId: string;
+  /** The origin subject's category: only some subjects' bridges are real cross-domain adjacency (eval r3, cause 1). */
+  subjectCategory: StoredSubject['category'];
   /** The aesthetic the subject's rail was built on (reason text "from your {aesthetic} rail"). */
   aesthetic: string | null;
 }
@@ -247,6 +251,14 @@ export function dedupeByName<T extends { entity: { name: string } }>(list: reado
     return true;
   });
 }
+
+/** Brand names the subject itself already surfaced: brand anchors, the read logo, the identified entity (echo keys). */
+function subjectEchoNames(s: StoredSubject | null, anchors: readonly StyleAnchor[]): ReadonlySet<string> {
+  const names = anchors.filter((a) => a.types.includes('urn:entity:brand')).map((a) => a.name);
+  if (s?.brand?.name) names.push(s.brand.name);
+  if (s?.entity?.name) names.push(s.entity.name);
+  return echoNames(names);
+}
 /** TOPIC-1: Qloo theme tags on films per subject category (recorded: fixtures/qloo/probe-2026-10-24-tune). */
 export interface StyleTopic {
   tagId: string;
@@ -331,6 +343,18 @@ export class StyleStage {
     return [...this.bridgeList];
   }
 
+  /**
+   * Whether any subject's rails may bridge into a cross-domain category at all (eval r3, cause
+   * 1). False once the reading exists and no subject category is bridge-eligible (interior, craft,
+   * food and place photos bridge nowhere): the long no-anchor bridge wait is then pointless,
+   * because their entertainment surface is the topic path, not a rail brand's co-likers. True
+   * while the reading is still unknown.
+   */
+  get bridgeEligible(): boolean {
+    const subjects = this.stored?.subjects;
+    return !subjects || subjects.some((s) => bridgeTargets(s.category).length > 0);
+  }
+
   /** R-5: resolves when the More-like-this primary returned, the style stage ended without rails, or `ms` passed. */
   async waitForBridges(ms: number): Promise<StyleBridge[]> {
     await within(this.primary.promise, ms);
@@ -375,12 +399,16 @@ export class StyleStage {
   /**
    * smatch-1 for cross-domain cards: Qloo's own order, re-ranked by how well each result's own tags
    * match the reading (half and half), so a film tagged "Midcentury design history" or "Culinary
-   * cinema" rises for the room or the dish it echoes. Never drops a result — unless the reading is
-   * the only signal (`dropStyleless`): then a result sharing none of its words is left out
-   * (measured: a bodybuilding label for a tennis court, an obscure thriller for a rustic cafe;
-   * empty beats junk).
+   * cinema" rises for the room or the dish it echoes. Drops a result only for a stated policy:
+   * the reading is the only signal (`dropStyleless`, measured: a bodybuilding label for a tennis
+   * court), or the card repeats an anchor brand beyond the echo cap (eval r3, cause 4) — an echo
+   * is penalized first, so a genuinely best echo can still show once.
    */
-  rerankCrossDomain<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[], styleShare = 0.5, options: { gateFashion?: boolean; dropStyleless?: boolean } = {}): T[] {
+  rerankCrossDomain<T extends { entity_id: string; name?: string; tags?: { id: string; name: string }[] }>(
+    entities: readonly T[],
+    styleShare = 0.5,
+    options: { gateFashion?: boolean; dropStyleless?: boolean; echoNames?: ReadonlySet<string> } = {},
+  ): T[] {
     // Wear cards for a garment pass the same product and tier gates as its rail (no couture house
     // next to a casual dress, no eyewear house for a jacket).
     const garment = options.gateFashion ? this.stored?.subjects.find((x) => x.category === 'fashion') : undefined;
@@ -393,11 +421,32 @@ export class StyleStage {
       scored = this.crossDomainScores(kept);
     }
     const best = Math.max(0, ...scored.map((x) => x.style));
-    if (best <= 0 || kept.length < 2) return [...kept];
+    if (best <= 0 || kept.length < 2) return this.capEchoes([...kept], options.echoNames);
+    const echo = (e: T) => !!options.echoNames?.size && !!e.name && options.echoNames.has(echoKey(e.name));
+    let echoes = 0;
     return scored
-      .map((x) => ({ ...x, score: styleShare * (x.style / best) + (1 - styleShare) / (1 + x.i / 5) }))
+      .map((x) => ({ ...x, score: (styleShare * (x.style / best) + (1 - styleShare) / (1 + x.i / 5)) * (echo(x.e) ? ECHO_PENALTY : 1) }))
       .sort((a, b) => b.score - a.score || a.i - b.i)
+      .filter((x) => {
+        if (!echo(x.e)) return true;
+        // At most one card may repeat an anchor brand; repeats beyond that are cut (eval r3, cause 4).
+        if (echoes >= ECHO_CAP) return false;
+        echoes++;
+        return true;
+      })
       .map((x) => x.e);
+  }
+
+  /** The echo cap for the degenerate paths (no style signal to re-rank by): keep the best, cut repeats. */
+  private capEchoes<T extends { entity_id: string; name?: string }>(entities: readonly T[], echoNames: ReadonlySet<string> | undefined): T[] {
+    if (!echoNames?.size) return [...entities];
+    let echoes = 0;
+    return entities.filter((e) => {
+      if (!e.name || !echoNames.has(echoKey(e.name))) return true;
+      if (echoes >= ECHO_CAP) return false;
+      echoes++;
+      return true;
+    });
   }
 
   /**
@@ -798,6 +847,8 @@ export class StyleStage {
     if (!e || this.earlyRail) return;
     this.earlyRail = (async () => {
       const type = e.types.includes('urn:entity:brand') ? 'urn:entity:brand' : e.types.includes('urn:entity:movie') ? 'urn:entity:movie' : 'urn:entity:artist';
+      // The subject the reading will give this anchor is unknown yet: a brand anchor's subject is a fashion subject.
+      const subjectCategory: StoredSubject['category'] = type === 'urn:entity:brand' ? 'fashion' : 'media';
       const request: QlooInsightsRequest = {
         filterType: type,
         signalEntities: [e.entityId],
@@ -816,11 +867,11 @@ export class StyleStage {
       const anchorIds = new Set(anchors.map((a) => a.entityId));
       const entities = res.entities.filter((x) => !anchorIds.has(x.entity_id));
       const candidates = fuseRail(entities, [], []);
-      const added = await this.publishRail('s1', candidates, [], { via: 'entity', entityName: e.name, palette: [], providerQueryId: res.providerQueryId, isReplay: res.isReplay, rev: 0, append: false });
+      const added = await this.publishRail('s1', candidates, [], { via: 'entity', entityName: e.name, palette: [], providerQueryId: res.providerQueryId, isReplay: res.isReplay, rev: 0, append: false, echoNames: echoNames([...anchors.filter((a) => a.types.includes('urn:entity:brand')).map((a) => a.name)]) });
       this.earlyBySubject.set('s1', { entityId: e.entityId, count: added });
       if (added) {
         this.mark('rail_first_cards');
-        for (const c of candidates.slice(0, 2)) this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: 's1', aesthetic: null });
+        for (const c of candidates.slice(0, 2)) this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: 's1', subjectCategory, aesthetic: null });
         this.primary.resolve();
       }
     })().catch(() => undefined);
@@ -988,12 +1039,17 @@ export class StyleStage {
     const styleIds = primaryTag ? new Set([primaryTag.id, ...(s.aesthetics.find((x) => x.name === primaryTag.claimName)?.qloo?.alt_ids ?? [])]) : null;
     const needsStyle = !plan.entity && s.category === 'fashion' && !!styleIds;
     const carries = (e: QlooEntity) => !needsStyle || e.tags.some((t) => styleIds!.has(t.id));
-    listA = listA.filter(carries);
+    // Eval r3, relevance cause 1: an artwork media subject's own rail holds only entities that
+    // reference the work (its words in the entity's own name, tags or properties) or are about art
+    // itself — a blockbuster sharing nothing with the painting is not "more like this".
+    const artGate = mediaArtworkGate(s);
+    const adjacent = (e: QlooEntity) => !artGate || entityAdjacency(e, artGate);
+    listA = listA.filter((e) => carries(e) && adjacent(e));
     // Bridges: the top 2 real results of an entity- or filter-backed call (never a tag-only call's top
     // results, never places: a stadium bridging into Wear gave sports merchandise in the live check).
     if (plan.bridgeable && listA.length && verdictA === 'ok') {
       const usable = dedupeByName(fuseRail(listA, [], accepted).filter((c) => (plan.entity || c.overlap > 0) && !c.entity.types.includes('urn:entity:place')));
-      for (const c of usable.slice(0, 2)) this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, aesthetic: primaryTag?.claimName ?? null });
+      for (const c of usable.slice(0, 2)) this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, subjectCategory: s.category, aesthetic: primaryTag?.claimName ?? null });
     }
     if (a) {
       this.primary.resolve();
@@ -1008,7 +1064,7 @@ export class StyleStage {
     let b: Awaited<ReturnType<StyleStage['insights']>> = null;
     if (secondaryReq && (listA.length < SECONDARY_BELOW || (early?.count && secondaryReq === plan.primary)))
       b = await this.insights(`style:mlt:${s.id}:b`, secondaryReq, false, { subject_id: s.id, recipe: plan.recipe, list: 'secondary' });
-    let listB = b ? clean(b.entities, secondaryReq!).filter(carries) : [];
+    let listB = b ? clean(b.entities, secondaryReq!).filter((e) => carries(e) && adjacent(e)) : [];
     const verdictB = b ? flatVerdict(secondaryReq!, listB, accepted) : 'ok';
     if (verdictB === 'flat_discarded') listB = [];
     let fused = fuseRail(listA, listB, accepted, { primary: weightA, secondary: verdictB === 'flat_kept' ? 0 : 0.6 });
@@ -1034,6 +1090,7 @@ export class StyleStage {
       rev: stored.rev,
       append: !!early?.count,
       existing: early?.count ?? 0,
+      echoNames: subjectEchoNames(s, anchors),
     });
     if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
     await this.trace('style:rail', { subject: s.id, status: 'ready', cards: added + (early?.count ?? 0), verdict_a: verdictA, verdict_b: verdictB, timings: this.timings });
@@ -1087,7 +1144,7 @@ export class StyleStage {
         { list: early?.entities ?? [], prior: true, fromEntity: true },
         { list: b?.entities ?? [], prior: false, fromEntity: false },
       ],
-      { exclude: anchorIds, entityLinked: !!brandAnchor, signalNames: new Map(pool.slice(0, FASHION_EXEMPLARS).map((x) => [x.id, x.name])) },
+      { exclude: anchorIds, entityLinked: !!brandAnchor, signalNames: new Map(pool.slice(0, FASHION_EXEMPLARS).map((x) => [x.id, x.name])), echoNames: subjectEchoNames(s, anchors) },
     );
     const providerQueryIds = [a?.providerQueryId, early?.providerQueryId, b?.providerQueryId].filter((x): x is string => !!x);
     if (!ranked.candidates.length || !providerQueryIds.length) {
@@ -1098,12 +1155,13 @@ export class StyleStage {
     // Bridges for cross-domain recommend (C.5): the three most on-style results, not Qloo's first two
     // (three average out one brand's audience: one bridge alone pulled a whole rail into its market).
     for (const c of ranked.candidates.filter((x) => !x.via).slice(0, FASHION_BRIDGES))
-      this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, aesthetic: s.aesthetics.find((x) => !x.held && !x.retracted)?.name ?? null });
+      this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, subjectCategory: s.category, aesthetic: s.aesthetics.find((x) => !x.held && !x.retracted)?.name ?? null });
     const added = await this.publishAffinityRail(s.id, ranked.candidates, {
       entityName: brandAnchor?.name ?? null,
       providerQueryIds,
       isReplay: (a?.isReplay ?? false) || (b?.isReplay ?? false) || (early?.isReplay ?? false),
       rev: stored.rev,
+      echoNames: subjectEchoNames(s, anchors),
     });
     if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
     await this.trace('style:rail', { subject: s.id, status: added ? 'ready' : 'empty', recipe: 'fashion_affinity', cards: added, gated: ranked.gated, timings: this.timings });
@@ -1140,6 +1198,7 @@ export class StyleStage {
       exclude: anchorIds,
       fashion: false,
       v: homeVocabulary(),
+      echoNames: subjectEchoNames(s, anchors),
     });
     const providerQueryIds = [a?.providerQueryId].filter((x): x is string => !!x);
     if (!ranked.candidates.length || !providerQueryIds.length) {
@@ -1149,12 +1208,13 @@ export class StyleStage {
     }
     // Bridges for cross-domain recommend (C.5): the most on-style results, not Qloo's first.
     for (const c of ranked.candidates.filter((x) => !x.via).slice(0, FASHION_BRIDGES))
-      this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, aesthetic: s.aesthetics.find((x) => !x.held && !x.retracted)?.name ?? null });
+      this.bridgeList.push({ entityId: c.entity.entity_id, name: c.entity.name, subjectId: s.id, subjectCategory: s.category, aesthetic: s.aesthetics.find((x) => !x.held && !x.retracted)?.name ?? null });
     const added = await this.publishAffinityRail(s.id, ranked.candidates, {
       entityName: null,
       providerQueryIds,
       isReplay: a?.isReplay ?? false,
       rev: stored.rev,
+      echoNames: subjectEchoNames(s, anchors),
     });
     if (added && !this.timings.rail_first_cards) this.mark('rail_first_cards');
     await this.trace('style:rail', { subject: s.id, status: added ? 'ready' : 'empty', recipe: plan.recipe, cards: added, gated: ranked.gated, timings: this.timings });
@@ -1164,7 +1224,7 @@ export class StyleStage {
   private async publishAffinityRail(
     subjectId: string,
     ranked: readonly AffinityCandidate[],
-    o: { entityName: string | null; providerQueryIds: readonly string[]; isReplay: boolean; rev: number },
+    o: { entityName: string | null; providerQueryIds: readonly string[]; isReplay: boolean; rev: number; echoNames?: ReadonlySet<string> },
   ): Promise<number> {
     const { ctx } = this.host;
     const excluded = await this.host.excludedKeys();
@@ -1173,6 +1233,7 @@ export class StyleStage {
     const picked = selectRail(
       pool.map((c) => ({ entity: c.entity, sources: ['primary' as const], overlap: c.match.score, score: c.score })),
       LIMITS.moreLikeThisPerSubject,
+      o.echoNames ? { names: o.echoNames } : undefined,
     ).map((x) => byId.get(x.entity.entity_id)!);
     let added = 0;
     await publishForCapture(ctx.db, this.host.capture.id, ctx.ensureActive, async (tx) => {
@@ -1250,13 +1311,14 @@ export class StyleStage {
       rev: number;
       append: boolean;
       existing?: number;
+      echoNames?: ReadonlySet<string>;
     },
   ): Promise<number> {
     const { ctx } = this.host;
     const excluded = await this.host.excludedKeys();
     const pool = candidates.filter((c) => kindFor(c.entity.types) && !excluded.has(`qloo:${c.entity.entity_id}`) && !this.host.usedKeys.has(`qloo:${c.entity.entity_id}`));
     const slots = LIMITS.moreLikeThisPerSubject - (o.existing ?? 0);
-    const picked = slots > 0 ? selectRail(pool, slots) : [];
+    const picked = slots > 0 ? selectRail(pool, slots, o.echoNames ? { names: o.echoNames } : undefined) : [];
     let added = 0;
     await publishForCapture(ctx.db, this.host.capture.id, ctx.ensureActive, async (tx) => {
       const { rows } = await tx.query<{ next: number }>(`SELECT COALESCE(MAX(rank), 999) + 1 AS next FROM recommendations WHERE analysis_id = $1 AND rail = 'more_like_this' AND subject_id = $2`, [this.host.analysisId, subjectId]);

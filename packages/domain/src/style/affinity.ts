@@ -1,7 +1,8 @@
 import { vlmLexicons, type QlooTagRef } from '@culture-atlas/providers';
 import type { StoredSubject } from './types';
-import { styleVocabulary, type ExemplarBrand, type StyleVocabulary } from './vocabulary';
+import { normalizeStyleName, styleVocabulary, type ExemplarBrand, type StyleVocabulary } from './vocabulary';
 import { lowerFirst } from './text';
+import { moodContradicts, moodFamiliesOf, MOOD_CONTRADICTION_FACTOR, type MoodFamily } from './mood';
 
 /**
  * Style affinity smatch-1: how closely a real Qloo entity's own tags match
@@ -329,6 +330,8 @@ export interface SubjectProfile {
   label: string;
   /** Kids' clothing words appear in the reading. */
   kids: boolean;
+  /** Mood families the reading's own words name (mood claims, aesthetics, lineage); a contradicting entity ranks down. */
+  mood: ReadonlySet<MoodFamily>;
 }
 
 /** Colour words describe the photo's palette, which brands rarely share: they count for little. */
@@ -396,6 +399,8 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
     ...shown(subject.materials).map((m) => m.name),
     ...shown(subject.construction).map((c) => c.name),
   ].join(' ; ');
+  // Mood alignment: mood claims name it ("cozy"), and an aesthetic can too ("Abandoned decay").
+  const moodText = [...shown(subject.mood).map((m) => m.name), ...shown(subject.aesthetics).map((a) => a.name), ...shown(subject.lineage).map((l) => l.name)].join(' ; ');
   return {
     tokens,
     kind,
@@ -403,6 +408,7 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
     regions: new Set(regionsOf(text)),
     label: subject.label,
     kids: /\b(?:kids?|child(?:ren)?|baby|toddler|infant)\b/i.test(text),
+    mood: moodFamiliesOf(moodText),
   };
 }
 
@@ -462,6 +468,8 @@ export interface EntityProfile {
   regions: Set<string>;
   kids: boolean;
   bridalOrCouture: boolean;
+  /** Mood families the entity's own tags name ("Cozy Home", "Stark Minimalism"); empty tags carry none. */
+  mood: ReadonlySet<MoodFamily>;
 }
 
 export function entityProfile(tags: readonly EntityTagLike[]): EntityProfile {
@@ -469,10 +477,12 @@ export function entityProfile(tags: readonly EntityTagLike[]): EntityProfile {
   const genres: string[] = [];
   const regionText: string[] = [];
   const materials: string[] = [];
+  const moodText: string[] = [];
   let ethnic = false;
   let price: string | null = null;
   for (const t of tags) {
     if (!t?.id) continue;
+    if (t.name) moodText.push(t.name);
     if (t.id.startsWith('urn:tag:genre:brand:')) {
       genres.push(t.id);
       // Product family names ("Sneakers", "Formalwear", "Jeans") are matchable words too.
@@ -508,6 +518,7 @@ export function entityProfile(tags: readonly EntityTagLike[]): EntityProfile {
     // A children's label, not a family label with a kids' line: a quarter of its tags are about children.
     kids: tags.filter((t) => /\b(?:kids?wear|kids|children|childrens|baby|babies|toddlers?|infants?)\b/i.test(t.name ?? '')).length >= Math.max(2, 0.25 * tags.filter((t) => isStyleTag(t.id)).length),
     bridalOrCouture: genres.some((g) => /:haute_couture$/.test(g)) || tags.some((t) => /:(?:fashion_segment|design_inspiration|cultural_relevance):qloo:(?:bridal|haute_couture|couture)/.test(t.id)),
+    mood: moodFamiliesOf(moodText.join(' ; ')),
   };
 }
 
@@ -640,9 +651,12 @@ export function scoreMatch(q: SubjectProfile, e: EntityProfile, options: { fashi
   }
   const foreign = [...e.regions].filter((r) => !q.regions.has(r));
   const regionFactor = foreign.length && ![...e.regions].some((r) => q.regions.has(r)) ? REGION_PENALTY : 1;
+  // Mood alignment (eval r3, cause 2): a card whose own tags name the opposite mood of the
+  // reading ("cheerful" for an abandoned, austere or gloomy photo) keeps a fraction of its score.
+  const moodFactor = q.mood.size && e.mood.size && moodContradicts(q.mood, e.mood) ? MOOD_CONTRADICTION_FACTOR : 1;
   // Tailoring: a gown or bridal house is not "more like" a suit (and the reverse is fine: a suit
   // reading may still match a formalwear house that also makes gowns).
-  let factor = regionFactor;
+  let factor = regionFactor * moodFactor;
   if (q.kind === 'tailoring' && (!TAILORING_WORDS.some((t) => e.tokens.has(t)) || (GOWN_WORDS.some((t) => e.tokens.has(t)) && !SUIT_WORDS.some((t) => e.tokens.has(t)))))
     factor *= TAILORING_FACTOR;
   // The match is about style when the reading's claims (not the label's product noun or the logo's
@@ -660,6 +674,27 @@ export function priceDistance(a: string | null, b: string | null): number | null
   const i = a ? PRICE_ORDER.indexOf(a) : -1;
   const j = b ? PRICE_ORDER.indexOf(b) : -1;
   return i < 0 || j < 0 ? null : Math.abs(i - j);
+}
+
+// ---- anchor echoes -------------------------------------------------------------
+
+/**
+ * Anchor-brand echoes (eval r3, cause 4): a card that repeats a brand the photo
+ * itself already surfaced (its reference chip, the logo the reading read, the
+ * identified brand entity) is down-ranked, not removed — one echo per rail may
+ * still show when it genuinely is the best match, repeats beyond that are cut.
+ */
+export const ECHO_PENALTY = 0.5;
+export const ECHO_CAP = 1;
+
+/** The name key an echo is matched by (the same normalization dedupeByName uses). */
+export function echoKey(name: string): string {
+  return normalizeStyleName(name).replace(/\s+/g, '');
+}
+
+/** Echo-name set from brand names already surfaced (brand anchors, read logos, identified brand entities). */
+export function echoNames(names: readonly string[]): ReadonlySet<string> {
+  return new Set(names.filter((n) => !!n && n.trim()).map(echoKey));
 }
 
 // ---- exemplars -----------------------------------------------------------------

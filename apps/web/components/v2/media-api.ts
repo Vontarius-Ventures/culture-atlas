@@ -194,7 +194,8 @@ export const mediaApi = {
     v2('/v2/capabilities', { schema: WebCapabilities, signal }),
   library: (
     query: {
-      kind?: 'photo' | 'video';
+      /** 'audio' lists Music Mode recordings (kept via POST /v2/media/audio). */
+      kind?: 'photo' | 'video' | 'audio';
       status?: string;
       source?: string;
       cursor?: string | null;

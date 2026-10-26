@@ -10,6 +10,22 @@ export const MediaSource = z.enum([
   'upload',
   'legacy_sensor',
 ]);
+/**
+ * Kinds a media row or library filter can name (amendment 2.3): Music Mode
+ * recordings are kept as `kind='audio'` (POST /v2/media/audio) and carry the
+ * microphone sources below. The owner library lists audio rows only when a
+ * client asks for the kind, so legacy photo/video pages never change.
+ */
+export const LibraryMediaKind = z.enum(['photo', 'video', 'audio']);
+export const LibraryMediaSource = z.enum([
+  'browser_camera',
+  'phone_camera',
+  'meta_glasses',
+  'upload',
+  'legacy_sensor',
+  'browser_microphone',
+  'phone_microphone',
+]);
 export const MediaStatus = z.enum([
   'pending_upload',
   'verifying',
@@ -92,13 +108,15 @@ export const MediaAsset = z
   .object({
     schema_version: z.literal(1),
     id: CaptureV2Uuid,
-    kind: MediaKind,
-    source: MediaSource,
+    kind: LibraryMediaKind,
+    source: LibraryMediaSource,
     status: MediaStatus,
     analysis_status: z.enum(['not_requested', 'queued', 'running', 'complete', 'failed']),
     created_at: DateTime,
     title: z.string().nullable().optional(),
-    duration_ms: z.number().int().positive().max(120000).optional(),
+    // Audio rows (uploaded recordings) run to 600000 ms; the database keeps
+    // photo/video at 120000 ms.
+    duration_ms: z.number().int().positive().max(600000).optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
     audio_present: z.boolean().optional(),
@@ -164,9 +182,9 @@ export const AnalyzeMediaResponse = z.object({
   result: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 export const MediaLibraryQuery = z.object({
-  kind: MediaKind.optional(),
+  kind: LibraryMediaKind.optional(),
   status: MediaStatus.exclude(['deleted']).optional(),
-  source: MediaSource.optional(),
+  source: LibraryMediaSource.optional(),
   cursor: z.string().max(512).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });

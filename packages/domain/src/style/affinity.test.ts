@@ -3,6 +3,9 @@ import type { QlooEntity } from '@culture-atlas/providers';
 import {
   AFFINITY_REASON_MAX,
   affinityReason,
+  echoKey,
+  echoNames,
+  ECHO_PENALTY,
   entityProfile,
   familiesOf,
   genreFilterFor,
@@ -16,6 +19,7 @@ import {
   subjectProfile,
   wordWeight,
 } from './affinity';
+import { MOOD_CONTRADICTION_FACTOR } from './mood';
 import { matchClaims, rankAffinity } from './affinity-rail';
 import { storedAesthetic, storedSubject } from './test-support';
 import { styleVocabulary } from './vocabulary';
@@ -136,5 +140,47 @@ describe('smatch-1 rail assembly', () => {
     ]);
     expect(out.candidates.map((c) => c.entity.entity_id)).toEqual(['C']);
     expect(out.gated).toMatchObject({ not_apparel: 1, weak: 1 });
+  });
+
+  it('mood-blind cards are strongly down-ranked: cheerful bedding for an abandoned motel room (eval r3, cause 2)', () => {
+    const motel = storedSubject({
+      category: 'interior',
+      label: 'Abandoned paneled motel room',
+      aesthetics: [storedAesthetic('Abandoned decay', { wording: 'resembles' }), storedAesthetic('Roadside motel', { wording: 'resembles' })],
+      materials: [{ ...storedAesthetic('Cotton bedding'), texture: 'worn' }],
+    });
+    const q = subjectProfile(motel);
+    expect([...q.mood]).toEqual(['melancholy']);
+    // Two entities carrying the same non-mood evidence ("Roadside Motel"); only one also names a
+    // mood ("Cozy Home") — the contradiction cuts its score by the fixed factor; silence never does.
+    const roadside = 'urn:tag:decor:qloo:roadside_motel';
+    const neutral = entityProfile([tag(roadside, 'Roadside Motel'), tag('urn:tag:lifestyle:qloo:family', 'Family Friendly')]);
+    const cozy = entityProfile([tag(roadside, 'Roadside Motel'), tag('urn:tag:aesthetic_property:qloo:cozy_home', 'Cozy Home')]);
+    expect([...neutral.mood]).toEqual([]);
+    expect([...cozy.mood]).toEqual(['warm']);
+    expect(scoreMatch(q, cozy).score).toBeCloseTo(scoreMatch(q, neutral).score * MOOD_CONTRADICTION_FACTOR, 5);
+    expect(scoreMatch(q, neutral).score).toBeGreaterThan(0);
+    // A reading without mood words is never mood-gated.
+    const plain = subjectProfile(storedSubject({ category: 'interior', label: 'Roadside motel room' }));
+    expect([...plain.mood]).toEqual([]);
+    expect(scoreMatch(plain, cozy).score).toBeCloseTo(scoreMatch(plain, neutral).score, 5);
+  });
+
+  it('an anchor-brand echo is down-ranked, not removed (eval r3, cause 4)', () => {
+    const q = subjectProfile(tennis);
+    const tennisTag = tag('urn:tag:cultural_relevance:qloo:tennis_culture', 'Tennis Culture');
+    const out = rankAffinity(
+      q,
+      [{ list: [ent('W', 'Wilson', [tag(G('casual'), 'Casual'), tennisTag]), ent('K', 'Kappa', [tag(G('casual'), 'Casual'), tennisTag])], prior: true, fromEntity: false }],
+      { echoNames: echoNames(['Wilson']) },
+    );
+    // The echo still matches the reading's style (it is kept), but ranks below the equal match.
+    expect(out.candidates.map((c) => c.entity.name)).toEqual(['Kappa', 'Wilson']);
+    expect(out.candidates[1]!.score).toBeLessThan(out.candidates[0]!.score);
+    expect(out.gated.echo).toBe(1);
+    // Echo names are brand names already surfaced, matched by folded name.
+    expect(echoKey('Fila')).toBe(echoKey(' FILA. '));
+    expect(ECHO_PENALTY).toBeLessThan(1);
+    expect(out.candidates).toHaveLength(2);
   });
 });

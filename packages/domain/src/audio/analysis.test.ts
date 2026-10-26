@@ -14,6 +14,7 @@ import type { JobRecord } from '../jobs/types';
 import { JobCancelledError } from '../jobs/handler';
 import { AudioLibrary } from './assets';
 import { AudioAnalysis } from './analysis';
+import { MediaLibraryResponse } from '../schemas/capture-v2';
 import { AnalyzeAudioRequest } from '../schemas/audio';
 import { createAnalyzeAudioHandler, runAnalyzeAudio, setAudioOriginalStorage } from './analyze-job';
 import { pcmWavBytes } from './wav';
@@ -136,10 +137,50 @@ describe('Keep does not analyze', () => {
       f.account.accountId,
     ]);
     expect(prefs.rows).toEqual([]);
-    const library = await f.intake.library({});
-    expect(library.items).toEqual([]);
+    // Legacy library pages keep listing photos and videos only (amendment 2.3);
+    // the recording is listed when a client asks for kind='audio' (below).
+    expect((await f.intake.library({})).items).toEqual([]);
     const detail = await f.audio.detail(kept.asset_id);
     expect(detail.media.analysis_status).toBe('not_requested');
+  });
+});
+
+describe('The library lists kept recordings', () => {
+  it("answers kind='audio' with the recording row and keeps the default page photo/video", async () => {
+    const f = await fixture();
+    const kept = await keep(f);
+    // The whole page parses against the shared library contract (no audio-only shape).
+    const page = MediaLibraryResponse.parse(await f.intake.library({ kind: 'audio' }));
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]!.media).toMatchObject({
+      id: kept.asset_id,
+      kind: 'audio',
+      source: 'browser_microphone',
+      status: 'ready',
+      analysis_status: 'not_requested',
+      duration_ms: 15_000,
+    });
+    expect(page.items[0]!.links).toMatchObject({
+      original: `/v2/media/${kept.asset_id}/content/original`,
+      playback: null,
+      poster: null,
+    });
+    // Only what the server knows: an audio row carries no video audio-track flag.
+    expect(page.items[0]!.media.audio_present).toBeUndefined();
+    expect(page.items[0]!.frames).toEqual([]);
+    expect((await f.intake.library({ kind: 'photo' })).items).toEqual([]);
+    expect((await f.intake.library({ kind: 'video' })).items).toEqual([]);
+    // The microphone sources are filterable like any other source.
+    expect((await f.intake.library({ kind: 'audio', source: 'browser_microphone' })).items).toHaveLength(1);
+    expect((await f.intake.library({ kind: 'audio', source: 'phone_microphone' })).items).toEqual([]);
+  });
+
+  it('keeps another account guessing at the recording', async () => {
+    const a = await fixture(),
+      b = await fixture();
+    await keep(a);
+    expect((await a.intake.library({ kind: 'audio' })).items).toHaveLength(1);
+    expect((await b.intake.library({ kind: 'audio' })).items).toEqual([]);
   });
 });
 

@@ -1,6 +1,8 @@
 import type { QlooEntity, QlooInsightsRequest, QlooEntityType } from '@culture-atlas/providers';
 import { FASHION_BRAND_TAG } from './grounding';
 import { RRF_K } from './fusion';
+import { echoKey, ECHO_CAP } from '../style/affinity';
+import { isArtworkSubject } from '../style/adjacency';
 import type { AcceptedTag } from '../style/map-tags';
 import { mediaKind, tagNamespace } from '../style/map-tags';
 import type { Exemplar } from '../style/exemplars';
@@ -108,6 +110,10 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
   const e = entity ? { id: entity.id, name: entity.name } : null;
   switch (subject.category) {
     case 'fashion': {
+      // Eval r3, relevance cause 3: an artwork the reading filed under fashion (a painting or
+      // poster of a person) is a media question, not a brand question — its depicted clothing
+      // never becomes a wear rail. The honest state is the unsupported empty.
+      if (isArtworkSubject(subject)) return empty('unsupported');
       const personal = firstTag(accepted, ['personal_style']);
       if (entity && entity.types.includes('urn:entity:brand')) {
         const primary: QlooInsightsRequest = {
@@ -362,14 +368,25 @@ export function priceLevel(entity: Pick<QlooEntity, 'tags'>): string | null {
   return entity.tags.find((t) => t.id.startsWith('urn:tag:price_level:'))?.name ?? null;
 }
 
-/** selectDiverse for the rail (R-20): at most 3 per price level unless fewer than `slots` results remain. */
-export function selectRail(candidates: readonly RailCandidate[], slots: number): RailCandidate[] {
-  if (candidates.length <= slots) return [...candidates];
+/**
+ * selectDiverse for the rail (R-20): at most 3 per price level unless fewer than `slots` results
+ * remain. Echo (eval r3, cause 4): at most `cap` cards may repeat an anchor brand already
+ * surfaced in the analysis — the best echo can still show, repeats beyond the cap are cut.
+ */
+export function selectRail(candidates: readonly RailCandidate[], slots: number, echo?: { names: ReadonlySet<string>; cap?: number }): RailCandidate[] {
+  const echoCap = echo?.cap ?? ECHO_CAP;
+  const hasEcho = !!echo?.names.size && candidates.some((c) => echo!.names.has(echoKey(c.entity.name)));
+  if (!hasEcho && candidates.length <= slots) return [...candidates];
   const picked: RailCandidate[] = [];
   const perLevel = new Map<string, number>();
   const deferred: RailCandidate[] = [];
+  let echoes = 0;
   for (const c of candidates) {
     if (picked.length >= slots) break;
+    if (hasEcho && echo!.names.has(echoKey(c.entity.name))) {
+      if (echoes >= echoCap) continue;
+      echoes++;
+    }
     const level = priceLevel(c.entity);
     if (level && (perLevel.get(level) ?? 0) >= PRICE_LEVEL_CAP) {
       deferred.push(c);

@@ -47,9 +47,22 @@ import { V2Icon } from './V2Icon';
 
 type Load =
   | { state: 'loading' }
-  | { state: 'ready'; item: MediaDetail }
+  | { state: 'ready'; item: DetailItem }
   | { state: 'error'; message: string; missing?: boolean }
   | { state: 'signed-out' };
+
+/**
+ * Reference 07 is a photo/video detail. Music Mode recordings are kept
+ * separately, and their schema_version 2 detail never parses as this shape;
+ * an audio row (if one ever arrives) shows the error state, never a photo.
+ */
+type DetailItem = MediaDetail & {
+  media: Omit<MediaDetail['media'], 'kind'> & { kind: 'photo' | 'video' };
+};
+
+function isPhotoVideoDetail(item: MediaDetail): item is DetailItem {
+  return item.media.kind !== 'audio';
+}
 
 /** Video/photo detail (reference 07). */
 /** A result opened from a library item remembers it (Back to photo, Library tab stays lit). */
@@ -96,6 +109,10 @@ export function MediaDetailView({ id }: { id: string }) {
   const fetchItem = useCallback(async () => {
     try {
       const item = await mediaApi.media(id);
+      if (!isPhotoVideoDetail(item)) {
+        setLoad({ state: 'error', message: 'This item could not load.' });
+        return null;
+      }
       setLoad({ state: 'ready', item });
       return item;
     } catch (err) {

@@ -1,5 +1,5 @@
 import type { QlooEntity } from '@culture-atlas/providers';
-import { entityProfile, scoreMatch, STRICT_KINDS, type MatchHit, type StyleMatchResult, type SubjectProfile } from './affinity';
+import { echoKey, ECHO_PENALTY, entityProfile, scoreMatch, STRICT_KINDS, type MatchHit, type StyleMatchResult, type SubjectProfile } from './affinity';
 import type { StyleVocabulary } from './vocabulary';
 import type { StyleMatchClaim } from './reasons';
 
@@ -42,7 +42,7 @@ export const STRICT_FILL_TO = 4;
 export function rankAffinity(
   q: SubjectProfile,
   lists: readonly AffinityList[],
-  options: { exclude?: ReadonlySet<string>; entityLinked?: boolean; signalNames?: ReadonlyMap<string, string>; fashion?: boolean; v?: StyleVocabulary } = {},
+  options: { exclude?: ReadonlySet<string>; entityLinked?: boolean; signalNames?: ReadonlyMap<string, string>; fashion?: boolean; v?: StyleVocabulary; echoNames?: ReadonlySet<string> } = {},
 ): { candidates: AffinityCandidate[]; gated: Record<string, number> } {
   const byId = new Map<string, { entity: QlooEntity; prior: number; fromEntity: boolean }>();
   for (const l of lists)
@@ -84,7 +84,10 @@ export function rankAffinity(
       weak.push(x);
       continue;
     }
-    out.push({ entity: x.entity, match: x.match, fromEntity: x.fromEntity, score: STYLE_SHARE * (Math.min(rel, REL_CAP) / REL_CAP) + (1 - STYLE_SHARE) * x.prior });
+    // Anchor-brand echo: down-ranked, never removed (a genuinely best echo may still show once).
+    const echo = !!options.echoNames?.size && options.echoNames.has(echoKey(x.entity.name));
+    if (echo) gated.echo = (gated.echo ?? 0) + 1;
+    out.push({ entity: x.entity, match: x.match, fromEntity: x.fromEntity, score: (STYLE_SHARE * (Math.min(rel, REL_CAP) / REL_CAP) + (1 - STYLE_SHARE) * x.prior) * (echo ? ECHO_PENALTY : 1) });
   }
   out.sort((a, b) => b.score - a.score || a.entity.entity_id.localeCompare(b.entity.entity_id));
   // FILL-1: a shoe or bag reading often has few style words; Qloo's taste list was already filtered to

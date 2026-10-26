@@ -135,14 +135,14 @@ export class ModelSpendLedger {
     return (await this.control()).circuits[role] ?? null;
   }
   /** Spend/allowance check for `micros` more reserved by this job (pause and circuits excluded). */
-  private fits(
+  private exceededLimits(
     s: SpendState,
     day: string,
     identity: Pick<ModelIdentity, 'accountId' | 'jobId'>,
     micros: number,
     /** Micro-USD of `micros` that belongs to experimental roles. */
     experimentalMicros = 0,
-  ): boolean {
+  ): string[] {
     const outstanding = s.attempts.filter((a) => a.state !== 'settled');
     const counted = s.attempts.filter((a) => a.day === day || a.state !== 'settled');
     const charge = (a: InferenceAttempt) =>
@@ -155,13 +155,15 @@ export class ModelSpendLedger {
         .filter((a) => a.day === day && a.identity.accountId === identity.accountId)
         .map((a) => a.identity.jobId),
     );
-    if (
-      sum(counted) + micros > this.limits.dailyMicros ||
-      sum(owned) + micros > this.limits.accountDailyMicros ||
-      sum(outstanding) + micros > this.limits.maxUnknownMicros ||
-      (!analyses.has(identity.jobId) && analyses.size >= this.limits.accountDailyAnalyses)
-    )
-      return false;
+    const exceeded: string[] = [];
+    if (sum(counted) + micros > this.limits.dailyMicros)
+      exceeded.push('MODEL_DAILY_SPEND_LIMIT_USD');
+    if (sum(owned) + micros > this.limits.accountDailyMicros)
+      exceeded.push('MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD');
+    if (sum(outstanding) + micros > this.limits.maxUnknownMicros)
+      exceeded.push('MODEL_MAX_UNKNOWN_SPEND_USD');
+    if (!analyses.has(identity.jobId) && analyses.size >= this.limits.accountDailyAnalyses)
+      exceeded.push('ACCOUNT_DAILY_MEDIA_ANALYSES');
     const exp = this.limits.experimental;
     if (exp && experimentalMicros > 0) {
       const expCounted = counted.filter((a) => this.experimentalRoles.has(a.role));
@@ -170,10 +172,12 @@ export class ModelSpendLedger {
           .filter((a) => a.day === day && a.identity.accountId === identity.accountId && this.experimentalRoles.has(a.role))
           .map((a) => a.identity.jobId),
       );
-      if (sum(expCounted) + experimentalMicros > exp.dailyMicros) return false;
-      if (!expJobs.has(identity.jobId) && expJobs.size >= exp.accountDailyAnalyses) return false;
+      if (sum(expCounted) + experimentalMicros > exp.dailyMicros)
+        exceeded.push('ANALYSIS_EXPERIMENTAL_DAILY_SPEND_LIMIT_USD');
+      if (!expJobs.has(identity.jobId) && expJobs.size >= exp.accountDailyAnalyses)
+        exceeded.push('ANALYSIS_EXPERIMENTAL_ACCOUNT_DAILY');
     }
-    return true;
+    return exceeded;
   }
 
   /**
@@ -195,13 +199,13 @@ export class ModelSpendLedger {
         const now = this.now();
         if (s.pause && (s.pause.until === null || s.pause.until > now)) return false;
         if (profiles.some((p) => s.circuits?.[p.role])) return false;
-        return this.fits(
+        return this.exceededLimits(
           s,
           day,
           identity,
           profiles.reduce((n, p) => n + p.reservationMicros, 0),
           profiles.filter((p) => this.experimentalRoles.has(p.role)).reduce((n, p) => n + p.reservationMicros, 0),
-        );
+        ).length === 0;
       },
       { day },
     );
@@ -251,11 +255,29 @@ export class ModelSpendLedger {
             'Attempt already reserved; reconcile rather than dispatch twice',
           );
         }
-        if (!this.fits(s, day, identity, profile.reservationMicros, this.experimentalRoles.has(profile.role) ? profile.reservationMicros : 0)) {
+        const exceeded = this.exceededLimits(
+          s,
+          day,
+          identity,
+          profile.reservationMicros,
+          this.experimentalRoles.has(profile.role) ? profile.reservationMicros : 0,
+        );
+        if (exceeded.length > 0) {
+          const unknownSpendLimitHit = exceeded.includes('MODEL_MAX_UNKNOWN_SPEND_USD');
+          const spendLimitHit = exceeded.some(
+            (limit) =>
+              limit !== 'ACCOUNT_DAILY_MEDIA_ANALYSES' &&
+              limit !== 'ANALYSIS_EXPERIMENTAL_ACCOUNT_DAILY',
+          );
+          const reservationMessage = unknownSpendLimitHit
+            ? ' Worst-case reservations for in-flight and unknown-cost attempts count against MODEL_MAX_UNKNOWN_SPEND_USD until actual billing is reconciled.'
+            : spendLimitHit
+              ? ' Worst-case reservations count against spend limits until actual costs are reconciled.'
+              : '';
           throw new ProviderError(
             'model-gateway',
             'budget_exhausted',
-            'Analysis allowance exhausted',
+            `Analysis budget exhausted: ${exceeded.join(', ')} limit${exceeded.length === 1 ? '' : 's'} reached.${reservationMessage}`,
           );
         }
         const id = randomUUID();

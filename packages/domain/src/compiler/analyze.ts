@@ -68,6 +68,10 @@ import {
 import { humanList, normalizeName, slugify } from './text';
 import { BRIDGE_WAIT_MS, BRIDGE_WAIT_NO_ANCHOR_MS, StyleStage, topicReason, type StyleBridge, type StyleCallOutput, type StylePlan } from './style-stage';
 import { normalizeStyleName } from '../style/vocabulary';
+import { artworkEvidence, bridgeTargets, entityAdjacency, referenceKeywords, suppressWearForArtwork } from '../style/adjacency';
+import { echoNames } from '../style/affinity';
+import { homeKindOfReading, wearIndustryAllowed } from '../style/home-affinity';
+import type { StoredSubject } from '../style/types';
 
 /**
  * TOPIC-1: films tagged with the topic, popular enough to be known. Measured: 0.8 left 5 architecture
@@ -539,13 +543,18 @@ export class CaptureCompiler {
     // R-5: recommend runs once, when resolve is done AND (the More-like-this primary returned, or
     // 4 s passed, or style failed/empty), with whatever style signals exist at that moment.
     // With no anchor at all, cross-domain has no signal but the bridges, so it waits for them longer
-    // (bounded by the soft deadline) instead of publishing empty Wear/Play/Watch.
-    const bridgeWait = anchors.some((a) => a.qloo?.entityId || a.qloo?.tagId) ? BRIDGE_WAIT_MS : Math.max(0, Math.min(BRIDGE_WAIT_NO_ANCHOR_MS, this.softDeadlineAt - Date.now()));
+    // (bounded by the soft deadline) instead of publishing empty Wear/Play/Watch — unless the reading
+    // is already known to bridge nowhere (an interior, craft or food photo: eval r3, cause 1), in
+    // which case its entertainment surface is the topic path and the long wait is pointless.
+    const bridgeWait =
+      anchors.some((a) => a.qloo?.entityId || a.qloo?.tagId) || this.style?.bridgeEligible === false
+        ? BRIDGE_WAIT_MS
+        : Math.max(0, Math.min(BRIDGE_WAIT_NO_ANCHOR_MS, this.softDeadlineAt - Date.now()));
     const bridges = this.style && this.stylePlan.enabled ? await this.style.waitForBridges(bridgeWait) : [];
     await this.traceStage('recommend:style_signals', Date.now(), { bridges: bridges.length, style: this.style?.sectionStatus ?? 'off' });
     for (const category of order.filter((c): c is (typeof QLOO_CATEGORIES)[number] => (QLOO_CATEGORIES as readonly string[]).includes(c))) {
       t0 = Date.now();
-      const rec = await ctx.runStage<RecommendOutput>(`recommend:${category}`, () => this.recommend(category, anchors, isUsable(qlooCaps.insights), bridges));
+      const rec = await ctx.runStage<RecommendOutput>(`recommend:${category}`, () => this.recommend(category, anchors, isUsable(qlooCaps.insights), bridges, resolved.refs));
       await this.composeCategory(rec, resolved.refs, order, excluded, usedKeys);
       await this.traceStage(`recommend:${category}`, t0, { status: rec.status, candidates: rec.candidates.length, reason: rec.reason });
     }
@@ -1646,12 +1655,24 @@ export class CaptureCompiler {
     insightsUsable: boolean,
     /** C.5: the top More-like-this results (real Qloo ids) as extra entity signals. */
     bridges: readonly StyleBridge[] = [],
+    /** All published references: the artwork's own identity for the fine-art adjacency gate. */
+    refs: readonly ResolvedRef[] = [],
   ): Promise<RecommendOutput> {
     const { ctx } = this;
     const empty = (status: SectionStatus, reason: string): RecommendOutput => ({ category, status, providerQueryId: null, isReplay: false, candidates: [], reason });
     if (!insightsUsable) return empty('unavailable', 'qloo_unavailable');
+    const subjects = this.style?.reading?.subjects ?? [];
+    // Eval r3, relevance cause 3: an artwork (a painting, an illustration, a poster of a person) is
+    // a media question, not a brand question — wear never fires on the depicted clothing.
+    if (category === 'wear' && suppressWearForArtwork(subjects)) return empty('skipped', 'artwork_subject');
     const anchorEntityIds = anchors.map((a) => a.qloo?.entityId).filter((v): v is string => !!v);
-    const bridgeIds = bridges.map((b) => b.entityId).filter((id) => !anchorEntityIds.includes(id));
+    // Eval r3, relevance cause 1: a bridge is real adjacency only for the categories its origin
+    // subject maps to (BRIDGE_TARGETS). A home, craft, food or place rail brand never pulls
+    // fashion, music or film entities; an interior or food photo's honest entertainment surface is
+    // the topic path below, not a rail brand's co-likers. An empty bridge is honest; an invented
+    // one is not.
+    const usableBridges = bridges.filter((b) => bridgeTargets(b.subjectCategory).includes(category));
+    const bridgeIds = usableBridges.map((b) => b.entityId).filter((id) => !anchorEntityIds.includes(id));
     const entityIds = [...new Set([...anchorEntityIds, ...bridgeIds])].slice(0, 6);
     // C.5: the style reading's accepted tags join only when type-compatible with the target (rule 4).
     const styleTags = this.style?.signalTagsFor(CATEGORY_ENTITY_TYPE[category]!) ?? [];
@@ -1660,8 +1681,10 @@ export class CaptureCompiler {
     const target = CATEGORY_ENTITY_TYPE[category]!;
     const anchorTags = anchors.filter((a) => a.qloo?.tagId && (!a.qloo.types?.length || a.qloo.types.includes(target))).map((a) => a.qloo!.tagId!);
     const tagIds = [...new Set([...anchorTags, ...styleTags.map((t) => t.id)])];
-    // TOPIC-1: with nothing else to signal, films Qloo tags with the room's, building's or dish's topic.
-    const topic = entityIds.length + tagIds.length === 0 ? (this.style?.topicFor(target) ?? null) : null;
+    // TOPIC-1: with no entity signals, films Qloo tags with the room's, building's or dish's topic are
+    // the honest entertainment surface — preferred over tag-only co-likers for a subject that maps to
+    // the domain (architecture -> architecture films, a dish -> food films).
+    const topic = entityIds.length === 0 ? (this.style?.topicFor(target) ?? null) : null;
     if (entityIds.length + tagIds.length === 0 && !topic) return empty('skipped', 'no_anchors');
     if (this.budget.remaining('qloo') === 0) return empty('skipped', 'budget');
     if (this.pastSoftDeadline()) return empty('skipped', 'deadline');
@@ -1684,9 +1707,22 @@ export class CaptureCompiler {
       const call = await this.qlooCall(`recommend:${category}`, (o) => ctx.providers.qloo.insights(request, { ...o, onAttempt: counter.observer }));
       const res = call.value;
       const anchorIds = new Set(entityIds);
-      const raw = res.data.entities.filter((e) => !anchorIds.has(e.entity_id));
-      const entities = this.style && topic ? this.style.topicFilms(raw) : this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { gateFashion: category === 'wear', dropStyleless: entityIds.length === 0 }) : raw;
-      if (bridges.length) this.recommendBridges.set(category, bridges);
+      // Eval r3, relevance cause 5: when the reading's primary subject is a home thing (an espresso
+      // machine, a skillet, a coffee drink), a wear card must be a brand of that object's industry —
+      // eyewear and jewelry houses a coffee brand's co-likers pull in are off-category drift.
+      const homeKind = category === 'wear' ? homeKindOfReading(subjects) : null;
+      // Eval r3, relevance cause 1: a fine-art subject's entertainment cards must carry the evidence
+      // themselves — they reference the artwork (the reading's words, or its identified references,
+      // in the entity's own name, tags or properties) or they are about art. "The Dark Knight" for
+      // a Vermeer is not adjacency.
+      const baseEvidence = category === 'watch' ? artworkEvidence(subjects) : null;
+      const evidence = baseEvidence ? { ...baseEvidence, keywords: [...baseEvidence.keywords, ...referenceKeywords(refs.map((r) => r.name))] } : null;
+      const raw = res.data.entities
+        .filter((e) => !anchorIds.has(e.entity_id))
+        .filter((e) => !evidence || entityAdjacency(e, evidence))
+        .filter((e) => !homeKind || wearIndustryAllowed(e, homeKind));
+      const entities = this.style && topic ? this.style.topicFilms(raw) : this.style && restyle ? this.style.rerankCrossDomain(raw, 0.5, { gateFashion: category === 'wear', dropStyleless: entityIds.length === 0, echoNames: this.crossDomainEchoNames(anchors, subjects) }) : raw;
+      if (usableBridges.length) this.recommendBridges.set(category, usableBridges);
       const providerQueryId = await recordProviderQuery(ctx.db, {
         parent: { analysisId: this.analysisId },
         provider: 'qloo',
@@ -1862,6 +1898,18 @@ export class CaptureCompiler {
 
   /** Bridges used by each category's recommend call (C.5), for the bridge reason. */
   private readonly recommendBridges = new Map<string, readonly StyleBridge[]>();
+
+  /**
+   * Brand names the analysis itself already surfaced (eval r3, cause 4): brand anchors (reference
+   * chips), the logos the style reading read, and the identified brand entities. A card repeating
+   * one is an echo: down-ranked in the cross-domain re-rank, at most one per rail.
+   */
+  private crossDomainEchoNames(anchors: readonly ResolvedRef[], subjects: readonly StoredSubject[]): ReadonlySet<string> {
+    return echoNames([
+      ...anchors.filter((a) => a.type === 'brand' || a.qloo?.types?.includes('urn:entity:brand')).map((a) => a.name),
+      ...subjects.flatMap((s) => [s.brand?.name ?? '', s.entity?.name ?? '']),
+    ]);
+  }
 
   private async composeEat(refs: readonly ResolvedRef[], order: readonly Category[], excluded: Set<string>, usedKeys: Set<string>): Promise<SectionStatus> {
     const { ctx } = this;

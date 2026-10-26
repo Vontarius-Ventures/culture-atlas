@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { parseInsights, resolveFromWorkspace, type QlooEntity } from '@culture-atlas/providers';
 import { describe, expect, it } from 'vitest';
 import type { AcceptedTag } from '../style/map-tags';
-import { storedSubject } from '../style/test-support';
+import { echoNames } from '../style/affinity';
+import { storedAesthetic, storedSubject } from '../style/test-support';
 import { dedupeByName } from './style-stage';
 import { flatVerdict, fuseRail, outsideCity, planMoreLikeThis, priceLevel, qlooLinks, selectRail, type PlanInput } from './style-rails';
 
@@ -39,6 +40,16 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
     expect(p.bridgeable).toBe(false);
     expect(p.primary).toMatchObject({ filterTags: ['urn:tag:genre:brand:fashion'], signalTags: [{ id: PS, weight: 0.5 }], filterPopularityMin: 0.7 });
     expect(plan({ accepted: [] }).emptyReason).toBe('no_signal');
+  });
+
+  it('a painting or poster the reading filed under fashion never becomes a wear rail (eval r3, cause 3)', () => {
+    const painting = storedSubject({ category: 'fashion', label: 'Renaissance dress in oil painting', aesthetics: [storedAesthetic('Baroque portraiture')] });
+    expect(plan({ subject: painting, accepted: [tag(F)] })).toMatchObject({ recipe: null, primary: null, emptyReason: 'unsupported' });
+    const poster = storedSubject({ category: 'fashion', label: 'Illustration of a woman in a head wrap' });
+    expect(plan({ subject: poster, accepted: [tag(F)] })).toMatchObject({ primary: null, emptyReason: 'unsupported' });
+    // A real garment keeps its brand rail.
+    const tee = storedSubject({ category: 'fashion', label: 'Colour-block cropped logo tee', aesthetics: [storedAesthetic('Retro sportswear')] });
+    expect(plan({ subject: tee, accepted: [tag(F)] }).recipe).toBe('fashion_tag_only');
   });
 
   it('interior: places with the decor tag in the user city; with brand rails off, an honest no_city', () => {
@@ -150,6 +161,18 @@ describe('result hygiene on recorded probe responses (C.3, R-10)', () => {
     expect(picked).toHaveLength(8);
     expect(picked.filter((c) => priceLevel(c.entity) === '$$').length).toBe(3);
     expect(selectRail(pool.slice(0, 4), 8)).toHaveLength(4);
+  });
+
+  it('caps anchor-brand echoes at one card per rail, keeping the best echo (eval r3, cause 4)', () => {
+    const e = (id: string, name: string): QlooEntity => ({ entity_id: id, name, types: ['urn:entity:brand'], properties: {}, tags: [] });
+    const pool = fuseRail([e('1', 'Fila'), e('2', 'Solid Brand'), e('3', 'Wilson'), e('4', 'Fourth Brand'), e('5', 'Fifth Brand')], [], []);
+    const echo = { names: echoNames(['Fila', 'Wilson']) };
+    // The strongest echo may still show once (it was down-ranked before selection); repeats are cut.
+    expect(selectRail(pool, 3, echo).map((c) => c.entity.name)).toEqual(['Fila', 'Solid Brand', 'Fourth Brand']);
+    // The cap holds even when the rail is short (a shorter, honest rail beats repeats).
+    expect(selectRail(pool, 8, echo).map((c) => c.entity.name)).toEqual(['Fila', 'Solid Brand', 'Fourth Brand', 'Fifth Brand']);
+    // Without echo names the selection is unchanged.
+    expect(selectRail(pool, 8).map((c) => c.entity.name)).toEqual(['Fila', 'Solid Brand', 'Wilson', 'Fourth Brand', 'Fifth Brand']);
   });
 
   it('"Qloo also links" uses the similar_brand tags\' own names only', () => {

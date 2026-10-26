@@ -34,8 +34,15 @@ type Device = z.infer<typeof CaptureDeviceResponse>;
 
 export interface SeedMedia {
   title: string | null;
-  kind: 'photo' | 'video';
-  source: 'browser_camera' | 'phone_camera' | 'meta_glasses' | 'upload';
+  /** 'audio' seeds Music Mode recordings (POST /v2/media/audio). */
+  kind: 'photo' | 'video' | 'audio';
+  source:
+    | 'browser_camera'
+    | 'phone_camera'
+    | 'meta_glasses'
+    | 'upload'
+    | 'browser_microphone'
+    | 'phone_microphone';
   status?: Detail['media']['status'];
   image?: string;
   video?: string;
@@ -198,10 +205,13 @@ export class MockV2 {
         analysis_status: 'not_requested',
         created_at: createdAt,
         title: seed.title,
-        width: 1600,
-        height: 1200,
-        ...(seed.kind === 'video' && seed.duration_ms
-          ? { duration_ms: seed.duration_ms, audio_present: seed.audio ?? false }
+        // Recordings have no frame; photos and videos always carry their size.
+        ...(seed.kind === 'audio' ? {} : { width: 1600, height: 1200 }),
+        ...(seed.duration_ms
+          ? {
+              duration_ms: seed.duration_ms,
+              ...(seed.kind === 'video' ? { audio_present: seed.audio ?? false } : {}),
+            }
           : {}),
       },
       generation: 1,
@@ -418,7 +428,9 @@ export class MockV2 {
       const limit = Number(url.searchParams.get('limit') ?? 30);
       const items = [...this.media.values()]
         .filter((d) => d.media.status !== 'deleted')
-        .filter((d) => !kind || d.media.kind === kind)
+        // Amendment 2.3, like the server: the default page lists photos and
+        // videos only; recordings appear when a client asks for kind='audio'.
+        .filter((d) => (kind ? d.media.kind === kind : d.media.kind !== 'audio'))
         .filter((d) => !status || d.media.status === status)
         .sort((a, b) => b.media.created_at.localeCompare(a.media.created_at));
       const cursor = Number(url.searchParams.get('cursor') ?? 0);

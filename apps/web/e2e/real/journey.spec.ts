@@ -200,8 +200,19 @@ test('main journey on the real stack', async ({ page }, info) => {
   });
 
   await test.step('plans list', async () => {
-    await page.goto('/plans');
-    await expect(page.getByRole('link', { name: /Movie night|movie night/i }).first()).toBeVisible();
+    // The plan was created in the previous step. This list is read client-side, and under
+    // the parallel-viewport load of a keyed stack that single read can time out and land on
+    // the error state, which never retries on its own. Wait for the API to reflect the plan,
+    // then retry the page until it renders the link (the journey's slow steps use 60-90s).
+    const listedPlans = async () =>
+      ((await (await page.request.get('/v1/plans')).json()) as { plans: unknown[] }).plans.length;
+    await expect.poll(listedPlans, { timeout: 90_000, intervals: [1_000] }).toBeGreaterThan(0);
+    await expect(async () => {
+      await page.goto('/plans');
+      await expect(
+        page.getByRole('link', { name: /Movie night|movie night/i }).first(),
+      ).toBeVisible({ timeout: 30_000 });
+    }).toPass({ timeout: 90_000, intervals: [1_000] });
     await shot(page, info, '13-plans');
   });
 

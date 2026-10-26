@@ -54,7 +54,7 @@ Every mutation accepts `Idempotency-Key` UUID except part byte transfer (provide
 | POST /v2/uploads/{id}/parts | requested bounded part numbers | 200 fresh scoped signed part instructions; no reusable bucket credentials |
 | POST /v2/uploads/{id}/complete | provider part receipts/object version as applicable | 202 verifying or 200 already committed; repeat must not create new assets |
 | DELETE /v2/uploads/{id} | none | 202 aborted; release reservation, stop parts, clean staging; cannot delete committed media implicitly |
-| GET /v2/library | kind?,status?,source?,cursor? | 200 own media summaries; do not enumerate deleted records |
+| GET /v2/library | kind?,status?,source?,cursor? | 200 own media summaries; do not enumerate deleted records. `kind=audio` (amendment 2.3) lists Music Mode recordings; without a kind the page lists photos and videos only |
 | GET /v2/media/{id} | none | 200 media-contract schema, preparation state, permitted links and analysis link |
 | PATCH /v2/media/{id} | title,expected_revision | 200 new revision; stale409 |
 | POST /v2/media/{id}/analysis | focus, mode photo/selected_frame/sampled_video, timestamp_ms?, expected_generation | 202 analysis/job IDs, reused; explicit analysis quota |
