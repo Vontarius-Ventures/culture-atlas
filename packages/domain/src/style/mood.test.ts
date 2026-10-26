@@ -15,10 +15,22 @@ describe('mood vocabulary (eval r3, relevance cause 2)', () => {
   it('every family is non-empty and every word maps back to exactly the families it belongs to', () => {
     for (const words of Object.values(MOOD_WORDS)) for (const w of words) expect([...moodFamiliesOf(w)].length).toBeGreaterThan(0);
     expect([...moodFamiliesOf('cheerful')]).toEqual(['warm']);
-    expect([...moodFamiliesOf('stark minimal')]).toEqual(['austere']);
+    expect([...moodFamiliesOf('stark severe')]).toEqual(['austere']);
     expect([...moodFamiliesOf('rugged weathered')]).toEqual(['rugged']);
     expect([...moodFamiliesOf('opulent')]).toEqual(['opulent']);
     expect([...moodFamiliesOf('vibrant dynamic')]).toEqual(['energetic']);
+  });
+
+  it('words that describe products, not moods, are not mood words (the espresso regression)', () => {
+    // Measured on the live espresso run: these words on coffee brands made every real result
+    // contradict a warm reading and emptied the rail (eval r3, relevance cause 2 regression).
+    for (const w of ['dark', 'rich', 'bright', 'fresh', 'cold', 'raw', 'open', 'still', 'quiet', 'minimal', 'minimalist', 'industrial', 'nostalgic', 'vibrant', 'sporty', 'athletic'])
+      expect([...moodFamiliesOf(w)], w).toEqual([]);
+    expect(moodFamiliesOf('Minimalist Design ; Dark Roast ; Rich Flavor ; Cold Brew ; Raw Denim ; Industrial Design')).toEqual(new Set());
+    // Genuine scene and feeling words still are (the abandoned-motel gate keeps working).
+    expect([...moodFamiliesOf('Abandoned decay')]).toEqual(['melancholy']);
+    expect([...moodFamiliesOf('moody somber')]).toEqual(['melancholy']);
+    expect([...moodFamiliesOf('warm cozy')]).toEqual(['warm']);
   });
 
   it('contradicts only on opposite pairs, and never when either side is silent', () => {

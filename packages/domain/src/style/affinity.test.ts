@@ -166,6 +166,48 @@ describe('smatch-1 rail assembly', () => {
     expect(scoreMatch(plain, cozy).score).toBeCloseTo(scoreMatch(plain, neutral).score, 5);
   });
 
+  it('a warm drink reading is never contradicted by product words: the espresso rail keeps its real results', () => {
+    // The live espresso run (r3run h16): the reading says "Feels warm, Feels cozy"; every coffee
+    // brand carries product words ("Minimalist" design, "Dark Roast", "Cold Brew", "Rich") that
+    // used to read as austere/melancholy moods, cutting all 17 real results to 35 % and gating
+    // the rail empty. Product words are style evidence, never moods.
+    const drink = storedSubject({
+      category: 'food',
+      label: 'Espresso in a ceramic cup',
+      aesthetics: [storedAesthetic('Italian espresso', { wording: 'resembles' }), storedAesthetic('Classic cafe', { wording: 'resembles' })],
+      mood: [
+        { name: 'warm', certainty: 0.8, wording: 'resembles', display: 'Feels warm', strength: null, corroborated_by: [], held: false, basis: 'visible', region: null, qloo: null },
+        { name: 'cozy', certainty: 0.7, wording: 'resembles', display: 'Feels cozy', strength: null, corroborated_by: [], held: false, basis: 'visible', region: null, qloo: null },
+      ],
+    });
+    const q = subjectProfile(drink);
+    expect([...q.mood]).toEqual(['warm']);
+    // Two brands with the same espresso evidence and the same tag count; one carries the product
+    // descriptors, the other neutral ones. Product words are style evidence, never moods: the
+    // two score identically, where the old mood reading cut the first to 35 %.
+    const shared = [tag('urn:tag:lifestyle:qloo:italian_espresso_culture', 'Italian Espresso Culture'), tag('urn:tag:genre:brand:dining', 'Dining')];
+    const neutral = entityProfile([...shared, tag('urn:tag:material:qloo:arabica', 'Arabica'), tag('urn:tag:material:qloo:robusta', 'Robusta'), tag('urn:tag:product_service:qloo:slow_drip', 'Slow Drip'), tag('urn:tag:product_service:qloo:single_origin', 'Single Origin')]);
+    const productWords = entityProfile([
+      ...shared,
+      tag('urn:tag:aesthetic_property:qloo:minimalist_design', 'Minimalist Design'),
+      tag('urn:tag:material:qloo:dark_roast', 'Dark Roast'),
+      tag('urn:tag:product_service:qloo:cold_brew', 'Cold Brew'),
+      tag('urn:tag:aesthetic_property:qloo:rich_flavor', 'Rich Flavor'),
+    ]);
+    expect([...neutral.mood]).toEqual([]);
+    expect([...productWords.mood]).toEqual([]);
+    // Not the 0.35 mood cut the old reading gave these brands: within 10 % of its twin.
+    expect(scoreMatch(q, productWords).score).toBeGreaterThan(scoreMatch(q, neutral).score * 0.9);
+    expect(scoreMatch(q, productWords).score).toBeGreaterThan(0);
+    // The gate still bites the real opposite mood: a cheerful brand for a gloomy reading.
+    const gloomy = subjectProfile(storedSubject({ category: 'interior', label: 'Abandoned room', aesthetics: [storedAesthetic('Abandoned decay', { wording: 'resembles' })] }));
+    const cheerful = entityProfile([tag('urn:tag:aesthetic_property:qloo:italian_espresso_culture', 'Italian Espresso Culture'), tag('urn:tag:aesthetic_property:qloo:cheerful', 'Cheerful')]);
+    const glumless = entityProfile([tag('urn:tag:aesthetic_property:qloo:italian_espresso_culture', 'Italian Espresso Culture'), tag('urn:tag:aesthetic_property:qloo:unfussy', 'Unfussy')]);
+    expect([...cheerful.mood]).toEqual(['warm']);
+    expect([...glumless.mood]).toEqual([]);
+    expect(scoreMatch(gloomy, cheerful).score).toBeCloseTo(scoreMatch(gloomy, glumless).score * MOOD_CONTRADICTION_FACTOR, 5);
+  });
+
   it('an anchor-brand echo is down-ranked, not removed (eval r3, cause 4)', () => {
     const q = subjectProfile(tennis);
     const tennisTag = tag('urn:tag:cultural_relevance:qloo:tennis_culture', 'Tennis Culture');

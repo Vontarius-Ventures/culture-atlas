@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReason, type ResolvedRef } from './analyze';
+import { buildReason, composedSectionStatus, type ResolvedRef } from './analyze';
 import { JobBudget } from './budget';
 import { interleaveCategories, reciprocalRankFusion, RRF_K, selectDiverse, type RankedCandidate } from './fusion';
 import { canonicalTokens, nameSimilarity, nameTokens, normalizeName, sameTokens, slugify, stemmedKey, stemToken, strictSubset } from './text';
@@ -125,6 +125,30 @@ describe('reasons', () => {
     expect(buildReason([ref('Vintage Racing', 'resembles')])).toBe('Picked for the Vintage Racing feel of your photo.');
     expect(buildReason([])).toBe('Connected to what stood out in your photo.');
     expect(buildReason([ref('A', 'depicted')])).not.toMatch(/qloo|affinity|score|\d/i);
+  });
+});
+
+describe('composedSectionStatus (a provider that answered with nothing is an honest empty, not a ready rail)', () => {
+  // The live cross-domain film searches answered with 20 results and then picked none: the rail
+  // showed "ready, 0" with no empty message (eval r3, relevance cause 1 regression).
+  it('a completed section with no cards is empty; with cards it stays complete', () => {
+    expect(composedSectionStatus('complete', 0, 'skipped', false)).toBe('empty');
+    expect(composedSectionStatus('complete', 2, 'skipped', false)).toBe('complete');
+    expect(composedSectionStatus('complete', 2, 'empty', false)).toBe('complete');
+  });
+  it('a later append (always with new cards) never downgrades a complete section, never resurrects an empty one', () => {
+    expect(composedSectionStatus('complete', 3, 'complete', true)).toBe('complete');
+    expect(composedSectionStatus('complete', 3, 'empty', true)).toBe('partial');
+    expect(composedSectionStatus('complete', 1, 'skipped', true)).toBe('complete');
+    expect(composedSectionStatus('skipped', 1, 'skipped', true)).toBe('partial');
+    expect(composedSectionStatus('complete', 1, 'partial', true)).toBe('partial');
+  });
+  it('a skipped or failed provider section stays what it was; cards picked anyway make it partial', () => {
+    expect(composedSectionStatus('skipped', 0, 'skipped', false)).toBe('skipped');
+    expect(composedSectionStatus('failed', 0, 'skipped', false)).toBe('failed');
+    expect(composedSectionStatus('unavailable', 0, 'skipped', false)).toBe('unavailable');
+    expect(composedSectionStatus('skipped', 1, 'skipped', false)).toBe('partial');
+    expect(composedSectionStatus('failed', 1, 'skipped', false)).toBe('partial');
   });
 });
 

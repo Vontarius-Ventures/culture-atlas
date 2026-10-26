@@ -25,11 +25,13 @@ import { selectExemplars } from '../style/exemplars';
 import { acceptedTags, bestFilterTag, mapSubjectTags, primaryStyleTag, tagLookupQueries, type AcceptedTag } from '../style/map-tags';
 import { computeSwatches, PALETTE_SIZE, swatchIsBackground, swatchPresentInRegion, type Swatch } from '../style/palette';
 import { buildStyleReason, sharedClaims, type StyleMatch, type StyleMatchClaim } from '../style/reasons';
-import { affinityReason, entityProfile, genreFilterFor, rankCatalogue, scoreMatch, subjectProfile } from '../style/affinity';
-import { echoKey, echoNames, ECHO_CAP, ECHO_PENALTY } from '../style/affinity';
+import { affinityReason, genreFilterFor, rankCatalogue, subjectProfile } from '../style/affinity';
+import { echoNames } from '../style/affinity';
 import { bridgeTargets, entityAdjacency, mediaArtworkGate } from '../style/adjacency';
+import { type CrossDomainOptions, rerankCrossDomain, topicFilms } from '../style/cross-domain';
 import { drinkKindOf, homeKindOf, homeVocabulary, rankHomeCatalogue, type HomeKind } from '../style/home-affinity';
 import { lowerFirst } from '../style/text';
+import { resolveTopicTags, topicTagPlan, type StyleTopicTag } from '../style/topic-tags';
 import { matchClaims, rankAffinity, type AffinityCandidate } from '../style/affinity-rail';
 import type { StoredStyleReading, StoredSubject } from '../style/types';
 import { closedTagQuery, closedVocabularyLists, normalizeStyleName, styleVocabulary, VOCAB_VERSION } from '../style/vocabulary';
@@ -273,11 +275,6 @@ export const TOPIC_BY_CATEGORY: Partial<Record<StoredSubject['category'], readon
   place: [ARCHITECTURE, DESIGN],
   food: [FOOD],
 };
-/** TOPIC-1 films are ranked mostly by the reading (their tags: "Midcentury modern", "Decay", "Sushi"), then Qloo's order. */
-export const TOPIC_STYLE_SHARE = 0.75;
-/** ... and a film is kept only with a real overlap: at least this score, and this share of the best film's. */
-export const TOPIC_MIN_SCORE = 0.6;
-export const TOPIC_MIN_RELATIVE = 0.45;
 
 /** TOPIC-1 card reason: the film's own Qloo theme (the first topic tag it carries) next to the subject's label. */
 export function topicReason(topics: readonly StyleTopic[], filmTagIds: readonly string[], label: string): string {
@@ -314,6 +311,8 @@ export class StyleStage {
   private earlyEntity: { entityId: string; name: string; entities: QlooEntity[]; providerQueryId: string; isReplay: boolean } | null = null;
   /** Subjects whose rail already holds an early entity call's cards (R-4). */
   private readonly earlyBySubject = new Map<string, { entityId: string; count: number }>();
+  /** TOPIC-1 fill: the reading's own words resolved to genre/subgenre/theme tags, once per target type. */
+  private readonly topicTagsByTarget = new Map<string, readonly StyleTopicTag[]>();
   readonly timings: Record<string, number> = {};
 
   constructor(private readonly host: StyleHost) {}
@@ -402,85 +401,46 @@ export class StyleStage {
    * cinema" rises for the room or the dish it echoes. Drops a result only for a stated policy:
    * the reading is the only signal (`dropStyleless`, measured: a bodybuilding label for a tennis
    * court), or the card repeats an anchor brand beyond the echo cap (eval r3, cause 4) — an echo
-   * is penalized first, so a genuinely best echo can still show once.
+   * is penalized first, so a genuinely best echo can still show once. Pure policy in
+   * style/cross-domain.ts; this is the reading-bound wrapper.
    */
   rerankCrossDomain<T extends { entity_id: string; name?: string; tags?: { id: string; name: string }[] }>(
     entities: readonly T[],
     styleShare = 0.5,
-    options: { gateFashion?: boolean; dropStyleless?: boolean; echoNames?: ReadonlySet<string> } = {},
+    options: CrossDomainOptions = {},
   ): T[] {
-    // Wear cards for a garment pass the same product and tier gates as its rail (no couture house
-    // next to a casual dress, no eyewear house for a jacket).
-    const garment = options.gateFashion ? this.stored?.subjects.find((x) => x.category === 'fashion') : undefined;
-    const q = garment ? subjectProfile(garment) : null;
-    const kept0 = q ? entities.filter((e) => !scoreMatch(q, entityProfile(e.tags ?? [])).gate) : entities;
-    let kept = kept0;
-    let scored = this.crossDomainScores(kept);
-    if (options.dropStyleless) {
-      kept = scored.filter((x) => x.style > 0).map((x) => x.e);
-      scored = this.crossDomainScores(kept);
-    }
-    const best = Math.max(0, ...scored.map((x) => x.style));
-    if (best <= 0 || kept.length < 2) return this.capEchoes([...kept], options.echoNames);
-    const echo = (e: T) => !!options.echoNames?.size && !!e.name && options.echoNames.has(echoKey(e.name));
-    let echoes = 0;
-    return scored
-      .map((x) => ({ ...x, score: (styleShare * (x.style / best) + (1 - styleShare) / (1 + x.i / 5)) * (echo(x.e) ? ECHO_PENALTY : 1) }))
-      .sort((a, b) => b.score - a.score || a.i - b.i)
-      .filter((x) => {
-        if (!echo(x.e)) return true;
-        // At most one card may repeat an anchor brand; repeats beyond that are cut (eval r3, cause 4).
-        if (echoes >= ECHO_CAP) return false;
-        echoes++;
-        return true;
-      })
-      .map((x) => x.e);
-  }
-
-  /** The echo cap for the degenerate paths (no style signal to re-rank by): keep the best, cut repeats. */
-  private capEchoes<T extends { entity_id: string; name?: string }>(entities: readonly T[], echoNames: ReadonlySet<string> | undefined): T[] {
-    if (!echoNames?.size) return [...entities];
-    let echoes = 0;
-    return entities.filter((e) => {
-      if (!e.name || !echoNames.has(echoKey(e.name))) return true;
-      if (echoes >= ECHO_CAP) return false;
-      echoes++;
-      return true;
-    });
+    return rerankCrossDomain(this.stored?.subjects ?? [], entities, styleShare, options);
   }
 
   /**
    * TOPIC-1 films: only those whose own Qloo tags share a style claim with the reading ("Midcentury
    * modern", "Urban decay", "Ramen", "Cafe"), strongest first. A topic alone ("design") is not a
    * match: with no overlapping film the Watch rail stays empty rather than showing popular films
-   * about something else.
+   * about something else. Pure policy in style/cross-domain.ts.
    */
   topicFilms<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[]): T[] {
-    const scored = this.crossDomainScores(entities).filter((x) => x.styleHit);
-    const best = Math.max(0, ...scored.map((x) => x.style));
-    if (best < TOPIC_MIN_SCORE) return [];
-    return scored
-      .filter((x) => x.style >= Math.max(TOPIC_MIN_SCORE, TOPIC_MIN_RELATIVE * best))
-      .map((x) => ({ ...x, score: TOPIC_STYLE_SHARE * (x.style / best) + (1 - TOPIC_STYLE_SHARE) / (1 + x.i / 5) }))
-      .sort((a, b) => b.score - a.score || a.i - b.i)
-      .map((x) => x.e);
+    return topicFilms(this.stored?.subjects ?? [], entities);
   }
 
-  private crossDomainScores<T extends { entity_id: string; tags?: { id: string; name: string }[] }>(entities: readonly T[]): { e: T; i: number; style: number; styleHit: boolean }[] {
-    const profiles = (this.stored?.subjects ?? []).map((x) => subjectProfile(x));
-    return entities.map((e, i) => {
-      const prof = entityProfile(e.tags ?? []);
-      let style = 0;
-      let styleHit = false;
-      for (const q of profiles) {
-        const m = scoreMatch(q, prof, { fashion: false });
-        if (m.score > style) {
-          style = m.score;
-          styleHit = m.styleHit;
-        }
-      }
-      return { e, i, style, styleHit };
-    });
+  /**
+   * TOPIC-1 rail fill (eval r3, thin rails): the reading's OWN words resolved to real Qloo
+   * genre/subgenre/theme tags the target entity type carries, via the same cached /v2/tags search
+   * the mapper uses (budget-checked, <= TOPIC_TAG_QUERIES_MAX queries). Deterministic and bounded;
+   * resolved once per job and target type. Empty when the reading names nothing Qloo has — the
+   * rail then keeps its honest empty state.
+   */
+  async topicTagsFor(targetType: string): Promise<readonly StyleTopicTag[]> {
+    if (!this.stored) return [];
+    const cached = this.topicTagsByTarget.get(targetType);
+    if (cached) return cached;
+    const plan = topicTagPlan(this.stored.subjects);
+    let out: readonly StyleTopicTag[] = [];
+    if (plan.length) {
+      const results = await this.lookupTags(plan.map((p) => p.query));
+      out = resolveTopicTags(plan, results, targetType);
+    }
+    this.topicTagsByTarget.set(targetType, out);
+    return out;
   }
 
   /** The style section for analyses where style does not run (examples, no role, kill switch, budget). */

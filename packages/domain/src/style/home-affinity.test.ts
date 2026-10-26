@@ -68,6 +68,13 @@ describe('home kind from the reading words (R-9)', () => {
     expect(drinkKindOf(storedSubject({ category: 'food', label: 'Tonkotsu ramen bowl' }))).toBeNull();
   });
 
+  it('a sunroom without another room noun still reaches the home catalogue', () => {
+    const sunroom = storedSubject({ category: 'interior', label: 'Sunroom with wood ceiling' });
+    expect(homeKindOf(sunroom)).toBe('interior');
+    expect(homeKindOfReading([sunroom])).toBe('interior');
+    expect(homeKindOf(storedSubject({ category: 'interior', label: 'Wood-framed conservatory' }))).toBe('interior');
+  });
+
   it('a coffee table is furniture, not a drink (the room keeps its own kind)', () => {
     expect(homeKindOf(storedSubject({ category: 'interior', label: 'Living room with glass coffee table' }))).not.toBe('coffee');
     expect(drinkKindOf(storedSubject({ category: 'food', label: 'Cake on a coffee table' }))).toBeNull();

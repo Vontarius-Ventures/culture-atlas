@@ -34,7 +34,7 @@ const WORDS: Record<HomeKind, RegExp> = {
   furniture: /\b(?:chairs?|sofas?|couches?|armchairs?|settees?|chaises?|tables?|desks?|bookcases?|shel(f|ves|ving)|sideboards?|credenzas?|cabinets?|dressers?|wardrobes?|nightstands?|beds?|stools?|benches?|ottomans?|loveseats?|futons?)\b/i,
   decor: /\b(?:mirrors?|rugs?|carpets?|artworks?|paintings?|prints?|posters?|clocks?|candles?|cushions?|pillows?|lamps?|pendants?|sconces?|chandeliers?|screens?|bentwood)\b/i,
   ceramics: /\b(?:ceramics?|pottery|porcelain|stoneware|earthenware|terracotta|glazes?|glazed|slipware|slip-painted)\b/i,
-  interior: /\b(?:rooms?|interiors?|nooks?|cafes?|bars?|dining|bedrooms?|living|kitchens?|offices?|workspaces?|venues?|alcoves?|lofts?|apartments?|motels?|spaces?)\b/i,
+  interior: /\b(?:rooms?|sunrooms?|conservator(?:y|ies)|interiors?|nooks?|cafes?|bars?|dining|bedrooms?|living|kitchens?|offices?|workspaces?|venues?|alcoves?|lofts?|apartments?|motels?|spaces?)\b/i,
   coffee: /\b(?:espresso|latte|cappuccino|macchiato|americano|mocha|cortado|flat whites?|coffee(?! ?tables?)|coffeehouses?)\b/i,
 };
 
