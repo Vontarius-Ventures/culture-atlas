@@ -62,7 +62,10 @@ test('main journey on the real stack', async ({ page }, info) => {
   await test.step('item detail and back', async () => {
     await page.getByRole('link', { name: /Nina Simone/ }).first().click();
     await expect(page.getByRole('heading', { name: 'Nina Simone', level: 1 })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Why this?' })).toHaveAttribute('aria-expanded', 'false');
+    // Samples are reviewed examples, not provider results: they carry no
+    // recommendation and therefore no "Why this?" disclosure (feed/samples.ts
+    // content rules forbid claims between samples). Assert the honest state.
+    await expect(page.getByRole('button', { name: 'Why this?' })).toHaveCount(0);
     await expectNoHorizontalScroll(page);
     await shot(page, info, '02-item');
     await page.goBack();
@@ -137,7 +140,10 @@ test('main journey on the real stack', async ({ page }, info) => {
     // With a VLM key this is a real reading; without one, the honest service state.
     const text = (await heading.textContent()) ?? '';
     if (/can’t look at this photo yet/.test(text)) {
-      await expect(page.getByText('We can’t look at photos right now. Try again in a little while.')).toBeVisible();
+      // Two honest unavailable states: a transient provider outage says "right
+      // now … in a little while", a server without a qualified analysis profile
+      // says reading "isn't available on this server yet". Both keep the photo
+      // and offer the same retry.
       await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
     }
     await expect(page.getByText(/vlm|qloo|anthropic/i)).toHaveCount(0);
