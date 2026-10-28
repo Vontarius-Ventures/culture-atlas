@@ -7,6 +7,7 @@ import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import { inject } from 'vitest';
 import { insertAccount, insertAgentConnection } from '../testing';
+import { assertSafeDatabaseName, dropOwnedDatabase } from '../testing';
 import { MIGRATIONS_DIR, RECONCILED_CHECKSUMS, runMigrations } from './migrate';
 
 /**
@@ -26,6 +27,7 @@ const tempDirs: string[] = [];
 async function freshDatabase(): Promise<string> {
   const base = new URL(inject('databaseUrl'));
   const name = `${base.pathname.slice(1)}_r${randomBytes(3).toString('hex')}`;
+  assertSafeDatabaseName(name);
   const admin = new pg.Client({ connectionString: base.toString() });
   await admin.connect();
   await admin.query(`CREATE DATABASE ${name}`);
@@ -78,8 +80,14 @@ async function agentFenceShape(url: string) {
 afterAll(async () => {
   const admin = new pg.Client({ connectionString: inject('databaseUrl') });
   await admin.connect();
-  for (const name of created) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-  await admin.end();
+  try {
+    // Only the databases this file created; each waits, bounded, for its
+    // sessions to exit instead of terminating them (the test role has no
+    // pg_signal_backend, so FORCE intermittently failed the afterAll).
+    for (const name of created) await dropOwnedDatabase(admin, name);
+  } finally {
+    await admin.end();
+  }
   for (const d of tempDirs) await rm(d, { recursive: true, force: true });
 });
 

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import type { TestProject } from 'vitest/node';
 import { runMigrations } from './packages/domain/src/db/migrate';
+import { assertSafeDatabaseName, dropOwnedDatabase } from './packages/domain/src/testing/isolated-db';
 
 /**
  * Creates an isolated database for this test run (so parallel agents/worktrees
@@ -28,6 +29,7 @@ function withDatabase(url: string, db: string): string {
 
 export default async function setup(project: TestProject) {
   const name = `ca_test_${process.pid}_${randomBytes(3).toString('hex')}`;
+  assertSafeDatabaseName(name);
   const admin = new pg.Client({ connectionString: BASE_URL });
   try {
     await admin.connect();
@@ -48,7 +50,14 @@ export default async function setup(project: TestProject) {
   return async () => {
     const c = new pg.Client({ connectionString: BASE_URL });
     await c.connect();
-    await c.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-    await c.end();
+    try {
+      // No WITH (FORCE): the test role lacks pg_signal_backend, and a
+      // role-less autovacuum worker attached to the churned per-run database
+      // would make the teardown fail with "permission denied to terminate
+      // process". dropOwnedDatabase waits, bounded, for sessions to exit.
+      await dropOwnedDatabase(c, name);
+    } finally {
+      await c.end();
+    }
   };
 }
