@@ -73,6 +73,15 @@ export const JobPayloads = {
     asset_id: Uuid,
     expected_generation: z.number().int().positive(),
   }),
+  /**
+   * PR 8 interest graph: project one account's private graph from current
+   * authoritative state. The payload mirrors the owning account (defense in
+   * depth); the projector reads current state itself, so retries and replays
+   * of the same job always converge to the same result.
+   */
+  project_interest_graph: z.object({
+    account_id: Uuid,
+  }),
 } as const satisfies Record<JobType, z.ZodType>;
 
 export type JobPayload<T extends JobType> = z.infer<(typeof JobPayloads)[T]>;

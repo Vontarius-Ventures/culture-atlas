@@ -1,0 +1,122 @@
+import { randomUUID } from 'node:crypto';
+import { afterAll, describe, expect, it } from 'vitest';
+import { dispatchGraphOutbox, getJobById, preferences } from '@culture-atlas/domain';
+import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
+import { accountCtx, runJobs, world } from './test-world';
+
+/**
+ * VAL-PROJ-007 real-stack evidence: a committed projection intent projects
+ * through the real Worker (queue, lease, heartbeat, handler) after the
+ * dispatcher returns, without any new user mutation. The projection flag is
+ * the only switch; no live provider is involved.
+ */
+
+const db = getTestDb();
+afterAll(closeTestDb);
+
+const config = testConfig({ INTEREST_GRAPH_PROJECTION_ENABLED: 'true' });
+
+interface StateRow {
+  state: string;
+  applied: number;
+  projection_revision: number;
+}
+
+async function stateRow(accountId: string): Promise<StateRow | null> {
+  const { rows } = await db.query<StateRow>(
+    `SELECT state, applied_taste_revision AS applied, projection_revision
+       FROM personal_graph_state WHERE owner_account_id = $1`,
+    [accountId],
+  );
+  return rows[0] ?? null;
+}
+
+async function tasteRevision(accountId: string): Promise<number> {
+  const { rows } = await db.query<{ revision: number }>('SELECT revision FROM taste_profiles WHERE owner_account_id = $1', [
+    accountId,
+  ]);
+  return rows[0]?.revision ?? 0;
+}
+
+async function unsatisfied(accountId: string): Promise<{ id: string; dispatch_state: string }[]> {
+  const { rows } = await db.query<{ id: string; dispatch_state: string }>(
+    `SELECT id, dispatch_state FROM graph_outbox WHERE owner_account_id = $1 ORDER BY target_taste_revision`,
+    [accountId],
+  );
+  return rows;
+}
+
+async function accountItem(accountId: string): Promise<string> {
+  const key = randomUUID();
+  const { rows } = await db.query<{ id: string }>(
+    `INSERT INTO discovery_items (owner_account_id, kind, category, canonical_key, title)
+     VALUES ($1, 'film', 'watch', $2, 'A film') RETURNING id`,
+    [accountId, `qloo:${key}`],
+  );
+  return rows[0]!.id;
+}
+
+describe('graph projection through the real worker', () => {
+  it('projects committed intents after a dispatcher restart without a new mutation', async () => {
+    const { providers } = world({ qloo: null, research: false, composer: false });
+    const ctx = await accountCtx(providers, config);
+    if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+    const accountId = ctx.principal.accountId;
+    const item = await accountItem(accountId);
+    await preferences.recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: item });
+
+    // The dispatcher is down while the mutation commits: nothing is lost.
+    const pending = await unsatisfied(accountId);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.dispatch_state).toBe('pending');
+    expect(await stateRow(accountId)).toBeNull();
+
+    // The dispatcher returns, hands the intents to the queue, and the real
+    // worker projects them to the latest state.
+    const dispatched = await dispatchGraphOutbox(db, { config, ownerAccountId: accountId });
+    expect(dispatched.accounts).toHaveLength(1);
+    await runJobs(ctx, [dispatched.accounts[0]!.jobId]);
+
+    const job = await getJobById(db, dispatched.accounts[0]!.jobId);
+    expect(job?.state).toBe('complete');
+    expect(job?.result_type).toBe('graph_projection');
+
+    const state = (await stateRow(accountId))!;
+    expect(state.state).toBe('ready');
+    expect(state.applied).toBe(await tasteRevision(accountId));
+    expect(state.projection_revision).toBe(1);
+    expect((await unsatisfied(accountId)).every((e) => e.dispatch_state === 'done')).toBe(true);
+
+    const { rows: edges } = await db.query<{ n: number }>(
+      'SELECT count(*) AS n FROM personal_interest_edges WHERE owner_account_id = $1',
+      [accountId],
+    );
+    expect(Number(edges[0]!.n)).toBe(1);
+  });
+
+  it('one worker job satisfies a burst of intents at the latest revision', async () => {
+    const { providers } = world({ qloo: null, research: false, composer: false });
+    const ctx = await accountCtx(providers, config);
+    if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+    const accountId = ctx.principal.accountId;
+    const first = await accountItem(accountId);
+    const second = await accountItem(accountId);
+    await preferences.recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: first });
+    await preferences.recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: second });
+    expect((await unsatisfied(accountId)).length).toBe(2);
+
+    const dispatched = await dispatchGraphOutbox(db, { config, ownerAccountId: accountId });
+    expect(dispatched.accounts).toHaveLength(1);
+    expect(dispatched.eventsDispatched).toBe(2);
+    await runJobs(ctx, [dispatched.accounts[0]!.jobId]);
+
+    const state = (await stateRow(accountId))!;
+    expect(state.applied).toBe(await tasteRevision(accountId));
+    expect((await unsatisfied(accountId)).every((e) => e.dispatch_state === 'done')).toBe(true);
+    const { rows: edges } = await db.query<{ n: number }>(
+      'SELECT count(*) AS n FROM personal_interest_edges WHERE owner_account_id = $1',
+      [accountId],
+    );
+    expect(Number(edges[0]!.n)).toBe(2);
+  });
+});

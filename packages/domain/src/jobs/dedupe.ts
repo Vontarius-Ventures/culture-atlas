@@ -64,3 +64,22 @@ export function interestExpandDedupeKey(input: { owner: Owner; wave: number }): 
 export function audioAnalysisDedupeKey(input: { owner: Owner; analysisId: string }): string {
   return `analyze_audio:${digest([ownerKey(input.owner), input.analysisId])}`;
 }
+
+/**
+ * One active graph-projection job per account and unsatisfied intent set. The
+ * set of (event id, attempt) pairs is the freshness dimension: attempts grow
+ * with every dispatch cycle, so a re-delivery of the same events, a new
+ * intent joining the set, or a terminally failed job always produces a fresh
+ * job, while concurrent dispatchers seeing the same state compute the same
+ * key and dedupe. A completed job's event set is done by definition, so its
+ * key never needs to be reused.
+ */
+export function interestGraphProjectionDedupeKey(input: {
+  accountId: string;
+  events: readonly { id: string; attempts: number }[];
+}): string {
+  return `graph_projection:${digest([
+    `a:${input.accountId}`,
+    ...input.events.map((e) => `${e.id}:${e.attempts}`).sort(),
+  ])}`;
+}

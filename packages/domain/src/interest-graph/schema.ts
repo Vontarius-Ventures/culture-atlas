@@ -11,6 +11,11 @@ import { RECOMMENDATION_ORIGINS } from '../enums';
  * never admitted, and private interpretations stay account-scoped.
  */
 
+// --- Policy ------------------------------------------------------------------------
+
+/** Version of the projection/admission rules a graph run applied. */
+export const INTEREST_GRAPH_POLICY_VERSION = 'graph-policy-1';
+
 // --- Shared canonical identities -----------------------------------------------
 
 export const GRAPH_NODE_KINDS = [
@@ -162,10 +167,24 @@ export const PersonalGraphStateRow = z.object({
   suppression_revision: z.number().int(),
   last_error_code: z.string().nullable(),
   last_projected_at: z.date().nullable(),
+  last_graph_run_id: z.string().uuid().nullable(),
   created_at: z.date(),
   updated_at: z.date(),
 });
 export type PersonalGraphStateRow = z.infer<typeof PersonalGraphStateRow>;
+
+/** Deployment-singleton checkpoint of the current-state backfill (migration 260). */
+export const GraphBackfillStateRow = z.object({
+  id: z.number().int(),
+  state: z.enum(['running', 'complete']),
+  started_at: z.date(),
+  updated_at: z.date(),
+  finished_at: z.date().nullable(),
+  last_owner_account_id: z.string().uuid().nullable(),
+  accounts_projected: z.number().int(),
+  passes: z.number().int(),
+});
+export type GraphBackfillStateRow = z.infer<typeof GraphBackfillStateRow>;
 
 export const PersonalInterestEdgeRow = z.object({
   id: z.string().uuid(),

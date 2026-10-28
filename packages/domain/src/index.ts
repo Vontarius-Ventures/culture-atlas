@@ -13,6 +13,7 @@ export * from './jobs';
 export * as schemas from './schemas';
 export * from './services';
 export { JOB_HANDLERS } from './pipeline';
+export * from './interest-graph';
 export * from './media/image';
 export * from './util/cursor';
 export * from './util/stable-json';

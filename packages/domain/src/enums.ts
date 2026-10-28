@@ -54,6 +54,12 @@ export const JOB_TYPES = [
   'interest_expand',
   /** Amendment 2.3 Music Mode: explicit Explore of a private audio asset. */
   'analyze_audio',
+  /**
+   * PR 8 interest graph: rebuilds one account's private projection from
+   * current explicit state (outbox dispatch, backfill or sweeper). Never
+   * calls providers and never touches live recommendations.
+   */
+  'project_interest_graph',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;

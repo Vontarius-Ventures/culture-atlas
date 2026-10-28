@@ -1,5 +1,6 @@
 import type { JobHandlerMap } from '../jobs/handler';
 import { analyzeAudio } from '../audio/analyze-job';
+import { projectInterestGraph } from './project-interest-graph';
 import { analyzeCapture } from './analyze-capture';
 import { discoverRelated } from './discover-related';
 import { generatePlan } from './generate-plan';
@@ -20,4 +21,5 @@ export const JOB_HANDLERS: JobHandlerMap = {
   taste_seed: tasteSeed,
   interest_expand: interestExpand,
   analyze_audio: analyzeAudio,
+  project_interest_graph: projectInterestGraph,
 };
