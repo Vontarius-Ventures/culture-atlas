@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { liftFeatureKill, setFeatureKill } from '../flags/feature-flags';
 import { recordPreference } from '../services/preferences';
+import { loadFoldSaves } from '../services/taste';
 import { accountCtx, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
 import { closeTestDb, getTestDb, testConfig } from '../testing';
 import { dispatchGraphOutbox } from './dispatch';
@@ -408,6 +409,41 @@ describe('projector: idempotent projection and revision fences (VAL-PROJ-008)', 
     await recordPreference(ctx, { action: 'unhide', target_type: 'discovery_item', target_id: item });
     await dispatch(principal.accountId);
     await project(principal.accountId);
+    expect(await edgeCount(principal.accountId)).toBe(1);
+  });
+
+  it('saves on shared catalog rows stay taste but never become private roots', async () => {
+    const { principal, ctx } = await accountCtx({ config: projectionOn });
+    const own = await insertItem({ accountId: principal.accountId }, { title: 'Owned film' });
+    const shared = await insertItem(null, { title: 'Shared sample' });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: own });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: shared });
+    await dispatch(principal.accountId);
+
+    // The composite owner FK on edges makes shared catalog rows (owner-less
+    // sample items) cross-account state: real taste, never private roots.
+    const result = await project(principal.accountId);
+    expect(result.projected).toBe(true);
+    expect(result.tailClean).toBe(true);
+    expect(await edgeCount(principal.accountId)).toBe(1);
+    const support = await supportShapes(principal.accountId);
+    expect(support).toHaveLength(1);
+    expect(support[0]).toMatchObject({ originKind: 'saved_item', edgeTarget: own });
+
+    // The fold keeps both saves: shared rows are taste, just not graph roots.
+    const fold = await loadFoldSaves(db, { kind: 'account', accountId: principal.accountId });
+    expect(fold.map((s) => s.item_id).sort()).toEqual([own, shared].sort());
+
+    // Replays keep the fence: redelivered events rebuild the same roots.
+    await db.query(
+      `UPDATE graph_outbox SET dispatch_state = 'pending', dispatched_at = NULL, processed_at = NULL
+        WHERE owner_account_id = $1`,
+      [principal.accountId],
+    );
+    await dispatch(principal.accountId);
+    const replay = await project(principal.accountId);
+    expect(replay.projected).toBe(true);
+    expect(replay.tailClean).toBe(true);
     expect(await edgeCount(principal.accountId)).toBe(1);
   });
 

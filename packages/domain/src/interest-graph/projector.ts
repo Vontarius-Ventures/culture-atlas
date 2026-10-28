@@ -183,14 +183,18 @@ async function runPass(db: Db, input: ProjectAccountInterestGraphInput, pass: nu
       // it are invisible by design: they drive the post-commit tail check.
       const events = await unsatisfiedGraphOutboxEventIds(tx, accountId);
 
-      // Authoritative current state, one consistent snapshot.
+      // Authoritative current state, one consistent snapshot. The account's
+      // own discovery items bound what the pass may build roots on; both the
+      // parity guard and the rebuild read the same ownership set.
+      const owned = await ownedItemIds(tx, accountId);
       const snapshot = await loadExplicitSupport(tx, accountId);
-      await assertFreshFoldParity(tx, accountId, snapshot);
+      await assertFreshFoldParity(tx, accountId, snapshot, owned);
 
       const built = await rebuildAccountProjection(tx, {
         accountId,
         snapshot,
         source: input.source,
+        owned,
       });
 
       const run = await createGraphRun(tx, {
@@ -313,21 +317,42 @@ export async function countUnsatisfiedGraphOutboxEvents(db: Queryable, accountId
 // --- Parity ----------------------------------------------------------------------------
 
 /**
+ * Discovery items the account actually owns. Private graph edges carry the
+ * composite owner FK (`discovery_item_id, owner_account_id`), so only these
+ * items can ever become explicit roots. Shared catalog rows (sample/example
+ * items with no owner) stay real taste in the fold and the reconciled reads,
+ * but they are cross-account state and never become this account's roots.
+ */
+async function ownedItemIds(tx: Queryable, accountId: string): Promise<Set<string>> {
+  const { rows } = await tx.query<{ id: string }>('SELECT id FROM discovery_items WHERE owner_account_id = $1', [accountId]);
+  return new Set(rows.map((r) => r.id));
+}
+
+/**
  * The projection's explicit roots must equal the current taste fold's save
  * set minus exposure-only rows (both exclude hidden canonical keys). The two
  * are computed by different readers; this guard fails the pass honestly if
- * they ever diverge instead of publishing a wrong projection.
+ * they ever diverge instead of publishing a wrong projection. Both sides are
+ * restricted to the account's own discovery items: saves on shared catalog
+ * rows are taste but cannot be private graph roots.
  */
-async function assertFreshFoldParity(tx: Queryable, accountId: string, snapshot: ExplicitSupportSnapshot): Promise<void> {
+async function assertFreshFoldParity(
+  tx: Queryable,
+  accountId: string,
+  snapshot: ExplicitSupportSnapshot,
+  owned: Set<string>,
+): Promise<void> {
   // Sequential on purpose: inside the RR pass both readers share one client,
   // and a failed query in a concurrent batch can strand the client's queue.
   const saves = await loadFoldSaves(tx, { kind: 'account', accountId });
   const hidden = await hiddenKeys(tx, { kind: 'account', accountId });
   const exposureOnly = new Set(snapshot.exposureOnlyItemIds);
   const expected = new Set(
-    saves.filter((s) => !hidden.has(s.canonical_key) && !exposureOnly.has(s.item_id)).map((s) => s.item_id),
+    saves.filter((s) => !hidden.has(s.canonical_key) && !exposureOnly.has(s.item_id) && owned.has(s.item_id)).map((s) => s.item_id),
   );
-  const projected = new Set(snapshot.saves.filter((s) => !hidden.has(s.canonicalKey)).map((s) => s.itemId));
+  const projected = new Set(
+    snapshot.saves.filter((s) => !hidden.has(s.canonicalKey) && owned.has(s.itemId)).map((s) => s.itemId),
+  );
   if (expected.size !== projected.size || [...expected].some((id) => !projected.has(id))) {
     throw new AppError('internal', {
       message: 'Interest-graph projection diverged from the current taste fold.',
@@ -348,15 +373,18 @@ interface BuiltProjection {
  * snapshot. Support rows are wiped and re-derived, so replays produce exactly
  * the same content and withdrawn authority simply disappears. Edge identity
  * stays stable per target (upsert), and suppression markers live in their own
- * table so they survive rebuilds.
+ * table so they survive rebuilds. Explicit roots are restricted to the
+ * account's own discovery items (the composite owner FK on edges); saves on
+ * shared catalog rows stay taste but never become private roots, and their
+ * pick-group members are skipped by the same fence below.
  */
 async function rebuildAccountProjection(
   tx: Queryable,
-  input: { accountId: string; snapshot: ExplicitSupportSnapshot; source: ProjectionSource },
+  input: { accountId: string; snapshot: ExplicitSupportSnapshot; source: ProjectionSource; owned: Set<string> },
 ): Promise<BuiltProjection> {
-  const { accountId, snapshot, source } = input;
+  const { accountId, snapshot, source, owned } = input;
   const hidden = new Set(snapshot.exclusions);
-  const roots = snapshot.saves.filter((s) => !hidden.has(s.canonicalKey));
+  const roots = snapshot.saves.filter((s) => !hidden.has(s.canonicalKey) && owned.has(s.itemId));
 
   await tx.query('DELETE FROM personal_interest_support WHERE owner_account_id = $1', [accountId]);
 
@@ -392,7 +420,7 @@ async function rebuildAccountProjection(
   for (const group of snapshot.pickGroups) {
     for (const member of group.members) {
       const edgeId = edgeByItemId.get(member.itemId);
-      if (!edgeId) continue; // hidden or withdrawn members stay excluded
+      if (!edgeId) continue; // hidden, withdrawn or unowned members stay excluded
       await addEdgeSupport(tx, {
         ownerAccountId: accountId,
         edgeId,

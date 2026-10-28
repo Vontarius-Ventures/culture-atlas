@@ -5,6 +5,7 @@ import {
   JobCancelledError,
   claimJobs,
   completeJob,
+  dispatchGraphOutbox,
   enqueueJob,
   failJob,
   heartbeatJob,
@@ -52,6 +53,13 @@ export interface WorkerOptions {
   /** Re-create broken World Sensor poll chains periodically (default: on unless jobIds is set). */
   scheduleSensorPolls?: boolean;
   sensorSweepEveryMs?: number;
+  /**
+   * Hand durable interest-graph projection intents to the queue periodically
+   * (default: on unless jobIds is set). One cheap indexed pass per interval;
+   * per-account kill/opt-in checks stay inside dispatchGraphOutbox.
+   */
+  scheduleGraphDispatch?: boolean;
+  graphDispatchEveryMs?: number;
 }
 
 /** One purge per hour bucket at most: the dedupe key makes concurrent workers agree. */
@@ -94,6 +102,7 @@ export class Worker {
   private lastReap = 0;
   private lastPurge = 0;
   private lastSensorSweep = 0;
+  private lastGraphDispatch = 0;
 
   constructor(private readonly opts: WorkerOptions) {
     this.workerId = opts.workerId ?? `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
@@ -127,6 +136,21 @@ export class Worker {
     if ((this.opts.scheduleSensorPolls ?? !this.opts.jobIds) && Date.now() - this.lastSensorSweep > (this.opts.sensorSweepEveryMs ?? 60_000)) {
       this.lastSensorSweep = Date.now();
       await sensorConnections.ensureSensorPollJobs(this.opts.db).catch((e: Error) => this.log('sensor sweep failed', { error: e.message }));
+    }
+    // Interest-graph outbox dispatch (PR 8): the durable intents committed by
+    // mutations are handed to this same queue here, so a committed change is
+    // projected without any new user mutation even across dispatcher restarts.
+    // Only runs when the operator opted the server in; per-account kill flags
+    // are still honored inside the dispatch pass.
+    if (
+      (this.opts.scheduleGraphDispatch ?? !this.opts.jobIds) &&
+      Date.now() - this.lastGraphDispatch > (this.opts.graphDispatchEveryMs ?? 5_000) &&
+      (this.opts.config.INTEREST_GRAPH_PROJECTION_ENABLED === 'true' || this.opts.config.INTEREST_GRAPH_PROJECTION_ENABLED === '1')
+    ) {
+      this.lastGraphDispatch = Date.now();
+      await dispatchGraphOutbox(this.opts.db, { config: this.opts.config }).catch((e: Error) =>
+        this.log('graph outbox dispatch failed', { error: e.message }),
+      );
     }
     const free = this.concurrency - this.running.size;
     if (free <= 0 || this.stopped) return 0;

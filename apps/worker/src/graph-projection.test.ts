@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
-import { dispatchGraphOutbox, getJobById, preferences } from '@culture-atlas/domain';
+import { dispatchGraphOutbox, enqueueGraphOutboxEvent, getJobById, preferences } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
+import { JOB_HANDLERS } from '@culture-atlas/domain';
 import { accountCtx, runJobs, world } from './test-world';
+import { Worker } from './worker';
 
 /**
  * VAL-PROJ-007 real-stack evidence: a committed projection intent projects
@@ -118,5 +120,86 @@ describe('graph projection through the real worker', () => {
       [accountId],
     );
     expect(Number(edges[0]!.n)).toBe(2);
+  });
+
+  it('the running worker sweeps committed intents into projection without an explicit dispatch call', async () => {
+    const { providers } = world({ qloo: null, research: false, composer: false });
+    const ctx = await accountCtx(providers, config);
+    if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+    const accountId = ctx.principal.accountId;
+    const item = await accountItem(accountId);
+    await preferences.recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: item });
+    expect((await unsatisfied(accountId)).length).toBe(1);
+
+    // A real Worker with no job filter: its periodic outbox sweep hands the
+    // committed intent to the queue and the claimed job projects it. No test
+    // calls dispatchGraphOutbox; the dispatcher outage ends when it starts.
+    const worker = new Worker({
+      db: getTestDb(),
+      providers: ctx.providers,
+      config,
+      handlers: JOB_HANDLERS,
+      log: () => undefined,
+      heartbeatMs: 1_000,
+      graphDispatchEveryMs: 0,
+    });
+    await worker.drain();
+
+    const state = (await stateRow(accountId))!;
+    expect(state.state).toBe('ready');
+    expect(state.applied).toBe(await tasteRevision(accountId));
+    expect((await unsatisfied(accountId)).every((e) => e.dispatch_state === 'done')).toBe(true);
+    const { rows: edges } = await db.query<{ n: number }>(
+      'SELECT count(*) AS n FROM personal_interest_edges WHERE owner_account_id = $1',
+      [accountId],
+    );
+    expect(Number(edges[0]!.n)).toBe(1);
+    const { rows: queued } = await db.query<{ n: number }>(
+      `SELECT count(*) AS n FROM jobs WHERE owner_account_id = $1 AND type = 'project_interest_graph'
+        AND state IN ('queued','running')`,
+      [accountId],
+    );
+    expect(Number(queued[0]!.n)).toBe(0);
+  });
+
+  it('the sweep leaves intents pending while the projection flag is off', async () => {
+    const { providers } = world({ qloo: null, research: false, composer: false });
+    // Flag off: the mutation itself writes no intent, so seed the committed
+    // intent directly — the durable shape an operator rollback leaves behind.
+    const off = testConfig();
+    const ctx = await accountCtx(providers, off);
+    if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+    const accountId = ctx.principal.accountId;
+    const item = await accountItem(accountId);
+    await preferences.recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: item });
+    await enqueueGraphOutboxEvent(db, {
+      ownerAccountId: accountId,
+      eventType: 'taste',
+      logicalEventKey: 'taste',
+      targetTasteRevision: await tasteRevision(accountId),
+      jobIntent: 'project_interest_graph',
+      payload: { action: 'save' },
+    });
+
+    const worker = new Worker({
+      db: getTestDb(),
+      providers: ctx.providers,
+      config: off,
+      handlers: JOB_HANDLERS,
+      log: () => undefined,
+      heartbeatMs: 1_000,
+      graphDispatchEveryMs: 0,
+    });
+    await worker.drain();
+
+    const pending = await unsatisfied(accountId);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.dispatch_state).toBe('pending');
+    const { rows: jobs } = await db.query<{ n: number }>(
+      `SELECT count(*) AS n FROM jobs WHERE owner_account_id = $1 AND type = 'project_interest_graph'`,
+      [accountId],
+    );
+    expect(Number(jobs[0]!.n)).toBe(0);
+    expect(await stateRow(accountId)).toBeNull();
   });
 });
