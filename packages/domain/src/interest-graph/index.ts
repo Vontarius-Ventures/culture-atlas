@@ -4,6 +4,7 @@ export * from './evidence';
 export * from './assertion-policy';
 export * from './validity';
 export * from './paths';
+export * from './expansion';
 export * from './research';
 export * from './corpus-manifest';
 export * from './corpus';

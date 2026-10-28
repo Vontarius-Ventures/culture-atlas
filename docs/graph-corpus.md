@@ -50,6 +50,46 @@ counts. Independently sourced families stay separately represented (for
 example, *The Bedroom*'s creator is corroborated by both the AIC record and
 the Wikipedia *Bedroom in Arles* summary).
 
+## Admission and expansion (VAL-DISC-001/002/004)
+
+`expandAccountInterestGraph`
+(`packages/domain/src/interest-graph/expansion.ts`) is the shared consumer of
+the corpus: one admission pipeline serves BOTH root kinds — explicit-interest
+roots (a projected explicit edge whose canonical key is still explicit and not
+hidden) and active-photo-reference roots (the current authorized
+resolved/user-confirmed, depicted/user-selected references of the current
+active analysis of a saved capture).
+
+- **Cultural evidence and private relevance are separate decisions.** A
+  candidate is admitted only when an approved path-grammar composition
+  (`validateGraphPath`, exactly the six reviewed templates — never "some
+  bounded graph walk") is currently justified AND the root's private relevance
+  is current right now (stale roots are never rescued by still-valid
+  evidence). Photo-root candidates additionally require a supported path to
+  the photo reference itself; personal appeal only ranks admitted candidates,
+  it never admits one.
+- **Reason truth stays distinct.** The rendered reason is the template's own
+  bounded meaning; the private support edge and the photo-reference metadata
+  (with its uncertainty) are recorded separately on the frontier candidate and
+  the pinned proof (`intent: 'personal' | 'photo'`).
+- **Unqualified vision is fail-closed.** `visionQualified` is a constant
+  `false`: active `VISUALLY_RESEMBLES` private links are counted as denied and
+  never become roots, candidates or reasons, and a reference with relation
+  `resembles` is a visual claim that never yields a photo root. Enabling the
+  graph flags does not qualify vision.
+- **Bounds.** At most two approved relation hops, 200 distinct assertions
+  traversed, 40 candidates evaluated and 500 active frontier entries per
+  account (due entries expire first, then lowest-priority entries are pruned —
+  pruning candidate state never removes confirmed interests). Frontier
+  candidates deduplicate per account and expire within seven days, shortened
+  by evidence/rights expiry. Only admitted candidates enter the versioned
+  ranking policy (`RANKING_POLICY_VERSION`), whose deterministic scores and
+  tie handling make fixed-input replay reproduce the selection; rejected
+  evidence can never be overridden and no unsupported filler completes a rail.
+
+The expansion runs entirely on the shared corpus and the account's own
+projected state: it makes no provider or model calls and records none.
+
 ## Review and rights
 
 - **Reviewed only:** corpus admission requires a review record

@@ -97,6 +97,14 @@ export const DomainConfigSchema = z.object({
    * turns it off (feature-flags.json activation rule).
    */
   INTEREST_GRAPH_PROJECTION_ENABLED: z.string().optional(),
+  /**
+   * PR 8 interest graph: the operator opt-in for graph-assisted discovery.
+   * Default off; requires the projection opt-in as well (the activation rule
+   * of interest_graph_discovery_enabled). Discovery publication/expansion
+   * only — never legacy paths, and an account/cohort never runs graph and
+   * legacy paid expansion for the same window.
+   */
+  INTEREST_GRAPH_DISCOVERY_ENABLED: z.string().optional(),
   FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()
