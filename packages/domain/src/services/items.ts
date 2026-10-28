@@ -28,7 +28,7 @@ import type {
 } from '../schemas/items';
 import { iso } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
-import { clipText, preferPicturedCards, readDisplayMetadata } from './display';
+import { clipText, isProviderBackedItem, preferPicturedCards, readDisplayMetadata } from './display';
 import { getTasteRevision } from './taste';
 
 /**
@@ -238,7 +238,10 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   const [card] = await loadCards(ctx, [item.id], { recommendations: recContext });
   if (!card) throw new AppError('not_found');
 
-  const description = clipText(meta.description);
+  // Provider-backed rows carry no displayable prose (VAL-EVID-005: Qloo
+  // descriptions are transient-only); user/model-authored descriptions on
+  // owned rows still display.
+  const description = isProviderBackedItem(item.external_ids) ? null : clipText(meta.description);
   const detail = meta.detail?.trim() || null;
   const reason = rec?.display_reason ?? null;
   const sources = rec ? await loadSources(ctx.db, rec.source_ids) : [];

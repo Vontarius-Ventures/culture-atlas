@@ -243,7 +243,9 @@ describe('Explore authorizes analysis', () => {
                   entity_id: 'qloo-artist-nina',
                   name: 'Nina Simone',
                   types: ['urn:entity:artist'],
-                  properties: {},
+                  // Live provider material: while Qloo's retention/display rights
+                  // are undocumented, none of this may persist or display.
+                  properties: { short_description: 'Qloo prose about Nina.', image: 'https://images.example.test/nina.jpg' },
                   tags: [],
                 },
               ]
@@ -312,7 +314,8 @@ describe('Explore authorizes analysis', () => {
     ]);
     expect(result.components.speech_references.state).toBe('not_requested');
     // The result screen gets the Qloo artist and related Qloo artists, nothing invented:
-    // the seed itself and non-artists are dropped; a non-https image is never kept.
+    // the seed itself and non-artists are dropped; a Qloo picture is never
+    // displayed while its display rights stay undocumented (VAL-EVID-005).
     const match = (got.result as { match: unknown }).match;
     expect(match).toEqual({
       title: null,
@@ -329,13 +332,13 @@ describe('Explore authorizes analysis', () => {
     );
     expect(evidence.rows).toEqual([{ method: 'transcript', qloo_entity_id: 'qloo-artist-nina' }]);
     // The heard artist is stored and starts related discovery that feeds suggestions.
-    const artist = (got.result as { artist: { name: string; item_id: string; discovery_job_id: string; related_job_id: string } }).artist;
-    expect(artist).toMatchObject({ name: 'Nina Simone' });
-    const item = await db.query<{ title: string; kind: string; owner_account_id: string }>(
-      'SELECT title, kind, owner_account_id FROM discovery_items WHERE id = $1',
+    const artist = (got.result as { artist: { name: string; item_id: string; image_url: string | null; discovery_job_id: string; related_job_id: string } }).artist;
+    expect(artist).toMatchObject({ name: 'Nina Simone', image_url: null });
+    const item = await db.query<{ title: string; kind: string; owner_account_id: string; display_metadata: Record<string, unknown> }>(
+      'SELECT title, kind, owner_account_id, display_metadata FROM discovery_items WHERE id = $1',
       [artist.item_id],
     );
-    expect(item.rows[0]).toEqual({ title: 'Nina Simone', kind: 'artist', owner_account_id: f.account.accountId });
+    expect(item.rows[0]).toEqual({ title: 'Nina Simone', kind: 'artist', owner_account_id: f.account.accountId, display_metadata: { subtitle: 'Heard in Music Mode' } });
     const dj = await db.query<{ source: string; source_label: string }>(
       'SELECT source, source_label FROM discovery_jobs WHERE id = $1',
       [artist.discovery_job_id],

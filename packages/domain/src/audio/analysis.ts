@@ -194,7 +194,10 @@ export class AudioAnalysis {
       item_id: string; title: string; kind: string; category: string | null; reason: string | null; image_url: string | null;
     }>(
       `SELECT di.id AS item_id, di.title, di.kind, di.category, rec.display_reason AS reason,
-              CASE WHEN di.display_metadata->'image'->>'url' LIKE 'https://%' THEN di.display_metadata->'image'->>'url' END AS image_url
+              -- Only app-served display assets may serve (VAL-EVID-005); an
+              -- uncleared external URL (e.g. a legacy provider image) never does.
+              CASE WHEN di.display_metadata->'image'->>'url' LIKE '/%' AND di.display_metadata->'image'->>'url' NOT LIKE '//%'
+                   THEN di.display_metadata->'image'->>'url' END AS image_url
          FROM recommendations rec JOIN discovery_items di ON di.id = rec.discovery_item_id
         WHERE rec.discovery_job_id = $1 ORDER BY rec.rank`,
       [djId],

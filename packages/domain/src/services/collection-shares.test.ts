@@ -263,9 +263,13 @@ describe('SHR-02 public-safe projection', () => {
     expect(view.share.view_only).toBe(true);
     expect(view.discoveries.map((d) => d.title)).toEqual(['A neighborhood gallery', 'Sunday listening']);
     const [gallery, listening] = view.discoveries;
-    expect(gallery).toMatchObject({ description: 'Art, small exhibitions and an afternoon nearby.', saveable: true,
-      image: { url: 'https://images.example.com/gallery.jpg' }, destination_url: 'https://gallery.example.com' });
-    expect(listening).toMatchObject({ image: null, destination_url: null, saveable: false });
+    // The gallery row is Qloo-backed legacy provider material: its prose never
+    // displays (transient-only) and its uncleared image URL never serves
+    // (owned-or-cleared-only). The verified destination link still reads.
+    expect(gallery).toMatchObject({ description: null, saveable: true, image: null, destination_url: 'https://gallery.example.com' });
+    // A user-authored description on a non-provider row still displays; its
+    // private stored image never does.
+    expect(listening).toMatchObject({ description: 'Records to spend a little time with.', image: null, destination_url: null, saveable: false });
     expect(view.media).toEqual([{ id: f.video, kind: 'video', width: 1280, height: 720, duration_ms: 60_000,
       poster_url: `/v2/shared/media/${f.video}/poster?share=${view.share.id}`,
       playback_url: `/v2/shared/media/${f.video}/playback?share=${view.share.id}`, original_url: null }]);
@@ -319,6 +323,9 @@ describe('SHR-02 public-safe projection', () => {
       'SELECT owner_account_id, display_metadata, reference_id FROM discovery_items WHERE id = $1', [saved.item_id],
     );
     expect(copy.rows[0]).toMatchObject({ owner_account_id: viewerAccount.accountId, reference_id: null });
+    // The copied public card carries no restricted provider material either.
+    expect(copy.rows[0]!.display_metadata.description ?? null).toBeNull();
+    expect(copy.rows[0]!.display_metadata.image ?? null).toBeNull();
     const own = await db.query('SELECT 1 FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2', [viewerAccount.accountId, saved.item_id]);
     expect(own.rowCount).toBe(1);
     await expect(saveSharedItem(vctx, viewer, f.listening)).rejects.toMatchObject({ code: 'invalid_input' });

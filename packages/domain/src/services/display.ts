@@ -4,7 +4,9 @@ import { z } from 'zod';
  * Contract for discovery_items.display_metadata (jsonb). Every writer of
  * discovery items must produce this shape; cards.ts reads it.
  * Images: `object_key` for private/stored media (signed on read) or `url` for
- * public licensed assets (e.g. /samples/... or a provider image we may display).
+ * app-owned public assets (e.g. /samples/...). An external absolute URL is
+ * never a cleared display asset while no independent rights review has
+ * recorded one (see isClearedDisplayImageUrl).
  */
 export const DisplayImage = z.object({
   object_key: z.string().optional(),
@@ -63,35 +65,98 @@ export function readDisplayMetadata(value: unknown): DisplayMetadata {
 /**
  * JSONB `||` overwrites keys present on the right, including `"image": null`.
  * Drop null/undefined so a later writer that has no picture cannot wipe one
- * Qloo already stored on the same canonical item.
+ * an earlier writer stored on the same canonical item.
  */
 export function forDisplayUpsert(meta: DisplayMetadata): Record<string, unknown> {
   return Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined && v !== null));
 }
 
+// --- Provider display-rights boundary (VAL-EVID-005 / DISC-SCR-001) ------------------
+
+/** external_ids keys that hold Qloo ids (entities and tags). */
+export const QLOO_EXTERNAL_ID_KEYS = ['qloo', 'qloo_tag'] as const;
+
+/** True when the item's material is Qloo-backed (an entity or tag id is stored on it). */
+export function isProviderBackedItem(externalIds: Record<string, unknown> | null | undefined): boolean {
+  if (!externalIds) return false;
+  return QLOO_EXTERNAL_ID_KEYS.some((k) => k in externalIds);
+}
+
 /**
- * Real provider picture only: an https URL Qloo actually returned. Never a
- * guessed portrait or a generated stand-in. Attribution/license pass through
- * when present so the card can credit the source.
+ * External image origins with an INDEPENDENT, recorded clearance review.
+ * Empty today: no external host has one yet. HTTPS is transport security, a
+ * provider-returned license/attribution field is the provider's own claim
+ * about upstream material, and operator assurance is not a rights record —
+ * none of them clear an external URL for retention or display. Extend only
+ * with a documented independent review.
  */
-export function imageFromQlooProperties(
-  properties: Record<string, unknown> | undefined,
-  alt: string,
-): DisplayImage | null {
+export const CLEARED_EXTERNAL_IMAGE_URL_PREFIXES: readonly string[] = [];
+
+/**
+ * May this URL be served as a display asset? Only app-served relative assets
+ * ("/samples/...", served by this application and owned/reviewed by it) and
+ * the independently cleared external prefixes above qualify.
+ */
+export function isClearedDisplayImageUrl(url: string): boolean {
+  if (url.startsWith('/') && !url.startsWith('//')) return true;
+  return CLEARED_EXTERNAL_IMAGE_URL_PREFIXES.some((prefix) => url.startsWith(prefix));
+}
+
+/**
+ * The image a reader may actually serve: user-owned stored media
+ * (object_key, signed on read) or an app-owned/cleared asset URL. Any other
+ * image (an external absolute URL with no recorded clearance — e.g. a
+ * Qloo-returned picture) never displays.
+ */
+export function clearedDisplayImage(image: DisplayImage | null | undefined): DisplayImage | null {
+  if (!image) return null;
+  if (image.object_key) return image;
+  const url = image.url?.trim();
+  if (url && isClearedDisplayImageUrl(url)) return { ...image, url };
+  return null;
+}
+
+/**
+ * The display metadata a discovery-item upsert may persist:
+ *  - Qloo prose (or any prose on a provider-backed item) never persists —
+ *    provider responses are transient under the recorded rights policy;
+ *  - an image persists only when it is user-owned stored media or an
+ *    app-owned/cleared asset — never an uncleared external URL.
+ * Independently produced prose (model/user) on non-provider items passes.
+ */
+export function storeSanitizedDisplayMetadata(
+  meta: DisplayMetadata,
+  externalIds: Record<string, unknown> | undefined,
+): DisplayMetadata {
+  return {
+    ...meta,
+    image: clearedDisplayImage(meta.image),
+    description: isProviderBackedItem(externalIds) ? null : meta.description ?? null,
+  };
+}
+
+/**
+ * Real provider picture URL only: an https URL Qloo actually returned. This is
+ * TRANSIENT-ONLY extraction (VAL-EVID-005): the recorded provider_rights_policies
+ * row for qloo keeps response_retention = transient_only and
+ * public_display = owned_or_cleared_only while its retention/display rights are
+ * undocumented, so Qloo prose and Qloo-returned image URLs are never persisted
+ * or displayed. Producers may use the URL transiently (the renderability probe
+ * below); they must not turn it into stored or displayed content.
+ */
+export function qlooImageUrl(properties: Record<string, unknown> | undefined): string | null {
   if (!properties) return null;
   const candidates: unknown[] = [properties.image, properties.photo];
   if (Array.isArray(properties.images)) candidates.push(...properties.images);
   for (const raw of candidates) {
-    const parsed = parseQlooImage(raw, alt);
-    if (parsed) return parsed;
+    const url = parseQlooImageUrl(raw);
+    if (url) return url;
   }
   return null;
 }
 
-function parseQlooImage(raw: unknown, alt: string): DisplayImage | null {
+function parseQlooImageUrl(raw: unknown): string | null {
   let url: string | undefined;
-  let attribution: string | undefined;
-  let license: string | undefined;
   if (typeof raw === 'string') url = raw.trim();
   else if (raw && typeof raw === 'object') {
     const rec = raw as Record<string, unknown>;
@@ -100,11 +165,9 @@ function parseQlooImage(raw: unknown, alt: string): DisplayImage | null {
       const nested = rec.url as Record<string, unknown>;
       if (typeof nested.value === 'string') url = nested.value.trim();
     }
-    if (typeof rec.attribution === 'string') attribution = rec.attribution.trim() || undefined;
-    if (typeof rec.license === 'string') license = rec.license.trim() || undefined;
   }
   if (!url || !/^https:\/\//i.test(url)) return null;
-  return { url, alt, attribution, license };
+  return url;
 }
 
 /**
@@ -118,25 +181,28 @@ export function sourceImageTooSmall(byteLength: number | null | undefined): bool
   return typeof byteLength !== 'number' || !Number.isFinite(byteLength) || byteLength < MIN_SOURCE_IMAGE_BYTES;
 }
 
-/** Keep the URL only when the bytes behind it are a real picture, not a stub. */
-export async function qlooImageIfRenderable(
-  image: DisplayImage | null,
-  fetchImpl: typeof fetch = fetch,
-): Promise<DisplayImage | null> {
-  if (!image?.url) return null;
+/**
+ * Transient renderability probe: is the picture behind this Qloo URL a real
+ * image and not a stub? Producers use the answer as a quality gate (a venue
+ * without a renderable photo is not worth a card) WITHOUT keeping the URL.
+ * The bytes are inspected transiently and then discarded; a failed probe never
+ * drops a real venue (the URL was Qloo's, the card's text is ours).
+ */
+export async function qlooImageUrlIfRenderable(url: string | null, fetchImpl: typeof fetch = fetch): Promise<boolean> {
+  if (!url) return false;
   try {
-    const head = await fetchImpl(image.url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(2500) });
+    const head = await fetchImpl(url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(2500) });
     const headLen = Number(head.headers.get('content-length'));
     if (head.ok && Number.isFinite(headLen)) {
-      return sourceImageTooSmall(headLen) ? null : image;
+      return !sourceImageTooSmall(headLen);
     }
-    const get = await fetchImpl(image.url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(2500) });
-    if (!get.ok) return image;
+    const get = await fetchImpl(url, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(2500) });
+    if (!get.ok) return true;
     const buf = await get.arrayBuffer();
-    return sourceImageTooSmall(buf.byteLength) ? null : image;
+    return !sourceImageTooSmall(buf.byteLength);
   } catch {
-    // Probe failed: keep the URL. Do not drop a real photo because HEAD timed out.
-    return image;
+    // Probe failed: keep the card. Do not drop a real venue because HEAD timed out.
+    return true;
   }
 }
 

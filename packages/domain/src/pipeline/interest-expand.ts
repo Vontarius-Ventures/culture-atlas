@@ -171,8 +171,6 @@ export const interestExpand: JobHandler<'interest_expand'> = async (ctx) => {
         display_metadata: {
           subtitle: c.subtitle,
           year: c.year,
-          description: c.description,
-          image: c.image,
           destination_url: c.destination_url,
           example: c.origin === 'replay',
         },

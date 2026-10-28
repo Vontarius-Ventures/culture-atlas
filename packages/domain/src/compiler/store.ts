@@ -3,7 +3,7 @@ import type { Category, ItemKind, ReferenceType, SectionStatus } from '../enums'
 import { JobCancelledError } from '../jobs/handler';
 import { setSectionStatus } from '../jobs/stages';
 import type { Owner } from '../principal';
-import { forDisplayUpsert, type DisplayMetadata } from '../services/display';
+import { forDisplayUpsert, storeSanitizedDisplayMetadata, type DisplayMetadata } from '../services/display';
 
 /** Capture row fields the compiler needs. */
 export interface CaptureForCompile {
@@ -103,6 +103,13 @@ export interface DiscoveryItemInput {
  * Stable per-owner identity (owner + canonical_key): the same film/brand from
  * two analyses maps to ONE DiscoveryItem. Existing items keep their id (saved
  * state survives); anchors are merged and metadata refreshed.
+ *
+ * Provider display-rights boundary (VAL-EVID-005): the incoming metadata is
+ * sanitized before it is written, and the stored side is cleaned on the
+ * conflict-merge so a legacy row's restricted content cannot survive a new
+ * upsert. Qloo prose never persists on provider-backed items, and an image
+ * persists only when it is user-owned stored media or an app-owned/cleared
+ * asset — never an uncleared external URL.
  */
 export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: DiscoveryItemInput): Promise<string> {
   const conflict = owner.kind === 'account' ? '(owner_account_id, canonical_key)' : '(owner_session_id, canonical_key)';
@@ -111,7 +118,18 @@ export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: Dis
                                   title, display_metadata, external_ids, resolved_anchor_ids)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::uuid[])
      ON CONFLICT ${conflict} DO UPDATE
-       SET display_metadata = discovery_items.display_metadata || EXCLUDED.display_metadata,
+       SET display_metadata =
+         -- Stored legacy metadata is cleaned of restricted content before the
+         -- sanitized EXCLUDED overlay: prose disappears when the merged
+         -- identity is provider-backed, and an uncleared external image URL is
+         -- nulled while user-owned object_key images survive.
+         (discovery_items.display_metadata
+            || CASE WHEN (discovery_items.external_ids || EXCLUDED.external_ids) ?| ARRAY['qloo','qloo_tag']
+                    THEN '{"description": null}'::jsonb ELSE '{}'::jsonb END
+            || CASE WHEN (discovery_items.display_metadata -> 'image') ? 'object_key'
+                     OR left(COALESCE(discovery_items.display_metadata -> 'image' ->> 'url', ''), 1) = '/'
+                   THEN '{}'::jsonb ELSE '{"image": null}'::jsonb END)
+         || EXCLUDED.display_metadata,
            external_ids = discovery_items.external_ids || EXCLUDED.external_ids,
            resolved_anchor_ids = ARRAY(SELECT DISTINCT unnest(discovery_items.resolved_anchor_ids || EXCLUDED.resolved_anchor_ids)),
            updated_at = now()
@@ -124,7 +142,7 @@ export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: Dis
       item.canonicalKey,
       item.referenceId ?? null,
       item.title.slice(0, 200),
-      JSON.stringify(forDisplayUpsert(item.displayMetadata)),
+      JSON.stringify(forDisplayUpsert(storeSanitizedDisplayMetadata(item.displayMetadata, item.externalIds))),
       JSON.stringify(item.externalIds),
       [...item.resolvedAnchorIds],
     ],

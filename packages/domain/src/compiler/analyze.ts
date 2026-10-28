@@ -43,7 +43,7 @@ import type { Owner } from '../principal';
 import type { Focus } from '../schemas/common';
 import { activateAnalysis, ensureAnalysisRow } from '../services/analyses';
 import { foodExclusionsFor } from '../services/onboarding';
-import { destinationFromQlooProperties, imageFromQlooProperties, type DisplayImage } from '../services/display';
+import { destinationFromQlooProperties } from '../services/display';
 import { stripSafetyClaims, violatedExclusions } from '../composer/dietary';
 import { getTasteRevision } from '../services/taste';
 import type { Queryable } from '../db/pool';
@@ -244,7 +244,6 @@ interface CategoryCandidate {
   name: string;
   year: number | null;
   explain: string[];
-  image: DisplayImage | null;
   destination_url: string | null;
 }
 
@@ -1684,7 +1683,6 @@ export class CaptureCompiler {
           name: e.name,
           year: entityYear(e),
           explain: (e.query?.explainability ?? []).sort((a, b) => b.score - a.score).map((x) => x.entity_id),
-          image: imageFromQlooProperties(e.properties, e.name),
           destination_url: destinationFromQlooProperties(e.properties),
         })),
       };
@@ -1804,7 +1802,7 @@ export class CaptureCompiler {
             displayMetadata: {
               subtitle: kind === 'film' && c.year ? String(c.year) : null,
               year: kind === 'film' ? c.year : null,
-              ...(c.image ? { image: c.image } : {}),
+              // Qloo images are transient-only (VAL-EVID-005): never persisted.
               ...(c.destination_url ? { destination_url: c.destination_url } : {}),
               example: Boolean(rec.isReplay),
             },

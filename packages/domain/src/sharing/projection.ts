@@ -1,7 +1,7 @@
 import type { Queryable } from '../db/pool';
 import type { Category, ItemKind } from '../enums';
 import type { SharedDiscovery, SharedMedia } from '../schemas/collection-shares';
-import { readDisplayMetadata } from '../services/display';
+import { isProviderBackedItem, readDisplayMetadata } from '../services/display';
 
 /**
  * ShareProjection: the deep module that decides what a share viewer may see.
@@ -11,6 +11,9 @@ import { readDisplayMetadata } from '../services/display';
  *  - recommendation reasons, evidence, traces and taste (never read);
  *  - capture items and their stored photos (only sanitized media below);
  *  - private stored images (display images with an object_key);
+ *  - uncleared external image URLs (provider imagery without a recorded
+ *    independent rights clearance never serves, public view or not);
+ *  - provider-backed prose (Qloo descriptions are transient-only);
  *  - device provenance, coordinates, EXIF, transcripts, media titles and
  *    analysis output (media rows are reduced to kind, size and duration);
  *  - every other collection (all queries are bound to the share's collection
@@ -32,7 +35,8 @@ export interface LiveShare {
   policy_version: number;
 }
 
-const SAFE_IMAGE = /^(https:\/\/|\/samples\/)/;
+/** Public display assets this app serves itself (owned/reviewed: "/samples/..."). */
+const SAFE_IMAGE = /^\/(?!\/)/;
 const SAFE_LINK = /^https:\/\//;
 
 /** Public catalog references are the only items a viewer may copy into their own library. */
@@ -66,9 +70,9 @@ export interface ShareableMediaObject {
 export async function projectDiscoveries(db: Queryable, share: LiveShare): Promise<{ items: SharedDiscovery[]; truncated: boolean }> {
   const { rows } = await db.query<{
     id: string; kind: ItemKind; category: Category | null; title: string; display_metadata: unknown;
-    is_sample: boolean; canonical_key: string;
+    is_sample: boolean; canonical_key: string; external_ids: Record<string, unknown> | null;
   }>(
-    `SELECT di.id, di.kind, di.category, di.title, di.display_metadata, di.is_sample, di.canonical_key
+    `SELECT di.id, di.kind, di.category, di.title, di.display_metadata, di.is_sample, di.canonical_key, di.external_ids
        FROM collection_items ci
        JOIN saved_items si ON si.id = ci.saved_item_id AND si.owner_account_id = ci.owner_account_id
        JOIN discovery_items di ON di.id = si.discovery_item_id
@@ -83,13 +87,17 @@ export async function projectDiscoveries(db: Queryable, share: LiveShare): Promi
     const image = meta.image && !meta.image.object_key && meta.image.url && SAFE_IMAGE.test(meta.image.url)
       ? { url: meta.image.url, width: meta.image.width ?? null, height: meta.image.height ?? null, alt: meta.image.alt ?? '' }
       : null;
+    // Provider-backed rows carry no displayable prose (VAL-EVID-005: Qloo
+    // descriptions are transient-only); user/model-authored prose on owned
+    // rows still shares.
+    const description = isProviderBackedItem(r.external_ids) ? null : meta.description ?? null;
     return {
       id: r.id,
       kind: r.kind,
       category: r.category,
       title: r.title,
       subtitle: meta.subtitle ?? (meta.year ? String(meta.year) : null),
-      description: meta.description ?? null,
+      description,
       detail: meta.detail ?? null,
       image,
       destination_url: meta.destination_url && SAFE_LINK.test(meta.destination_url) ? meta.destination_url : null,

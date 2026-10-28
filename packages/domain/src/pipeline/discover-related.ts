@@ -22,7 +22,7 @@ import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { loadItemAnchors } from '../library/anchors';
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
-import { clipText, destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, readDisplayMetadata, type DisplayImage } from '../services/display';
+import { destinationFromQlooProperties, qlooImageUrl, qlooImageUrlIfRenderable, readDisplayMetadata } from '../services/display';
 import { interleaveFeed, rebuildFeedSnapshots } from '../services/discovery';
 
 /**
@@ -47,11 +47,6 @@ const SEARCH_TYPES: Partial<Record<ItemKind, QlooEntityType>> = {
   artist: 'urn:entity:artist',
   brand: 'urn:entity:brand',
 };
-
-function textProp(properties: Record<string, unknown> | undefined, key: string): string | null {
-  const v = properties?.[key];
-  return typeof v === 'string' && v.trim() ? clipText(v) : null;
-}
 
 /** Interest-feed cards already sourced from Qloo for this owner — not a title search. */
 async function seedRelatedPicks(
@@ -101,8 +96,10 @@ async function seedRelatedPicks(
       title: row.title,
       year: meta.year ?? null,
       qloo_id: qloo,
-      description: meta.description ?? null,
-      image: meta.image ?? null,
+      // Legacy restricted material (Qloo prose, uncleared image URLs) may sit
+      // in stored metadata; it is never re-propagated — the upsert boundary
+      // strips it from the merged row (VAL-EVID-005).
+      description: null,
       destination_url: meta.destination_url ?? null,
       origin: row.origin === 'replay' ? 'replay' : 'qloo',
       provider_query_ids: row.provider_query_ids,
@@ -140,8 +137,12 @@ interface Pick {
   title: string;
   year: number | null;
   qloo_id: string | null;
+  /**
+   * Independently produced prose (model-composed dish ideas) — never Qloo
+   * prose, which is transient-only and never leaves a provider response
+   * (VAL-EVID-005). Provider-sourced picks carry null here.
+   */
   description: string | null;
-  image: DisplayImage | null;
   destination_url: string | null;
   origin: 'qloo' | 'replay' | 'vlm_creative';
   provider_query_ids: string[];
@@ -238,8 +239,8 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
             title: e.name,
             year: map.kind === 'film' ? yearOf(e) : null,
             qloo_id: e.entity_id,
-            description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
-            image: imageFromQlooProperties(e.properties, e.name),
+            // Qloo prose is transient-only (VAL-EVID-005): never extracted.
+            description: null,
             destination_url: destinationFromQlooProperties(e.properties),
             origin: isReplay ? ('replay' as const) : ('qloo' as const),
             provider_query_ids: [queryId],
@@ -312,8 +313,12 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
             response.data
               .filter((e) => !signals.ids.includes(e.entity_id) && !(tasteBased && sameAsOrigin(e.name, origin.title)))
               .map(async (e): Promise<Pick | null> => {
-                const image = await qlooImageIfRenderable(imageFromQlooProperties(e.properties, e.name));
-                if (!image) return null;
+                // Transient renderability probe only (VAL-EVID-005): a place
+                // needs a real picture behind its Qloo URL to earn a pick, but
+                // the URL itself (and Qloo prose) is transient-only and never
+                // persists or displays.
+                const pictured = await qlooImageUrlIfRenderable(qlooImageUrl(e.properties));
+                if (!pictured) return null;
                 return {
                   key: canonicalKeyFor({ kind: map.kind, title: e.name, qlooId: e.entity_id }),
                   kind: map.kind,
@@ -321,8 +326,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
                   title: e.name,
                   year: null,
                   qloo_id: e.entity_id,
-                  description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
-                  image,
+                  description: null,
                   destination_url: destinationFromQlooProperties(e.properties),
                   origin: response.is_replay ? ('replay' as const) : ('qloo' as const),
                   provider_query_ids: [queryId],
@@ -400,7 +404,6 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
                 year: null,
                 qloo_id: null,
                 description: stripSafetyClaims(d.description) || null,
-                image: null,
                 destination_url: null,
                 origin: 'vlm_creative',
                 provider_query_ids: [],
@@ -451,8 +454,9 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
         display_metadata: {
           subtitle: p.year ? String(p.year) : null,
           year: p.year,
+          // Model-composed prose persists on creative rows; provider picks
+          // carry none. Images: no provider-sourced pick has one to persist.
           description: p.description,
-          image: p.image,
           destination_url: p.destination_url,
           // Provider picks record whether they came from a replay; creative ideas leave it unchanged.
           ...(p.origin === 'vlm_creative' ? {} : { example: p.origin === 'replay' }),

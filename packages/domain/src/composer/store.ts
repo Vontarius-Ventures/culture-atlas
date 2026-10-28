@@ -2,7 +2,7 @@ import type { QlooEntity } from '@culture-atlas/providers';
 import type { Queryable } from '../db/pool';
 import type { Category, ItemKind, RecommendationOrigin } from '../enums';
 import { ownerColumns, type Owner } from '../principal';
-import { forDisplayUpsert, type DisplayMetadata } from '../services/display';
+import { forDisplayUpsert, storeSanitizedDisplayMetadata, type DisplayMetadata } from '../services/display';
 import type { RecordedQuery } from './provider-calls';
 
 /**
@@ -75,7 +75,18 @@ export interface ItemUpsert {
   resolved_anchor_ids?: readonly string[];
 }
 
-/** Insert or merge a DiscoveryItem for an owner; returns its id. */
+/**
+ * Insert or merge a DiscoveryItem for an owner; returns its id.
+ *
+ * Provider display-rights boundary (VAL-EVID-005): the incoming metadata is
+ * sanitized before it is written, and the stored side is cleaned on the
+ * conflict-merge so a legacy row's restricted content cannot survive a new
+ * upsert. Qloo prose never persists on provider-backed items, and an image
+ * persists only when it is user-owned stored media or an app-owned/cleared
+ * asset — never an uncleared external URL. Verified destination links,
+ * subtitles, years, details and the example flag are not restricted content
+ * and pass through.
+ */
 export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: ItemUpsert): Promise<string> {
   const cols = ownerColumns(owner);
   const conflict = owner.kind === 'account' ? '(owner_account_id, canonical_key)' : '(owner_session_id, canonical_key)';
@@ -84,7 +95,18 @@ export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: Ite
                                   title, display_metadata, external_ids, resolved_anchor_ids)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::uuid[])
      ON CONFLICT ${conflict} DO UPDATE SET
-       display_metadata = discovery_items.display_metadata || EXCLUDED.display_metadata,
+       display_metadata =
+         -- Stored legacy metadata is cleaned of restricted content before the
+         -- sanitized EXCLUDED overlay: prose disappears when the merged
+         -- identity is provider-backed, and an uncleared external image URL is
+         -- nulled while user-owned object_key images survive.
+         (discovery_items.display_metadata
+            || CASE WHEN (discovery_items.external_ids || EXCLUDED.external_ids) ?| ARRAY['qloo','qloo_tag']
+                    THEN '{"description": null}'::jsonb ELSE '{}'::jsonb END
+            || CASE WHEN (discovery_items.display_metadata -> 'image') ? 'object_key'
+                     OR left(COALESCE(discovery_items.display_metadata -> 'image' ->> 'url', ''), 1) = '/'
+                   THEN '{}'::jsonb ELSE '{"image": null}'::jsonb END)
+         || EXCLUDED.display_metadata,
        external_ids = discovery_items.external_ids || EXCLUDED.external_ids,
        resolved_anchor_ids = ARRAY(SELECT DISTINCT unnest(discovery_items.resolved_anchor_ids || EXCLUDED.resolved_anchor_ids)),
        reference_id = COALESCE(discovery_items.reference_id, EXCLUDED.reference_id),
@@ -98,7 +120,7 @@ export async function upsertDiscoveryItem(db: Queryable, owner: Owner, item: Ite
       item.canonical_key,
       item.reference_id ?? null,
       item.title,
-      JSON.stringify(forDisplayUpsert(item.display_metadata)),
+      JSON.stringify(forDisplayUpsert(storeSanitizedDisplayMetadata(item.display_metadata, item.external_ids))),
       JSON.stringify(item.external_ids ?? {}),
       [...(item.resolved_anchor_ids ?? [])],
     ],

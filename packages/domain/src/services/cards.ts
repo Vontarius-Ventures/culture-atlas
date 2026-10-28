@@ -2,7 +2,7 @@ import type { ServiceContext } from '../context';
 import type { Category, ItemKind, RecommendationOrigin } from '../enums';
 import { ownerOf, ownerPredicate } from '../principal';
 import type { DiscoveryCard, Image } from '../schemas/common';
-import { readDisplayMetadata, type DisplayImage } from './display';
+import { clearedDisplayImage, readDisplayMetadata, type DisplayImage } from './display';
 
 /**
  * Shared DiscoveryItem -> DiscoveryCard mapping used by feed, captures,
@@ -28,18 +28,25 @@ interface CardRow {
   saved_item_id: string | null;
 }
 
+/**
+ * Serves only owned or independently cleared display images (VAL-EVID-005):
+ * user-owned stored media (signed on read) or app-served assets. An uncleared
+ * external URL that slipped into stored metadata (e.g. a legacy provider
+ * image) never displays, whatever transport it uses.
+ */
 export async function resolveImage(ctx: ServiceContext, image: DisplayImage | null | undefined): Promise<Image | null> {
-  if (!image) return null;
-  let url: string | undefined = image.url;
-  if (image.object_key) {
+  const cleared = clearedDisplayImage(image);
+  if (!cleared) return null;
+  let url: string | undefined = cleared.url;
+  if (cleared.object_key) {
     try {
-      url = await ctx.providers.storage.signedUrl(image.object_key);
+      url = await ctx.providers.storage.signedUrl(cleared.object_key);
     } catch {
       url = undefined;
     }
   }
   if (!url) return null;
-  return { url, width: image.width ?? null, height: image.height ?? null, alt: image.alt ?? '' };
+  return { url, width: cleared.width ?? null, height: cleared.height ?? null, alt: cleared.alt ?? '' };
 }
 
 /**

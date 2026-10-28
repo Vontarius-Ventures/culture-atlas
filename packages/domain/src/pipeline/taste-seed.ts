@@ -23,7 +23,7 @@ import type { Owner } from '../principal';
 import type { SeedCategoryState } from '../schemas/onboarding';
 import { fillInterestsBoard } from '../services/collections';
 import { rebuildFeedSnapshots } from '../services/discovery';
-import { clipText, destinationFromQlooProperties, imageFromQlooProperties, qlooImageIfRenderable, type DisplayImage } from '../services/display';
+import { destinationFromQlooProperties, qlooImageUrl, qlooImageUrlIfRenderable } from '../services/display';
 import {
   ensureSeedRun,
   readFoodExclusions,
@@ -240,8 +240,6 @@ export interface SeedCard {
   year: number | null;
   qloo_id: string;
   subtitle: string | null;
-  description: string | null;
-  image: DisplayImage | null;
   destination_url: string | null;
   origin: 'qloo' | 'replay';
   provider_query_id: string;
@@ -327,11 +325,6 @@ function namesList(names: readonly string[]): string {
   return n.length === 2 ? `${n[0]} and ${n[1]}` : (n[0] ?? 'your picks');
 }
 
-function textProp(props: Record<string, unknown>, key: string): string | null {
-  const v = props[key];
-  return typeof v === 'string' && v.trim() ? clipText(v) : null;
-}
-
 const GENERIC_VENUE_WORDS = new Set([
   'restaurant', 'restaurante', 'ristorante', 'restaurants', 'style', 'food', 'cuisine', 'kitchen', 'house', 'shop',
   'the', 'a', 'and', 'de', 'del', 'la', 'le', 'el', 'cafe', 'bar', 'noodle', 'noodles', 'place', 'eatery', 'diner',
@@ -368,14 +361,18 @@ async function eatPlaceCards(
         category: 'eat',
       });
       const origin = response.is_replay ? ('replay' as const) : ('qloo' as const);
+      // Transient renderability probe only (VAL-EVID-005): a venue needs a
+      // real Qloo photo behind its URL to earn a card, but the provider's
+      // image URL and prose are transient-only — neither persists nor displays,
+      // so the card below carries neither.
       const probed = await Promise.all(
         response.data.map(async (e) => ({
           e,
-          image: await qlooImageIfRenderable(imageFromQlooProperties(e.properties, e.name)),
+          pictured: await qlooImageUrlIfRenderable(qlooImageUrl(e.properties)),
         })),
       );
-      for (const { e, image } of probed) {
-        if (!image) continue;
+      for (const { e, pictured } of probed) {
+        if (!pictured) continue;
         if (violatedExclusions({ title: e.name, cuisine: e.name }, foodExclusions).length) continue;
         // One card per name, and never a venue whose name is just the cuisine.
         const titleKey = e.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -396,8 +393,6 @@ async function eatPlaceCards(
           year: null,
           qloo_id: e.entity_id,
           subtitle: e.disambiguation ?? 'Place',
-          description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
-          image,
           destination_url: destinationFromQlooProperties(e.properties),
           origin,
           provider_query_id: queryId,
@@ -485,8 +480,6 @@ export async function fetchCategory(
         year: null,
         qloo_id: t.id,
         subtitle: 'Cuisine',
-        description: null,
-        image: null,
         destination_url: null,
         origin,
         provider_query_id: queryId,
@@ -501,6 +494,8 @@ export async function fetchCategory(
         .sort((a, b) => b.score - a.score)
         .map((x) => signalNames.get(x.entity_id)!);
       const year = plan.kind === 'film' ? yearOf(e) : null;
+      // Qloo prose and Qloo image URLs are transient-only (VAL-EVID-005):
+      // neither is extracted, persisted or displayed from these cards.
       consider({
         key: canonicalKeyFor({ kind: plan.kind, title: e.name, qlooId: e.entity_id }),
         kind: plan.kind,
@@ -509,8 +504,6 @@ export async function fetchCategory(
         year,
         qloo_id: e.entity_id,
         subtitle: year ? String(year) : null,
-        description: textProp(e.properties, 'short_description') ?? textProp(e.properties, 'description'),
-        image: imageFromQlooProperties(e.properties, e.name),
         destination_url: destinationFromQlooProperties(e.properties),
         origin,
         provider_query_id: queryId,
@@ -539,8 +532,6 @@ async function publishCategory(ctx: JobContext<'taste_seed'>, runId: string, own
         display_metadata: {
           subtitle: c.subtitle,
           year: c.year,
-          description: c.description,
-          image: c.image,
           destination_url: c.destination_url,
           example: c.origin === 'replay',
         },

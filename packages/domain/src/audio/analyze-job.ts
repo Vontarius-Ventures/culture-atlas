@@ -11,7 +11,7 @@ import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { relatedDiscoveryDedupeKey } from '../jobs/dedupe';
 import { enqueueJob } from '../jobs/queue';
 import type { Queryable } from '../db/pool';
-import { clipText, destinationFromQlooProperties, imageFromQlooProperties } from '../services/display';
+import { destinationFromQlooProperties } from '../services/display';
 import { getTasteRevision } from '../services/taste';
 import { audioMatchDisplay, type AudioMatchDisplay } from './match-display';
 import { artistSeedsFromQlooEntities, queriesFromTranscript, searchQueryForHit } from './qloo-seeds';
@@ -150,10 +150,11 @@ async function startArtistDiscovery(
   accountId: string,
   seed: { entity_id: string; name: string },
   entity: QlooEntity | undefined,
-): Promise<{ itemId: string; discoveryJobId: string; jobId: string; imageUrl: string | null }> {
+): Promise<{ itemId: string; discoveryJobId: string; jobId: string; imageUrl: null }> {
   const owner = { kind: 'account' as const, accountId };
-  const image = imageFromQlooProperties(entity?.properties, seed.name);
-  const description = entity?.properties?.['short_description'] ?? entity?.properties?.['description'];
+  // Qloo prose and Qloo image URLs are transient-only (VAL-EVID-005): neither
+  // persists on the artist's library item nor returns in the job result. The
+  // verified destination link (the artist's own site) still does.
   const itemId = await upsertDiscoveryItem(ctx.db, owner, {
     kind: 'artist',
     category: 'play',
@@ -161,8 +162,6 @@ async function startArtistDiscovery(
     title: seed.name,
     display_metadata: {
       subtitle: 'Heard in Music Mode',
-      description: typeof description === 'string' ? clipText(description) : null,
-      image,
       destination_url: destinationFromQlooProperties(entity?.properties),
     },
     external_ids: { qloo: seed.entity_id },
@@ -185,7 +184,7 @@ async function startArtistDiscovery(
         itemId,
         discoveryJobId: existing.rows[0].payload.discovery_job_id,
         jobId: existing.rows[0].id,
-        imageUrl: image?.url ?? null,
+        imageUrl: null,
       };
     const dj = await tx.query<{ id: string }>(
       `INSERT INTO discovery_jobs (owner_account_id, origin_item_id, category, taste_revision, source, source_label)
@@ -205,7 +204,7 @@ async function startArtistDiscovery(
       resultId: discoveryJobId,
     });
     await tx.query('UPDATE discovery_jobs SET job_id = $2 WHERE id = $1', [discoveryJobId, job.id]);
-    return { itemId, discoveryJobId, jobId: job.id, imageUrl: image?.url ?? null };
+    return { itemId, discoveryJobId, jobId: job.id, imageUrl: null };
   });
 }
 

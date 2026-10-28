@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   discovery,
   items,
@@ -106,7 +106,7 @@ function scriptedQloo(reply: (filterType: string, url: URL) => Reply | Promise<R
     fetch: impl,
     breaker: breaker ?? new CircuitBreaker({ failureThreshold: 10_000, cooldownMs: 1 }),
   });
-  return { providers: testProviders({ qloo }), calls, state };
+  return { providers: testProviders({ qloo }), calls, state, impl };
 }
 
 async function insertPick(accountId: string, input: { kind: string; category: string | null; title: string; qloo: string }) {
@@ -150,6 +150,7 @@ async function enqueue(accountId: string, config: DomainConfig = testConfig()) {
 
 const workers: Worker[] = [];
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(workers.splice(0).map((w) => w.stop()));
 });
 
@@ -555,6 +556,83 @@ describe('taste seed job', () => {
     expect(status.categories.every((c) => c.state === 'unavailable')).toBe(true);
     expect(await seededRecs(principal.accountId)).toEqual([]);
     expect((await wholeFeed(testContext(principal, { providers }))).is_example_feed).toBe(true);
+  });
+
+  it('persists no Qloo prose or uncleared imagery on seeded cards, keeping trace, card set and spend accounting (VAL-EVID-005)', async () => {
+    const principal = await onboardedAccount();
+    const { accountId } = principal;
+    // Live responses carrying exactly what the recorded Qloo policy keeps
+    // transient: short_description/description prose and https image URLs.
+    const rich: Record<string, Reply> = {
+      search: ok({
+        entities: [
+          ent('FIXTURE-PLACE-PROBED', 'Pictured Venue', 'urn:entity:place', {
+            properties: { image: 'https://images.example.test/venue.jpg', short_description: 'Qloo prose about the venue.', website: 'https://venue.example.com' },
+          }),
+          ent('FIXTURE-PLACE-BARE', 'Bare Venue', 'urn:entity:place', { properties: {} }),
+          ent('FIXTURE-PLACE-STUB', 'Stub Venue', 'urn:entity:place', { properties: { image: 'https://images.example.test/stub.jpg' } }),
+        ],
+      }),
+      'urn:entity:brand': ok({
+        entities: [ent('FIXTURE-BRAND-PROSE', 'Prose Brand', 'urn:entity:brand', { properties: { short_description: 'Qloo prose about the brand.', image: 'https://images.example.test/brand.jpg' } })],
+      }),
+      'urn:entity:artist': ok({
+        entities: [ent('FIXTURE-ARTIST-PROSE', 'Prose Artist', 'urn:entity:artist', { properties: { description: 'Longer Qloo prose.' } })],
+      }),
+      'urn:entity:movie': ok({
+        entities: [ent('FIXTURE-MOVIE-PROSE', 'Prose Film', 'urn:entity:movie', { properties: { short_description: 'Qloo prose.', image: 'https://images.example.test/film.jpg' } })],
+      }),
+    };
+    // The image host answers the transient renderability probe only: a stub
+    // Content-Length disproves a real picture; other probes fail (the venue
+    // keeps its slot, as a failed probe never dropped a real venue). The probe
+    // uses the scripted fetch too, so it is visible in the call log without
+    // ever being counted as Qloo spend.
+    const q = scriptedQloo((type, url) => {
+      if (url.hostname === 'images.example.test') {
+        return url.pathname === '/stub.jpg' ? ({ status: 200, headers: { 'content-length': '117' } } as Reply) : ({ status: 404 } as Reply);
+      }
+      return rich[type] ?? { status: 400 };
+    });
+    vi.stubGlobal('fetch', q.impl);
+    const jobId = await enqueue(accountId);
+    await runAttempt(q.providers, jobId);
+    expect(await job(jobId)).toMatchObject({ state: 'complete' });
+
+    const recs = await seededRecs(accountId);
+    const titles = recs.map((r) => r.title);
+    // The card set is unchanged: pictured venues still card, bare/stub venues still do not.
+    expect(titles).toContain('Pictured Venue');
+    expect(titles).not.toContain('Bare Venue');
+    expect(titles).not.toContain('Stub Venue');
+    expect(titles).toEqual(expect.arrayContaining(['Prose Brand', 'Prose Artist', 'Prose Film']));
+
+    // No Qloo prose and no uncleared image URL persists on any seeded discovery item.
+    const restricted = await getTestDb().query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n
+         FROM discovery_items di
+         JOIN recommendations r ON r.discovery_item_id = di.id
+         JOIN taste_seed_runs tr ON tr.id = r.taste_seed_run_id
+        WHERE tr.owner_account_id = $1
+          AND (di.display_metadata ? 'description' OR di.display_metadata ? 'image')`,
+      [accountId],
+    );
+    expect(restricted.rows[0]!.n).toBe(0);
+
+    // Trace identity stays intact: every recommendation is a real returned Qloo
+    // result citing its provider query.
+    for (const r of recs) {
+      expect(r.origin).toBe('qloo');
+      expect(r.provider_query_ids.length).toBeGreaterThanOrEqual(1);
+      expect(r.canonical_key).toBe(`qloo:${r.external_ids.qloo}`);
+    }
+    // Spend accounting stays actual: the durable counter counts Qloo API calls,
+    // never the transient image probes (which are not Qloo requests).
+    const apiCalls = q.calls.filter((u) => u.hostname === 'qloo.example.test').length;
+    const probeCalls = q.calls.length - apiCalls;
+    expect(probeCalls).toBeGreaterThan(0);
+    const { rows: used } = await getTestDb().query<{ n: number }>('SELECT qloo_requests_used AS n FROM taste_seed_runs WHERE job_id = $1', [jobId]);
+    expect(used[0]!.n).toBe(apiCalls);
   });
 
   it('labels replayed Qloo data as examples', async () => {
