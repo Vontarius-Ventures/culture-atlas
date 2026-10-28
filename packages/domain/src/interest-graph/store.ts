@@ -353,6 +353,19 @@ export interface FrontierUpsertResult {
  * candidate upsert and its roots commit or roll back in one statement, and
  * the composite foreign keys reject a foreign or nonexistent root id even
  * through direct SQL, so a rejected writer leaves no candidate behind.
+ *
+ * A dedupe hit is also a reader of the roots stored by whoever created the
+ * candidate. When the conflict was resolved against a transaction that
+ * committed while this statement waited, those roots are invisible to the
+ * statement's own snapshot — the ON CONFLICT path re-reads only the
+ * conflicting tuple, while every sibling scan keeps the pre-wait statement
+ * snapshot — so a same-statement join would misreport empty support_root_ids
+ * while owner-bound stored roots exist. The retained roots therefore come
+ * from a follow-up statement on the same handle: a fresh READ COMMITTED
+ * statement snapshot sees the commit that ended the wait, and a REPEATABLE
+ * READ/SERIALIZABLE caller has already failed the conflict with a
+ * serialization error and can never observe a stale set. Offered roots are
+ * never merged into a stored candidate.
  */
 export async function upsertFrontierCandidate(db: Queryable, input: UpsertFrontierCandidateInput): Promise<FrontierUpsertResult> {
   if (!Number.isInteger(input.expiresInDays) || input.expiresInDays < 1 || input.expiresInDays > GRAPH_FRONTIER_MAX_LIFETIME_DAYS) {
@@ -373,12 +386,6 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
        RETURNING id, owner_account_id, run_id, node_id, intent, state, score, dedupe_key,
                  expires_at, created_at, (xmax = 0) AS created
      ),
-     prior_roots AS (
-       SELECT sr.frontier_id AS frontier_id, array_agg(sr.root_id ORDER BY sr.root_id) AS roots
-         FROM graph_frontier_support_roots sr
-         JOIN upsert u ON u.id = sr.frontier_id AND NOT u.created
-        GROUP BY sr.frontier_id
-     ),
      new_roots AS (
        INSERT INTO graph_frontier_support_roots (frontier_id, owner_account_id, root_id)
        SELECT u.id, u.owner_account_id, r.root_id
@@ -391,11 +398,10 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
        SELECT frontier_id, array_agg(root_id ORDER BY root_id) AS roots FROM new_roots GROUP BY frontier_id
      )
      SELECT u.id, u.owner_account_id, u.run_id, u.node_id, u.intent,
-            COALESCE(nra.roots, pr.roots, ARRAY[]::uuid[]) AS support_root_ids,
+            COALESCE(nra.roots, ARRAY[]::uuid[]) AS support_root_ids,
             u.state, u.score, u.dedupe_key, u.expires_at, u.created_at, u.created
        FROM upsert u
-       LEFT JOIN new_roots_agg nra ON nra.frontier_id = u.id
-       LEFT JOIN prior_roots pr ON pr.frontier_id = u.id`,
+       LEFT JOIN new_roots_agg nra ON nra.frontier_id = u.id`,
     [
       input.ownerAccountId,
       run.id,
@@ -408,7 +414,18 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
     ],
   );
   const { created, ...row } = rows[0]!;
-  return { created, row };
+  if (created) return { created, row };
+  // Dedupe-hit read-back: a follow-up statement on the same handle takes a
+  // fresh READ COMMITTED statement snapshot, so the roots committed by the
+  // transaction that ended the conflict wait are visible. The owner equality
+  // keeps the read inside the account's own dependency rows.
+  const { rows: retained } = await db.query<{ roots: string[] }>(
+    `SELECT COALESCE(array_agg(sr.root_id ORDER BY sr.root_id), ARRAY[]::uuid[]) AS roots
+       FROM graph_frontier_support_roots sr
+      WHERE sr.frontier_id = $1 AND sr.owner_account_id = $2`,
+    [row.id, input.ownerAccountId],
+  );
+  return { created, row: { ...row, support_root_ids: retained[0]!.roots } };
 }
 
 // --- Graph-parented recommendations and provider queries ----------------------------
