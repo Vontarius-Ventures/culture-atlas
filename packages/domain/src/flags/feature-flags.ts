@@ -42,6 +42,14 @@ export const FEATURE_FLAG_DEFAULTS = {
   // verifier is off by default. The tune-split evaluation (docs/quality-plan.md
   // §15) kept it off: it lowered no forbidden-label count on the tune split.
   analysis_verifier_enabled: false,
+  // Interest graph (PR 8): all four flags ship off and need an explicit
+  // operator opt-in; kills (global or per account) can only turn them off.
+  // Projection alone never changes live ranking or buys research; reads,
+  // removals, retractions and deletion cleanup never depend on these flags.
+  interest_graph_projection_enabled: false,
+  interest_graph_discovery_enabled: false,
+  interest_graph_research_enabled: false,
+  interest_graph_framework_shadow_enabled: false,
 } as const;
 
 export type FeatureFlagName = Exclude<keyof typeof FEATURE_FLAG_DEFAULTS, 'meta_glasses_label'>;
@@ -68,6 +76,10 @@ export const KILLABLE_FLAGS = [
   'fast_analysis_two_stage',
   'while_we_look_enabled',
   'analysis_verifier_enabled',
+  'interest_graph_projection_enabled',
+  'interest_graph_discovery_enabled',
+  'interest_graph_research_enabled',
+  'interest_graph_framework_shadow_enabled',
 ] as const satisfies readonly FeatureFlagName[];
 export type KillableFlag = (typeof KILLABLE_FLAGS)[number];
 export const isKillableFlag = (value: string): value is KillableFlag =>
@@ -122,6 +134,13 @@ export interface FeatureFlagInputs {
     agentRemoteCapture: boolean;
     /** ANALYSIS_VERIFIER_ENABLED: set by the operator only after the tune-split evaluation enables the verifier. */
     analysisVerifier: boolean;
+    /** Interest graph opt-ins (PR 8); each flag has its own independent gate. */
+    interestGraph: {
+      projection: boolean;
+      discovery: boolean;
+      research: boolean;
+      frameworkShadow: boolean;
+    };
   };
 }
 
@@ -217,6 +236,12 @@ export function evaluateFeatureFlags(i: FeatureFlagInputs): FeatureFlagEvaluatio
       [i.onboarding.whileWeLookConfigured, 'not_enabled'],
     ]),
     analysis_verifier_enabled: false,
+    // Interest graph flags are gated after the literal (PR 8): each stays off
+    // until its operator opt-in holds and it is not killed.
+    interest_graph_projection_enabled: false,
+    interest_graph_discovery_enabled: false,
+    interest_graph_research_enabled: false,
+    interest_graph_framework_shadow_enabled: false,
   };
   // The verifier runs only after a stage 2, so it needs the two-stage reading,
   // a qualified, ready vision_verify profile and the operator's opt-in.
@@ -230,6 +255,23 @@ export function evaluateFeatureFlags(i: FeatureFlagInputs): FeatureFlagEvaluatio
   flags.agent_remote_capture_enabled = gate('agent_remote_capture_enabled', [
     [i.optIn.agentRemoteCapture, 'not_enabled'],
     [flags.agent_api_enabled, 'agent_api_disabled'],
+  ]);
+  // Interest graph (PR 8): default-off operator opt-ins with independent
+  // gates. Projection alone never switches live ranking/reasons or buys
+  // research; discovery, research and the framework shadow each stay off
+  // until their own opt-in AND none of their inputs is killed.
+  flags.interest_graph_projection_enabled = gate('interest_graph_projection_enabled', [
+    [i.optIn.interestGraph.projection, 'not_enabled'],
+  ]);
+  flags.interest_graph_discovery_enabled = gate('interest_graph_discovery_enabled', [
+    [i.optIn.interestGraph.discovery, 'not_enabled'],
+    [flags.interest_graph_projection_enabled, 'projection_disabled'],
+  ]);
+  flags.interest_graph_research_enabled = gate('interest_graph_research_enabled', [
+    [i.optIn.interestGraph.research, 'not_enabled'],
+  ]);
+  flags.interest_graph_framework_shadow_enabled = gate('interest_graph_framework_shadow_enabled', [
+    [i.optIn.interestGraph.frameworkShadow, 'not_enabled'],
   ]);
   return { flags, reasons, killed: KILLABLE_FLAGS.filter((flag) => i.killed.has(flag)) };
 }
@@ -440,6 +482,12 @@ export async function resolveFeatureFlags(
       nativeVideoModelInput: on(env.NATIVE_VIDEO_MODEL_INPUT_ENABLED),
       agentRemoteCapture: on(env.AGENT_REMOTE_CAPTURE_ENABLED),
       analysisVerifier: on(env.ANALYSIS_VERIFIER_ENABLED),
+      interestGraph: {
+        projection: on(env.INTEREST_GRAPH_PROJECTION_ENABLED),
+        discovery: on(env.INTEREST_GRAPH_DISCOVERY_ENABLED),
+        research: on(env.INTEREST_GRAPH_RESEARCH_ENABLED),
+        frameworkShadow: on(env.INTEREST_GRAPH_FRAMEWORK_SHADOW_ENABLED),
+      },
     },
   });
 }

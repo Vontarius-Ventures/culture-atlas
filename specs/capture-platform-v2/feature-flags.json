@@ -21,7 +21,11 @@
     "taste_seed_enabled": true,
     "fast_analysis_two_stage": false,
     "while_we_look_enabled": true,
-    "analysis_verifier_enabled": false
+    "analysis_verifier_enabled": false,
+    "interest_graph_projection_enabled": false,
+    "interest_graph_discovery_enabled": false,
+    "interest_graph_research_enabled": false,
+    "interest_graph_framework_shadow_enabled": false
   },
   "activation_rules": {
     "meta_glasses_capture_enabled": "Build includes real SDK AND platform/release-channel entitlement verified AND rollout eligible AND supported device/OS AND permission granted AND not killed",
@@ -32,7 +36,11 @@
     "taste_seed_enabled": "Amendment 2.2. TASTE_SEED_ENABLED not false AND not killed. Completing onboarding queues one taste_seed job (at most 6 Qloo requests, at most 3 concurrent). When off or when Qloo is unavailable, the feed shows labeled example cards; nothing is fabricated",
     "fast_analysis_two_stage": "Amendment 2.2. concentrate_analysis_enabled AND a qualified, ready vision_photo_enrich profile (Concentrate only, never Elorian) AND not killed. When off, photo analysis uses the single-call reading",
     "while_we_look_enabled": "Amendment 2.2. WHILE_WE_LOOK_ENABLED not false AND not killed. The strip only reads the existing FeedSnapshot and never starts generation",
-    "analysis_verifier_enabled": "Photo-role requalification (docs/requalification-plan.md). ANALYSIS_VERIFIER_ENABLED=true (set only after the tune-split evaluation enables it) AND fast_analysis_two_stage AND a qualified, ready vision_verify profile (Concentrate only, never Elorian) AND not killed. The verifier runs in the background after stage 2 and can only lower a reference's certainty or mark it qualified; it never removes a card or a reference"
+    "analysis_verifier_enabled": "Photo-role requalification (docs/requalification-plan.md). ANALYSIS_VERIFIER_ENABLED=true (set only after the tune-split evaluation enables it) AND fast_analysis_two_stage AND a qualified, ready vision_verify profile (Concentrate only, never Elorian) AND not killed. The verifier runs in the background after stage 2 and can only lower a reference's certainty or mark it qualified; it never removes a card or a reference",
+    "interest_graph_projection_enabled": "PR 8 interest graph. INTEREST_GRAPH_PROJECTION_ENABLED=true AND not killed. Default off; projection alone never switches live ranking/reasons or buys research. Existing saves/taste stay authoritative, and reads, removals, retractions and deletion cleanup continue while off",
+    "interest_graph_discovery_enabled": "PR 8 interest graph. INTEREST_GRAPH_DISCOVERY_ENABLED=true AND interest_graph_projection_enabled AND not killed. Default off; controls graph-assisted discovery publication/expansion only, never legacy paths, and an account/cohort never runs graph and legacy paid expansion for the same window",
+    "interest_graph_research_enabled": "PR 8 interest graph. INTEREST_GRAPH_RESEARCH_ENABLED=true AND not killed. Default off; separate gate from discovery. Paid relation research additionally requires a qualified compatible role and durable account/global spend caps before any dispatch",
+    "interest_graph_framework_shadow_enabled": "PR 8 interest graph, optional. INTEREST_GRAPH_FRAMEWORK_SHADOW_ENABLED=true AND not killed. Default off; shadow ingestion is a proposal-only comparison and never switches live behavior"
   },
   "note": "False activation defaults prevent unqualified rollout, not omission from implementation. CI experimental artifacts must contain and exercise the real feature. Server evaluation is authoritative. Disabling capture never deletes existing media. Amendment 2.2 flags (onboarding_*, taste_seed_enabled, fast_analysis_two_stage, while_we_look_enabled) follow specs/onboarding-and-fast-analysis.md."
 }

@@ -48,7 +48,13 @@ function inputs(over: Partial<FeatureFlagInputs> = {}): FeatureFlagInputs {
     agentApiConfigured: true,
     sharingConfigured: true,
     onboarding: { requiredConfigured: true, seedConfigured: true, whileWeLookConfigured: true },
-    optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: false, analysisVerifier: false },
+    optIn: {
+      automaticAnalysis: false,
+      nativeVideoModelInput: false,
+      agentRemoteCapture: false,
+      analysisVerifier: false,
+      interestGraph: { projection: false, discovery: false, research: false, frameworkShadow: false },
+    },
     ...over,
   };
 }
@@ -133,13 +139,25 @@ describe('evaluateFeatureFlags', () => {
     expect(off.flags.agent_remote_capture_enabled).toBe(false);
     const on = evaluateFeatureFlags(
       inputs({
-        optIn: { automaticAnalysis: true, nativeVideoModelInput: true, agentRemoteCapture: true, analysisVerifier: false },
+        optIn: {
+          automaticAnalysis: true,
+          nativeVideoModelInput: true,
+          agentRemoteCapture: true,
+          analysisVerifier: false,
+          interestGraph: { projection: false, discovery: false, research: false, frameworkShadow: false },
+        },
       }),
     );
     expect(on.flags.automatic_analysis && on.flags.agent_remote_capture_enabled).toBe(true);
     const noAnalysis = evaluateFeatureFlags(
       inputs({
-        optIn: { automaticAnalysis: true, nativeVideoModelInput: true, agentRemoteCapture: false, analysisVerifier: false },
+        optIn: {
+          automaticAnalysis: true,
+          nativeVideoModelInput: true,
+          agentRemoteCapture: false,
+          analysisVerifier: false,
+          interestGraph: { projection: false, discovery: false, research: false, frameworkShadow: false },
+        },
         analysis: { ...inputs().analysis, budgetAvailable: false },
       }),
     );
@@ -235,6 +253,79 @@ describe('amendment 2.2 flags', () => {
     expect(off.flags.while_we_look_enabled).toBe(false);
     expect(off.reasons.while_we_look_enabled).toEqual(['temporarily_disabled']);
     expect(off.killed).toEqual(['while_we_look_enabled']);
+  });
+});
+
+describe('interest graph flags (PR 8)', () => {
+  const allOptIn = {
+    projection: true,
+    discovery: true,
+    research: true,
+    frameworkShadow: true,
+  };
+
+  it('all four flags default off and are killable', () => {
+    expect(FEATURE_FLAG_DEFAULTS).toMatchObject({
+      interest_graph_projection_enabled: false,
+      interest_graph_discovery_enabled: false,
+      interest_graph_research_enabled: false,
+      interest_graph_framework_shadow_enabled: false,
+    });
+    for (const flag of [
+      'interest_graph_projection_enabled',
+      'interest_graph_discovery_enabled',
+      'interest_graph_research_enabled',
+      'interest_graph_framework_shadow_enabled',
+    ]) {
+      expect(KILLABLE_FLAGS).toContain(flag);
+    }
+  });
+
+  it('stay off without the operator opt-in, even with every other input on', () => {
+    const off = evaluateFeatureFlags(inputs());
+    expect(off.flags.interest_graph_projection_enabled).toBe(false);
+    expect(off.flags.interest_graph_discovery_enabled).toBe(false);
+    expect(off.flags.interest_graph_research_enabled).toBe(false);
+    expect(off.flags.interest_graph_framework_shadow_enabled).toBe(false);
+    expect(off.reasons.interest_graph_projection_enabled).toEqual(['not_enabled']);
+  });
+
+  it('turn on per opt-in; discovery also needs projection, research and shadow stay separate', () => {
+    const on = evaluateFeatureFlags(inputs({ optIn: { ...inputs().optIn, interestGraph: allOptIn } }));
+    expect(
+      on.flags.interest_graph_projection_enabled &&
+        on.flags.interest_graph_discovery_enabled &&
+        on.flags.interest_graph_research_enabled &&
+        on.flags.interest_graph_framework_shadow_enabled,
+    ).toBe(true);
+    // Discovery without projection never publishes: roots come from projection.
+    const noProjection = evaluateFeatureFlags(
+      inputs({ optIn: { ...inputs().optIn, interestGraph: { ...allOptIn, projection: false } } }),
+    );
+    expect(noProjection.flags.interest_graph_discovery_enabled).toBe(false);
+    expect(noProjection.reasons.interest_graph_discovery_enabled).toEqual(['projection_disabled']);
+    expect(noProjection.flags.interest_graph_research_enabled).toBe(true);
+    expect(noProjection.flags.interest_graph_framework_shadow_enabled).toBe(true);
+    // Research is its own gate, independent of discovery.
+    const researchOnly = evaluateFeatureFlags(
+      inputs({ optIn: { ...inputs().optIn, interestGraph: { ...allOptIn, discovery: false } } }),
+    );
+    expect(researchOnly.flags.interest_graph_research_enabled).toBe(true);
+  });
+
+  it('a kill turns a flag off without touching the others or the library', () => {
+    const killed = evaluateFeatureFlags(
+      inputs({
+        optIn: { ...inputs().optIn, interestGraph: allOptIn },
+        killed: new Set(['interest_graph_projection_enabled']),
+      }),
+    );
+    expect(killed.flags.interest_graph_projection_enabled).toBe(false);
+    expect(killed.flags.interest_graph_research_enabled).toBe(true);
+    expect(killed.flags.media_library).toBe(true);
+    // Killing projection also stops discovery publication (roots unavailable).
+    expect(killed.flags.interest_graph_discovery_enabled).toBe(false);
+    expect(killed.reasons.interest_graph_discovery_enabled).toEqual(['projection_disabled']);
   });
 });
 
@@ -474,7 +565,13 @@ describe('service-enforced flags', () => {
               killed,
               agentApiConfigured: api !== 'false',
               sharingConfigured: sharing !== 'false',
-              optIn: { automaticAnalysis: false, nativeVideoModelInput: false, agentRemoteCapture: remote === 'true', analysisVerifier: false },
+              optIn: {
+                automaticAnalysis: false,
+                nativeVideoModelInput: false,
+                agentRemoteCapture: remote === 'true',
+                analysisVerifier: false,
+                interestGraph: { projection: false, discovery: false, research: false, frameworkShadow: false },
+              },
               onboarding: {
                 requiredConfigured: o.required !== 'false',
                 seedConfigured: o.seed !== 'false',

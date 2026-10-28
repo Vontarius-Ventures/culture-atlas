@@ -5,7 +5,10 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/node_modules/**', '**/.next/**', '**/dist/**', 'design/**', 'coverage/**', '**/next-env.d.ts', '.data/**'],
+    // '.claude/worktrees' holds other local agent worktrees of this same repo;
+    // they are not part of this tree and would duplicate (and fail) every lint run.
+    // '**/build' holds generated artifacts (e.g. Gradle test reports), never source.
+    ignores: ['**/node_modules/**', '**/.next/**', '**/dist/**', '**/build/**', 'design/**', 'coverage/**', '**/next-env.d.ts', '.data/**', '.claude/worktrees/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

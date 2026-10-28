@@ -503,7 +503,11 @@
           "taste_seed_enabled": true,
           "fast_analysis_two_stage": false,
           "while_we_look_enabled": true,
-          "analysis_verifier_enabled": false
+          "analysis_verifier_enabled": false,
+          "interest_graph_projection_enabled": false,
+          "interest_graph_discovery_enabled": false,
+          "interest_graph_research_enabled": false,
+          "interest_graph_framework_shadow_enabled": false
         },
         "limits": {
           "photo_max_bytes": 15728640,

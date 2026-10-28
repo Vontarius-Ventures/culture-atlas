@@ -77,7 +77,7 @@ describe('readFoodExclusions', () => {
 });
 
 describe('migration 120', () => {
-  it('leaves exactly one four-parent CHECK on provider_queries and recommendations', async () => {
+  it('leaves exactly one one-parent CHECK on provider_queries and recommendations', async () => {
     const { rows } = await getTestDb().query<{ table: string; def: string }>(
       `SELECT rel.relname AS table, pg_get_constraintdef(con.oid) AS def
          FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
@@ -85,7 +85,12 @@ describe('migration 120', () => {
           AND pg_get_constraintdef(con.oid) LIKE '%num_nonnulls(analysis_id%'`,
     );
     expect(rows.map((r) => r.table).sort()).toEqual(['provider_queries', 'recommendations']);
-    for (const r of rows) expect(r.def).toContain('num_nonnulls(analysis_id, plan_id, discovery_job_id, taste_seed_run_id) = 1');
+    // Migration 240 widens the exclusive-parent set with graph_run_id while
+    // keeping the invariant: exactly one parent, never zero, never two.
+    for (const r of rows)
+      expect(r.def).toContain(
+        'num_nonnulls(analysis_id, plan_id, discovery_job_id, taste_seed_run_id, graph_run_id) = 1',
+      );
   });
 });
 

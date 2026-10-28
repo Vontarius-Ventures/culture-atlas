@@ -103,6 +103,12 @@ export function evaluateCaptureCapabilities(
       while_we_look_enabled: true,
       // Off by default (the tune-split evaluation kept it off); the server overlay decides.
       analysis_verifier_enabled: false,
+      // Interest graph (PR 8): default off; the server overlay (feature
+      // flags) is authoritative and each flag needs its own operator opt-in.
+      interest_graph_projection_enabled: false,
+      interest_graph_discovery_enabled: false,
+      interest_graph_research_enabled: false,
+      interest_graph_framework_shadow_enabled: false,
     },
     limits: {
       photo_max_bytes: limits.photoMaxBytes,
