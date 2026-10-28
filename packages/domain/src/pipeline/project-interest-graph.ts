@@ -31,7 +31,9 @@ export async function projectInterestGraph(ctx: JobContext<'project_interest_gra
   const result = await projectAccountInterestGraph(ctx.db, {
     accountId,
     config: ctx.config,
-    source: 'mutation_intent',
+    // A catch-up job (upgrade reprojection) has no mutation intent behind it:
+    // its run is labeled support_version_catch_up, never mutation lineage.
+    source: ctx.payload.catch_up === 'support_version' ? 'support_version_catch_up' : 'mutation_intent',
     jobId: ctx.job.id ?? undefined,
   });
 

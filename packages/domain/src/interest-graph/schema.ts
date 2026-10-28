@@ -16,6 +16,22 @@ import { RECOMMENDATION_ORIGINS } from '../enums';
 /** Version of the projection/admission rules a graph run applied. */
 export const INTEREST_GRAPH_POLICY_VERSION = 'graph-policy-1';
 
+/**
+ * Versioned completeness of an APPLIED projection (migration 290): which
+ * projector semantics built the account's current `personal_graph_state`.
+ * Version 1 is the legacy default — projections applied before migration 270
+ * (shared-save graph support), which may silently omit explicit saves of
+ * ownerless shared rows even at an equal taste revision with a done outbox.
+ * The projector stamps the current version on every successful pass; backfill
+ * due checks, dispatch catch-up and reconciled reads treat a behind-version
+ * row as due for a current-state rebuild. Bump this constant (and take the
+ * next migration number only if the marker itself needs schema work) whenever
+ * the projector's completeness semantics change: each bump durably re-marks
+ * every applied projection due exactly once, repaired by an ordinary
+ * deterministic rebuild — never fabricated history or a blanket reset.
+ */
+export const PROJECTION_SUPPORT_VERSION = 2;
+
 // --- Shared canonical identities -----------------------------------------------
 
 export const GRAPH_NODE_KINDS = [
@@ -165,6 +181,8 @@ export const PersonalGraphStateRow = z.object({
   deletion_generation: z.number().int(),
   state: z.enum(['idle', 'queued', 'running', 'ready', 'failed']),
   suppression_revision: z.number().int(),
+  /** Versioned completeness marker of the applied projection (migration 290). */
+  support_version: z.number().int(),
   last_error_code: z.string().nullable(),
   last_projected_at: z.date().nullable(),
   last_graph_run_id: z.string().uuid().nullable(),

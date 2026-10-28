@@ -140,8 +140,11 @@ export class Worker {
     // Interest-graph outbox dispatch (PR 8): the durable intents committed by
     // mutations are handed to this same queue here, so a committed change is
     // projected without any new user mutation even across dispatcher restarts.
-    // Only runs when the operator opted the server in; per-account kill flags
-    // are still honored inside the dispatch pass.
+    // The same sweep hands off support-version catch-up work (upgrade
+    // reprojection): accounts whose ready projection predates the current
+    // projector semantics are rebuilt from current state without a new user
+    // mutation. Only runs when the operator opted the server in; per-account
+    // kill flags are still honored inside the dispatch pass.
     if (
       (this.opts.scheduleGraphDispatch ?? !this.opts.jobIds) &&
       Date.now() - this.lastGraphDispatch > (this.opts.graphDispatchEveryMs ?? 5_000) &&

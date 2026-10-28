@@ -77,10 +77,14 @@ export const JobPayloads = {
    * PR 8 interest graph: project one account's private graph from current
    * authoritative state. The payload mirrors the owning account (defense in
    * depth); the projector reads current state itself, so retries and replays
-   * of the same job always converge to the same result.
+   * of the same job always converge to the same result. `catch_up` marks a
+   * support-version catch-up job (upgrade reprojection): no mutation intent
+   * exists for it — the account is behind the current projection semantics —
+   * so the run is labeled support_version_catch_up, never mutation lineage.
    */
   project_interest_graph: z.object({
     account_id: Uuid,
+    catch_up: z.enum(['support_version']).optional(),
   }),
 } as const satisfies Record<JobType, z.ZodType>;
 

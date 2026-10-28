@@ -6,7 +6,7 @@ import { WEIGHTS } from '../library/taste-fold';
 import { loadFoldSaves } from '../services/taste';
 import { projectionEnabledForAccount, type ProjectionGateConfig } from './intent';
 import { loadExplicitSupport, removeSupersedesSaveSql, type ExplicitSupportSnapshot } from './explicit-support';
-import { INTEREST_GRAPH_POLICY_VERSION } from './schema';
+import { INTEREST_GRAPH_POLICY_VERSION, PROJECTION_SUPPORT_VERSION } from './schema';
 import { addEdgeSupport, createGraphRun, setGraphRunState, upsertPersonalEdge } from './store';
 
 /**
@@ -34,7 +34,11 @@ import { addEdgeSupport, createGraphRun, setGraphRunState, upsertPersonalEdge } 
  */
 
 /** What triggered the projection; recorded in run and support lineage. */
-export type ProjectionSource = 'mutation_intent' | 'backfill_current_state' | 'reconciliation_sweep';
+export type ProjectionSource =
+  | 'mutation_intent'
+  | 'backfill_current_state'
+  | 'reconciliation_sweep'
+  | 'support_version_catch_up';
 
 /** Reconciliation passes one call may need (bounded; the tail drives more). */
 const MAX_PASSES = 4;
@@ -253,19 +257,25 @@ async function runPass(db: Db, input: ProjectAccountInterestGraphInput, pass: nu
 
       // Revision fences: target catches up to the snapshot's current revision
       // and applied records exactly what this pass built. The table's CHECK
-      // (applied <= target) plus the row lock keep this monotonic.
+      // (applied <= target) plus the row lock keep this monotonic. The pass
+      // also stamps the versioned completeness marker: a committed projection
+      // now certifies it was built by the CURRENT projector semantics, which
+      // is what due checks (backfill, dispatch catch-up, reads) trust — an
+      // equal-revision legacy projection stays durably due until a current
+      // semantics pass replaces it.
       await tx.query(
         `UPDATE personal_graph_state
             SET target_taste_revision = GREATEST(target_taste_revision, $2),
                 applied_taste_revision = $2,
                 projection_revision = projection_revision + 1,
                 state = 'ready',
+                support_version = $4,
                 last_projected_at = now(),
                 last_error_code = NULL,
                 last_graph_run_id = $3,
                 updated_at = now()
           WHERE owner_account_id = $1`,
-        [accountId, snapshot.tasteRevision, run.id],
+        [accountId, snapshot.tasteRevision, run.id, PROJECTION_SUPPORT_VERSION],
       );
 
       // Only the intents this pass saw are satisfied; the effects of every one

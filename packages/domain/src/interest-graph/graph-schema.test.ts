@@ -25,6 +25,7 @@ const GRAPH_MIGRATIONS = [
   '260_graph_projector_backfill.sql',
   '270_shared_save_graph_support.sql',
   '280_owner_bound_graph_dependencies.sql',
+  '290_projection_support_version.sql',
 ];
 
 // --- Fixtures -----------------------------------------------------------------

@@ -5,6 +5,7 @@ import { accountCtx, insertItem } from '../test-support/library';
 import { closeTestDb, getTestDb, testConfig } from '../testing';
 import { dispatchGraphOutbox, markGraphProjectionQueued } from './dispatch';
 import { projectAccountInterestGraph, unsatisfiedGraphOutboxEventIds } from './projector';
+import { PROJECTION_SUPPORT_VERSION } from './schema';
 import { markGraphOutboxDispatched } from './store';
 
 /**
@@ -324,7 +325,8 @@ describe('dispatcher status update race (VAL-PROJ-008)', () => {
       await new Promise((r) => setTimeout(r, 200));
 
       // The projection completes under the lock — the exact committed shape
-      // of a finished projector pass — and the lock is released.
+      // of a finished projector pass, including the versioned completeness
+      // marker it stamps — and the lock is released.
       await holder.query(`UPDATE graph_outbox SET dispatch_state = 'done', processed_at = now() WHERE owner_account_id = $1`, [
         principal.accountId,
       ]);
@@ -334,10 +336,11 @@ describe('dispatcher status update race (VAL-PROJ-008)', () => {
                 applied_taste_revision = $2,
                 projection_revision = projection_revision + 1,
                 state = 'ready',
+                support_version = $3,
                 last_projected_at = now(),
                 updated_at = now()
           WHERE owner_account_id = $1`,
-        [principal.accountId, revision],
+        [principal.accountId, revision, PROJECTION_SUPPORT_VERSION],
       );
       await holder.query('COMMIT');
       await parked;

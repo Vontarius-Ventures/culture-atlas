@@ -6,9 +6,13 @@
  * state — accounts that gathered saves, picks, exclusions and capture
  * corrections before the projection flag existed have no historical intents, so
  * they are labeled backfill_current_state, never invented event provenance.
- * Checkpointed and resumable; replay adds nothing. Requires the operator
- * opt-in (INTEREST_GRAPH_PROJECTION_ENABLED) and never writes live
- * recommendations (projection is shadow-only).
+ * Due also covers upgrade reprojection: a ready projection applied by older
+ * projector semantics (behind on the versioned completeness marker, e.g. built
+ * before migration 270 and silently omitting explicit shared-save roots at an
+ * equal taste revision with a done outbox) is durably due and converges here
+ * exactly once, idempotently. Checkpointed and resumable; replay adds nothing.
+ * Requires the operator opt-in (INTEREST_GRAPH_PROJECTION_ENABLED) and never
+ * writes live recommendations (projection is shadow-only).
  */
 import path from 'node:path';
 import { loadRootEnv } from '../packages/domain/src/config';

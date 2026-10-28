@@ -1,6 +1,7 @@
 import type { Db } from '../db/pool';
 import { projectionEnabledForAccount, type ProjectionGateConfig } from './intent';
 import { projectAccountInterestGraph } from './projector';
+import { PROJECTION_SUPPORT_VERSION } from './schema';
 
 /**
  * Checkpointed current-state backfill (PR 8 package B). Accounts that gathered
@@ -52,7 +53,14 @@ const DEFAULT_MAX_ACCOUNTS = 500;
 const DEFAULT_MAX_SWEEPS = 5;
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 
-/** An account is due when its projection is behind current authority. */
+/**
+ * An account is due when its projection is behind current authority: no state
+ * row yet, a taste revision gap, an unsatisfied outbox event, or — the upgrade
+ * case — an applied projection built by OLDER projector semantics (a
+ * behind-version completeness marker, e.g. a pre-migration-270 ready state
+ * that omits explicit shared-save roots at an equal revision with a done
+ * outbox). Repair is always a current-state rebuild, never invented events.
+ */
 const DUE_PREDICATE = `(
      NOT EXISTS (SELECT 1 FROM personal_graph_state s WHERE s.owner_account_id = a.id)
      OR EXISTS (
@@ -60,6 +68,7 @@ const DUE_PREDICATE = `(
             WHERE s.owner_account_id = a.id
               AND (s.applied_taste_revision < COALESCE(
                      (SELECT t.revision FROM taste_profiles t WHERE t.owner_account_id = a.id), 0)
+                   OR s.support_version < ${PROJECTION_SUPPORT_VERSION}
                    OR EXISTS (SELECT 1 FROM graph_outbox o
                                WHERE o.owner_account_id = a.id
                                  AND o.dispatch_state IN ('pending','dispatched')))))`;

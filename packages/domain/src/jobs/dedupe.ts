@@ -73,13 +73,20 @@ export function audioAnalysisDedupeKey(input: { owner: Owner; analysisId: string
  * job, while concurrent dispatchers seeing the same state compute the same
  * key and dedupe. A completed job's event set is done by definition, so its
  * key never needs to be reused.
+ *
+ * `catchUpTo` keys support-version catch-up jobs (upgrade reprojection),
+ * which have no intent set: their key space is per target version, so a
+ * future marker bump can never be blocked by a completed catch-up job of an
+ * older version.
  */
 export function interestGraphProjectionDedupeKey(input: {
   accountId: string;
   events: readonly { id: string; attempts: number }[];
+  catchUpTo?: number;
 }): string {
   return `graph_projection:${digest([
     `a:${input.accountId}`,
     ...input.events.map((e) => `${e.id}:${e.attempts}`).sort(),
+    ...(input.catchUpTo !== undefined ? [`v:${input.catchUpTo}`] : []),
   ])}`;
 }

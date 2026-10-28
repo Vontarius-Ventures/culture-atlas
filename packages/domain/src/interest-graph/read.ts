@@ -3,6 +3,7 @@ import type { ItemKind } from '../enums';
 import { getTasteRevision } from '../services/taste';
 import { countUnsatisfiedGraphOutboxEvents } from './projector';
 import { loadExplicitSupport } from './explicit-support';
+import { PROJECTION_SUPPORT_VERSION } from './schema';
 
 /**
  * Reconciled interest-graph read (PR 8 package B). Reads honor CURRENT
@@ -20,6 +21,12 @@ export interface ProjectionStatus {
   targetTasteRevision: number;
   appliedTasteRevision: number;
   currentTasteRevision: number;
+  /**
+   * Versioned completeness of the applied projection (0 when never
+   * projected): behind current projector semantics means the stored support
+   * may silently omit current authoritative roots.
+   */
+  supportVersion: number;
   /** True when committed intents are unsatisfied or the projection is behind. */
   lagging: boolean;
   pendingEvents: number;
@@ -85,11 +92,12 @@ export async function readReconciledInterestGraph(db: Queryable, accountId: stri
       projection_revision: number;
       target_taste_revision: number;
       applied_taste_revision: number;
+      support_version: number;
       last_projected_at: Date | null;
       last_graph_run_id: string | null;
     }>(
       `SELECT state, projection_revision, target_taste_revision, applied_taste_revision,
-              last_projected_at, last_graph_run_id
+              support_version, last_projected_at, last_graph_run_id
          FROM personal_graph_state WHERE owner_account_id = $1`,
       [accountId],
     ),
@@ -111,7 +119,16 @@ export async function readReconciledInterestGraph(db: Queryable, accountId: stri
 
   const row = state.rows[0];
   const applied = row?.applied_taste_revision ?? 0;
-  const lagging = pendingEvents > 0 || applied < currentRevision;
+  const supportVersion = row?.support_version ?? 0;
+  // Lag is honest about every kind of behind-ness: unsatisfied committed
+  // intents, a taste revision gap, or an applied projection built by older
+  // projector semantics (a behind-version completeness marker whose stored
+  // support may silently omit current authoritative roots, e.g. a legacy
+  // ready projection missing explicit shared-save support).
+  const lagging =
+    pendingEvents > 0 ||
+    applied < currentRevision ||
+    (row !== undefined && supportVersion < PROJECTION_SUPPORT_VERSION);
 
   // Projected edge ids by target, for decoration only: authority decides membership.
   // Saves of ownerless shared rows carry their own private saved-item edge.
@@ -188,6 +205,7 @@ export async function readReconciledInterestGraph(db: Queryable, accountId: stri
       targetTasteRevision: row?.target_taste_revision ?? 0,
       appliedTasteRevision: applied,
       currentTasteRevision: currentRevision,
+      supportVersion,
       lagging,
       pendingEvents,
       lastProjectedAt: row?.last_projected_at ? row.last_projected_at.toISOString() : null,
