@@ -53,12 +53,18 @@ the claim revision:
   session: the transferred capture answers 404 in the API and "This photo
   isn't available." in the UI, while the owner still sees it.
 
-Saves that target shared catalog rows (the labeled examples) are real taste —
-they stay in the fold and the feed — but they never become private graph
-roots: `personal_interest_edges` carries the composite
-`(discovery_item_id, owner_account_id)` FK, so only the account's own
-discovery items root edges. The claim journey asserts this fence directly
-(the overlapping sample save produces no edge or support).
+Saves that target shared catalog rows (the labeled examples) are real taste,
+and they project as real confirmed interests: the shared row is ownerless, so
+`personal_interest_edges` cannot target it with the composite
+`(discovery_item_id, owner_account_id)` FK. Instead such a save roots a
+private edge on the account's OWN `saved_items` row
+(`saved_item_id` target, migration 270), so the support is account-owned and
+isolated without forging an item owner, weakening an owner FK or inventing a
+shared identity. The claim journey asserts this directly: the overlapping
+sample save and the transferred sample save each produce one private
+saved-item edge with `saved_item` support (four explicit roots before the
+claim including the sample save; six after it including the capture card),
+and removal of one account's shared-row save never touches another account's.
 
 ## No provider spend
 

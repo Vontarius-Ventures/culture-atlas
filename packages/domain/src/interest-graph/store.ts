@@ -209,8 +209,11 @@ export async function markGraphOutboxDispatched(db: Queryable, ids: readonly str
 
 export interface UpsertPersonalEdgeInput {
   ownerAccountId: string;
-  /** Exactly one target form: a shared identity or one of the account's items. */
-  target: { kind: 'node'; nodeId: string } | { kind: 'item'; discoveryItemId: string };
+  /** Exactly one target form: a shared identity, one of the account's items, or the account's own save. */
+  target:
+    | { kind: 'node'; nodeId: string }
+    | { kind: 'item'; discoveryItemId: string }
+    | { kind: 'saved_item'; savedItemId: string };
   origin: 'explicit' | 'derived';
   policyVersion: string;
   strength?: number;
@@ -220,24 +223,38 @@ export interface UpsertPersonalEdgeInput {
  * Upserts one private edge per owner target. An explicit contribution confirms
  * the edge (until withdrawn through the existing save/pick controls); a derived
  * contribution never confirms anything and never downgrades an existing state.
+ * The saved-item target is how saves of ownerless shared rows (sample catalog
+ * items) become private support: the account's own save row is the target, so
+ * no item owner is forged and the composite owner FKs stay intact.
  */
 export async function upsertPersonalEdge(db: Queryable, input: UpsertPersonalEdgeInput): Promise<PersonalInterestEdgeRow> {
   const state = input.origin === 'explicit' ? 'confirmed' : 'tentative';
-  const select = `id, owner_account_id, node_id, discovery_item_id, origin, state, strength, support_summary,
+  const select = `id, owner_account_id, node_id, discovery_item_id, saved_item_id, origin, state, strength, support_summary,
                   policy_version, revision, first_supported_at, last_supported_at, created_at, updated_at`;
-  if (input.target.kind === 'node') {
-    const { rows } = await db.query<PersonalInterestEdgeRow>(
-      `INSERT INTO personal_interest_edges (owner_account_id, node_id, origin, state, policy_version, strength)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (owner_account_id, node_id) WHERE node_id IS NOT NULL
-       DO UPDATE SET updated_at = now(),
+  const upsert = `DO UPDATE SET updated_at = now(),
                      last_supported_at = now(),
                      revision = personal_interest_edges.revision + 1,
                      origin = CASE WHEN personal_interest_edges.origin = 'explicit' OR EXCLUDED.origin = 'explicit'
                                    THEN 'explicit' ELSE personal_interest_edges.origin END,
                      state = CASE WHEN EXCLUDED.origin = 'explicit' THEN 'confirmed' ELSE personal_interest_edges.state END
-       RETURNING ${select}`,
+       RETURNING ${select}`;
+  if (input.target.kind === 'node') {
+    const { rows } = await db.query<PersonalInterestEdgeRow>(
+      `INSERT INTO personal_interest_edges (owner_account_id, node_id, origin, state, policy_version, strength)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (owner_account_id, node_id) WHERE node_id IS NOT NULL
+       ${upsert}`,
       [input.ownerAccountId, input.target.nodeId, input.origin, state, input.policyVersion, input.strength ?? null],
+    );
+    return rows[0]!;
+  }
+  if (input.target.kind === 'saved_item') {
+    const { rows } = await db.query<PersonalInterestEdgeRow>(
+      `INSERT INTO personal_interest_edges (owner_account_id, saved_item_id, origin, state, policy_version, strength)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (owner_account_id, saved_item_id) WHERE saved_item_id IS NOT NULL
+       ${upsert}`,
+      [input.ownerAccountId, input.target.savedItemId, input.origin, state, input.policyVersion, input.strength ?? null],
     );
     return rows[0]!;
   }
@@ -245,13 +262,7 @@ export async function upsertPersonalEdge(db: Queryable, input: UpsertPersonalEdg
     `INSERT INTO personal_interest_edges (owner_account_id, discovery_item_id, origin, state, policy_version, strength)
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (owner_account_id, discovery_item_id) WHERE discovery_item_id IS NOT NULL
-     DO UPDATE SET updated_at = now(),
-                   last_supported_at = now(),
-                   revision = personal_interest_edges.revision + 1,
-                   origin = CASE WHEN personal_interest_edges.origin = 'explicit' OR EXCLUDED.origin = 'explicit'
-                                 THEN 'explicit' ELSE personal_interest_edges.origin END,
-                   state = CASE WHEN EXCLUDED.origin = 'explicit' THEN 'confirmed' ELSE personal_interest_edges.state END
-     RETURNING ${select}`,
+     ${upsert}`,
     [input.ownerAccountId, input.target.discoveryItemId, input.origin, state, input.policyVersion, input.strength ?? null],
   );
   return rows[0]!;

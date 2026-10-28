@@ -79,6 +79,34 @@ describe('reconciled reads honor removals before catch-up (VAL-PROJ-008)', () =>
     expect(read.interests).toEqual([]);
     expect(read.projection.lagging).toBe(false);
   });
+
+  it('a shared-row save reads as a confirmed interest decorated with its private edge', async () => {
+    const { principal, ctx } = await accountCtx({ config: projectionOn });
+    const shared = await insertItem(null, { title: 'Shared sample' });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: shared });
+    await dispatchGraphOutbox(db, { config: projectionOn, ownerAccountId: principal.accountId });
+    await project(principal.accountId);
+
+    const read = await readReconciledInterestGraph(db, principal.accountId);
+    expect(read.projection.lagging).toBe(false);
+    expect(read.interests).toHaveLength(1);
+    expect(read.interests[0]).toMatchObject({
+      itemId: shared,
+      state: 'confirmed',
+      edgeId: expect.any(String),
+    });
+    const { rows: edge } = await db.query<{ saved_item_id: string | null }>(
+      'SELECT saved_item_id FROM personal_interest_edges WHERE owner_account_id = $1',
+      [principal.accountId],
+    );
+    expect(edge[0]!.saved_item_id).toBe(read.interests[0]!.savedItemId);
+
+    // Removal is honored before catch-up, exactly like owned roots.
+    await recordPreference(ctx, { action: 'remove', target_type: 'discovery_item', target_id: shared });
+    const after = await readReconciledInterestGraph(db, principal.accountId);
+    expect(after.interests).toEqual([]);
+    expect(after.projection.lagging).toBe(true);
+  });
 });
 
 describe('claim merges canonical saves and projects once', () => {

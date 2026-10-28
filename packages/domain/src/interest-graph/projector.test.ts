@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { liftFeatureKill, setFeatureKill } from '../flags/feature-flags';
+import { createAccount } from '../services/auth';
 import { recordPreference } from '../services/preferences';
 import { loadFoldSaves } from '../services/taste';
-import { accountCtx, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
+import { accountCtx, anonCtx, ctxFor, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
 import { closeTestDb, getTestDb, testConfig } from '../testing';
 import { dispatchGraphOutbox } from './dispatch';
 import { projectAccountInterestGraph } from './projector';
@@ -60,6 +61,7 @@ async function supportShapes(accountId: string): Promise<SupportShape[]> {
   const { rows } = await db.query<{
     edge_item: string | null;
     edge_node: string | null;
+    edge_save: string | null;
     origin_kind: string;
     saved_item_id: string | null;
     pick_id: string | null;
@@ -67,17 +69,17 @@ async function supportShapes(accountId: string): Promise<SupportShape[]> {
     dependency_versions: Record<string, unknown>;
     originating_event_id: string | null;
   }>(
-    `SELECT e.discovery_item_id AS edge_item, e.node_id AS edge_node, s.origin_kind,
+    `SELECT e.discovery_item_id AS edge_item, e.node_id AS edge_node, e.saved_item_id AS edge_save, s.origin_kind,
             s.saved_item_id, s.pick_id, s.capture_reference_id, s.dependency_versions,
             s.originating_event_id
        FROM personal_interest_support s
        JOIN personal_interest_edges e ON e.id = s.edge_id
       WHERE s.owner_account_id = $1
-      ORDER BY e.discovery_item_id, e.node_id, s.origin_kind, s.saved_item_id, s.pick_id, s.capture_reference_id`,
+      ORDER BY e.discovery_item_id, e.node_id, e.saved_item_id, s.origin_kind, s.saved_item_id, s.pick_id, s.capture_reference_id`,
     [accountId],
   );
   return rows.map((r) => ({
-    edgeTarget: r.edge_item ?? r.edge_node,
+    edgeTarget: r.edge_item ?? r.edge_node ?? r.edge_save,
     originKind: r.origin_kind,
     sourceId: r.saved_item_id ?? r.pick_id ?? r.capture_reference_id,
     dependencyVersions: {
@@ -412,39 +414,148 @@ describe('projector: idempotent projection and revision fences (VAL-PROJ-008)', 
     expect(await edgeCount(principal.accountId)).toBe(1);
   });
 
-  it('saves on shared catalog rows stay taste but never become private roots', async () => {
-    const { principal, ctx } = await accountCtx({ config: projectionOn });
-    const own = await insertItem({ accountId: principal.accountId }, { title: 'Owned film' });
+  it('explicit saves of ownerless shared rows become private account-owned support', async () => {
+    const a = await accountCtx({ config: projectionOn });
+    const b = await accountCtx({ config: projectionOn });
+    const own = await insertItem({ accountId: a.principal.accountId }, { title: 'Owned film' });
     const shared = await insertItem(null, { title: 'Shared sample' });
-    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: own });
-    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: shared });
-    await dispatch(principal.accountId);
+    await recordPreference(a.ctx, { action: 'save', target_type: 'discovery_item', target_id: own });
+    await recordPreference(a.ctx, { action: 'save', target_type: 'discovery_item', target_id: shared });
+    await recordPreference(b.ctx, { action: 'save', target_type: 'discovery_item', target_id: shared });
+    await dispatch(a.principal.accountId);
+    await dispatch(b.principal.accountId);
+    const { rows: nodesBefore } = await db.query<{ n: number }>('SELECT count(*) AS n FROM graph_nodes');
+    const aSaveId = (
+      await db.query<{ id: string }>('SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2', [
+        a.principal.accountId,
+        shared,
+      ])
+    ).rows[0]!.id;
 
-    // The composite owner FK on edges makes shared catalog rows (owner-less
-    // sample items) cross-account state: real taste, never private roots.
-    const result = await project(principal.accountId);
+    // Saves of shared catalog rows are real confirmed taste: they project as
+    // private support targeting the account's OWN saved_items row, never a
+    // forged item owner and never a silently omitted root.
+    const result = await project(a.principal.accountId);
     expect(result.projected).toBe(true);
     expect(result.tailClean).toBe(true);
-    expect(await edgeCount(principal.accountId)).toBe(1);
-    const support = await supportShapes(principal.accountId);
-    expect(support).toHaveLength(1);
-    expect(support[0]).toMatchObject({ originKind: 'saved_item', edgeTarget: own });
+    expect(await edgeCount(a.principal.accountId)).toBe(2);
+    const { rows: aEdges } = await db.query<{
+      discovery_item_id: string | null;
+      saved_item_id: string | null;
+      node_id: string | null;
+      origin: string;
+      state: string;
+    }>('SELECT discovery_item_id, saved_item_id, node_id, origin, state FROM personal_interest_edges WHERE owner_account_id = $1', [
+      a.principal.accountId,
+    ]);
+    const aSharedEdge = aEdges.find((e) => e.saved_item_id === aSaveId)!;
+    expect(aSharedEdge).toMatchObject({ discovery_item_id: null, node_id: null, origin: 'explicit', state: 'confirmed' });
+    expect(aEdges.find((e) => e.discovery_item_id === own)).toMatchObject({ saved_item_id: null, origin: 'explicit', state: 'confirmed' });
+    const support = await supportShapes(a.principal.accountId);
+    expect(support).toHaveLength(2);
+    expect(support.map((s) => s.edgeTarget).sort()).toEqual([own, aSaveId].sort());
+    expect(support.every((s) => s.originKind === 'saved_item' && s.dependencyVersions.origin === 'mutation_intent')).toBe(true);
 
-    // The fold keeps both saves: shared rows are taste, just not graph roots.
-    const fold = await loadFoldSaves(db, { kind: 'account', accountId: principal.accountId });
+    // No owner is forged onto the shared row and no shared identity or sourced
+    // cultural relationship is invented for it.
+    const { rows: sharedRow } = await db.query<{ owner_account_id: string | null; is_sample: boolean }>(
+      'SELECT owner_account_id, is_sample FROM discovery_items WHERE id = $1',
+      [shared],
+    );
+    expect(sharedRow[0]).toMatchObject({ owner_account_id: null, is_sample: true });
+    const { rows: nodesAfter } = await db.query<{ n: number }>('SELECT count(*) AS n FROM graph_nodes');
+    expect(Number(nodesAfter[0]!.n)).toBe(Number(nodesBefore[0]!.n));
+
+    // The fold keeps both saves and the projection now covers both.
+    const fold = await loadFoldSaves(db, { kind: 'account', accountId: a.principal.accountId });
     expect(fold.map((s) => s.item_id).sort()).toEqual([own, shared].sort());
 
-    // Replays keep the fence: redelivered events rebuild the same roots.
+    // Isolation: the other account's identical shared-row save is an
+    // independent private edge; it survives this account's edits untouched.
+    const bSaveId = (
+      await db.query<{ id: string }>('SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2', [
+        b.principal.accountId,
+        shared,
+      ])
+    ).rows[0]!.id;
+    expect(bSaveId).not.toBe(aSaveId);
+    await project(b.principal.accountId);
+    expect(await edgeCount(b.principal.accountId)).toBe(1);
+    const { rows: bEdges } = await db.query<{ saved_item_id: string | null }>(
+      'SELECT saved_item_id FROM personal_interest_edges WHERE owner_account_id = $1',
+      [b.principal.accountId],
+    );
+    expect(bEdges[0]!.saved_item_id).toBe(bSaveId);
+
+    // Removal withdraws only this account's support; the returned Undo
+    // restores it exactly once; the other account keeps hers.
+    const remove = await recordPreference(a.ctx, { action: 'remove', target_type: 'discovery_item', target_id: shared });
+    expect(remove.undo).toEqual({ action: 'save', target_type: 'discovery_item', target_id: shared });
+    await dispatch(a.principal.accountId);
+    await project(a.principal.accountId);
+    expect(await edgeCount(a.principal.accountId)).toBe(1);
+    expect(await edgeCount(b.principal.accountId)).toBe(1);
+
+    await recordPreference(a.ctx, remove.undo!);
+    await dispatch(a.principal.accountId);
+    const restored = await project(a.principal.accountId);
+    expect(restored.projected).toBe(true);
+    expect(await edgeCount(a.principal.accountId)).toBe(2);
+    expect((await supportShapes(a.principal.accountId)).filter((s) => s.originKind === 'saved_item')).toHaveLength(2);
+
+    // Hiding the shared row stays scoped: it excludes only this account's
+    // interest, never the other account's support.
+    await recordPreference(a.ctx, { action: 'hide', target_type: 'discovery_item', target_id: shared });
+    await dispatch(a.principal.accountId);
+    await project(a.principal.accountId);
+    expect(await edgeCount(a.principal.accountId)).toBe(1);
+    expect(await edgeCount(b.principal.accountId)).toBe(1);
+    const { rows: hiddenSave } = await db.query<{ n: number }>(
+      'SELECT count(*) AS n FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+      [a.principal.accountId, shared],
+    );
+    expect(Number(hiddenSave[0]!.n)).toBe(1);
+
+    // Replays keep the same roots: redelivered events rebuild identical
+    // private support without inflation.
     await db.query(
       `UPDATE graph_outbox SET dispatch_state = 'pending', dispatched_at = NULL, processed_at = NULL
         WHERE owner_account_id = $1`,
-      [principal.accountId],
+      [a.principal.accountId],
     );
-    await dispatch(principal.accountId);
-    const replay = await project(principal.accountId);
+    await dispatch(a.principal.accountId);
+    const replay = await project(a.principal.accountId);
     expect(replay.projected).toBe(true);
     expect(replay.tailClean).toBe(true);
-    expect(await edgeCount(principal.accountId)).toBe(1);
+    expect(await edgeCount(a.principal.accountId)).toBe(1);
+  });
+
+  it('a pending-save pick on a shared row attaches its group support to the private edge', async () => {
+    const { principal: anon } = await anonCtx();
+    const sample = await insertItem(null, { title: 'Claimed sample' });
+    const res = await createAccount(ctxFor(anon, { config: projectionOn }), {
+      claim_session: true,
+      pending_save: { target_type: 'discovery_item', target_id: sample },
+    });
+    await dispatch(res.account_id);
+    const result = await project(res.account_id);
+    expect(result.projected).toBe(true);
+    // The shared-row save is a private saved-item root AND carries the
+    // pending-save pick group's support on that same private edge.
+    expect(await edgeCount(res.account_id)).toBe(1);
+    const saveId = (
+      await db.query<{ id: string }>('SELECT id FROM saved_items WHERE owner_account_id = $1', [res.account_id])
+    ).rows[0]!.id;
+    const { rows: edges } = await db.query<{ saved_item_id: string | null; support_summary: { saved_items?: number } }>(
+      'SELECT saved_item_id, support_summary FROM personal_interest_edges WHERE owner_account_id = $1',
+      [res.account_id],
+    );
+    expect(edges[0]!.saved_item_id).toBe(saveId);
+    expect(edges[0]!.support_summary).toMatchObject({ saved_items: 1 });
+    const support = await supportShapes(res.account_id);
+    expect(support).toHaveLength(2);
+    expect(support.filter((s) => s.originKind === 'saved_item').map((s) => s.edgeTarget)).toEqual([saveId]);
+    expect(support.filter((s) => s.originKind === 'pick_group').map((s) => s.edgeTarget)).toEqual([saveId]);
   });
 
   it('projection failure records an honest error state without touching support', async () => {
@@ -468,6 +579,63 @@ describe('projector: idempotent projection and revision fences (VAL-PROJ-008)', 
     const recovered = await project(principal.accountId);
     expect(recovered.projected).toBe(true);
     expect(recovered.appliedTasteRevision).toBe(await tasteRevision(principal.accountId));
+  });
+});
+
+describe('foreign-key failures are classified honestly (VAL-PROJ-008)', () => {
+  it('an unrelated FK violation fails projection without pretending the account is deleted', async () => {
+    const { principal, ctx } = await accountCtx({ config: projectionOn });
+    const item = await insertItem({ accountId: principal.accountId });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: item });
+    await dispatch(principal.accountId);
+
+    // Simulate an FK 23503 whose violated constraint references something
+    // OTHER than accounts (here: a support row's composite saved-item FK).
+    await db.query(
+      `CREATE FUNCTION graph_test_unrelated_fk() RETURNS trigger AS $fn$
+         BEGIN
+           RAISE EXCEPTION 'simulated non-account foreign key violation'
+             USING ERRCODE = '23503',
+                   CONSTRAINT = 'personal_interest_support_saved_item_id_owner_account_id_fkey',
+                   TABLE = 'personal_interest_support',
+                   SCHEMA = current_schema();
+           RETURN NEW;
+         END $fn$ LANGUAGE plpgsql`,
+    );
+    await db.query(
+      'CREATE TRIGGER graph_test_unrelated_fk BEFORE INSERT ON personal_interest_support FOR EACH ROW EXECUTE FUNCTION graph_test_unrelated_fk()',
+    );
+    try {
+      await expect(project(principal.accountId)).rejects.toThrow(/simulated non-account/);
+      const state = (await stateRow(principal.accountId))!;
+      expect(state.state).toBe('failed');
+      expect(state.last_error_code).toBe('pg_23503');
+      expect(state.applied_taste_revision).toBe(0);
+      // The intent is retained for an honest retry, not swallowed as deletion.
+      expect((await outboxStates(principal.accountId)).every((e) => e.dispatch_state === 'dispatched')).toBe(true);
+      expect(await edgeCount(principal.accountId)).toBe(0);
+    } finally {
+      await db.query('DROP TRIGGER graph_test_unrelated_fk ON personal_interest_support');
+      await db.query('DROP FUNCTION graph_test_unrelated_fk');
+    }
+    // Recovery: the retained events project once the fault clears.
+    const recovered = await project(principal.accountId);
+    expect(recovered.projected).toBe(true);
+    expect(await edgeCount(principal.accountId)).toBe(1);
+  });
+
+  it('a genuinely deleted account is the only FK failure classified as account_missing', async () => {
+    const { principal, ctx } = await accountCtx({ config: projectionOn });
+    const item = await insertItem({ accountId: principal.accountId });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: item });
+    await dispatch(principal.accountId);
+    expect((await stateRow(principal.accountId))!.state).toBe('queued');
+
+    // Genuine deletion: the account (and its cascaded graph state) vanish.
+    await db.query('DELETE FROM accounts WHERE id = $1', [principal.accountId]);
+    const result = await project(principal.accountId);
+    expect(result).toMatchObject({ projected: false, reason: 'account_missing' });
+    expect(await stateRow(principal.accountId)).toBeNull();
   });
 });
 

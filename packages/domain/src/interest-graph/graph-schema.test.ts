@@ -22,6 +22,8 @@ const GRAPH_MIGRATIONS = [
   '230_personal_graph_state.sql',
   '240_graph_runs_frontier_proofs_outbox.sql',
   '250_graph_flags.sql',
+  '260_graph_projector_backfill.sql',
+  '270_shared_save_graph_support.sql',
 ];
 
 // --- Fixtures -----------------------------------------------------------------
@@ -362,6 +364,62 @@ describe('account-owned graph state', () => {
        VALUES ($1, $2, 'explicit', 'confirmed', 'graph-policy-1')`,
       [a.accountId, itemA],
     );
+  });
+  it('gives shared-row saves a private saved-item target without weakening owner foreign keys', async () => {
+    const a = await insertAccount(db);
+    const b = await insertAccount(db);
+    // An ownerless shared catalog row, the way sample items are seeded.
+    const { rows: shared } = await db.query<{ id: string }>(
+      `INSERT INTO discovery_items (is_sample, kind, canonical_key, title)
+       VALUES (true, 'film', $1, 'Shared sample') RETURNING id`,
+      [`sample:${randomUUID()}`],
+    );
+    const sharedId = shared[0]!.id;
+    const { rows: savedA } = await db.query<{ id: string }>(
+      'INSERT INTO saved_items (owner_account_id, discovery_item_id) VALUES ($1, $2) RETURNING id',
+      [a.accountId, sharedId],
+    );
+    const { rows: savedB } = await db.query<{ id: string }>(
+      'INSERT INTO saved_items (owner_account_id, discovery_item_id) VALUES ($1, $2) RETURNING id',
+      [b.accountId, sharedId],
+    );
+    // The account's own save of an ownerless row is a valid private target.
+    const { rows: edgeA } = await db.query<{ id: string }>(
+      `INSERT INTO personal_interest_edges (owner_account_id, saved_item_id, origin, state, policy_version)
+       VALUES ($1, $2, 'explicit', 'confirmed', 'graph-policy-1') RETURNING id`,
+      [a.accountId, savedA[0]!.id],
+    );
+    expect(edgeA[0]!.id).toBeTruthy();
+    // Exactly one target form still holds: a saved-item edge cannot also
+    // carry a node or discovery-item target.
+    await expect(
+      db.query(
+        `INSERT INTO personal_interest_edges (owner_account_id, saved_item_id, node_id, origin, policy_version)
+         VALUES ($1, $2, $3, 'derived', 'graph-policy-1')`,
+        [a.accountId, savedA[0]!.id, await node(db)],
+      ),
+    ).rejects.toThrow(/check/i);
+    // The composite FK is not weakened: one account cannot target another
+    // account's save of the same shared row.
+    await expect(
+      db.query(
+        `INSERT INTO personal_interest_edges (owner_account_id, saved_item_id, origin, state, policy_version)
+         VALUES ($1, $2, 'explicit', 'confirmed', 'graph-policy-1')`,
+        [a.accountId, savedB[0]!.id],
+      ),
+    ).rejects.toThrow(/foreign key/i);
+    // Two accounts get independent private edges over the same shared row.
+    await db.query(
+      `INSERT INTO personal_interest_edges (owner_account_id, saved_item_id, origin, state, policy_version)
+       VALUES ($1, $2, 'explicit', 'confirmed', 'graph-policy-1')`,
+      [b.accountId, savedB[0]!.id],
+    );
+    // No owner is forged onto the shared row by any of this.
+    const { rows: owner } = await db.query<{ owner_account_id: string | null }>(
+      'SELECT owner_account_id FROM discovery_items WHERE id = $1',
+      [sharedId],
+    );
+    expect(owner[0]!.owner_account_id).toBeNull();
   });
 
   it('rejects cross-account support sources through composite foreign keys', async () => {

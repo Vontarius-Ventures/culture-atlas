@@ -3,6 +3,7 @@ import {
   closeJourneyDb,
   isGraphOn,
   journeyDb,
+  one,
   paidModelAttempts,
   scalar,
   sessionOf,
@@ -138,11 +139,11 @@ test('claim projects the merged state once and denies the old anonymous authorit
     const before = await supportRows(accountId);
     // Every pick member is itself a save (Amendment 2.2: the pending save counts
     // as one pick; the bundled tile pick adds its members). The three onboarding
-    // tile members are account-owned and root edges; the Nina save targets a
-    // shared catalog sample row, which is real taste but never a private graph
-    // root (the composite owner FK is the cross-account fence).
-    expect(before.filter((r) => r.origin_kind === 'saved_item').length).toBe(3);
-    expect(new Set(before.filter((r) => r.pick_id).map((r) => r.pick_id)).size).toBe(2);
+    // tile members are account-owned item roots; the Nina save targets a shared
+    // catalog sample row and projects as private support on the account's own
+    // saved_items row — a real confirmed root, not an omission.
+    expect(before.filter((r) => r.origin_kind === 'saved_item').length).toBe(4);
+    expect(new Set(before.filter((r) => r.pick_id).map((r) => r.pick_id)).size).toBe(3);
     expect(before.filter((r) => r.capture_id)).toHaveLength(0);
     // Projection is shadow-only: nothing graph-parented reaches the feed tables.
     expect(
@@ -289,17 +290,25 @@ test('claim projects the merged state once and denies the old anonymous authorit
     expect(state.applied).toBeGreaterThanOrEqual(pendingSaveRevision);
     expect(state.projection_revision).toBeGreaterThan(projectionRevisionBeforeClaim);
     const support = await supportRows(accountId);
-    // Exactly one endorsement per owned canonical save: the claim added the
-    // capture card (account-owned, a plain save). The merged Amélie save and
-    // the kept Nina save target shared catalog rows — real taste, never
-    // private roots — so the graph count stays at the three onboarding roots
-    // plus the capture card, and the hide and the unsaved capture confirm
-    // nothing.
-    expect(support.filter((r) => r.origin_kind === 'saved_item').length).toBe(4);
-    expect(new Set(support.filter((r) => r.pick_id).map((r) => r.pick_id)).size).toBe(2);
+    // Exactly one endorsement per canonical save: the three onboarding tiles,
+    // the capture card (account-owned, a plain save), and the two shared-row
+    // saves (Nina kept through the merge, Amélie transferred by it) as private
+    // saved-item support. The hide and the unsaved capture confirm nothing.
+    expect(support.filter((r) => r.origin_kind === 'saved_item').length).toBe(6);
+    expect(new Set(support.filter((r) => r.pick_id).map((r) => r.pick_id)).size).toBe(3);
     expect(support.filter((r) => r.capture_id)).toHaveLength(0);
-    const ninaSupport = support.filter((r) => r.discovery_item_id === ninaId && r.origin_kind === 'saved_item');
-    expect(ninaSupport).toHaveLength(0);
+    // The claimed shared-row save survives the claim as private account-owned
+    // confirmed support: its edge targets the account's own saved_items row,
+    // never a forged item owner.
+    const ninaSave = await one<{ id: string }>(
+      `SELECT si.id FROM saved_items si JOIN discovery_items i ON i.id = si.discovery_item_id
+        WHERE si.owner_account_id = $1 AND i.canonical_key = 'sample:artist-nina-simone'`,
+      [accountId],
+    );
+    expect(ninaSave?.id).toBeTruthy();
+    const ninaSupport = support.filter((r) => r.saved_item_id === ninaSave!.id && r.origin_kind === 'saved_item');
+    expect(ninaSupport).toHaveLength(1);
+    expect(ninaSupport[0]!.saved_item_source_id).toBe(ninaSave!.id);
     await shot(pageA, info, 'claim-05-merged-feed');
   });
 

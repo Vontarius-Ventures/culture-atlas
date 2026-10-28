@@ -94,14 +94,16 @@ export async function waitForProjectionReady(accountId: string, timeoutMs = 90_0
 
 /**
  * The account's projected support rows as a comparable semantic set: edge
- * target (discovery item or graph node), source kind and source id, ignoring
- * row ids (the projector legitimately rewrites rows on every rebuild).
+ * target (discovery item, graph node, or the account's own save of a shared
+ * row), source kind and source id, ignoring row ids (the projector
+ * legitimately rewrites rows on every rebuild).
  */
 export interface SupportRow {
   discovery_item_id: string | null;
   node_id: string | null;
-  origin_kind: string;
   saved_item_id: string | null;
+  origin_kind: string;
+  saved_item_source_id: string | null;
   pick_id: string | null;
   capture_id: string | null;
   active: boolean;
@@ -109,11 +111,12 @@ export interface SupportRow {
 
 export async function supportRows(accountId: string): Promise<SupportRow[]> {
   const { rows } = await journeyDb().query<SupportRow>(
-    `SELECT e.discovery_item_id, e.node_id, s.origin_kind, s.saved_item_id, s.pick_id, s.capture_id, s.active
+    `SELECT e.discovery_item_id, e.node_id, e.saved_item_id, s.origin_kind, s.saved_item_id AS saved_item_source_id,
+            s.pick_id, s.capture_id, s.active
        FROM personal_interest_support s
        JOIN personal_interest_edges e ON e.id = s.edge_id AND e.owner_account_id = s.owner_account_id
       WHERE s.owner_account_id = $1
-      ORDER BY COALESCE(e.discovery_item_id::text, e.node_id::text), s.origin_kind,
+      ORDER BY COALESCE(e.discovery_item_id::text, e.node_id::text, e.saved_item_id::text), s.origin_kind,
                COALESCE(s.saved_item_id::text, s.pick_id::text, s.capture_id::text)`,
     [accountId],
   );

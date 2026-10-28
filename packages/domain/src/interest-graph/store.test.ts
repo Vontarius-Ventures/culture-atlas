@@ -218,6 +218,49 @@ describe('personal edge and support contracts', () => {
     expect(support.active).toBe(true);
     void nodeA;
   });
+  it('upserts a private saved-item edge per own save and keeps accounts isolated', async () => {
+    const a = await insertAccount(db);
+    const b = await insertAccount(db);
+    // The ownerless shared catalog row both accounts explicitly saved.
+    const { rows: shared } = await db.query<{ id: string }>(
+      `INSERT INTO discovery_items (is_sample, kind, canonical_key, title)
+       VALUES (true, 'film', $1, 'Shared sample') RETURNING id`,
+      [`sample:${randomUUID()}`],
+    );
+    const { rows: savedA } = await db.query<{ id: string }>(
+      'INSERT INTO saved_items (owner_account_id, discovery_item_id) VALUES ($1, $2) RETURNING id',
+      [a.accountId, shared[0]!.id],
+    );
+    const { rows: savedB } = await db.query<{ id: string }>(
+      'INSERT INTO saved_items (owner_account_id, discovery_item_id) VALUES ($1, $2) RETURNING id',
+      [b.accountId, shared[0]!.id],
+    );
+    const edgeA = await upsertPersonalEdge(db, {
+      ownerAccountId: a.accountId,
+      target: { kind: 'saved_item', savedItemId: savedA[0]!.id },
+      origin: 'explicit',
+      policyVersion: 'graph-policy-1',
+    });
+    expect(edgeA).toMatchObject({ saved_item_id: savedA[0]!.id, discovery_item_id: null, node_id: null, state: 'confirmed' });
+    // Upsert converges on the same private edge without duplication.
+    const edgeA2 = await upsertPersonalEdge(db, {
+      ownerAccountId: a.accountId,
+      target: { kind: 'saved_item', savedItemId: savedA[0]!.id },
+      origin: 'explicit',
+      policyVersion: 'graph-policy-1',
+    });
+    expect(edgeA2.id).toBe(edgeA.id);
+    // The same shared row is an independent private edge for the other
+    // account: composite owner FKs keep the two saves isolated.
+    const edgeB = await upsertPersonalEdge(db, {
+      ownerAccountId: b.accountId,
+      target: { kind: 'saved_item', savedItemId: savedB[0]!.id },
+      origin: 'explicit',
+      policyVersion: 'graph-policy-1',
+    });
+    expect(edgeB.id).not.toBe(edgeA.id);
+    expect(edgeB.saved_item_id).toBe(savedB[0]!.id);
+  });
 });
 
 describe('graph parent writers and readers', () => {

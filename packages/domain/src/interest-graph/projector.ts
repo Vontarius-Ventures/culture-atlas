@@ -133,10 +133,46 @@ async function runPassWithRetry(db: Db, input: ProjectAccountInterestGraphInput,
     } catch (err) {
       // Concurrent projector commits under repeatable read: retry the pass.
       if ((err as { code?: string }).code === '40001' && attempt < MAX_SERIALIZATION_RETRIES) continue;
-      // The account vanished mid-run (deletion cascades its graph state).
-      if ((err as { code?: string }).code === '23503') return accountMissing();
+      // A foreign-key violation means account deletion ONLY when the violated
+      // constraint actually references the accounts table. Any other 23503
+      // (an unrelated composite-owner failure) fails the pass honestly: the
+      // projection is marked failed, the intents stay retained for retry and
+      // the original cause reaches the caller; it is never masked as a
+      // missing account.
+      if ((err as { code?: string }).code === '23503' && (await fkViolationReferencesAccounts(db, err))) {
+        return accountMissing();
+      }
       throw err;
     }
+  }
+}
+
+/**
+ * True only when the 23503 error's violated foreign key references the
+ * accounts table — the signature of a genuinely deleted account (deletion
+ * cascades the projection state row, so the pass's state upsert is the first
+ * statement to fail). Unknown or unmappable FK violations resolve to false:
+ * the honest direction is a failed projection, never a false deletion.
+ */
+async function fkViolationReferencesAccounts(db: Queryable, err: unknown): Promise<boolean> {
+  const e = err as { constraint?: unknown; table?: unknown; schema?: unknown };
+  const constraint = typeof e.constraint === 'string' ? e.constraint : null;
+  const table = typeof e.table === 'string' ? e.table : null;
+  const schema = typeof e.schema === 'string' && e.schema ? e.schema : 'public';
+  if (!constraint || !table) return false;
+  try {
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT count(*) AS n
+         FROM pg_constraint c
+        WHERE c.contype = 'f'
+          AND c.conname = $1
+          AND c.conrelid = to_regclass($2 || '.' || $3)
+          AND c.confrelid = to_regclass($2 || '.accounts')`,
+      [constraint, schema, table],
+    );
+    return Number(rows[0]?.n ?? 0) > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -184,11 +220,12 @@ async function runPass(db: Db, input: ProjectAccountInterestGraphInput, pass: nu
       const events = await unsatisfiedGraphOutboxEventIds(tx, accountId);
 
       // Authoritative current state, one consistent snapshot. The account's
-      // own discovery items bound what the pass may build roots on; both the
-      // parity guard and the rebuild read the same ownership set.
+      // own discovery items root on their item edges; saves of ownerless
+      // shared rows root on the account's own save (see the rebuild below).
+      // The parity guard reads the same save set both sides cover.
       const owned = await ownedItemIds(tx, accountId);
       const snapshot = await loadExplicitSupport(tx, accountId);
-      await assertFreshFoldParity(tx, accountId, snapshot, owned);
+      await assertFreshFoldParity(tx, accountId, snapshot);
 
       const built = await rebuildAccountProjection(tx, {
         accountId,
@@ -281,7 +318,12 @@ function accountMissing(): PassOutcome {
 }
 
 async function markProjectionFailed(db: Queryable, accountId: string, err: unknown): Promise<void> {
-  const code = (isAppError(err) ? err.code : 'internal').slice(0, 100);
+  // AppError codes stay; raw PostgreSQL failures record their SQLSTATE so the
+  // honest cause survives in last_error_code.
+  const pgCode = (err as { code?: unknown }).code;
+  const code = (
+    isAppError(err) ? err.code : typeof pgCode === 'string' && /^[0-9A-Z]{5}$/.test(pgCode) ? `pg_${pgCode}` : 'internal'
+  ).slice(0, 100);
   await db.query(
     `INSERT INTO personal_graph_state (owner_account_id, state, last_error_code)
      VALUES ($1, 'failed', $2)
@@ -317,11 +359,9 @@ export async function countUnsatisfiedGraphOutboxEvents(db: Queryable, accountId
 // --- Parity ----------------------------------------------------------------------------
 
 /**
- * Discovery items the account actually owns. Private graph edges carry the
- * composite owner FK (`discovery_item_id, owner_account_id`), so only these
- * items can ever become explicit roots. Shared catalog rows (sample/example
- * items with no owner) stay real taste in the fold and the reconciled reads,
- * but they are cross-account state and never become this account's roots.
+ * Discovery items the account actually owns. Items outside this set (ownerless
+ * shared sample rows) are real confirmed taste whose private graph target is
+ * the account's own save, never the shared row itself.
  */
 async function ownedItemIds(tx: Queryable, accountId: string): Promise<Set<string>> {
   const { rows } = await tx.query<{ id: string }>('SELECT id FROM discovery_items WHERE owner_account_id = $1', [accountId]);
@@ -332,15 +372,14 @@ async function ownedItemIds(tx: Queryable, accountId: string): Promise<Set<strin
  * The projection's explicit roots must equal the current taste fold's save
  * set minus exposure-only rows (both exclude hidden canonical keys). The two
  * are computed by different readers; this guard fails the pass honestly if
- * they ever diverge instead of publishing a wrong projection. Both sides are
- * restricted to the account's own discovery items: saves on shared catalog
- * rows are taste but cannot be private graph roots.
+ * they ever diverge instead of publishing a wrong projection. Both sides
+ * cover every explicit save: owned discovery items AND saves of ownerless
+ * shared rows, which project as private saved-item roots.
  */
 async function assertFreshFoldParity(
   tx: Queryable,
   accountId: string,
   snapshot: ExplicitSupportSnapshot,
-  owned: Set<string>,
 ): Promise<void> {
   // Sequential on purpose: inside the RR pass both readers share one client,
   // and a failed query in a concurrent batch can strand the client's queue.
@@ -348,11 +387,9 @@ async function assertFreshFoldParity(
   const hidden = await hiddenKeys(tx, { kind: 'account', accountId });
   const exposureOnly = new Set(snapshot.exposureOnlyItemIds);
   const expected = new Set(
-    saves.filter((s) => !hidden.has(s.canonical_key) && !exposureOnly.has(s.item_id) && owned.has(s.item_id)).map((s) => s.item_id),
+    saves.filter((s) => !hidden.has(s.canonical_key) && !exposureOnly.has(s.item_id)).map((s) => s.item_id),
   );
-  const projected = new Set(
-    snapshot.saves.filter((s) => !hidden.has(s.canonicalKey) && owned.has(s.itemId)).map((s) => s.itemId),
-  );
+  const projected = new Set(snapshot.saves.filter((s) => !hidden.has(s.canonicalKey)).map((s) => s.itemId));
   if (expected.size !== projected.size || [...expected].some((id) => !projected.has(id))) {
     throw new AppError('internal', {
       message: 'Interest-graph projection diverged from the current taste fold.',
@@ -373,10 +410,13 @@ interface BuiltProjection {
  * snapshot. Support rows are wiped and re-derived, so replays produce exactly
  * the same content and withdrawn authority simply disappears. Edge identity
  * stays stable per target (upsert), and suppression markers live in their own
- * table so they survive rebuilds. Explicit roots are restricted to the
- * account's own discovery items (the composite owner FK on edges); saves on
- * shared catalog rows stay taste but never become private roots, and their
- * pick-group members are skipped by the same fence below.
+ * table so they survive rebuilds.
+ *
+ * Explicit roots come in two target forms. Saves of the account's OWN
+ * discovery items root on the item (the composite owner FK holds). Saves of
+ * rows the account does not own — ownerless shared sample catalog rows — root
+ * on the account's own saved_items row: private, account-owned support with no
+ * forged item owner, no weakened foreign key and no invented shared identity.
  */
 async function rebuildAccountProjection(
   tx: Queryable,
@@ -384,7 +424,7 @@ async function rebuildAccountProjection(
 ): Promise<BuiltProjection> {
   const { accountId, snapshot, source, owned } = input;
   const hidden = new Set(snapshot.exclusions);
-  const roots = snapshot.saves.filter((s) => !hidden.has(s.canonicalKey) && owned.has(s.itemId));
+  const roots = snapshot.saves.filter((s) => !hidden.has(s.canonicalKey));
 
   await tx.query('DELETE FROM personal_interest_support WHERE owner_account_id = $1', [accountId]);
 
@@ -396,14 +436,25 @@ async function rebuildAccountProjection(
   const nodeByReference = await nodesForReferences(tx, snapshot.captures.flatMap((c) => c.references.map((r) => r.referenceId)));
 
   const edgeByItemId = new Map<string, string>();
+  const edgeBySavedItemId = new Map<string, string>();
   for (const root of roots) {
-    const edge = await upsertPersonalEdge(tx, {
-      ownerAccountId: accountId,
-      target: { kind: 'item', discoveryItemId: root.itemId },
-      origin: 'explicit',
-      policyVersion: INTEREST_GRAPH_POLICY_VERSION,
-    });
+    // Owned items keep the item edge; shared/ownerless rows target the
+    // account's own save, the private account-owned root.
+    const edge = owned.has(root.itemId)
+      ? await upsertPersonalEdge(tx, {
+          ownerAccountId: accountId,
+          target: { kind: 'item', discoveryItemId: root.itemId },
+          origin: 'explicit',
+          policyVersion: INTEREST_GRAPH_POLICY_VERSION,
+        })
+      : await upsertPersonalEdge(tx, {
+          ownerAccountId: accountId,
+          target: { kind: 'saved_item', savedItemId: root.savedItemId },
+          origin: 'explicit',
+          policyVersion: INTEREST_GRAPH_POLICY_VERSION,
+        });
     edgeByItemId.set(root.itemId, edge.id);
+    edgeBySavedItemId.set(root.savedItemId, edge.id);
     await addEdgeSupport(tx, {
       ownerAccountId: accountId,
       edgeId: edge.id,
@@ -416,11 +467,12 @@ async function rebuildAccountProjection(
   }
 
   // Pick groups: one support row per still-rooted member. A grouped choice
-  // counts once per group (pick id), never as extra item weight.
+  // counts once per group (pick id), never as extra item weight. Members on
+  // shared rows attach to that save's private edge.
   for (const group of snapshot.pickGroups) {
     for (const member of group.members) {
-      const edgeId = edgeByItemId.get(member.itemId);
-      if (!edgeId) continue; // hidden, withdrawn or unowned members stay excluded
+      const edgeId = edgeByItemId.get(member.itemId) ?? edgeBySavedItemId.get(member.savedItemId);
+      if (!edgeId) continue; // hidden or withdrawn members stay excluded
       await addEdgeSupport(tx, {
         ownerAccountId: accountId,
         edgeId,
@@ -437,7 +489,7 @@ async function rebuildAccountProjection(
   // corpus provides one. Derived edges never confirm anything.
   let derivedSupport = 0;
   for (const capture of snapshot.captures) {
-    const captureEdgeId = edgeByItemId.get(capture.captureItemId);
+    const captureEdgeId = edgeByItemId.get(capture.captureItemId) ?? edgeBySavedItemId.get(capture.savedItemId);
     if (!captureEdgeId || !capture.analysisId) continue;
     for (const ref of capture.references) {
       let edgeId = captureEdgeId;

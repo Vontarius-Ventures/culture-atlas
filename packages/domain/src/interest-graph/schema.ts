@@ -191,6 +191,8 @@ export const PersonalInterestEdgeRow = z.object({
   owner_account_id: z.string().uuid(),
   node_id: z.string().uuid().nullable(),
   discovery_item_id: z.string().uuid().nullable(),
+  /** Private target for saves of shared/ownerless rows: the account's own save. */
+  saved_item_id: z.string().uuid().nullable(),
   origin: z.enum(['explicit', 'derived']),
   state: z.enum(['confirmed', 'tentative', 'suppressed']),
   strength: z.number().nullable(),

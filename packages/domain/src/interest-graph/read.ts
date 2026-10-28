@@ -71,6 +71,7 @@ interface EdgeRow {
   id: string;
   node_id: string | null;
   discovery_item_id: string | null;
+  saved_item_id: string | null;
   origin: string;
   state: string;
 }
@@ -95,7 +96,7 @@ export async function readReconciledInterestGraph(db: Queryable, accountId: stri
     getTasteRevision(db, { kind: 'account', accountId }),
     countUnsatisfiedGraphOutboxEvents(db, accountId),
     db.query<EdgeRow>(
-      `SELECT id, node_id, discovery_item_id, origin, state
+      `SELECT id, node_id, discovery_item_id, saved_item_id, origin, state
          FROM personal_interest_edges WHERE owner_account_id = $1`,
       [accountId],
     ),
@@ -113,11 +114,14 @@ export async function readReconciledInterestGraph(db: Queryable, accountId: stri
   const lagging = pendingEvents > 0 || applied < currentRevision;
 
   // Projected edge ids by target, for decoration only: authority decides membership.
+  // Saves of ownerless shared rows carry their own private saved-item edge.
   const edgeByItem = new Map<string, EdgeRow>();
   const edgeByNode = new Map<string, EdgeRow>();
+  const edgeBySavedItem = new Map<string, EdgeRow>();
   for (const edge of edges.rows) {
     if (edge.discovery_item_id) edgeByItem.set(edge.discovery_item_id, edge);
     if (edge.node_id) edgeByNode.set(edge.node_id, edge);
+    if (edge.saved_item_id) edgeBySavedItem.set(edge.saved_item_id, edge);
   }
   const nodeByReference = new Map(nodeRows.rows.map((r) => [r.cultural_reference_id, r.id]));
 
@@ -142,7 +146,7 @@ export async function readReconciledInterestGraph(db: Queryable, accountId: stri
         kind: s.kind,
         origin: 'explicit' as const,
         state: 'confirmed' as const,
-        edgeId: edgeByItem.get(s.itemId)?.id ?? null,
+        edgeId: edgeByItem.get(s.itemId)?.id ?? edgeBySavedItem.get(s.savedItemId)?.id ?? null,
         savedItemId: s.savedItemId,
         pickIds: pickIdsByItem.get(s.itemId) ?? [],
         ...(capture ? { capturedBy: { captureId: capture.captureId, analysisId: capture.analysisId } } : {}),

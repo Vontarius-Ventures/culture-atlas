@@ -4,6 +4,7 @@ import { submitCorrection } from '../services/analyses';
 import { fillInterestsBoard } from '../services/collections';
 import { createPick, deletePick } from '../services/onboarding';
 import { recordPreference } from '../services/preferences';
+import { loadFoldSaves } from '../services/taste';
 import { accountCtx, ctxFor, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
 import { closeTestDb, getTestDb, testConfig } from '../testing';
 import { runInterestGraphBackfill } from './backfill';
@@ -40,10 +41,13 @@ async function stateRow(accountId: string): Promise<{ state: string; applied: nu
   return rows[0] ?? null;
 }
 
-async function edgeTargets(accountId: string): Promise<{ item: string | null; node: string | null; origin: string; state: string }[]> {
-  const { rows } = await db.query<{ item: string | null; node: string | null; origin: string; state: string }>(
-    `SELECT discovery_item_id AS item, node_id AS node, origin, state
-       FROM personal_interest_edges WHERE owner_account_id = $1 ORDER BY discovery_item_id NULLS LAST`,
+async function edgeTargets(
+  accountId: string,
+): Promise<{ item: string | null; node: string | null; save: string | null; origin: string; state: string }[]> {
+  const { rows } = await db.query<{ item: string | null; node: string | null; save: string | null; origin: string; state: string }>(
+    `SELECT discovery_item_id AS item, node_id AS node, saved_item_id AS save, origin, state
+       FROM personal_interest_edges WHERE owner_account_id = $1
+      ORDER BY discovery_item_id NULLS LAST, saved_item_id NULLS LAST`,
     [accountId],
   );
   return rows;
@@ -297,6 +301,54 @@ describe('checkpointed current-state backfill (VAL-PROJ-009)', () => {
     // The deleted pick withdrew both member saves; the empty group is gone.
     expect((await edgeTargets(principal.accountId)).map((e) => e.item)).toEqual([]);
     expect((await supportContent(principal.accountId)).filter((s) => s.origin_kind === 'pick_group')).toHaveLength(0);
+  });
+
+  it('backfill includes explicit saves of ownerless shared rows as private support', async () => {
+    // History that predates the projection flag: an explicit save of an
+    // ownerless shared sample row must backfill as private account-owned
+    // support, never be dropped for lack of an item owner.
+    const { principal, ctx } = await accountCtx({ config: flagOff });
+    const shared = await insertItem(null, { title: 'Shared sample' });
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: shared });
+    const saveId = (
+      await db.query<{ id: string }>('SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2', [
+        principal.accountId,
+        shared,
+      ])
+    ).rows[0]!.id;
+    expect(await unsatisfiedEvents(principal.accountId)).toBe(0);
+
+    const result = await runInterestGraphBackfill(db, { config: flagOn, accountIds: [principal.accountId] });
+    expect(result).toMatchObject({ state: 'complete', accountsProjected: 1 });
+    const edges = await edgeTargets(principal.accountId);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ item: null, node: null, save: saveId, origin: 'explicit', state: 'confirmed' });
+    const content = await supportContent(principal.accountId);
+    expect(content).toHaveLength(1);
+    expect(content[0]).toMatchObject({ origin_kind: 'saved_item', origin: 'backfill_current_state' });
+
+    // Replay adds no support; removal withdraws it; a returned Undo restores
+    // exactly once. Fresh-fold parity holds at every step.
+    const replay = await runInterestGraphBackfill(db, { config: flagOn, accountIds: [principal.accountId] });
+    expect(replay).toMatchObject({ state: 'complete', accountsProjected: 0 });
+    expect(await supportContent(principal.accountId)).toEqual(content);
+
+    const remove = await recordPreference(ctxFor(principal, { config: flagOn }), {
+      action: 'remove',
+      target_type: 'discovery_item',
+      target_id: shared,
+    });
+    expect(remove.undo).toEqual({ action: 'save', target_type: 'discovery_item', target_id: shared });
+    await runInterestGraphBackfill(db, { config: flagOn, accountIds: [principal.accountId] });
+    expect(await edgeTargets(principal.accountId)).toEqual([]);
+
+    await recordPreference(ctxFor(principal, { config: flagOn }), remove.undo!);
+    await runInterestGraphBackfill(db, { config: flagOn, accountIds: [principal.accountId] });
+    const restored = await edgeTargets(principal.accountId);
+    expect(restored).toHaveLength(1);
+    expect(restored[0]).toMatchObject({ item: null, node: null, origin: 'explicit', state: 'confirmed' });
+    const fold = await loadFoldSaves(db, { kind: 'account', accountId: principal.accountId });
+    expect(fold.map((s) => s.item_id)).toEqual([shared]);
   });
 
   it('global mode scans the whole due population from its checkpoint', async () => {
