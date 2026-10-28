@@ -3,6 +3,7 @@ import { CATEGORIES, type Category } from '../enums';
 import { serviceFeatureState, type ServiceFeatureEnv } from '../flags/feature-flags';
 import { interestExpandDedupeKey } from '../jobs/dedupe';
 import { enqueueJob } from '../jobs/queue';
+import { discoveryEnabledForAccount, type DiscoveryGateConfig } from '../interest-graph/expansion';
 
 /**
  * One wave per minute: a pull-to-refresh in a new minute walks the next lane
@@ -28,13 +29,28 @@ export function interestExpandCategory(wave: number): Category {
  * Ask the worker to walk one more lane of the owner's interest graph.
  * Pull-to-refresh enqueues this; the GET itself never calls Qloo. Failures
  * here must not fail the feed read — the cards already on screen stay.
+ *
+ * Graph/legacy mutual exclusion (VAL-DISC-003): an account with graph
+ * discovery enabled never spends the legacy paid expansion for the same
+ * window — its refreshes flow through the graph expansion sweep instead, so
+ * this returns without enqueueing. The legacy handler refuses the same way,
+ * so a job enqueued before the flag flipped cannot spend either.
  */
 export async function enqueueInterestExpand(
   db: Queryable,
-  input: { accountId: string; now?: Date; traceId?: string; config: ServiceFeatureEnv; refresh?: boolean },
+  input: {
+    accountId: string;
+    now?: Date;
+    traceId?: string;
+    config: ServiceFeatureEnv & DiscoveryGateConfig;
+    refresh?: boolean;
+  },
 ): Promise<{ enqueued: boolean; reused: boolean }> {
   try {
     const now = input.now ?? new Date();
+    if (await discoveryEnabledForAccount(db, { accountId: input.accountId, config: input.config })) {
+      return { enqueued: false, reused: false };
+    }
     const flag = await serviceFeatureState(db, { accountId: input.accountId, env: input.config }, 'taste_seed_enabled');
     if (!flag.enabled) return { enqueued: false, reused: false };
     const seed = await db.query<{ id: string }>(

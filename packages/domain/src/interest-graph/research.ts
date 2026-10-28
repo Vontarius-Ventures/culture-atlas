@@ -212,10 +212,20 @@ export interface ResearchProposalResult {
  * is recorded honestly without publishing any assertion or evidence row.
  * Stored proposals carry UNREVIEWED machine-extraction evidence and the
  * `proposed` status — never `validated`.
+ *
+ * `fence` is the transactional publication recheck (VAL-DISC-007): it runs at
+ * the START of the storage transaction, so delayed research whose authority
+ * changed after the paid call (account deletion, discovery pause, lease loss)
+ * publishes nothing — the work is discarded and the error surfaces honestly.
  */
 export async function proposeResearchAssertions(
   db: Db,
-  input: { sources: ResearchSourceInput[]; proposals: ResearchProposalInput[] },
+  input: {
+    sources: ResearchSourceInput[];
+    proposals: ResearchProposalInput[];
+    /** Publication fence, run inside the storage transaction before any write. */
+    fence?: (tx: Queryable) => Promise<void>;
+  },
 ): Promise<ResearchProposalResult> {
   if (input.sources.length > RESEARCH_MAX_SOURCE_DOCUMENTS) {
     throw new AppError('invalid_input', {
@@ -257,6 +267,9 @@ export async function proposeResearchAssertions(
   }
 
   return db.transaction(async (tx) => {
+    // Transactional publication recheck: authority that changed after the paid
+    // call rejects the storage here — delayed work publishes nothing.
+    await input.fence?.(tx);
     const sources: ResearchProposalResult['sources'] = [];
     const revisions = new Map<string, { sourceRevisionId: string; familyKey: string }>();
     for (const source of input.sources) {

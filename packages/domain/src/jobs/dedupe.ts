@@ -90,3 +90,39 @@ export function interestGraphProjectionDedupeKey(input: {
     ...(input.catchUpTo !== undefined ? [`v:${input.catchUpTo}`] : []),
   ])}`;
 }
+
+/**
+ * One active graph-expansion job per account and dispatch window. The window
+ * is the account's PRE-dispatch `last_expansion_at` stamp, so concurrent
+ * sweeps compute the same key (one job) while the stamp the dispatch writes
+ * makes the next window's key fresh — a dispatched window can never block the
+ * next one. This key is also the LOGICAL identity the durable expansion budget
+ * anchors to: redeliveries of the same job reserve against the same budget row.
+ */
+export function interestGraphExpansionDedupeKey(input: { accountId: string; lastExpansionAt: Date | null }): string {
+  return `graph_expansion:${digest([
+    `a:${input.accountId}`,
+    input.lastExpansionAt ? input.lastExpansionAt.toISOString() : 'never',
+  ])}`;
+}
+
+/**
+ * One research job per (account, subject, object, predicate, subtype) pair: a
+ * completed job keeps its key, so a pair is researched once rather than
+ * re-bought; a failed or cancelled job frees the key for a fresh dispatch.
+ */
+export function graphResearchDedupeKey(input: {
+  accountId: string;
+  subjectNodeId: string;
+  objectNodeId: string;
+  predicate: string;
+  associationSubtype?: string | null;
+}): string {
+  return `graph_research:${digest([
+    `a:${input.accountId}`,
+    input.subjectNodeId,
+    input.objectNodeId,
+    input.predicate,
+    input.associationSubtype ?? null,
+  ])}`;
+}

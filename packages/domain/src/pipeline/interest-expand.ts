@@ -7,6 +7,7 @@ import { requireServiceFeature } from '../flags/feature-flags';
 import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
+import { discoveryEnabledForAccount } from '../interest-graph/expansion';
 import { rebuildFeedSnapshots } from '../services/discovery';
 import { INTEREST_EXPAND_MAX_QLOO_REQUESTS } from '../services/interest-expand';
 import { readFoodExclusions, TASTE_SEED_INLINE_RETRIES } from '../services/taste-seed';
@@ -61,6 +62,14 @@ export const interestExpand: JobHandler<'interest_expand'> = async (ctx) => {
   const accountId = ctx.job.owner_account_id;
   if (!accountId) throw new AppError('invalid_input', { message: 'Expanding a feed needs an account.', retryable: false });
   await requireServiceFeature({ db: ctx.db, config: ctx.config }, accountId, 'taste_seed_enabled');
+  // Graph/legacy mutual exclusion (VAL-DISC-003): an account with graph
+  // discovery enabled never runs the legacy PAID expansion — its refresh is
+  // the graph sweep's job, so this wave completes without spending. A job
+  // enqueued before the flag flipped cannot spend either.
+  if (await discoveryEnabledForAccount(ctx.db, { accountId, config: ctx.config })) {
+    ctx.log('skipping legacy expand: graph discovery is enabled for this account', { accountId });
+    return { state: 'complete', resultType: 'interest_expand' as const };
+  }
   const owner: Owner = { kind: 'account', accountId };
   const category = ctx.payload.category;
   const wave = ctx.payload.wave;

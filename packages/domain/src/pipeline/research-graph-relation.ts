@@ -1,0 +1,293 @@
+import { AppError } from '../errors';
+import { JobCancelledError, type JobContext, type JobHandler } from '../jobs/handler';
+import type { JobOutcome } from '../jobs/types';
+import { stillOwnsJob } from '../jobs/queue';
+import type { ResearchSourceDoc } from '@culture-atlas/providers';
+import {
+  ensureGraphWorkBudget,
+  setGraphWorkBudgetState,
+  type GraphWorkBudgetState,
+} from '../interest-graph/budgets';
+import { INTEREST_GRAPH_POLICY_VERSION, type GraphPredicate } from '../interest-graph/schema';
+import { graphDiscoveryPausedAt } from '../interest-graph/refresh';
+import {
+  buildRelationResearchRequest,
+  proposeResearchAssertions,
+  RESEARCH_MAX_PROPOSED_ASSERTIONS,
+  RESEARCH_MAX_SOURCE_DOCUMENTS,
+  isApprovedResearchUrl,
+  type ResearchProposalEvidenceInput,
+  type ResearchSourceInput,
+} from '../interest-graph/research';
+import { researchDispatchGate } from '../interest-graph/research-gate';
+import { createGraphRun, recordGraphProviderQuery, setGraphRunState } from '../interest-graph/store';
+
+/**
+ * Queue handler for `research_graph_relation` (PR 8, VAL-DISC-005/007).
+ *
+ * One bounded relation-research pair: the public-only request (canonical
+ * names/ids, never photos, account identity or private history) is evaluated
+ * against at most two approved source documents; citing claims become the
+ * machine-extraction evidence of at most ten proposed assertions. Proposals
+ * are stored as UNREVIEWED `proposed` assertions — validation is the separate
+ * review gate, never this job.
+ *
+ * The PAID call (the research claims model) is fail-closed behind the same
+ * gate as dispatch: research flag, no kill, no pause, a compatible qualified
+ * role and durable account/global spend limits. The call itself flows through
+ * the real provider stack, so the gateway's durable ledger reserves and
+ * settles it. The paid extraction runs inside ctx.runStage, so a retry after
+ * a lost lease reuses the completed output instead of re-buying it.
+ *
+ * The storage transaction is fenced: account deletion, a discovery pause or a
+ * lost lease that lands after the paid call rejects publication — the work is
+ * discarded, the spend stays accounted, nothing is published.
+ */
+
+/** Maps an approved research URL to its durable-rights provider policy key. */
+function researchProviderForUrl(url: string): 'wikipedia' | 'wikidata' | 'artic_open_access' {
+  const host = new URL(url).hostname.toLowerCase();
+  if (host === 'wikidata.org' || host.endsWith('.wikidata.org')) return 'wikidata';
+  if (host === 'artic.edu' || host.endsWith('.artic.edu')) return 'artic_open_access';
+  return 'wikipedia';
+}
+
+export const researchGraphRelation: JobHandler<'research_graph_relation'> = async (
+  ctx: JobContext<'research_graph_relation'>,
+): Promise<JobOutcome> => {
+  const accountId = ctx.job.owner_account_id;
+  if (!accountId || ctx.payload.account_id !== accountId) {
+    throw new AppError('invalid_input', { message: 'Relation research requires its owning account.', retryable: false });
+  }
+  await ctx.ensureActive();
+
+  // The dispatch gate, re-checked at run time: a gate that closed between
+  // dispatch and run refuses honestly, before any paid call.
+  const gate = await researchDispatchGate(ctx.db, {
+    accountId,
+    config: ctx.config,
+    providers: ctx.providers,
+  });
+  if (!gate.allowed) {
+    if (gate.reason === 'paused') {
+      await ctx.trace({ kind: 'note', name: 'graph_research_skipped', data: { reason: gate.reason } });
+      return { state: 'complete', resultType: 'graph_research' };
+    }
+    throw new AppError('service_unavailable', {
+      message: 'Relation research is not available on this server.',
+      retryable: false,
+      details: { rule: gate.reason },
+    });
+  }
+
+  // Deletion fence: jobs cascade with the account, but a claimed job can race
+  // deletion; the storage fence re-checks inside its transaction as well.
+  const { rows: accountRows } = await ctx.db.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
+  if (accountRows.length === 0) return { state: 'complete', resultType: 'graph_research' };
+
+  // The durable budget of the logical research item: research makes NO Qloo
+  // calls (allowance 0, so any accidental Qloo usage in this path is refused)
+  // and anchors its logical deadline so redelivery cannot reset it.
+  const workKey = ctx.job.dedupe_key ?? `research:${ctx.job.id}`;
+  const budget: GraphWorkBudgetState = await ensureGraphWorkBudget(ctx.db, {
+    ownerAccountId: accountId,
+    workKind: 'research',
+    workKey,
+    qlooAttemptsMax: 0,
+  });
+  if (budget.deadlineExpired) {
+    await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'stopped' });
+    throw new AppError('service_unavailable', {
+      message: 'This relation-research window expired; a new one is on the way.',
+      retryable: false,
+      details: { rule: 'logical_deadline_expired' },
+    });
+  }
+
+  // Public-only request: canonical names/ids of the shared identity layer.
+  const request = await buildRelationResearchRequest(ctx.db, {
+    subjectNodeId: ctx.payload.subject_node_id,
+    objectNodeId: ctx.payload.object_node_id,
+    predicate: ctx.payload.predicate as GraphPredicate,
+  });
+
+  const run = await createGraphRun(ctx.db, {
+    ownerAccountId: accountId,
+    runKind: 'research',
+    jobId: ctx.job.id,
+    policyVersion: INTEREST_GRAPH_POLICY_VERSION,
+    budget: {
+      source: 'relation_research',
+      predicate: ctx.payload.predicate,
+      bounds: {
+        max_source_documents: RESEARCH_MAX_SOURCE_DOCUMENTS,
+        max_proposed_assertions: RESEARCH_MAX_PROPOSED_ASSERTIONS,
+      },
+    },
+  });
+  await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'running' });
+
+  try {
+    // --- Bounded sources: subject first, object second, two total, URL-gated.
+    const kept: ResearchSourceDoc[] = [];
+    const sourcesIn: ResearchSourceInput[] = [];
+    const seenUrls = new Set<string>();
+    const take = (doc: ResearchSourceDoc) => {
+      if (kept.length >= RESEARCH_MAX_SOURCE_DOCUMENTS) return false;
+      if (!isApprovedResearchUrl(doc.url) || seenUrls.has(doc.url)) return false;
+      seenUrls.add(doc.url);
+      kept.push(doc);
+      const provider = researchProviderForUrl(doc.url);
+      const license = doc.license ?? 'See source license';
+      sourcesIn.push({
+        key: `s${kept.length - 1}`,
+        provider,
+        url: doc.url,
+        title: doc.title,
+        publisher: doc.publisher,
+        attribution: doc.publisher,
+        license,
+        // One source family per canonical URL: mirrors and re-crawls of the
+        // same document count as one family, never independent corroboration.
+        sourceFamilyKey: `research:${doc.url}`,
+        rights: { license, permitted_use: ['storage', 'display'], expiry: 'none', basis: `${provider} provider rights policy` },
+        retrievedAt: new Date(doc.retrieved_at),
+      });
+      return true;
+    };
+    const subjectDocs = await ctx.providers.research.findSources({
+      name: request.subject.canonicalName,
+      type: request.subject.nodeKind,
+      limit: RESEARCH_MAX_SOURCE_DOCUMENTS,
+    });
+    for (const doc of subjectDocs) take(doc);
+    if (request.object && kept.length < RESEARCH_MAX_SOURCE_DOCUMENTS) {
+      const objectDocs = await ctx.providers.research.findSources({
+        name: request.object.canonicalName,
+        type: request.object.nodeKind,
+        limit: RESEARCH_MAX_SOURCE_DOCUMENTS - kept.length,
+      });
+      for (const doc of objectDocs) take(doc);
+    }
+    if (kept.length === 0) {
+      // No approved source: research records nothing and invents nothing.
+      await recordGraphProviderQuery(ctx.db, {
+        ownerAccountId: accountId,
+        runId: run.id,
+        provider: 'research',
+        operation: 'find_sources',
+        sanitizedRequest: { subject: request.subject.canonicalKey, object: request.object?.canonicalKey ?? null },
+        results: { sources: 0 },
+        status: 'empty',
+        traceId: ctx.job.trace_id ?? undefined,
+      });
+      await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'complete' });
+      return { state: 'complete', resultType: 'graph_research', resultId: run.id };
+    }
+
+    // --- The paid extraction, stage-wrapped: a retry reuses the completed
+    // output instead of re-buying it.
+    const extraction = await ctx.runStage('research:extract', () =>
+      ctx.providers.research.extractClaims(
+        {
+          name: request.subject.canonicalName,
+          type: request.subject.nodeKind,
+          sources: kept,
+          maxClaims: RESEARCH_MAX_PROPOSED_ASSERTIONS,
+        },
+        { signal: ctx.signal },
+      ),
+    );
+    await ctx.ensureActive();
+    await recordGraphProviderQuery(ctx.db, {
+      ownerAccountId: accountId,
+      runId: run.id,
+      provider: 'research',
+      operation: 'extract_claims',
+      sanitizedRequest: {
+        subject: request.subject.canonicalKey,
+        object: request.object?.canonicalKey ?? null,
+        predicate: ctx.payload.predicate,
+        grammar_version: request.grammarVersion,
+        sources: kept.map((d) => d.url),
+      },
+      results: { claims: extraction.claims.length, overview_words: extraction.overview.trim().split(/\s+/).length },
+      status: 'ok',
+      traceId: ctx.job.trace_id ?? undefined,
+    });
+
+    // --- Citing claims become the machine-extraction evidence of ONE proposed
+    // assertion (the researched pair). Interpretive or uncited claims ground
+    // nothing and are counted honestly instead.
+    const urlToSourceKey = new Map(kept.map((d, i) => [d.url, `s${i}`]));
+    const evidence: ResearchProposalEvidenceInput[] = [];
+    let droppedInterpretive = 0;
+    let droppedUncited = 0;
+    for (const claim of extraction.claims) {
+      if (claim.claim_type !== 'factual') {
+        droppedInterpretive++;
+        continue;
+      }
+      const cited = claim.source_urls.filter((u) => urlToSourceKey.has(u));
+      if (cited.length === 0) {
+        droppedUncited++;
+        continue;
+      }
+      evidence.push({
+        sourceKey: urlToSourceKey.get(cited[0]!)!,
+        excerpt: claim.text,
+        evidenceKind: 'fact',
+        validationVersion: 'research-text-1',
+      });
+      if (evidence.length >= RESEARCH_MAX_PROPOSED_ASSERTIONS) break;
+    }
+    const proposals =
+      evidence.length > 0
+        ? [
+            {
+              subjectNodeId: ctx.payload.subject_node_id,
+              predicate: ctx.payload.predicate as GraphPredicate,
+              objectNodeId: ctx.payload.object_node_id,
+              associationSubtype: ctx.payload.association_subtype ?? null,
+              evidence,
+            },
+          ]
+        : [];
+
+    // --- Fenced storage: publication rechecks current authority inside the
+    // transaction, so delayed work after deletion, pause or lease loss
+    // publishes nothing (the paid call stays accounted, the work is discarded).
+    const stored = await proposeResearchAssertions(ctx.db, {
+      sources: sourcesIn,
+      proposals,
+      fence: async (tx) => {
+        const { rows } = await tx.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
+        if (rows.length === 0) throw new JobCancelledError('account deleted');
+        if ((await graphDiscoveryPausedAt(tx, accountId)) != null) {
+          throw new AppError('conflict', { message: 'Discovery is paused; research cannot publish.', retryable: false });
+        }
+        if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new JobCancelledError('lease lost');
+      },
+    });
+
+    await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'complete' });
+    await ctx.trace({
+      kind: 'note',
+      name: 'graph_research_proposed',
+      data: {
+        run_id: run.id,
+        sources: stored.sources.length,
+        proposed: stored.proposed.length,
+        rejected: stored.rejected.length,
+        dropped_interpretive: droppedInterpretive,
+        dropped_uncited: droppedUncited,
+      },
+    });
+    return { state: 'complete', resultType: 'graph_research', resultId: run.id };
+  } catch (err) {
+    // The run record is lineage, not authority: a failed attempt leaves an
+    // honest failed run (and the paid provider query recorded above stays).
+    await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'failed' }).catch(() => undefined);
+    throw err;
+  }
+};

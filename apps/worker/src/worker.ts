@@ -5,7 +5,9 @@ import {
   JobCancelledError,
   claimJobs,
   completeJob,
+  dispatchGraphExpansion,
   dispatchGraphOutbox,
+  discoveryEnabledInConfig,
   enqueueJob,
   failJob,
   heartbeatJob,
@@ -60,6 +62,16 @@ export interface WorkerOptions {
    */
   scheduleGraphDispatch?: boolean;
   graphDispatchEveryMs?: number;
+  /**
+   * Sweep due graph-expansion refreshes into the queue periodically (default:
+   * on unless jobIds is set). Accounts whose committed projection published
+   * fresh support refresh in the background, clients closed or open — the
+   * feed read only enqueues the same deduplicated due work, never inline
+   * provider/model work (VAL-DISC-003). Per-account gate/kill/pause checks
+   * and the 15-minute periodic bound stay inside dispatchGraphExpansion.
+   */
+  scheduleGraphExpansion?: boolean;
+  graphExpansionEveryMs?: number;
 }
 
 /** One purge per hour bucket at most: the dedupe key makes concurrent workers agree. */
@@ -103,6 +115,7 @@ export class Worker {
   private lastPurge = 0;
   private lastSensorSweep = 0;
   private lastGraphDispatch = 0;
+  private lastGraphExpansion = 0;
 
   constructor(private readonly opts: WorkerOptions) {
     this.workerId = opts.workerId ?? `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
@@ -153,6 +166,22 @@ export class Worker {
       this.lastGraphDispatch = Date.now();
       await dispatchGraphOutbox(this.opts.db, { config: this.opts.config }).catch((e: Error) =>
         this.log('graph outbox dispatch failed', { error: e.message }),
+      );
+    }
+    // Interest-graph expansion sweep (PR 8 discovery): the closed-app sweeper.
+    // Accounts whose committed projection published fresh support (or whose
+    // 15-minute periodic window opened) get one bounded expansion job each,
+    // coalesced by the queue dedupe; the sweep only runs when the operator
+    // opted the server into discovery. Gate/kill/pause checks and the periodic
+    // bound stay inside dispatchGraphExpansion.
+    if (
+      (this.opts.scheduleGraphExpansion ?? !this.opts.jobIds) &&
+      Date.now() - this.lastGraphExpansion > (this.opts.graphExpansionEveryMs ?? 5_000) &&
+      discoveryEnabledInConfig(this.opts.config)
+    ) {
+      this.lastGraphExpansion = Date.now();
+      await dispatchGraphExpansion(this.opts.db, { config: this.opts.config }).catch((e: Error) =>
+        this.log('graph expansion sweep failed', { error: e.message }),
       );
     }
     const free = this.concurrency - this.running.size;

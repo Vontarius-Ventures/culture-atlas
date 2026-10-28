@@ -12,6 +12,7 @@ import type { DiscoveriesQuery, DiscoveriesResponse } from '../schemas/discoveri
 import { decodeCursor, encodeCursor } from '../util/cursor';
 import { addHours } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
+import { dispatchGraphExpansion } from '../interest-graph/sweeper';
 import { enqueueInterestExpand } from './interest-expand';
 import { excludedFoodItemIds, foodExclusionsFor, isOnboardingRequired } from './onboarding';
 import { getTasteRevision } from './taste';
@@ -457,6 +458,19 @@ export async function getDiscoveries(ctx: ServiceContext, query: DiscoveriesQuer
         config: ctx.config,
         refresh: query.refresh,
       });
+      // PR 8 graph discovery: the read only ENQUEUES deduplicated due work
+      // (VAL-DISC-003) — the same sweep the closed-app worker runs, scoped to
+      // the reading account. Never inline provider/model work; a failure
+      // here must not fail the feed read.
+      try {
+        await dispatchGraphExpansion(ctx.db, {
+          config: ctx.config,
+          ownerAccountId: owner.accountId,
+          now: ctx.now(),
+        });
+      } catch {
+        // The cards already on screen stay; the sweeper retries the handoff.
+      }
     }
   }
 

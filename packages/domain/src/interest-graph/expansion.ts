@@ -1,10 +1,13 @@
 import type pg from 'pg';
 import type { Db, Queryable } from '../db/pool';
 import { activeKills } from '../flags/feature-flags';
+import { getTasteRevision } from '../services/taste';
 import { GRAPH_FRONTIER_MAX_LIFETIME_DAYS, INTEREST_GRAPH_POLICY_VERSION } from './schema';
 import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
 import { loadExplicitSupport } from './explicit-support';
+import { graphDiscoveryPausedAt } from './refresh';
+import { currentAssertionJustification } from './validity';
 import {
   createGraphRun,
   insertGraphRecommendation,
@@ -237,10 +240,36 @@ export interface ExpansionCounts {
   frontierPruned: number;
 }
 
+/**
+ * Why an expansion did not publish. Every code except 'disabled' comes from
+ * the transactional publication fence (VAL-DISC-007): delayed work re-checks
+ * current authority inside the publication transaction, and a violation rolls
+ * the whole pass back — no run, no frontier entry, no recommendations, no
+ * proofs. Rejected work never publishes private results or resurrects
+ * withdrawn proofs.
+ */
+export type ExpansionRejectionReason =
+  | 'disabled'
+  | 'account_missing'
+  | 'paused'
+  | 'stale_authority'
+  | 'exclusion_landed'
+  | 'source_invalidated'
+  | 'support_withdrawn'
+  | 'lease_lost';
+
+/** Thrown inside the publication transaction to reject the whole pass; the wrapper converts it to a rejection result. */
+export class GraphFenceError extends Error {
+  constructor(readonly code: Exclude<ExpansionRejectionReason, 'disabled'>) {
+    super(`graph expansion fenced: ${code}`);
+    this.name = 'GraphFenceError';
+  }
+}
+
 export interface ExpansionResult {
   expanded: boolean;
-  /** Present (with `expanded: false`) while the discovery gate is off. */
-  reason?: 'disabled';
+  /** Present (with `expanded: false`) when the gate is off or the publication fence rejected the pass. */
+  reason?: ExpansionRejectionReason;
   runId: string | null;
   policyVersion: string;
   rankingPolicyVersion: string;
@@ -271,6 +300,15 @@ export interface ExpandAccountInterestGraphInput {
   jobId?: string;
   /** Controlled clock for expiry/justification decisions. */
   at?: Date;
+  /**
+   * Publication fence hook (VAL-DISC-007): called INSIDE the publication
+   * transaction after every internal authority recheck, closest to the
+   * commit. The queue handler passes its lease-ownership check here, so work
+   * whose lease was lost or superseded cannot publish even when the job row
+   * was last seen healthy. Throwing rolls the whole pass back; throw
+   * `GraphFenceError` to surface a specific rejection reason.
+   */
+  fence?: (tx: Queryable) => Promise<void>;
 }
 
 // --- Internal row shapes ------------------------------------------------------------
@@ -328,35 +366,47 @@ export async function expandAccountInterestGraph(db: Db, input: ExpandAccountInt
   if (!(await discoveryEnabledForAccount(db, { accountId: input.accountId, config: input.config }))) {
     return disabledResult();
   }
-  return db.transaction(async (rawTx) => {
-    // One client underlies the whole transaction, and shared readers
-    // (loadExplicitSupport) fire concurrent queries by design on pools:
-    // serialize every query onto that client so a failed query in a
-    // concurrent batch cannot strand the client's queue mid-expansion.
-    const tail: { p: Promise<unknown> } = { p: Promise.resolve() };
-    const tx: Queryable = {
-      query<R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params?: readonly unknown[]) {
-        const p = tail.p.then(() => rawTx.query<R>(text, params));
-        tail.p = p.then(
-          () => undefined,
-          () => undefined,
-        );
-        return p;
-      },
-    };
-    // Re-check the gate inside the transaction: a kill that landed between
-    // the pre-check and this pass must halt publication before any write.
-    if (!(await discoveryEnabledForAccount(tx, { accountId: input.accountId, config: input.config }))) {
-      return disabledResult();
-    }
-    return runExpansion(tx, { accountId: input.accountId, jobId: input.jobId, at });
-  });
+  try {
+    return await db.transaction(async (rawTx) => {
+      // One client underlies the whole transaction, and shared readers
+      // (loadExplicitSupport) fire concurrent queries by design on pools:
+      // serialize every query onto that client so a failed query in a
+      // concurrent batch cannot strand the client's queue mid-expansion.
+      const tail: { p: Promise<unknown> } = { p: Promise.resolve() };
+      const tx: Queryable = {
+        query<R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params?: readonly unknown[]) {
+          const p = tail.p.then(() => rawTx.query<R>(text, params));
+          tail.p = p.then(
+            () => undefined,
+            () => undefined,
+          );
+          return p;
+        },
+      };
+      // Re-check the gate inside the transaction: a kill that landed between
+      // the pre-check and this pass must halt publication before any write.
+      if (!(await discoveryEnabledForAccount(tx, { accountId: input.accountId, config: input.config }))) {
+        return disabledResult();
+      }
+      return runExpansion(tx, { accountId: input.accountId, jobId: input.jobId, at, fence: input.fence });
+    });
+  } catch (err) {
+    // A fence violation rejects the whole pass: the transaction above rolled
+    // back, so no run, frontier entry, recommendation or proof row survives.
+    // The rejection itself is an honest result, not an internal error.
+    if (err instanceof GraphFenceError) return rejectedResult(err.code);
+    throw err;
+  }
 }
 
 function disabledResult(): ExpansionResult {
+  return rejectedResult('disabled');
+}
+
+function rejectedResult(reason: ExpansionRejectionReason): ExpansionResult {
   return {
     expanded: false,
-    reason: 'disabled',
+    reason,
     runId: null,
     policyVersion: INTEREST_GRAPH_POLICY_VERSION,
     rankingPolicyVersion: RANKING_POLICY_VERSION,
@@ -401,7 +451,7 @@ function emptyCounts(): ExpansionCounts {
 
 async function runExpansion(
   tx: Queryable,
-  input: { accountId: string; jobId?: string; at: Date },
+  input: { accountId: string; jobId?: string; at: Date; fence?: (tx: Queryable) => Promise<void> },
 ): Promise<ExpansionResult> {
   const { accountId, at } = input;
   const counts = emptyCounts();
@@ -409,6 +459,14 @@ async function runExpansion(
   const noteRejection = (code: string) => {
     rejections[code] = (rejections[code] ?? 0) + 1;
   };
+
+  // Early authority checks (cheap, fail fast): the account must exist, and a
+  // paused account publishes nothing (pause stops expansion dispatch AND
+  // publication, never projection). Both are re-checked at the publication
+  // fence below, so a pause landing mid-pass is still caught.
+  const account = await tx.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
+  if (account.rows.length === 0) return rejectedResult('account_missing');
+  if ((await graphDiscoveryPausedAt(tx, accountId)) != null) return rejectedResult('paused');
 
   // Current authoritative explicit state: the relevance half of every
   // admission decision reads THIS, never projection-event totals.
@@ -682,6 +740,28 @@ async function runExpansion(
     );
   }
 
+  // --- Publication fence: delayed work re-checks current authority (VAL-DISC-007) ---
+  // Every check below reads CURRENT committed state inside this transaction:
+  // a concurrent commit that landed after the pass began is visible to these
+  // statements (READ COMMITTED), so stale work is rejected and rolled back
+  // rather than publishing. Pre-dispatch checks alone are insufficient — this
+  // is the last word before the run is marked complete.
+  const violation = await checkGraphPublicationFence(tx, {
+    accountId,
+    at,
+    start: {
+      projectionRevision: run.input_projection_revision,
+      generation: run.input_generation,
+      tasteRevision: snapshot.tasteRevision,
+    },
+    ranked,
+  });
+  if (violation) throw new GraphFenceError(violation);
+  // The caller's fence hook runs last, closest to the commit: the queue
+  // handler rechecks its lease ownership here, so work published after a lost
+  // or superseded lease cannot exist.
+  await input.fence?.(tx);
+
   // --- Complete the run record --------------------------------------------------------
   await tx.query(`UPDATE graph_runs SET budget = $3, updated_at = now() WHERE id = $1 AND owner_account_id = $2`, [
     run.id,
@@ -713,6 +793,119 @@ async function runExpansion(
     truncated,
     candidates: ranked,
   };
+}
+
+// --- Publication fence (VAL-DISC-007) --------------------------------------------------
+
+export interface GraphPublicationFenceInput {
+  accountId: string;
+  at: Date;
+  /** The authority versions the pass read at its start. */
+  start: { projectionRevision: number; generation: number; tasteRevision: number };
+  /** The ranked observations about to be published (empty when nothing publishes). */
+  ranked: ReadonlyArray<{
+    intent: 'personal' | 'photo';
+    assertions: ReadonlyArray<{ id: string }>;
+    supportEdgeIds: readonly string[];
+    relevance: ExpansionRelevance | PhotoExpansionRelevance;
+  }>;
+}
+
+/**
+ * The transactional publication fence: re-reads CURRENT committed authority
+ * and reports the first violation, or null when the pass may publish. The
+ * expansion engine calls it inside the publication transaction right before
+ * the run is completed (pre-dispatch checks alone are insufficient); it is
+ * exported so the race-matrix tests can drive each check directly.
+ *
+ * Violations map exactly to the VAL-DISC-007 causes: account deletion
+ * ('account_missing'), taste/projection change or deletion-generation change
+ * ('stale_authority'), discovery pause ('paused'), an exclusion landing on a
+ * root about to publish ('exclusion_landed'), source invalidation of a pinned
+ * assertion ('source_invalidated') and withdrawn support for a root
+ * ('support_withdrawn'). Lease loss is the caller's fence hook, run after this.
+ */
+export async function checkGraphPublicationFence(
+  tx: Queryable,
+  input: GraphPublicationFenceInput,
+): Promise<Exclude<ExpansionRejectionReason, 'disabled' | 'lease_lost'> | null> {
+  const { accountId, at } = input;
+
+  // Account deletion is about the account row itself (the state row also
+  // cascades away, but a never-projected account has no state row either).
+  const { rows: account } = await tx.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
+  if (account.length === 0) return 'account_missing';
+  const { rows: state } = await tx.query<{ projection_revision: number; deletion_generation: number }>(
+    'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1',
+    [accountId],
+  );
+  const stateRow = state[0];
+  if (stateRow) {
+    if (stateRow.projection_revision !== input.start.projectionRevision || stateRow.deletion_generation !== input.start.generation) {
+      return 'stale_authority';
+    }
+  } else if (input.start.projectionRevision > 0 || input.start.generation > 0) {
+    // The state row existed when the pass began (non-zero versions were read)
+    // and is gone now: a reset/deletion landed mid-pass.
+    return 'stale_authority';
+  }
+  // A never-projected account (all-zero start versions, no state row) may
+  // still run a fenced pass: its authority comparison continues below.
+  // A taste change committed mid-pass (the projector has not caught up yet)
+  // still invalidates the roots this pass walked: fresh support arrived.
+  const tasteRevision = await getTasteRevision(tx, { kind: 'account', accountId });
+  if (tasteRevision !== input.start.tasteRevision) return 'stale_authority';
+  if ((await graphDiscoveryPausedAt(tx, accountId)) != null) return 'paused';
+
+  if (input.ranked.length > 0) {
+    // Exclusions: a hide landing on a personal root about to publish.
+    const personalKeys = input.ranked
+      .filter((o) => o.relevance.kind === 'personal')
+      .map((o) => (o.relevance as ExpansionRelevance).canonicalKey);
+    if (personalKeys.length > 0) {
+      const { rows: hidden } = await tx.query<{ canonical_key: string }>(
+        'SELECT DISTINCT canonical_key FROM item_exclusions WHERE owner_account_id = $1 AND canonical_key = ANY($2::text[])',
+        [accountId, personalKeys],
+      );
+      if (hidden.length > 0) return 'exclusion_landed';
+    }
+
+    // Source invalidation: every pinned assertion must still be currently
+    // justified (a retraction/expiry that committed mid-pass flips this).
+    const assertionIds = [...new Set(input.ranked.flatMap((o) => o.assertions.map((a) => a.id)))];
+    for (const assertionId of assertionIds) {
+      const justification = await currentAssertionJustification(tx, { assertionId, at });
+      if (!justification.justified) return 'source_invalidated';
+    }
+
+    // Support withdrawal: the private support edges a proof pins must still be
+    // present and non-suppressed (explicit edges are confirmed; derived edges
+    // — e.g. a saved capture's projected reference support — are tentative
+    // while active), and a photo root's capture-reference support must still
+    // be active (capture deletion/correction withdrew it).
+    const edgeIds = [...new Set(input.ranked.flatMap((o) => o.supportEdgeIds))];
+    if (edgeIds.length > 0) {
+      const { rows: edges } = await tx.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM personal_interest_edges
+          WHERE owner_account_id = $1 AND id = ANY($2::uuid[]) AND state IN ('confirmed','tentative')`,
+        [accountId, edgeIds],
+      );
+      if (Number(edges[0]!.n) !== edgeIds.length) return 'support_withdrawn';
+    }
+    const photoReferenceIds = input.ranked
+      .filter((o) => o.relevance.kind === 'photo')
+      .map((o) => (o.relevance as PhotoExpansionRelevance).captureReferenceId);
+    if (photoReferenceIds.length > 0) {
+      const { rows: active } = await tx.query<{ capture_reference_id: string }>(
+        `SELECT DISTINCT capture_reference_id FROM personal_interest_support
+          WHERE owner_account_id = $1 AND origin_kind = 'capture_reference' AND active
+            AND capture_reference_id = ANY($2::uuid[])`,
+        [accountId, [...new Set(photoReferenceIds)]],
+      );
+      if (active.length !== new Set(photoReferenceIds).size) return 'support_withdrawn';
+    }
+  }
+  return null;
 }
 
 // --- Root resolution --------------------------------------------------------------------

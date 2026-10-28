@@ -28,6 +28,7 @@ const GRAPH_MIGRATIONS = [
   '290_projection_support_version.sql',
   '300_evidence_review_and_provider_policies.sql',
   '310_evidence_retraction.sql',
+  '320_graph_refresh_and_work_budgets.sql',
 ];
 
 // --- Fixtures -----------------------------------------------------------------

@@ -105,6 +105,13 @@ export const DomainConfigSchema = z.object({
    * legacy paid expansion for the same window.
    */
   INTEREST_GRAPH_DISCOVERY_ENABLED: z.string().optional(),
+  /**
+   * PR 8 interest graph: the operator opt-in for paid relation research.
+   * Default off. The opt-in ALONE dispatches nothing: relation research also
+   * requires a compatible qualified model role and durable account/global
+   * spend limits (the model gateway's ledger) before any paid call.
+   */
+  INTEREST_GRAPH_RESEARCH_ENABLED: z.string().optional(),
   FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Category, Exploration, JobState, type JobType, PlanSection } from '../enums';
 import type { ErrorCode } from '../errors';
+import { GraphPredicate } from '../interest-graph/schema';
 import { Focus, Uuid } from '../schemas/common';
 
 /** Payload schemas per job type. enqueueJob validates payloads against these. */
@@ -85,6 +86,31 @@ export const JobPayloads = {
   project_interest_graph: z.object({
     account_id: Uuid,
     catch_up: z.enum(['support_version']).optional(),
+  }),
+  /**
+   * One bounded expansion refresh of the owning account's eligible explicit
+   * and active-photo roots (PR 8 discovery). The payload mirrors the owning
+   * account; the engine reads current state itself, so retries and redelivery
+   * converge. The LOGICAL budget (four Qloo attempts including retries, a
+   * 45-second deadline) is durable and keyed by the job's dedupe key, so no
+   * redelivery resets it.
+   */
+  expand_interest_graph: z.object({
+    account_id: Uuid,
+  }),
+  /**
+   * One bounded relation-research pair (PR 8): the paid model evaluates the
+   * public pair against at most two approved source documents; proposals (at
+   * most ten) are stored as unreviewed `proposed` assertions that only the
+   * review gate can validate. Dispatch is fail-closed behind the research
+   * flag, a qualified role and durable account/global spend limits.
+   */
+  research_graph_relation: z.object({
+    account_id: Uuid,
+    subject_node_id: Uuid,
+    object_node_id: Uuid,
+    predicate: GraphPredicate,
+    association_subtype: z.string().min(1).max(200).optional(),
   }),
 } as const satisfies Record<JobType, z.ZodType>;
 

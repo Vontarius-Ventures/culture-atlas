@@ -15,9 +15,16 @@ import {
   upsertGraphIdentity,
 } from './evidence';
 import { projectAccountInterestGraph } from './projector';
+import { pauseGraphDiscovery } from './refresh';
 import { createGraphRun } from './store';
-import { currentAssertionJustification } from './validity';
-import { EXPANSION_BOUNDS, RANKING_POLICY_VERSION, expandAccountInterestGraph } from './expansion';
+import { currentAssertionJustification, retractGraphEvidence } from './validity';
+import {
+  EXPANSION_BOUNDS,
+  GraphFenceError,
+  RANKING_POLICY_VERSION,
+  checkGraphPublicationFence,
+  expandAccountInterestGraph,
+} from './expansion';
 
 /**
  * VAL-DISC-001/002/004 (domain slice): the shared admission pipeline, the
@@ -989,5 +996,191 @@ describe('expansion gating stays fail-closed', () => {
       [other.principal.accountId],
     );
     expect(Number(otherRuns[0]!.n)).toBe(0);
+  });
+});
+
+// --- VAL-DISC-007 / VAL-PROJ-010: the publication fence race matrix ------------------
+
+describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
+  /** A publishable fixture: one admitted candidate with pinned proofs. */
+  async function publishableFixture() {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const root = await savedRoot(ctx, accountId);
+    const creator = await plainNode({ kind: 'creator', sense: 'painter' });
+    const candidate = await corpusNode({ kind: 'work' });
+    await justifiedEdge({ subject: root.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await candidateItem(accountId, candidate.referenceId);
+    await project(accountId);
+    const first = await expand(accountId);
+    if (!first.expanded) throw new Error(`fixture did not publish: ${first.reason}`);
+    return { accountId, root, candidate, ranked: first.candidates };
+  }
+
+  /** The authority versions a pass would have read at its start. */
+  async function startVersions(accountId: string) {
+    const { rows: state } = await db.query<{ projection_revision: number; deletion_generation: number }>(
+      'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1',
+      [accountId],
+    );
+    return {
+      projectionRevision: state[0]!.projection_revision,
+      generation: state[0]!.deletion_generation,
+      tasteRevision: (await db.query<{ revision: number }>('SELECT revision FROM taste_profiles WHERE owner_account_id = $1', [accountId]))
+        .rows[0]!.revision,
+    };
+  }
+
+  it('rejects a pass whose account was deleted mid-pass: nothing publishes', async () => {
+    const { accountId } = await publishableFixture();
+    const start = await startVersions(accountId);
+    await db.query('DELETE FROM accounts WHERE id = $1', [accountId]);
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked: [] }),
+    );
+    expect(violation).toBe('account_missing');
+  });
+
+  it('rejects a pass whose taste or projection authority moved mid-pass', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+
+    // A taste change commits mid-pass (the projection has not caught up yet).
+    await db.query('UPDATE taste_profiles SET revision = revision + 1 WHERE owner_account_id = $1', [accountId]);
+    const tasteViolation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+    );
+    expect(tasteViolation).toBe('stale_authority');
+
+    // A newer projection (or a deletion-reset generation) also invalidates it.
+    await db.query('UPDATE taste_profiles SET revision = revision - 1 WHERE owner_account_id = $1', [accountId]);
+    await db.query(
+      'UPDATE personal_graph_state SET projection_revision = projection_revision + 1 WHERE owner_account_id = $1',
+      [accountId],
+    );
+    const projectionViolation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+    );
+    expect(projectionViolation).toBe('stale_authority');
+  });
+
+  it('rejects a pass whose account paused mid-pass', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    await pauseGraphDiscovery(db, accountId);
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+    );
+    expect(violation).toBe('paused');
+  });
+
+  it('rejects a pass when a hide lands on a personal root mid-pass', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    const personal = ranked.find((o) => o.relevance.kind === 'personal');
+    if (!personal || personal.relevance.kind !== 'personal') throw new Error('fixture lost its personal root');
+    await db.query(
+      `INSERT INTO item_exclusions (owner_account_id, canonical_key) VALUES ($1, $2)
+       ON CONFLICT (owner_account_id, canonical_key) DO NOTHING`,
+      [accountId, personal.relevance.canonicalKey],
+    );
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+    );
+    expect(violation).toBe('exclusion_landed');
+  });
+
+  it('rejects a pass whose pinned source was retracted mid-pass', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    const assertionIds = [...new Set(ranked.flatMap((o) => o.assertions.map((a) => a.id)))];
+    expect(assertionIds.length).toBeGreaterThan(0);
+    const { rows: evidenceRows } = await db.query<{ evidence_id: string }>(
+      `SELECT DISTINCT s.evidence_id FROM graph_assertion_support s
+        WHERE s.assertion_id = ANY($1::uuid[])`,
+      [assertionIds],
+    );
+    expect(evidenceRows.length).toBeGreaterThan(0);
+    // The evidence behind a walked assertion is retracted mid-pass: the
+    // justification is gone (the sanctioned invalidation path).
+    await retractGraphEvidence(db, { evidenceId: evidenceRows[0]!.evidence_id, reason: 'mid-pass retraction test' });
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+    );
+    expect(violation).toBe('source_invalidated');
+  });
+
+  it('rejects a pass whose private support was withdrawn mid-pass', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    const edgeIds = [...new Set(ranked.flatMap((o) => [...o.supportEdgeIds]))];
+    expect(edgeIds.length).toBeGreaterThan(0);
+    // The save's projected support edge is withdrawn mid-pass (removal of the
+    // explicit interest withdraws its edge and cascades its support rows).
+    await db.query(
+      `DELETE FROM personal_interest_edges WHERE owner_account_id = $1 AND id = ANY($2::uuid[])`,
+      [accountId, edgeIds],
+    );
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+    );
+    expect(violation).toBe('support_withdrawn');
+  });
+
+  it('a fence rejection rolls the whole pass back: zero rows survive', async () => {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const root = await savedRoot(ctx, accountId);
+    const creator = await plainNode({ kind: 'creator', sense: 'painter' });
+    const candidate = await corpusNode({ kind: 'work' });
+    await justifiedEdge({ subject: root.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await candidateItem(accountId, candidate.referenceId);
+    await project(accountId);
+
+    const runsBefore = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1', [accountId])).rows[0]!.n,
+    );
+    const recsBefore = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM recommendations WHERE owner_account_id = $1', [accountId]))
+        .rows[0]!.n,
+    );
+
+    // The lease was lost while this pass was in flight: the handler's fence
+    // hook rejects at publication, and the entire transaction rolls back.
+    const result = await expandAccountInterestGraph(db, {
+      accountId,
+      config: graphOn,
+      at: new Date(),
+      fence: async () => {
+        throw new GraphFenceError('lease_lost');
+      },
+    });
+    expect(result.expanded).toBe(false);
+    expect(result.reason).toBe('lease_lost');
+    expect(result.counts.recommendationsPublished).toBe(0);
+
+    const runsAfter = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1', [accountId])).rows[0]!.n,
+    );
+    const recsAfter = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM recommendations WHERE owner_account_id = $1', [accountId]))
+        .rows[0]!.n,
+    );
+    const frontier = await activeFrontierCount(accountId);
+    expect(runsAfter).toBe(runsBefore);
+    expect(recsAfter).toBe(recsBefore);
+    expect(frontier).toBe(0);
+    expect(await proofRows(accountId)).toHaveLength(0);
+  });
+
+  it('a clean pass may publish: the fence reports no violation', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+    );
+    expect(violation).toBeNull();
   });
 });

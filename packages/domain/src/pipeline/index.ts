@@ -1,6 +1,8 @@
 import type { JobHandlerMap } from '../jobs/handler';
 import { analyzeAudio } from '../audio/analyze-job';
 import { projectInterestGraph } from './project-interest-graph';
+import { expandInterestGraph } from './expand-interest-graph';
+import { researchGraphRelation } from './research-graph-relation';
 import { analyzeCapture } from './analyze-capture';
 import { discoverRelated } from './discover-related';
 import { generatePlan } from './generate-plan';
@@ -22,4 +24,6 @@ export const JOB_HANDLERS: JobHandlerMap = {
   interest_expand: interestExpand,
   analyze_audio: analyzeAudio,
   project_interest_graph: projectInterestGraph,
+  expand_interest_graph: expandInterestGraph,
+  research_graph_relation: researchGraphRelation,
 };

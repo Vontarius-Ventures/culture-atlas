@@ -6,6 +6,7 @@ import { WEIGHTS } from '../library/taste-fold';
 import { loadFoldSaves } from '../services/taste';
 import { projectionEnabledForAccount, type ProjectionGateConfig } from './intent';
 import { loadExplicitSupport, removeSupersedesSaveSql, type ExplicitSupportSnapshot } from './explicit-support';
+import { noteExpansionDue } from './refresh';
 import { INTEREST_GRAPH_POLICY_VERSION, PROJECTION_SUPPORT_VERSION } from './schema';
 import { addEdgeSupport, createGraphRun, setGraphRunState, upsertPersonalEdge } from './store';
 
@@ -277,6 +278,14 @@ async function runPass(db: Db, input: ProjectAccountInterestGraphInput, pass: nu
           WHERE owner_account_id = $1`,
         [accountId, snapshot.tasteRevision, run.id, PROJECTION_SUPPORT_VERSION],
       );
+
+      // Committed fresh support is durably due for one bounded expansion
+      // refresh (VAL-DISC-003): the marker survives dispatcher outages and
+      // restarts, and the closed-app sweeper — never a feed read — hands it
+      // to the queue. Pause never blocks projection; it only stops the
+      // downstream dispatch/publication, and the marker stays in place for a
+      // resumed sweep that reads CURRENT authority.
+      await noteExpansionDue(tx, accountId);
 
       // Only the intents this pass saw are satisfied; the effects of every one
       // of them are part of the current-state rebuild above.

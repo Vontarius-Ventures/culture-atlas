@@ -60,6 +60,20 @@ export const JOB_TYPES = [
    * calls providers and never touches live recommendations.
    */
   'project_interest_graph',
+  /**
+   * PR 8 interest graph: one bounded expansion refresh for one account's
+   * eligible explicit and active-photo roots (the closed-app sweeper or a
+   * feed-read enqueue). Durable per-logical-run budget; never the legacy
+   * paid expansion.
+   */
+  'expand_interest_graph',
+  /**
+   * PR 8 interest graph: one bounded relation-research pair (at most two
+   * source documents, at most ten proposed assertions, stored as unreviewed
+   * proposals). Paid research dispatch is fail-closed behind the research
+   * flag, a qualified role and durable account/global spend limits.
+   */
+  'research_graph_relation',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;
