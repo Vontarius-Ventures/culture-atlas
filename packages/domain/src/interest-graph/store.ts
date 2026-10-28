@@ -347,7 +347,12 @@ export interface FrontierUpsertResult {
 
 /**
  * Upserts a candidate: canonical candidates deduplicate per account within the
- * seven-day lifetime window, so refreshes never inflate the frontier.
+ * seven-day lifetime window, so refreshes never inflate the frontier. Support
+ * roots attach only to a newly created candidate (a dedupe hit keeps its
+ * stored roots) and live in the owner-bound relation of migration 280: the
+ * candidate upsert and its roots commit or roll back in one statement, and
+ * the composite foreign keys reject a foreign or nonexistent root id even
+ * through direct SQL, so a rejected writer leaves no candidate behind.
  */
 export async function upsertFrontierCandidate(db: Queryable, input: UpsertFrontierCandidateInput): Promise<FrontierUpsertResult> {
   if (!Number.isInteger(input.expiresInDays) || input.expiresInDays < 1 || input.expiresInDays > GRAPH_FRONTIER_MAX_LIFETIME_DAYS) {
@@ -361,20 +366,45 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
     kinds: input.intent === 'research' ? ['research'] : ['expansion'],
   });
   const { rows } = await db.query<FrontierUpsertResult['row'] & { created: boolean }>(
-    `INSERT INTO graph_frontier (owner_account_id, run_id, node_id, intent, support_root_ids, dedupe_key, score, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(days => $8))
-     ON CONFLICT (owner_account_id, dedupe_key) DO UPDATE SET updated_at = now()
-     RETURNING id, owner_account_id, run_id, node_id, intent, support_root_ids, state, score, dedupe_key,
-               expires_at, created_at, (xmax = 0) AS created`,
+    `WITH upsert AS (
+       INSERT INTO graph_frontier (owner_account_id, run_id, node_id, intent, dedupe_key, score, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(days => $7))
+       ON CONFLICT (owner_account_id, dedupe_key) DO UPDATE SET updated_at = now()
+       RETURNING id, owner_account_id, run_id, node_id, intent, state, score, dedupe_key,
+                 expires_at, created_at, (xmax = 0) AS created
+     ),
+     prior_roots AS (
+       SELECT sr.frontier_id AS frontier_id, array_agg(sr.root_id ORDER BY sr.root_id) AS roots
+         FROM graph_frontier_support_roots sr
+         JOIN upsert u ON u.id = sr.frontier_id AND NOT u.created
+        GROUP BY sr.frontier_id
+     ),
+     new_roots AS (
+       INSERT INTO graph_frontier_support_roots (frontier_id, owner_account_id, root_id)
+       SELECT u.id, u.owner_account_id, r.root_id
+         FROM upsert u
+         CROSS JOIN (SELECT DISTINCT n.root_id FROM unnest($8::uuid[]) AS n(root_id)) r
+        WHERE u.created
+       RETURNING frontier_id, root_id
+     ),
+     new_roots_agg AS (
+       SELECT frontier_id, array_agg(root_id ORDER BY root_id) AS roots FROM new_roots GROUP BY frontier_id
+     )
+     SELECT u.id, u.owner_account_id, u.run_id, u.node_id, u.intent,
+            COALESCE(nra.roots, pr.roots, ARRAY[]::uuid[]) AS support_root_ids,
+            u.state, u.score, u.dedupe_key, u.expires_at, u.created_at, u.created
+       FROM upsert u
+       LEFT JOIN new_roots_agg nra ON nra.frontier_id = u.id
+       LEFT JOIN prior_roots pr ON pr.frontier_id = u.id`,
     [
       input.ownerAccountId,
       run.id,
       input.nodeId,
       input.intent ?? 'expansion',
-      input.supportRootIds ?? [],
       input.dedupeKey,
       input.score ?? null,
       input.expiresInDays,
+      input.supportRootIds ?? [],
     ],
   );
   const { created, ...row } = rows[0]!;
@@ -500,7 +530,11 @@ export interface InsertRecommendationProofInput {
 /**
  * Pins the exact assertion/evidence revisions and private support behind one
  * recommendation of one run. The proof is composite-bound to the
- * recommendation's own graph parent and the owning account.
+ * recommendation's own graph parent and the owning account, and every pinned
+ * private support edge lives in the owner-bound relation of migration 280:
+ * the proof and its support commit or roll back in one statement, and a
+ * foreign or nonexistent support id is rejected by the composite foreign keys
+ * without leaving a proof behind.
  */
 export async function insertRecommendationProof(
   db: Queryable,
@@ -512,16 +546,34 @@ export async function insertRecommendationProof(
   );
   if (rec.rows.length === 0) throw new AppError('not_found', { message: 'Recommendation not found.' });
   const { rows } = await db.query<RecommendationGraphProofRow>(
-    `INSERT INTO recommendation_graph_proofs (owner_account_id, recommendation_id, graph_run_id, proof_version,
-                                              assertion_ids, assertion_revisions, evidence_ids, evidence_revisions,
-                                              support_edge_ids, intent, reason_template, reason_template_version)
-     VALUES ($1, $2, $3,
-             (SELECT COALESCE(MAX(proof_version), 0) + 1 FROM recommendation_graph_proofs
-               WHERE recommendation_id = $2),
-             $4, $5, $6, $7, $8, $9, $10, $11)
-     RETURNING id, owner_account_id, recommendation_id, graph_run_id, proof_version, assertion_ids,
-               assertion_revisions, evidence_ids, evidence_revisions, support_edge_ids, intent, reason_template,
-               reason_template_version, validity_state, invalidated_at, created_at, updated_at`,
+    `WITH ins AS (
+       INSERT INTO recommendation_graph_proofs (owner_account_id, recommendation_id, graph_run_id, proof_version,
+                                                 assertion_ids, assertion_revisions, evidence_ids, evidence_revisions,
+                                                 intent, reason_template, reason_template_version)
+       VALUES ($1, $2, $3,
+               (SELECT COALESCE(MAX(proof_version), 0) + 1 FROM recommendation_graph_proofs
+                 WHERE recommendation_id = $2),
+               $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id, owner_account_id, recommendation_id, graph_run_id, proof_version, assertion_ids,
+                 assertion_revisions, evidence_ids, evidence_revisions, intent, reason_template,
+                 reason_template_version, validity_state, invalidated_at, created_at, updated_at
+     ),
+     support AS (
+       INSERT INTO recommendation_graph_proof_support_edges (proof_id, owner_account_id, support_edge_id)
+       SELECT i.id, i.owner_account_id, s.support_edge_id
+         FROM ins i
+         CROSS JOIN (SELECT DISTINCT n.support_edge_id FROM unnest($11::uuid[]) AS n(support_edge_id)) s
+       RETURNING proof_id, support_edge_id
+     ),
+     support_agg AS (
+       SELECT proof_id, array_agg(support_edge_id ORDER BY support_edge_id) AS edges FROM support GROUP BY proof_id
+     )
+     SELECT i.id, i.owner_account_id, i.recommendation_id, i.graph_run_id, i.proof_version, i.assertion_ids,
+            i.assertion_revisions, i.evidence_ids, i.evidence_revisions,
+            COALESCE(sa.edges, ARRAY[]::uuid[]) AS support_edge_ids, i.intent, i.reason_template,
+            i.reason_template_version, i.validity_state, i.invalidated_at, i.created_at, i.updated_at
+       FROM ins i
+       LEFT JOIN support_agg sa ON sa.proof_id = i.id`,
     [
       input.ownerAccountId,
       input.recommendationId,
@@ -530,10 +582,10 @@ export async function insertRecommendationProof(
       (input.assertions ?? []).map((a) => a.revision),
       (input.evidence ?? []).map((e) => e.id),
       (input.evidence ?? []).map((e) => e.revision),
-      input.supportEdgeIds ?? [],
       input.intent,
       input.reasonTemplate,
       input.reasonTemplateVersion ?? 'reason-1',
+      input.supportEdgeIds ?? [],
     ],
   );
   return rows[0]!;
@@ -550,7 +602,9 @@ export interface GraphRunCards {
 /**
  * Owner-joined read of every graph-parented card, provider query and proof:
  * both the run and the row itself must carry the account. Cross-owner ids
- * simply never appear (non-disclosing).
+ * simply never appear (non-disclosing), and a proof's private support edges
+ * come from the owner-bound relation of migration 280, so the reader cannot
+ * disclose another account's private support ids.
  */
 export async function loadGraphRunCards(db: Queryable, owner: { accountId: string }): Promise<GraphRunCards> {
   const recommendations = await db.query<GraphRecommendationRow>(
@@ -571,10 +625,16 @@ export async function loadGraphRunCards(db: Queryable, owner: { accountId: strin
   );
   const proofs = await db.query<RecommendationGraphProofRow>(
     `SELECT p.id, p.owner_account_id, p.recommendation_id, p.graph_run_id, p.proof_version, p.assertion_ids,
-            p.assertion_revisions, p.evidence_ids, p.evidence_revisions, p.support_edge_ids, p.intent,
+            p.assertion_revisions, p.evidence_ids, p.evidence_revisions,
+            COALESCE(se.edges, ARRAY[]::uuid[]) AS support_edge_ids, p.intent,
             p.reason_template, p.reason_template_version, p.validity_state, p.invalidated_at, p.created_at, p.updated_at
        FROM recommendation_graph_proofs p
        JOIN graph_runs gr ON gr.id = p.graph_run_id
+       LEFT JOIN LATERAL (
+         SELECT array_agg(s.support_edge_id ORDER BY s.support_edge_id) AS edges
+           FROM recommendation_graph_proof_support_edges s
+          WHERE s.proof_id = p.id AND s.owner_account_id = p.owner_account_id
+       ) se ON true
       WHERE p.owner_account_id = $1 AND gr.owner_account_id = $1
       ORDER BY p.created_at DESC, p.id`,
     [owner.accountId],
