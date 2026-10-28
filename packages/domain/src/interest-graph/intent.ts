@@ -29,6 +29,21 @@ export interface ProjectionGateConfig {
 
 const optedIn = (value: string | undefined) => value === 'true' || value === '1';
 
+/** Same env kill-list parsing as `activeKills` (feature-flags.ts). */
+const csvList = (value: string | undefined) => (value ? value.split(',').map((s) => s.trim()).filter(Boolean) : []);
+
+/**
+ * The server-wide projection gate from config alone: the operator opt-in AND
+ * the flag not present in the environment kill list. Per-account DATABASE
+ * kills are deliberately not consulted here — dispatch checks those per
+ * account (and in its candidate query) so it can page past ineligible
+ * accounts without consuming their intents.
+ */
+export function projectionEnabledInConfig(config: ProjectionGateConfig): boolean {
+  if (!optedIn(config.INTEREST_GRAPH_PROJECTION_ENABLED)) return false;
+  return !csvList(config.FEATURE_KILL_SWITCHES).includes('interest_graph_projection_enabled');
+}
+
 /** The projection flag for one account: operator opt-in AND not killed. */
 export async function projectionEnabledForAccount(
   db: Queryable,
