@@ -142,8 +142,12 @@ export interface EnqueueGraphOutboxEventInput {
 /**
  * Upserts the durable projection intent. A burst of mutations that land on the
  * same effective taste revision collapses into one row (the newest intent
- * wins); a newer revision is a new durable row. Dispatchers read and mark
- * at-least-once, so replay is always safe.
+ * wins); a newer revision is a new durable row. Analysis-dependency intents can
+ * legitimately land on an already-dispatched/processed (owner, key, revision)
+ * row — a correction and the activation of its replacement share one revision —
+ * so the conflict RE-ARMS the row as pending: the newest intent is never lost,
+ * and replay is safe because dispatch is at-least-once and projection rebuilds
+ * from current authoritative state.
  */
 export async function enqueueGraphOutboxEvent(db: Queryable, input: EnqueueGraphOutboxEventInput): Promise<GraphOutboxRow> {
   const { rows } = await db.query<GraphOutboxRow>(
@@ -154,7 +158,10 @@ export async function enqueueGraphOutboxEvent(db: Queryable, input: EnqueueGraph
      DO UPDATE SET event_type = EXCLUDED.event_type,
                   job_intent = EXCLUDED.job_intent,
                   target_generation = EXCLUDED.target_generation,
-                  payload = EXCLUDED.payload
+                  payload = EXCLUDED.payload,
+                  dispatch_state = 'pending',
+                  dispatched_at = NULL,
+                  processed_at = NULL
      RETURNING id, owner_account_id, event_type, logical_event_key, target_taste_revision, target_generation,
                job_intent, payload, dispatch_state, attempts, created_at, dispatched_at, processed_at`,
     [

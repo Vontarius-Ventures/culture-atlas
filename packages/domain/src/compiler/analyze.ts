@@ -821,7 +821,10 @@ export class CaptureCompiler {
       }
       // Progressive publishing: a first analysis becomes visible right away.
       // Correction versions are activated when complete (analyses are immutable).
-      if (!capture.active_analysis_id) await activateAnalysis(tx, { captureId: capture.id, analysisId: this.analysisId });
+      // The graph intent (when projection is enabled) commits with the pointer
+      // move, in this same transaction.
+      if (!capture.active_analysis_id)
+        await activateAnalysis(tx, { captureId: capture.id, analysisId: this.analysisId, config: this.ctx.config });
     });
     this.sections.set('observations', 'complete');
   }
@@ -1895,7 +1898,7 @@ export class CaptureCompiler {
     await ctx.setStage('publishing');
     await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
       await tx.query(`UPDATE analyses SET warnings = $2::jsonb WHERE id = $1`, [this.analysisId, JSON.stringify([...this.warnings.values()])]);
-      const ok = await activateAnalysis(tx, { captureId: this.capture.id, analysisId: this.analysisId });
+      const ok = await activateAnalysis(tx, { captureId: this.capture.id, analysisId: this.analysisId, config: ctx.config });
       if (!ok) throw new AppError('not_found', { retryable: false });
       await tx.query(`UPDATE captures SET status = $2, updated_at = now() WHERE id = $1`, [this.capture.id, partial ? 'partial' : 'ready']);
     });

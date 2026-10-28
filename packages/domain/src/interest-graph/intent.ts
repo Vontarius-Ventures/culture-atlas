@@ -40,7 +40,7 @@ export async function projectionEnabledForAccount(
 }
 
 /** The intent kinds the explicit-mutation hooks emit today. */
-export type ExplicitIntentKind = 'taste' | 'picks' | 'claim';
+export type ExplicitIntentKind = 'taste' | 'picks' | 'claim' | 'analysis';
 
 export interface NoteExplicitIntentInput {
   ownerAccountId: string;
@@ -68,6 +68,44 @@ export async function noteExplicitIntent(db: Queryable, input: NoteExplicitInten
     targetTasteRevision: input.targetTasteRevision,
     jobIntent: 'project_interest_graph',
     payload: { action: input.action, ...(input.payload ?? {}) },
+  });
+  return true;
+}
+
+/** What happened to one capture's analysis-dependent support. */
+export type AnalysisIntentAction = 'correct' | 'analysis_activated' | 'capture_deleted';
+
+export interface NoteAnalysisIntentInput {
+  ownerAccountId: string;
+  captureId: string;
+  action: AnalysisIntentAction;
+  /** The taste revision the projection must reach after this change. */
+  targetTasteRevision: number;
+  config: ProjectionGateConfig;
+  payload?: Record<string, unknown>;
+}
+
+/**
+ * Enqueue the durable projection intent for one capture-dependency change:
+ * a correction, an analysis activation that replaced the active version, or
+ * the capture's deletion withdrawing its lineage. Like the explicit hooks this
+ * runs inside the mutation's transaction; while the flag is off nothing is
+ * written and the current-state backfill reconciles later.
+ *
+ * Analysis changes do not bump the taste revision, so a correction and the
+ * activation of its replacement can land on the same (owner, capture,
+ * revision) key: the newest intent wins and re-arms the row, which is safe
+ * because the projector rebuilds from current authoritative state.
+ */
+export async function noteAnalysisIntent(db: Queryable, input: NoteAnalysisIntentInput): Promise<boolean> {
+  if (!(await projectionEnabledForAccount(db, { accountId: input.ownerAccountId, config: input.config }))) return false;
+  await enqueueGraphOutboxEvent(db, {
+    ownerAccountId: input.ownerAccountId,
+    eventType: 'analysis',
+    logicalEventKey: `analysis:${input.captureId}`,
+    targetTasteRevision: input.targetTasteRevision,
+    jobIntent: 'project_interest_graph',
+    payload: { action: input.action, capture_id: input.captureId, ...(input.payload ?? {}) },
   });
   return true;
 }

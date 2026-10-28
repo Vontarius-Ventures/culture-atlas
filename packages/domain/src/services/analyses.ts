@@ -4,13 +4,14 @@ import type { ServiceContext } from '../context';
 import type { Queryable } from '../db/pool';
 import { ANALYSIS_SECTIONS } from '../enums';
 import { AppError } from '../errors';
+import { noteAnalysisIntent, type ProjectionGateConfig } from '../interest-graph/intent';
 import { analysisDedupeKey } from '../jobs/dedupe';
 import { cancelJobsForResult, enqueueJob } from '../jobs/queue';
 import { ownerOf } from '../principal';
 import type { CorrectionRequest, CorrectionResponse } from '../schemas/captures';
 import { stableStringify } from '../util/stable-json';
 import { consumeAnalysisQuota, loadAccessibleCapture } from './captures';
-import { bumpTasteRevision } from './taste';
+import { bumpTasteRevision, getTasteRevision } from './taste';
 
 /**
  * Analyses are immutable versions of a capture's compilation. Corrections
@@ -70,8 +71,27 @@ export async function submitCorrection(
         p.kind === 'agent' ? p.connectionId : null,
       ],
     );
-    await bumpTasteRevision(tx, owner);
+    const revision = await bumpTasteRevision(tx, owner);
     if (body.focus) await tx.query('UPDATE captures SET focus = $2::jsonb, updated_at = now() WHERE id = $1', [capture.id, JSON.stringify(body.focus)]);
+
+    // PR 8: the correction withdraws the rejected reference's derived support.
+    // The intent commits in this same transaction (dirties the projection);
+    // the support reader already reflects the rejection immediately, before
+    // the replacement analysis exists, because it reads current intent.
+    if (owner.kind === 'account') {
+      await noteAnalysisIntent(tx, {
+        ownerAccountId: owner.accountId,
+        captureId: capture.id,
+        action: 'correct',
+        targetTasteRevision: revision,
+        config: ctx.config,
+        payload: {
+          analysis_id: current.id,
+          rejected_reference_ids: correction.reject_reference_ids,
+          ...(correction.confirm_reference_id ? { confirmed_reference_id: correction.confirm_reference_id } : {}),
+        },
+      });
+    }
 
     // Invalidate recommendations that relied on rejected references.
     if (correction.reject_reference_ids.length) {
@@ -152,18 +172,54 @@ export async function ensureAnalysisRow(
  * Point captures.active_analysis_id at a completed/partial analysis, unless the
  * capture was deleted meanwhile (returns false; caller must not publish).
  * Never moves the pointer back to an older version.
+ *
+ * PR 8 (capture-support-projection): when the pointer MOVES to this analysis
+ * and a projection config is given (the worker passes its job config inside
+ * the publish transaction), the activation commits its graph intent in the
+ * same transaction — the derived support of a saved capture must follow the
+ * new active version. Idempotent re-activation (pointer already there) and
+ * session-owned captures write nothing. Analysis activation does not bump the
+ * taste revision; the intent targets the current revision and the outbox
+ * re-arms the row if the correction intent at that revision was already
+ * processed.
  */
-export async function activateAnalysis(db: Queryable, input: { captureId: string; analysisId: string }): Promise<boolean> {
-  const { rows } = await db.query<{ id: string }>(
-    `UPDATE captures c SET active_analysis_id = $2, updated_at = now()
+export async function activateAnalysis(
+  db: Queryable,
+  input: { captureId: string; analysisId: string; config?: ProjectionGateConfig },
+): Promise<boolean> {
+  // The CTE snapshots the pre-update pointer/owner (data-modifying statements
+  // read the statement-start snapshot), so the intent fires exactly once per
+  // actual pointer move, for account-owned captures only.
+  const { rows } = await db.query<{ id: string; prev_active_analysis_id: string | null; owner_account_id: string | null }>(
+    `WITH prev AS (
+       SELECT id, active_analysis_id AS prev_active_analysis_id, owner_account_id
+         FROM captures WHERE id = $1
+     )
+     UPDATE captures c SET active_analysis_id = $2, updated_at = now()
       WHERE c.id = $1 AND c.deleted_at IS NULL
         AND EXISTS (SELECT 1 FROM analyses a WHERE a.id = $2 AND a.capture_id = c.id)
         AND (c.active_analysis_id IS NULL OR c.active_analysis_id = $2
              OR (SELECT version FROM analyses WHERE id = c.active_analysis_id) < (SELECT version FROM analyses WHERE id = $2))
-      RETURNING c.id`,
+      RETURNING c.id,
+                (SELECT prev_active_analysis_id FROM prev WHERE prev.id = c.id) AS prev_active_analysis_id,
+                (SELECT owner_account_id FROM prev WHERE prev.id = c.id) AS owner_account_id`,
     [input.captureId, input.analysisId],
   );
-  if (rows.length === 1) return true;
+  if (rows.length === 1) {
+    const moved = rows[0] && rows[0].prev_active_analysis_id !== input.analysisId;
+    const accountId = rows[0]!.owner_account_id;
+    if (moved && accountId && input.config) {
+      await noteAnalysisIntent(db, {
+        ownerAccountId: accountId,
+        captureId: input.captureId,
+        action: 'analysis_activated',
+        targetTasteRevision: await getTasteRevision(db, { kind: 'account', accountId }),
+        config: input.config,
+        payload: { analysis_id: input.analysisId },
+      });
+    }
+    return true;
+  }
   // Already pointing at a newer version is not a deletion: true while the capture is live.
   const live = await db.query('SELECT 1 FROM captures WHERE id = $1 AND deleted_at IS NULL', [input.captureId]);
   return live.rows.length === 1;

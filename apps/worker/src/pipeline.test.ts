@@ -330,6 +330,30 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect(rows).toEqual([{ action: 'correct' }]);
   });
 
+  it('dirties the account projection when a capture analysis activates through the real worker (PR 8, projection on)', async () => {
+    const { providers } = world();
+    const ctx = await accountCtx(providers, testConfig({ INTEREST_GRAPH_PROJECTION_ENABLED: 'true' }));
+    const { capture_id, job_id } = await submit(ctx);
+    await runJobs(ctx, [job_id]);
+    expect((await getJobById(db, job_id))?.state).toBe('complete');
+
+    // The pointer moved exactly once during the compile (progressive publish,
+    // then an idempotent finish), so one durable intent at the account's
+    // current revision — never two.
+    const { rows } = await db.query<{ event_type: string; logical_event_key: string; dispatch_state: string; payload: Record<string, unknown> }>(
+      `SELECT event_type, logical_event_key, dispatch_state, payload FROM graph_outbox WHERE owner_account_id = $1`,
+      [(ctx.principal as { accountId: string }).accountId],
+    );
+    expect(rows).toEqual([
+      {
+        event_type: 'analysis',
+        logical_event_key: `analysis:${capture_id}`,
+        dispatch_state: 'pending',
+        payload: { action: 'analysis_activated', capture_id: capture_id, analysis_id: expect.any(String) },
+      },
+    ]);
+  });
+
   it('fails the capture visibly when the VLM is unavailable (not retried, nothing fabricated)', async () => {
     const { providers } = world({ vlm: () => new ProviderError('vlm', 'unavailable', 'no key') });
     const ctx = await anonCtx(providers);

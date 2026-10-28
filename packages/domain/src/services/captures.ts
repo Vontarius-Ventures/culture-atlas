@@ -8,6 +8,7 @@ import { CATEGORIES, LIMITS, type CaptureSource, type Category } from '../enums'
 import { AppError } from '../errors';
 import { analysisDedupeKey } from '../jobs/dedupe';
 import { isGrantLimited } from '../library/access';
+import { noteAnalysisIntent } from '../interest-graph/intent';
 import { cancelJobsForResult, enqueueJob } from '../jobs/queue';
 import type { JobRecord } from '../jobs/types';
 import { normalizeImage } from '../media/image';
@@ -799,6 +800,18 @@ async function deleteCaptureTx(ctx: ServiceContext, tx: Db, owner: Owner, captur
       WHERE id = $1`,
     [capture.id],
   );
-  await bumpTasteRevision(tx, owner);
+  const revision = await bumpTasteRevision(tx, owner);
+  // PR 8: the deletion withdraws the capture's analysis/reference-dependent
+  // support (and its own save went with the capture item above). The intent
+  // commits in this same transaction; independent saves are untouched.
+  if (owner.kind === 'account') {
+    await noteAnalysisIntent(tx, {
+      ownerAccountId: owner.accountId,
+      captureId: capture.id,
+      action: 'capture_deleted',
+      targetTasteRevision: revision,
+      config: ctx.config,
+    });
+  }
   return { id: capture.id, keys };
 }

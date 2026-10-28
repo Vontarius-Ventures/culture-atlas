@@ -141,6 +141,40 @@ describe('graph outbox contracts', () => {
     // Re-dispatch is idempotent (at-least-once safe).
     await markGraphOutboxDispatched(db, pending.map((e) => e.id));
   });
+
+  it('re-arms a processed row when a newer intent lands on the same key and revision', async () => {
+    const a = await insertAccount(db);
+    const key = `analysis:${randomUUID()}`;
+    const first = await enqueueGraphOutboxEvent(db, {
+      ownerAccountId: a.accountId,
+      eventType: 'analysis',
+      logicalEventKey: key,
+      targetTasteRevision: 4,
+      jobIntent: 'project_interest_graph',
+      payload: { action: 'correct' },
+    });
+    await markGraphOutboxDispatched(db, [first.id]);
+    await db.query(`UPDATE graph_outbox SET dispatch_state = 'done', processed_at = now() WHERE id = $1`, [first.id]);
+
+    // Analysis changes do not bump the taste revision, so a correction and the
+    // activation of its replacement share one (owner, key, revision) row. The
+    // newest intent must never be lost to the already-processed one.
+    const again = await enqueueGraphOutboxEvent(db, {
+      ownerAccountId: a.accountId,
+      eventType: 'analysis',
+      logicalEventKey: key,
+      targetTasteRevision: 4,
+      jobIntent: 'project_interest_graph',
+      payload: { action: 'analysis_activated' },
+    });
+    expect(again.id).toBe(first.id);
+    expect(again.dispatch_state).toBe('pending');
+    expect(again.dispatched_at).toBeNull();
+    expect(again.processed_at).toBeNull();
+    expect(again.payload).toEqual({ action: 'analysis_activated' });
+    const pending = await pendingGraphOutboxEvents(db, { ownerAccountId: a.accountId, limit: 10 });
+    expect(pending.map((e) => e.id)).toEqual([first.id]);
+  });
 });
 
 describe('personal edge and support contracts', () => {
