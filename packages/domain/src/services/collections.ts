@@ -271,6 +271,10 @@ async function resolveAddTarget(ctx: ServiceContext, db: Queryable, owner: strin
 /**
  * PUT /v1/collections/{id}/items/{item_id} — item_id is a DiscoveryItem id.
  * Saves the accessible item if needed and adds membership idempotently.
+ * Collection memberships never multiply endorsement (PR 8): the save half
+ * enqueues its own graph projection intent through saveItem when it creates
+ * the save, and a membership-only add changes just scoped visibility — no
+ * taste revision, no projection intent.
  */
 export async function addCollectionItem(
   ctx: ServiceContext,
@@ -334,7 +338,9 @@ export async function addCollectionItem(
 /**
  * DELETE /v1/collections/{id}/items/{item_id} — this membership only. The
  * saved item, its endorsement and its other memberships remain. item_id is the
- * DiscoveryItem id (a SavedItem or membership id is also accepted).
+ * DiscoveryItem id (a SavedItem or membership id is also accepted). A
+ * membership removal changes scoped visibility only: no taste revision, no
+ * graph projection intent (the independent save keeps its support).
  */
 export async function removeCollectionItem(
   ctx: ServiceContext,
@@ -410,7 +416,10 @@ export const INTERESTS_BOARD_NAME = 'Interests';
 /**
  * File Qloo (or other non-sample) discovery items onto the owner's Interests
  * board. Does not bump taste revision — this is filing recommendations, not a
- * new endorsement that would re-run taste_seed.
+ * new endorsement that would re-run taste_seed. PR 8: these are exposure-only
+ * saves — no preference event, no pick, no graph projection intent — so the
+ * graph projection never treats a recommendation as an explicit root; only a
+ * later explicit save or pick by the user confirms such an item.
  */
 export async function fillInterestsBoard(
   db: Queryable,

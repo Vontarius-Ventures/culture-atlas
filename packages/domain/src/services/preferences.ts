@@ -16,6 +16,7 @@ import type {
 import { decodeCursor, encodeCursor } from '../util/cursor';
 import { iso } from '../util/time';
 import { tsKey } from '../library/sql';
+import { noteExplicitIntent } from '../interest-graph/intent';
 import { loadCards } from './cards';
 import { bumpTasteRevision, getTasteRevision, rebuildTasteProfile } from './taste';
 
@@ -165,8 +166,25 @@ export async function saveItem(
       // Taste onboarding picks (amendment 2.2) are ordinary explicit saves, marked by source.
       ...(options.source ? { source: options.source } : {}),
     });
-    await bumpTasteRevision(db, owner);
+    const revision = await bumpTasteRevision(db, owner);
     await rebuildTasteProfile(db, owner);
+    // PR 8: the effective save commits its graph projection intent in this
+    // same transaction. Duplicate saves (created === false) add nothing.
+    if (owner.kind === 'account') {
+      await noteExplicitIntent(db, {
+        ownerAccountId: owner.accountId,
+        kind: 'taste',
+        action: 'save',
+        targetTasteRevision: revision,
+        config: ctx.config,
+        payload: {
+          target_type: body.target_type,
+          target_id: body.target_id,
+          canonical_key: item.canonical_key,
+          ...(options.source ? { source: options.source } : {}),
+        },
+      });
+    }
   }
   const saved = await currentSaved(db, owner, item.id);
   if (!saved) throw new AppError('conflict', { retryable: true });
@@ -217,8 +235,19 @@ export async function recordPreference(ctx: ServiceContext, body: PreferenceRequ
           );
         }
         await writeEvent(ctx, db, 'remove', body, { canonical_key: item.canonical_key, collection_ids: collectionIds });
-        await bumpTasteRevision(db, owner);
+        const revision = await bumpTasteRevision(db, owner);
         await rebuildTasteProfile(db, owner);
+        // PR 8: unsave reverses support intent; it is never a negative vote.
+        if (owner.kind === 'account') {
+          await noteExplicitIntent(db, {
+            ownerAccountId: owner.accountId,
+            kind: 'taste',
+            action: 'remove',
+            targetTasteRevision: revision,
+            config: ctx.config,
+            payload: { target_type: body.target_type, target_id: body.target_id, canonical_key: item.canonical_key },
+          });
+        }
         undo = reverse('save');
       }
     } else if (body.action === 'hide') {
@@ -233,8 +262,20 @@ export async function recordPreference(ctx: ServiceContext, body: PreferenceRequ
       );
       if (ins.rowCount === 1) {
         await writeEvent(ctx, db, 'hide', body, { canonical_key: item.canonical_key });
-        await bumpTasteRevision(db, owner);
+        const revision = await bumpTasteRevision(db, owner);
         await rebuildTasteProfile(db, owner);
+        // PR 8: a hide constrains; the projection intent it triggers never
+        // endorses anything.
+        if (owner.kind === 'account') {
+          await noteExplicitIntent(db, {
+            ownerAccountId: owner.accountId,
+            kind: 'taste',
+            action: 'hide',
+            targetTasteRevision: revision,
+            config: ctx.config,
+            payload: { target_type: body.target_type, target_id: body.target_id, canonical_key: item.canonical_key },
+          });
+        }
         undo = reverse('unhide');
       }
     } else {
@@ -244,8 +285,20 @@ export async function recordPreference(ctx: ServiceContext, body: PreferenceRequ
       ]);
       if ((del.rowCount ?? 0) > 0) {
         await writeEvent(ctx, db, 'unhide', body, { canonical_key: item.canonical_key });
-        await bumpTasteRevision(db, owner);
+        const revision = await bumpTasteRevision(db, owner);
         await rebuildTasteProfile(db, owner);
+        // PR 8: unhide restores visibility and adds no endorsement; the
+        // intent just lets the projection drop the constraint.
+        if (owner.kind === 'account') {
+          await noteExplicitIntent(db, {
+            ownerAccountId: owner.accountId,
+            kind: 'taste',
+            action: 'unhide',
+            targetTasteRevision: revision,
+            config: ctx.config,
+            payload: { target_type: body.target_type, target_id: body.target_id, canonical_key: item.canonical_key },
+          });
+        }
         undo = reverse('hide');
       }
     }

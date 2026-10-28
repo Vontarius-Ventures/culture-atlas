@@ -89,6 +89,14 @@ export const DomainConfigSchema = z.object({
    * is qualified; the kill switch analysis_verifier_enabled turns it off.
    */
   ANALYSIS_VERIFIER_ENABLED: z.string().optional(),
+  /**
+   * PR 8 interest graph: the operator opt-in for the private projection.
+   * Default off; "true"/"1" lets effective explicit mutations queue their
+   * graph projection intents. Projection alone never switches live ranking
+   * or buys research; the kill switch interest_graph_projection_enabled
+   * turns it off (feature-flags.json activation rule).
+   */
+  INTEREST_GRAPH_PROJECTION_ENABLED: z.string().optional(),
   FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()

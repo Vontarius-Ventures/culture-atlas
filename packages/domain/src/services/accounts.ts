@@ -4,6 +4,8 @@ import type { Db, Queryable } from '../db/pool';
 import { AppError, isAppError } from '../errors';
 import type { AccountPrincipal, AnonymousPrincipal } from '../principal';
 import { currentUsage, tryConsume, utcDay, secondsUntilUtcMidnight } from '../quotas';
+import type { ProjectionGateConfig } from '../interest-graph/intent';
+import { noteExplicitIntent } from '../interest-graph/intent';
 import type {
   ClaimSummary,
   CreateAccountRequest,
@@ -19,7 +21,7 @@ import { createAnonymousSession, csrfTokenFor, hashToken, randomToken } from './
 import { addCollectionItem, createCollection } from './collections';
 import { dummyPasswordHash, hashPassword, normalizeEmail, verifyPassword } from './passwords';
 import { recordPreference } from './preferences';
-import { bumpTasteRevision, rebuildTasteProfile } from './taste';
+import { bumpTasteRevision, getTasteRevision, rebuildTasteProfile } from './taste';
 import { endAuthority } from './native-sessions';
 import { evaluateSignInTrigger, initForNewAccount } from './onboarding';
 
@@ -57,8 +59,17 @@ async function createAccountSession(db: Queryable, accountId: string, ctx: Servi
 /**
  * Move everything owned by an anonymous session to an account. Idempotent for
  * an already-claimed session (returns zero counts). Must run in a transaction.
+ * With a projection config, the merged canonical state also commits its graph
+ * projection intent here, so the claim projects exactly once and a retried
+ * claim adds nothing.
  */
-export async function claimSession(db: Queryable, sessionId: string, accountId: string, now: Date): Promise<ClaimSummary> {
+export async function claimSession(
+  db: Queryable,
+  sessionId: string,
+  accountId: string,
+  now: Date,
+  config?: ProjectionGateConfig,
+): Promise<ClaimSummary> {
   const s = await db.query<{ account_id: string | null; claimed_at: Date | null }>(
     'SELECT account_id, claimed_at FROM sessions WHERE id = $1 FOR UPDATE',
     [sessionId],
@@ -144,6 +155,18 @@ export async function claimSession(db: Queryable, sessionId: string, accountId: 
 
   // 6. The anonymous token stops working; the caller issues a fresh account session.
   await db.query('UPDATE sessions SET claimed_at = $2, revoked_at = $2 WHERE id = $1', [sessionId, now]);
+  // 7. PR 8: the claim projects the canonical merged state once, in this same
+  //    transaction; the revision above is the one the projection must reach.
+  if (config) {
+    await noteExplicitIntent(db, {
+      ownerAccountId: accountId,
+      kind: 'claim',
+      action: 'claim',
+      targetTasteRevision: await getTasteRevision(db, { kind: 'account', accountId }),
+      config,
+      payload: { captures: captures.rowCount ?? 0, saved_items: saved.rowCount ?? 0 },
+    });
+  }
   return { captures: captures.rowCount ?? 0, saved_items: saved.rowCount ?? 0 };
 }
 
@@ -232,7 +255,7 @@ export async function createAccountImpl(
       ]);
     }
     const claimed = input.claim_session
-      ? await claimSession(tx, anon.sessionId, accountId, ctx.now())
+      ? await claimSession(tx, anon.sessionId, accountId, ctx.now(), ctx.config)
       : { captures: 0, saved_items: 0 };
     const session = await createAccountSession(tx, accountId, ctx);
     const principal: AccountPrincipal = { kind: 'account', accountId, sessionId: session.sessionId, isDemoOwner: rows[0]!.is_demo_owner };
@@ -290,7 +313,7 @@ export async function signIn(
   return ctx.db.transaction(async (tx) => {
     let claimed: ClaimSummary = { captures: 0, saved_items: 0 };
     if (p.kind === 'anonymous' && input.claim_session) {
-      claimed = await claimSession(tx, p.sessionId, row.account_id, ctx.now());
+      claimed = await claimSession(tx, p.sessionId, row.account_id, ctx.now(), ctx.config);
     } else if (p.sessionId) {
       await tx.query('UPDATE sessions SET revoked_at = COALESCE(revoked_at, $2) WHERE id = $1', [p.sessionId, ctx.now()]);
       if (p.kind === 'account' && p.accountId !== row.account_id) {

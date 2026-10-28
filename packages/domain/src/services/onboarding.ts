@@ -43,6 +43,7 @@ import {
 } from '../schemas/onboarding';
 import { currentUsage, secondsUntilUtcMidnight, tryConsume, utcDay } from '../quotas';
 import { iso } from '../util/time';
+import { noteExplicitIntent } from '../interest-graph/intent';
 import { recordPreference, saveItem, type TargetItem } from './preferences';
 import { getTasteRevision } from './taste';
 import { enqueueTasteSeed, getTasteSeedStatus } from './taste-seed';
@@ -174,11 +175,11 @@ export async function initForNewAccount(
      ON CONFLICT (account_id) DO NOTHING`,
     [accountId, required, now],
   );
-  if (pending) await recordPendingSavePick(tx, accountId, pending.discovery_item_id, now);
+  if (pending) await recordPendingSavePick(tx, accountId, pending.discovery_item_id, now, ctx.config);
   return required;
 }
 
-async function recordPendingSavePick(tx: Tx, accountId: string, itemId: string, now: Date): Promise<void> {
+async function recordPendingSavePick(tx: Tx, accountId: string, itemId: string, now: Date, config: ServiceContext['config']): Promise<void> {
   const { rows } = await tx.query<{ title: string; category: Category | null; kind: ItemKind; display_metadata: Record<string, unknown> }>(
     'SELECT title, category, kind, display_metadata FROM discovery_items WHERE id = $1 AND (owner_account_id = $2 OR is_sample)',
     [itemId, accountId],
@@ -198,6 +199,16 @@ async function recordPendingSavePick(tx: Tx, accountId: string, itemId: string, 
     [pick.rows[0].id, accountId, itemId],
   );
   await tx.query('UPDATE onboarding_states SET started_at = COALESCE(started_at, $2), updated_at = $2 WHERE account_id = $1', [accountId, now]);
+  // PR 8: the pending save became a choice group; its projection intent lands
+  // with the save's intent in this same account-creation transaction.
+  await noteExplicitIntent(tx, {
+    ownerAccountId: accountId,
+    kind: 'picks',
+    action: 'pick_created',
+    targetTasteRevision: await getTasteRevision(tx, { kind: 'account', accountId }),
+    config,
+    payload: { pick_id: pick.rows[0].id, source: 'pending_save' },
+  });
 }
 
 /** Only public licensed images travel with a pick (never a private photo object key). */
@@ -437,6 +448,17 @@ export async function createPick(ctx: ServiceContext, req: CreatePickRequest): P
     }
     await ensureStateRow(tx, accountId, now);
     await tx.query('UPDATE onboarding_states SET started_at = COALESCE(started_at, $2), updated_at = $2 WHERE account_id = $1', [accountId, now]);
+    // PR 8: the fresh group commits one projection intent with its member
+    // saves' intents, in this same transaction. An already-active re-pick
+    // returns above without reaching here, so it adds nothing.
+    await noteExplicitIntent(tx, {
+      ownerAccountId: accountId,
+      kind: 'picks',
+      action: 'pick_created',
+      targetTasteRevision: await getTasteRevision(tx, ownerRef),
+      config: ctx.config,
+      payload: { pick_id: pickId },
+    });
     const [created] = await loadPicks(tx, accountId, pickId);
     return { pick: created!, already: false };
   });
@@ -488,6 +510,16 @@ export async function deletePick(ctx: ServiceContext, pickId: string): Promise<D
       await recordPreference(pctx, { action: 'remove', target_type: 'discovery_item', target_id: r.discovery_item_id });
     }
     await tx.query('DELETE FROM onboarding_picks WHERE id = $1 AND account_id = $2', [pickId, accountId]);
+    // PR 8: the group's removal commits its own intent (inherited saves keep
+    // their support; the group structure changed even when nothing unsaved).
+    await noteExplicitIntent(tx, {
+      ownerAccountId: accountId,
+      kind: 'picks',
+      action: 'pick_removed',
+      targetTasteRevision: await getTasteRevision(tx, { kind: 'account', accountId }),
+      config: ctx.config,
+      payload: { pick_id: pickId },
+    });
   });
   await reseedAfterTasteChange(ctx, accountId);
   return {
@@ -689,7 +721,10 @@ export async function excludedFoodItemIds(db: Queryable, ids: readonly string[],
   return out;
 }
 
-/** PUT /v1/onboarding/exclusions: replaces `food.exclusions` (an ordinary preference). */
+/** PUT /v1/onboarding/exclusions: replaces `food.exclusions` (an ordinary
+ * preference). PR 8: ingredient exclusions stay normalized constraints — never
+ * graph interests. Replacing or clearing them writes no projection intent, and
+ * removing a constraint implies no liking. */
 export async function putExclusions(ctx: ServiceContext, body: PutExclusionsRequest): Promise<ExclusionsResponse> {
   const owner = requireAccountOwner(ctx.principal);
   const exclusions = normalizeExclusions(body.food_exclusions);

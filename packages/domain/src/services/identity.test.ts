@@ -247,6 +247,23 @@ describe('verified email identity', () => {
         .captures,
     ).toBe(0);
   });
+  it('commits the claim projection intent once for a verified-email claim', async () => {
+    const anon = await insertAnonymousSession(db);
+    const ctx = testContext(anon, {
+      now: () => now,
+      config: testConfig({ INTEREST_GRAPH_PROJECTION_ENABLED: 'true' }),
+    });
+    const request = await begin(ctx, { destination: 'web', claim_session: true });
+    const completed = await completeEmail(ctx, request.proof);
+    const intents = await db.query<{ event_type: string; payload: Record<string, unknown> }>(
+      'SELECT event_type, payload FROM graph_outbox WHERE owner_account_id = $1',
+      [completed.account_id],
+    );
+    // A fresh identity account has no saves or picks: the claim itself is the
+    // only projection intent, enqueued in the same transaction.
+    expect(intents.rows.map((r) => r.event_type)).toEqual(['claim']);
+    expect(intents.rows[0]!.payload).toMatchObject({ action: 'claim' });
+  });
 
   it('recovers verified accounts, revokes all sessions/grants/proofs, and removes compromised legacy passwords', async () => {
     const first = await verifiedNative();

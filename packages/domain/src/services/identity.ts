@@ -269,7 +269,7 @@ export async function completeEmail(ctx: ServiceContext, raw: Complete) {
     }
     const claimed =
       c.claim_session && c.initiating_session_id
-        ? await claimSession(tx, c.initiating_session_id, accountId, now)
+        ? await claimSession(tx, c.initiating_session_id, accountId, now, ctx.config)
         : { captures: 0, saved_items: 0 };
     // Amendment 2.2 taste questionnaire: required for a new account; for an
     // existing one, evaluated once at sign-in (fewer than 3 explicit saves).
