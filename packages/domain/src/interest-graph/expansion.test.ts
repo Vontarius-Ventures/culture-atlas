@@ -1,19 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ServiceContext } from '../context';
 import type { PoolDb } from '../db/pool';
+import { upsertReference } from '../compiler/store';
 import type { GraphNodeDomain, GraphNodeKind, GraphPredicate } from './schema';
 import { accountCtx, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
-import { closeTestDb, getTestDb, testConfig } from '../testing';
+import { closeTestDb, createIsolatedDatabase, getTestDb, insertAccount, testConfig, testContext } from '../testing';
 import { submitCorrection } from '../services/analyses';
 import { recordPreference } from '../services/preferences';
 import {
   attachAssertionSupport,
   insertEvidence,
+  mapGraphExternalId,
   recordSourceRevision,
   upsertGraphAssertion,
   upsertGraphIdentity,
 } from './evidence';
+import { admitGraphCorpus } from './corpus';
+import { CorpusManifestSchema, type CorpusManifest } from './corpus-manifest';
+import { linkGraphReferenceIdentities } from './identity-links';
 import { projectAccountInterestGraph } from './projector';
 import { pauseGraphDiscovery } from './refresh';
 import { createGraphRun } from './store';
@@ -1182,5 +1187,441 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
       checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
     );
     expect(violation).toBeNull();
+  });
+});
+
+// --- Normal corpus admission reaches real application references (DISC-SCR-004/005) ---
+
+describe('corpus admission reaches real application references', () => {
+  // This describe runs on ONE isolated database (the documented pattern for
+  // global-count determinism): admission's linkage pass tallies every match in
+  // its database, and these tests assert exact global counts. It also keeps
+  // the shared per-run database's sweeper population untouched.
+  let isoDb: PoolDb;
+  let dropIso: () => Promise<void>;
+
+  beforeAll(async () => {
+    const iso = await createIsolatedDatabase('corpustrav');
+    isoDb = iso.db;
+    dropIso = iso.drop;
+  });
+  afterAll(async () => {
+    await dropIso();
+  });
+
+  /** An account + service context bound to the isolated database. */
+  async function isoAccountCtx() {
+    const principal = await insertAccount(isoDb);
+    return { principal, ctx: testContext(principal, { db: isoDb, config: graphOn }) };
+  }
+
+  async function projectIso(accountId: string) {
+    await projectAccountInterestGraph(isoDb, { accountId, config: graphOn, source: 'mutation_intent' });
+  }
+
+  async function expandIso(accountId: string) {
+    return expandAccountInterestGraph(isoDb, { accountId, config: graphOn });
+  }
+
+  /** A saved capture whose active analysis authorizes one depicted reference (isolated db). */
+  async function photoCaptureIso(
+    ctx: ServiceContext,
+    accountId: string,
+    over: { referenceId: string; resolution?: string; certainty?: number },
+  ) {
+    const cap = await insertCaptureWithAnalysis({ accountId }, {}, isoDb);
+    await isoDb.query(
+      `INSERT INTO capture_references (analysis_id, reference_id, relation, certainty, resolution_status, is_anchor, text_only, read_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        cap.analysisId,
+        over.referenceId,
+        'depicted',
+        over.certainty ?? 0.72,
+        over.resolution ?? 'resolved',
+        true,
+        false,
+        null,
+      ],
+    );
+    await recordPreference(ctx, { action: 'save', target_type: 'capture', target_id: cap.captureId });
+    return cap;
+  }
+  /**
+   * A reviewed manifest whose three identities carry confirmed Qloo provider
+   * mappings (the reviewed-corpus shape a real manifest revision uses to
+   * bridge its identities to the application's Qloo-resolved references).
+   * Assertions: root work A —CREATED_BY→ shared creator C ←CREATED_BY—
+   * candidate work B, the same two-distinct-assertion walk the scrutiny
+   * finding described.
+   */
+  function reviewedManifestWithProviderIds() {
+    const suffix = randomUUID().slice(0, 6);
+    const workA = `atlas:work:${randomUUID()}`;
+    const workB = `atlas:work:${randomUUID()}`;
+    const creatorC = `atlas:creator:${randomUUID()}`;
+    const ids = { a: `ent-${randomUUID()}`, b: `ent-${randomUUID()}`, c: `ent-${randomUUID()}` };
+    const sourceKey = 'source:1';
+    const manifest = CorpusManifestSchema.parse({
+      manifest_version: 1,
+      corpus_version: `corpus-${suffix}`,
+      policy_version: 'graph-policy-1',
+      domains: ['art'],
+      review: {
+        reviewed_by: 'test review',
+        reviewed_at: '2026-10-28T00:00:00.000Z',
+        basis: 'verified against the cited source; provider-id mappings confirmed by entity lookups',
+      },
+      photo_candidate_inventory: {
+        location: 'test research directory',
+        status: 'not_a_qualified_holdout',
+        note: 'candidate photo inventory is evaluation-planning material, never corpus content',
+      },
+      provider_policy: { transient_providers: ['qloo'], note: 'Qloo responses stay transient; ids map for traceability only.' },
+      identities: [
+        { key: workA, name: `Root work ${suffix}`, kind: 'work', domain: 'art', sense: 'painting' },
+        { key: workB, name: `Candidate work ${suffix}`, kind: 'work', domain: 'art', sense: 'painting' },
+        { key: creatorC, name: `Shared creator ${suffix}`, kind: 'creator', domain: 'art', sense: 'painter' },
+      ],
+      external_ids: [
+        { identity: workA, provider: 'qloo', external_id: ids.a, provenance: 'Qloo entity lookup confirmed id names the root work' },
+        { identity: workB, provider: 'qloo', external_id: ids.b, provenance: 'Qloo entity lookup confirmed id names the candidate work' },
+        { identity: creatorC, provider: 'qloo', external_id: ids.c, provenance: 'Qloo entity lookup confirmed id names the creator' },
+      ],
+      sources: [
+        {
+          key: sourceKey,
+          provider: 'artic_open_access',
+          url: `https://example.org/${randomUUID()}`,
+          family_key: `artic:${randomUUID()}`,
+          title: 'A Test Record',
+          publisher: 'A Museum',
+          attribution: 'A Museum',
+          retrieved_at: '2026-10-28T00:00:00.000Z',
+          rights: { license: 'CC0 1.0', permitted_use: ['storage', 'display'], expiry: 'none', basis: 'museum open access policy' },
+          retention: { content: 'permitted metadata fields only', basis: 'CC0' },
+        },
+      ],
+      assertions: [
+        {
+          label: 'root-work-created-by-creator',
+          subject: workA,
+          object: creatorC,
+          predicate: 'CREATED_BY',
+          evidence: [
+            {
+              source: sourceKey,
+              kind: 'fact',
+              derivation: 'primary',
+              validation: { method: 'provider_metadata', version: 'source-1' },
+              locator: 'artist_display',
+              excerpt: 'A Test Creator (Test, 1900-1901)',
+            },
+          ],
+        },
+        {
+          label: 'candidate-work-created-by-creator',
+          subject: workB,
+          object: creatorC,
+          predicate: 'CREATED_BY',
+          evidence: [
+            {
+              source: sourceKey,
+              kind: 'fact',
+              derivation: 'primary',
+              validation: { method: 'provider_metadata', version: 'source-1' },
+              locator: 'artist_display',
+              excerpt: 'A Test Creator (Test, 1900-1901)',
+            },
+          ],
+        },
+      ],
+    });
+    return { manifest, ids };
+  }
+
+  /** A compiler-shaped reference (Qloo-resolved entity id in key + external ids). */
+  async function realReference(providerId: string, type: 'work' | 'creator' = 'work'): Promise<string> {
+    return upsertReference(isoDb, {
+      canonicalKey: `qloo:${providerId}`,
+      name: `Real reference ${providerId.slice(4, 12)}`,
+      type,
+      externalIds: { qloo: providerId },
+    });
+  }
+
+  /** An account-owned discovery item on a real reference. */
+  async function itemOn(accountId: string, referenceId: string): Promise<string> {
+    return insertItem({ accountId }, { referenceId, kind: 'film', category: 'watch' }, isoDb);
+  }
+
+  /** The durable cultural-reference bindings of a manifest's identities, by canonical key. */
+  async function bindingsByManifestKey(manifest: CorpusManifest): Promise<Map<string, string | null>> {
+    const { rows } = await isoDb.query<{ canonical_key: string; cultural_reference_id: string | null }>(
+      'SELECT canonical_key, cultural_reference_id FROM graph_nodes WHERE canonical_key = ANY($1::text[])',
+      [manifest.identities.map((i) => i.key)],
+    );
+    return new Map(rows.map((r) => [r.canonical_key, r.cultural_reference_id]));
+  }
+
+  it('normal admission links pre-existing real references, and the walk reaches materialized candidates (no hand-prelinked fixtures)', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    // Real application references exist BEFORE the corpus is admitted.
+    const refA = await realReference(ids.a);
+    const refB = await realReference(ids.b);
+
+    const first = await admitGraphCorpus(isoDb, manifest);
+    // The linkage follows import: both real references are bound to their
+    // corpus identities, and replay writes nothing.
+    expect(first.referencesLinked).toBe(2);
+    expect(first.referenceLinksAmbiguous).toBe(0);
+    expect(first.referenceLinksConflicting).toBe(0);
+    const bindings = await bindingsByManifestKey(manifest);
+    expect(bindings.get(manifest.identities[0]!.key)).toBe(refA);
+    expect(bindings.get(manifest.identities[1]!.key)).toBe(refB);
+    const replay = await admitGraphCorpus(isoDb, manifest);
+    expect(replay.referencesLinked).toBe(0);
+    expect(replay.referencesAlreadyLinked).toBe(2);
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    const itemA = await itemOn(accountId, refA);
+    const itemB = await itemOn(accountId, refB);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemA });
+    await projectIso(accountId);
+
+    const result = await expandIso(accountId);
+    expect(result.expanded).toBe(true);
+    expect(result.counts.personalRoots).toBe(1);
+    expect(result.counts.admitted).toBe(1);
+    expect(result.counts.recommendationsPublished).toBe(1);
+    const obs = result.candidates.find((o) => o.intent === 'personal');
+    expect(obs).toBeDefined();
+    // The candidate materialized onto the account's real item for work B.
+    expect(obs!.discoveryItemId).toBe(itemB);
+    expect(obs!.discoveryItemId).not.toBeNull();
+    // The walked connection pins exactly the two distinct assertions, once each.
+    expect(obs!.assertions).toHaveLength(2);
+    const { rows: pinned } = await isoDb.query<{ subject_node_id: string; object_node_id: string }>(
+      'SELECT subject_node_id, object_node_id FROM graph_assertions WHERE id = ANY($1::uuid[])',
+      [obs!.assertions.map((a) => a.id)],
+    );
+    expect(pinned).toHaveLength(2);
+  });
+
+  it('real references resolved after admission still reach linked nodes and materialize candidates', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    // The corpus is admitted FIRST (the production shape: references appear
+    // over time, after the reviewed corpus landed).
+    const admission = await admitGraphCorpus(isoDb, manifest);
+    expect(admission.referencesLinked).toBe(0);
+    // No reference for these identities exists yet: nothing of theirs is bound.
+    const unbound = await bindingsByManifestKey(manifest);
+    expect([...unbound.values()].every((v) => v === null)).toBe(true);
+
+    const refA = await realReference(ids.a);
+    const refB = await realReference(ids.b);
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    const itemA = await itemOn(accountId, refA);
+    const itemB = await itemOn(accountId, refB);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemA });
+    await projectIso(accountId);
+
+    const result = await expandIso(accountId);
+    expect(result.expanded).toBe(true);
+    // The saved subject reached its corpus node through the verified
+    // provider-id link (exact confirmed id equality, never a name match).
+    expect(result.counts.personalRoots).toBe(1);
+    expect(result.counts.unmappedPersonalRoots).toBe(0);
+    expect(result.counts.referencesLinked).toBe(1);
+    expect(result.counts.recommendationsPublished).toBe(1);
+    const obs = result.candidates.find((o) => o.intent === 'personal');
+    expect(obs).toBeDefined();
+    expect(obs!.discoveryItemId).toBe(itemB);
+    // The candidate's card materialized through the same verified link.
+    expect(result.counts.candidatesResolvedByLink).toBe(1);
+
+    // A later linkage replay durably converges the bindings...
+    const pass = await linkGraphReferenceIdentities(isoDb);
+    expect(pass.referencesLinked).toBe(2);
+    const bindings = await bindingsByManifestKey(manifest);
+    expect(bindings.get(manifest.identities[0]!.key)).toBe(refA);
+    expect(bindings.get(manifest.identities[1]!.key)).toBe(refB);
+    // ...and the next expansion still recommends the same connection.
+    const again = await expandIso(accountId);
+    expect(again.candidates.map((o) => o.nodeId)).toContain(obs!.nodeId);
+    expect(again.counts.unmappedPersonalRoots).toBe(0);
+  });
+
+  it('an ambiguous verified candidate link materializes nothing (fail-closed)', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    await admitGraphCorpus(isoDb, manifest);
+    const refA = await realReference(ids.a);
+    // The candidate reference carries TWO provider ids (a real compiler
+    // shape), and a SECOND identity holds a confirmed mapping on the other
+    // provider: the reference now matches two corpus identities.
+    const wikidataId = `Q${randomUUID().slice(0, 8).toUpperCase()}`;
+    const refB = await upsertReference(isoDb, {
+      canonicalKey: `qloo:${ids.b}`,
+      name: `Disputed reference ${ids.b.slice(4, 12)}`,
+      type: 'work',
+      externalIds: { qloo: ids.b, wikidata: wikidataId },
+    });
+    const competitor = await upsertGraphIdentity(isoDb, {
+      canonicalKey: `atlas:work:${randomUUID()}`,
+      canonicalName: `Competing work ${randomUUID().slice(0, 6)}`,
+      nodeKind: 'work',
+      domain: 'art',
+      senseKey: 'painting',
+    });
+    await mapGraphExternalId(isoDb, {
+      nodeId: competitor.id,
+      provider: 'wikidata',
+      externalId: wikidataId,
+      matchStatus: 'confirmed',
+    });
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    const itemA = await itemOn(accountId, refA);
+    const itemB = await itemOn(accountId, refB);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemA });
+    await projectIso(accountId);
+
+    const result = await expandIso(accountId);
+    expect(result.expanded).toBe(true);
+    // The root still reaches the corpus (its own verified link is unique)...
+    expect(result.counts.personalRoots).toBe(1);
+    expect(result.counts.unmappedPersonalRoots).toBe(0);
+    expect(result.counts.admitted).toBe(1);
+    // ...but the ambiguous candidate link materializes nothing: the walked
+    // candidate never claims the account's item on the disputed reference,
+    // and the unmaterialized candidate is reported honestly.
+    expect(result.counts.candidatesResolvedByLink).toBe(0);
+    expect(result.counts.recommendationsPublished).toBe(0);
+    expect(result.counts.candidatesWithoutItems).toBe(1);
+    // The walked candidate observation is still returned honestly — but it
+    // never claims the account's item on the disputed reference.
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]!.discoveryItemId).toBeNull();
+    // And durably: no recommendation card ever claims the disputed item.
+    const { rows: claimed } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM recommendations WHERE discovery_item_id = $1',
+      [itemB],
+    );
+    expect(claimed).toHaveLength(0);
+
+    // The ambiguous link also fails closed durably: the linkage pass (global
+    // over this isolated DB; earlier tests' references are already linked)
+    // binds THIS test's clean root binding, reports the disputed reference as
+    // ambiguous, and binds neither claiming identity.
+    const pass = await linkGraphReferenceIdentities(isoDb);
+    expect(pass.referencesLinked).toBe(1);
+    expect(pass.referenceLinksAmbiguous).toBe(1);
+    const bindings = await bindingsByManifestKey(manifest);
+    expect(bindings.get(manifest.identities[0]!.key)).toBe(refA);
+    expect(bindings.get(manifest.identities[1]!.key)).toBeNull();
+    const { rows: competitorRows } = await isoDb.query<{ cultural_reference_id: string | null }>(
+      'SELECT cultural_reference_id FROM graph_nodes WHERE id = $1',
+      [competitor.id],
+    );
+    expect(competitorRows[0]!.cultural_reference_id).toBeNull();
+  });
+
+  it('a real authorized photo reference reaches the corpus through normal admission', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    await admitGraphCorpus(isoDb, manifest);
+    const refA = await realReference(ids.a);
+    const refB = await realReference(ids.b);
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    const itemB = await itemOn(accountId, refB);
+    await photoCaptureIso(ctx, accountId, { referenceId: refA, resolution: 'resolved', certainty: 0.72 });
+    await projectIso(accountId);
+
+    const result = await expandIso(accountId);
+    expect(result.expanded).toBe(true);
+    expect(result.counts.photoRoots).toBe(1);
+    expect(result.counts.photoReferencesUnmapped).toBe(0);
+    expect(result.counts.photoReferencesUnprojected).toBe(0);
+    expect(result.counts.referencesLinked).toBe(1);
+    const photo = result.candidates.find((o) => o.intent === 'photo');
+    expect(photo).toBeDefined();
+    expect(photo!.discoveryItemId).toBe(itemB);
+    expect(result.counts.recommendationsPublished).toBe(1);
+    expect(photo!.assertions).toHaveLength(2);
+  });
+
+  it('adding a personal creator root cannot erase the supported two-hop connection (DISC-SCR-005)', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    await admitGraphCorpus(isoDb, manifest);
+    const refA = await realReference(ids.a);
+    const refB = await realReference(ids.b);
+    const refC = await realReference(ids.c, 'creator');
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    const itemA = await itemOn(accountId, refA);
+    const itemB = await itemOn(accountId, refB);
+    const itemC = await itemOn(accountId, refC);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemA });
+    await projectIso(accountId);
+
+    // One root: A→C→B is a valid, supported two-hop connection.
+    const before = await expandIso(accountId);
+    expect(before.candidates.map((o) => o.nodeId)).toHaveLength(1);
+    const candidateNodeId = before.candidates[0]!.nodeId;
+    expect(before.counts.assertionsTraversed).toBe(2);
+
+    // A legitimate personal creator root below every bound joins the walk...
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemC });
+    await projectIso(accountId);
+    const after = await expandIso(accountId);
+    expect(after.counts.personalRoots).toBe(2);
+    // ...and the existing supported connection survives: the B–C edge loaded
+    // in hop one (from root C) is reused as the second hop for root A.
+    expect(after.candidates.map((o) => o.nodeId)).toContain(candidateNodeId);
+    expect(after.counts.admitted).toBe(1);
+    expect(after.counts.recommendationsPublished).toBe(1);
+    // Both assertions still count once: distinct rows traversed, not walks.
+    expect(after.counts.assertionsTraversed).toBe(2);
+    const obs = after.candidates.find((o) => o.nodeId === candidateNodeId)!;
+    expect(obs.assertions).toHaveLength(2);
+    expect(new Set(obs.assertions.map((a) => a.id)).size).toBe(2);
+    // The surviving candidate still materializes onto the same real item.
+    expect(obs.discoveryItemId).toBe(itemB);
+  });
+
+  it('adding a photo creator root cannot erase the supported two-hop connection (DISC-SCR-005)', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    await admitGraphCorpus(isoDb, manifest);
+    const refA = await realReference(ids.a);
+    const refB = await realReference(ids.b);
+    const refC = await realReference(ids.c, 'creator');
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    const itemA = await itemOn(accountId, refA);
+    await itemOn(accountId, refB);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemA });
+    await projectIso(accountId);
+
+    const before = await expandIso(accountId);
+    expect(before.candidates).toHaveLength(1);
+    const candidateNodeId = before.candidates[0]!.nodeId;
+
+    // A legitimate photo root on the creator joins the walk: its B–C edge is
+    // loaded in hop one, and the existing A→C→B connection must survive.
+    await photoCaptureIso(ctx, accountId, { referenceId: refC, resolution: 'resolved' });
+    await projectIso(accountId);
+    const after = await expandIso(accountId);
+    expect(after.counts.personalRoots).toBe(1);
+    expect(after.counts.photoRoots).toBe(1);
+    expect(after.candidates.map((o) => o.nodeId)).toContain(candidateNodeId);
+    expect(after.candidates.find((o) => o.nodeId === candidateNodeId)!.intent).toBe('personal');
+    expect(after.counts.assertionsTraversed).toBe(2);
+    expect(after.counts.admitted).toBe(1);
   });
 });

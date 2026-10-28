@@ -1,6 +1,7 @@
 export * from './schema';
 export * from './store';
 export * from './evidence';
+export * from './identity-links';
 export * from './assertion-policy';
 export * from './validity';
 export * from './paths';

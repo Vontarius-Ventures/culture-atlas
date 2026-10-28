@@ -78,6 +78,13 @@ const NODE_COLUMNS = `id, cultural_reference_id, canonical_key, canonical_name, 
  * identity fields returns the existing node; the same key with different
  * kind/domain/sense/name is a conflict (a name never silently re-binds an
  * identity). Aliases are add-only.
+ *
+ * The optional `culturalReferenceId` is the VERIFIED 1:1 link to an existing
+ * researched reference row: supplying it for a node that has none binds it
+ * (a later resolution converges); re-supplying the same reference is a
+ * no-op; a different reference on either side is a typed conflict, never a
+ * silent re-bind (a competing or ambiguous link fails closed without
+ * changing another identity).
  */
 export async function upsertGraphIdentity(db: Queryable, input: GraphIdentityInput): Promise<GraphNodeRow> {
   const existing = await db.query<GraphNodeRow>(
@@ -96,6 +103,11 @@ export async function upsertGraphIdentity(db: Queryable, input: GraphIdentityInp
         message: `Canonical identity ${input.canonicalKey} already names a different identity (kind/domain/sense/name must match).`,
       });
     }
+    // A later supplied reference binds an unlinked node idempotently; the
+    // binding helper enforces the fail-closed contract on both sides.
+    if (input.culturalReferenceId != null) {
+      row = (await bindGraphIdentityReference(db, { nodeId: row.id, culturalReferenceId: input.culturalReferenceId })).row;
+    }
   } else {
     // Same spelling is not identity, but the same spelling AND kind/domain/
     // sense is: a second canonical key claiming that identity is a data
@@ -110,13 +122,39 @@ export async function upsertGraphIdentity(db: Queryable, input: GraphIdentityInp
         message: `Canonical identity ${natural.rows[0].canonical_key} already owns the name/kind/domain/sense of ${input.canonicalKey}.`,
       });
     }
-    const inserted = await db.query<GraphNodeRow>(
-      `INSERT INTO graph_nodes (canonical_key, canonical_name, name_key, node_kind, domain, sense_key, cultural_reference_id)
-       VALUES ($1, $2, lower($2), $3, $4, $5, $6)
-       ON CONFLICT (canonical_key) DO NOTHING
-       RETURNING ${NODE_COLUMNS}`,
-      [input.canonicalKey, input.canonicalName, input.nodeKind, input.domain, input.senseKey, input.culturalReferenceId ?? null],
-    );
+    if (input.culturalReferenceId != null) {
+      // A reference maps to exactly one identity: creating a second identity
+      // on a held reference is a typed conflict, not a raw unique violation.
+      const holder = await db.query<{ id: string }>(
+        'SELECT id FROM graph_nodes WHERE cultural_reference_id = $1',
+        [input.culturalReferenceId],
+      );
+      if (holder.rows[0]) {
+        throw new AppError('conflict', {
+          message: `Cultural reference is already linked to canonical identity ${holder.rows[0].id}.`,
+        });
+      }
+    }
+    let inserted: { rows: GraphNodeRow[] };
+    try {
+      inserted = await db.query<GraphNodeRow>(
+        `INSERT INTO graph_nodes (canonical_key, canonical_name, name_key, node_kind, domain, sense_key, cultural_reference_id)
+         VALUES ($1, $2, lower($2), $3, $4, $5, $6)
+         ON CONFLICT (canonical_key) DO NOTHING
+         RETURNING ${NODE_COLUMNS}`,
+        [input.canonicalKey, input.canonicalName, input.nodeKind, input.domain, input.senseKey, input.culturalReferenceId ?? null],
+      );
+    } catch (err) {
+      // A concurrent bind took the reference's unique slot between the
+      // pre-check and the insert: surface the typed conflict, never a raw 23505.
+      if ((err as { code?: string }).code === '23505') {
+        throw new AppError('conflict', {
+          message: `Cultural reference is already linked to another canonical identity.`,
+          cause: err,
+        });
+      }
+      throw err;
+    }
     row = inserted.rows[0];
     if (!row) {
       // Lost a race on the name natural key (same spelling+kind+domain+sense
@@ -136,6 +174,9 @@ export async function upsertGraphIdentity(db: Queryable, input: GraphIdentityInp
           message: `Canonical identity ${input.canonicalKey} already names a different identity.`,
         });
       }
+      if (input.culturalReferenceId != null) {
+        row = (await bindGraphIdentityReference(db, { nodeId: row.id, culturalReferenceId: input.culturalReferenceId })).row;
+      }
     }
   }
   for (const alias of input.aliases ?? []) {
@@ -147,6 +188,55 @@ export async function upsertGraphIdentity(db: Queryable, input: GraphIdentityInp
     );
   }
   return row;
+}
+
+/**
+ * Binds the verified 1:1 cultural-reference link on an EXISTING canonical
+ * identity. The contract is fail-closed on both sides:
+ *  - the same reference again is an idempotent no-op (`already_bound`);
+ *  - a node already linked to a different reference is a typed conflict;
+ *  - a reference already held by a different node is a typed conflict that
+ *    leaves the other identity untouched.
+ * An unlinked node with an unheld reference binds durably (null → reference,
+ * `bound`).
+ */
+export async function bindGraphIdentityReference(
+  db: Queryable,
+  input: { nodeId: string; culturalReferenceId: string },
+): Promise<{ outcome: 'bound' | 'already_bound'; row: GraphNodeRow }> {
+  const existing = await db.query<GraphNodeRow>(`SELECT ${NODE_COLUMNS} FROM graph_nodes WHERE id = $1`, [input.nodeId]);
+  const row = existing.rows[0];
+  if (!row) throw new AppError('not_found', { message: 'Canonical identity not found.' });
+  if (row.cultural_reference_id === input.culturalReferenceId) return { outcome: 'already_bound', row };
+  if (row.cultural_reference_id !== null) {
+    throw new AppError('conflict', {
+      message: `Canonical identity ${row.canonical_key} is already linked to a different cultural reference.`,
+    });
+  }
+  const holder = await db.query<{ id: string }>(
+    'SELECT id FROM graph_nodes WHERE cultural_reference_id = $1 AND id <> $2',
+    [input.culturalReferenceId, input.nodeId],
+  );
+  if (holder.rows[0]) {
+    throw new AppError('conflict', {
+      message: `Cultural reference is already linked to canonical identity ${holder.rows[0].id}.`,
+    });
+  }
+  const updated = await db.query<GraphNodeRow>(
+    `UPDATE graph_nodes SET cultural_reference_id = $2, updated_at = now()
+      WHERE id = $1 AND cultural_reference_id IS NULL
+      RETURNING ${NODE_COLUMNS}`,
+    [input.nodeId, input.culturalReferenceId],
+  );
+  if (updated.rows[0]) return { outcome: 'bound', row: updated.rows[0] };
+  // A concurrent bind moved the link between the pre-check and the update:
+  // classify the survivor honestly instead of overwriting it.
+  const reRead = await db.query<GraphNodeRow>(`SELECT ${NODE_COLUMNS} FROM graph_nodes WHERE id = $1`, [input.nodeId]);
+  const current = reRead.rows[0];
+  if (current?.cultural_reference_id === input.culturalReferenceId) return { outcome: 'already_bound', row: current };
+  throw new AppError('conflict', {
+    message: `Canonical identity ${row.canonical_key} is already linked to a different cultural reference.`,
+  });
 }
 
 export interface GraphExternalIdInput {

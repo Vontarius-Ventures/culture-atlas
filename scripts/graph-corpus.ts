@@ -10,6 +10,13 @@
  * whole manifest commits in one transaction. Loading is idempotent — replay
  * reuses existing source revisions, evidence rows and support attachments.
  *
+ * Admission also runs the verified application-reference linkage: every
+ * real reference that matches an admitted identity's CONFIRMED provider-id
+ * mapping (exact id equality, never a name match) binds durably, so
+ * re-running this command converges bindings for references that appeared
+ * since the last run. Ambiguous or competing links fail closed and are only
+ * reported in the counts.
+ *
  * This is operational setup for SHARED public-source evidence only: no
  * account-private data, no paid provider calls, no graph flags involved.
  * See docs/graph-corpus.md.
@@ -43,6 +50,11 @@ try {
       assertions_created: result.assertionsCreated,
       support_attached: result.supportAttached,
       assertion_revision_total: result.assertionRevisionTotal,
+      references_matched: result.referencesMatched,
+      references_linked: result.referencesLinked,
+      references_already_linked: result.referencesAlreadyLinked,
+      reference_links_ambiguous: result.referenceLinksAmbiguous,
+      reference_links_conflicting: result.referenceLinksConflicting,
       summary: {
         domains: summary.domains,
         reviewed_evidence: summary.reviewedEvidence,

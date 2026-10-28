@@ -90,6 +90,42 @@ active analysis of a saved capture).
 The expansion runs entirely on the shared corpus and the account's own
 projected state: it makes no provider or model calls and records none.
 
+### Verified application-reference linkage (DISC-SCR-004)
+
+An identity only becomes reachable from the application's real saved/photo
+subjects through the verified 1:1 link
+(`graph_nodes.cultural_reference_id` → `cultural_references`). Normal corpus
+admission creates identities without that link, so admission also runs the
+verified linkage pass inside its transaction, and expansion resolves
+references the same way at read time:
+
+- **Exact provider-id equality only.** A reference links an identity only when
+  the reference's `external_ids` (e.g. `{qloo: <entity id>}` written by the
+  capture compiler) or its provider-scoped `canonical_key` (e.g. `qloo:<id>`,
+  `wikidata:Q…`) equals a **confirmed** `graph_external_ids` mapping of that
+  identity. A name — however similar — never links anything, and unconfirmed
+  (proposed/ambiguous) mappings never verify a link. Qloo mappings in a
+  reviewed manifest are id traceability only: no Qloo content is admitted
+  (the transient rights gate still applies to every source).
+- **Binding is idempotent and fail-closed.** Supplying a reference for an
+  unlinked identity binds it (`bindGraphIdentityReference`); re-supplying the
+  same reference is a no-op. A competing link — the identity already holds a
+  different reference, or another identity holds this reference — is a typed
+  conflict that changes no row. The linkage pass reports ambiguous matches
+  (one reference matching two identities, or one identity matched by two
+  references) and competing bindings as counts without binding anything.
+- **Both orders converge.** Admission binds every already-existing matching
+  reference (re-running `pnpm graph:corpus` durably converges bindings for
+  references that appeared since the last run, writing nothing when everything
+  is already linked). References created after the last pass still reach their
+  corpus node: expansion resolves them through the same verified match at read
+  time — roots through the link, and a candidate's publication item through
+  the account's own item on the matching reference — so real saved/photo
+  subjects and materialized candidates work without hand-prelinked fixtures.
+  Ambiguous matches stay unresolved and are reported on the run's counts
+  (`referencesLinked`, `referenceLinksAmbiguous`,
+  `candidatesResolvedByLink`).
+
 ## Review and rights
 
 - **Reviewed only:** corpus admission requires a review record
@@ -163,8 +199,10 @@ DATABASE_URL=... pnpm graph:corpus  # idempotent corpus admission + summary
 ```
 
 `pnpm graph:corpus` prints the admission counts (all zero on idempotent
-replay) and the corpus summary. Edited manifest content versions the affected
-sources (new revision + new evidence rows) without ever rewriting a pinned
-pair. Typed contracts live in
-`packages/domain/src/interest-graph/{evidence,corpus-manifest,corpus}.ts`;
-tests in `interest-graph/{evidence,corpus}.test.ts`.
+replay) and the corpus summary, plus the verified-linkage counts
+(`references_matched`, `references_linked`, `references_already_linked`,
+`reference_links_ambiguous`, `reference_links_conflicting`). Edited manifest
+content versions the affected sources (new revision + new evidence rows)
+without ever rewriting a pinned pair. Typed contracts live in
+`packages/domain/src/interest-graph/{evidence,identity-links,corpus-manifest,corpus}.ts`;
+tests in `interest-graph/{evidence,corpus,identity-links,expansion}.test.ts`.

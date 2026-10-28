@@ -1,6 +1,7 @@
 import { AppError } from '../errors';
 import type { Db, Queryable } from '../db/pool';
 import type { GraphEvidenceKind } from './schema';
+import { linkGraphReferenceIdentities, type GraphReferenceLinkCounts } from './identity-links';
 import {
   attachAssertionSupport,
   contentHash,
@@ -28,8 +29,16 @@ import type { CorpusManifest } from './corpus-manifest';
  * revisions, evidence rows and support attachments, and adds no revision
  * anywhere. A changed manifest versions the affected source (new revision +
  * new evidence rows) without ever rewriting a pinned pair.
+ *
+ * Admission is also the reviewed corpus's production linking path: after the
+ * manifest commits its identities and CONFIRMED provider-id mappings, the
+ * verified application-reference linkage binds every real reference that
+ * matches an identity by exact provider-id equality (never a name match), so
+ * saved/photo subjects actually reach the imported corpus. Replay converges
+ * bindings for references that appeared since the last run and writes
+ * nothing when everything is already linked.
  */
-export interface CorpusAdmissionResult {
+export interface CorpusAdmissionResult extends GraphReferenceLinkCounts {
   corpusVersion: string;
   identitiesCreated: number;
   externalIdsCreated: number;
@@ -211,6 +220,15 @@ export async function admitGraphCorpus(db: Db, manifest: CorpusManifest): Promis
         });
       }
     }
+
+    // Verified application-reference linkage follows import (DISC-SCR-004):
+    // identities admitted here reach the application's real saved/photo
+    // subjects only through the 1:1 cultural-reference link, so admission
+    // also binds every compiler-shaped reference that matches an identity's
+    // CONFIRMED provider-id mapping (exact id equality, never a name match).
+    // Replay is idempotent, and ambiguous/competing links fail closed inside
+    // the same transaction (the honest counts report them).
+    const links = await linkGraphReferenceIdentities(tx);
     return {
       corpusVersion: manifest.corpus_version,
       identitiesCreated,
@@ -220,6 +238,7 @@ export async function admitGraphCorpus(db: Db, manifest: CorpusManifest): Promis
       assertionsCreated,
       supportAttached,
       assertionRevisionTotal: revisionTotal[0]!.n,
+      ...links,
     };
   });
 }

@@ -8,6 +8,7 @@ import { validateGraphPath, type ValidatedGraphPath } from './paths';
 import { loadExplicitSupport } from './explicit-support';
 import { graphDiscoveryPausedAt } from './refresh';
 import { currentAssertionJustification } from './validity';
+import { verifiedReferenceNodeMatches } from './identity-links';
 import {
   createGraphRun,
   insertGraphRecommendation,
@@ -219,6 +220,19 @@ export interface ExpansionCounts {
   unprojectedPersonalRoots: number;
   /** Roots (or capture saves) with no active shared identity to walk from. */
   unmappedPersonalRoots: number;
+  /**
+   * Root references resolved through the verified provider-id link (exact
+   * confirmed id equality — never a name match) because no durable binding
+   * exists yet; the linkage pass materializes those bindings on its next run.
+   */
+  referencesLinked: number;
+  /** Root references whose verified matches are ambiguous (stay unresolved). */
+  referenceLinksAmbiguous: number;
+  /**
+   * Ranked candidates whose publication item was found through the same
+   * verified provider-id link (the account's item on the matching reference).
+   */
+  candidatesResolvedByLink: number;
   capturesWithoutAnalysis: number;
   /** Authorized references whose relation is a visual claim (disabled). */
   photoReferencesDenied: number;
@@ -427,6 +441,9 @@ function emptyCounts(): ExpansionCounts {
     hiddenPersonalRoots: 0,
     unprojectedPersonalRoots: 0,
     unmappedPersonalRoots: 0,
+    referencesLinked: 0,
+    referenceLinksAmbiguous: 0,
+    candidatesResolvedByLink: 0,
     capturesWithoutAnalysis: 0,
     photoReferencesDenied: 0,
     photoReferencesUnmapped: 0,
@@ -531,7 +548,16 @@ async function runExpansion(
   for (const root of sortedRoots) {
     const byCandidate = new Map<string, Array<[WalkEdge, WalkEdge]>>();
     for (const e1 of hop1.get(root.nodeId) ?? []) {
-      for (const e2 of hop2.get(e1.far) ?? []) {
+      // Second hops from the midpoint come from BOTH loaded layers:
+      //  - edges loaded in hop two (oriented from the midpoint), and
+      //  - REUSED edges already loaded in hop one and oriented from the
+      //    midpoint (only midpoints that are themselves roots have hop-one
+      //    orientations). Adding a legitimate creator/photo root must not
+      //    erase an existing supported two-hop connection just because its
+      //    second edge entered hop one; reuse still counts each distinct
+      //    assertion once (the row is already in `seen`).
+      const secondHops = [...(hop2.get(e1.far) ?? []), ...(hop1.get(e1.far) ?? [])];
+      for (const e2 of secondHops) {
         if (e2.id === e1.id) continue;
         if (e2.far === root.nodeId) continue;
         const paths = byCandidate.get(e2.far);
@@ -699,10 +725,71 @@ async function runExpansion(
     }
   }
 
+  // Candidates whose corpus identity has NO durable reference binding
+  // materialize through the SAME verified provider-id link that resolves
+  // roots: the identity's CONFIRMED provider id must equal an account item's
+  // reference id (exact equality, never a name match). Ambiguous links fail
+  // closed in BOTH directions — one identity matching two references, or one
+  // reference matched by two identities, materializes nothing — and the
+  // honest candidatesWithoutItems count reports it.
+  const unboundNodeIds = [
+    ...new Set(candidateNodes.rows.filter((r) => r.cultural_reference_id == null).map((r) => r.id)),
+  ];
+  const itemByLinkedNode = new Map<string, { id: string; title: string }>();
+  if (unboundNodeIds.length > 0) {
+    const linkedRefs = await tx.query<{ node_id: string; reference_id: string }>(
+      `SELECT DISTINCT x.node_id, cr.id AS reference_id
+         FROM graph_external_ids x
+         JOIN cultural_references cr
+           ON (cr.external_ids ->> x.provider) = x.external_id
+              OR cr.canonical_key = (x.provider || ':' || x.external_id)
+        WHERE x.match_status = 'confirmed'
+          AND x.node_id = ANY($1::uuid[])`,
+      [unboundNodeIds],
+    );
+    const refsByNode = new Map<string, Set<string>>();
+    for (const row of linkedRefs.rows) {
+      const refs = refsByNode.get(row.node_id) ?? new Set<string>();
+      refs.add(row.reference_id);
+      refsByNode.set(row.node_id, refs);
+    }
+    // Ambiguity is GLOBAL, not scoped to the candidate set: a reference
+    // matched by two identities anywhere (verifiedReferenceNodeMatches is
+    // the same reader the root path uses) is ambiguous in both directions,
+    // so neither identity materializes it (fail closed).
+    const matchedReferences = [...new Set(linkedRefs.rows.map((r) => r.reference_id))];
+    const nodesPerReference = await verifiedReferenceNodeMatches(tx, { referenceIds: matchedReferences });
+    const unambiguousReferences = [...nodesPerReference.entries()]
+      .filter(([, nodeIds]) => nodeIds.length === 1)
+      .map(([referenceId]) => referenceId);
+    const unambiguousReferenceSet = new Set(unambiguousReferences);
+    const itemsByReference = new Map<string, { id: string; title: string }>();
+    if (unambiguousReferences.length > 0) {
+      const items = await tx.query<{ id: string; title: string; reference_id: string }>(
+        `SELECT id, title, reference_id FROM discovery_items
+          WHERE owner_account_id = $1 AND reference_id = ANY($2::uuid[])
+          ORDER BY id`,
+        [accountId, unambiguousReferences],
+      );
+      for (const item of items.rows) {
+        if (!itemsByReference.has(item.reference_id)) itemsByReference.set(item.reference_id, { id: item.id, title: item.title });
+      }
+    }
+    for (const [nodeId, refs] of refsByNode) {
+      if (refs.size !== 1) continue;
+      const referenceId = [...refs][0]!;
+      if (!unambiguousReferenceSet.has(referenceId)) continue;
+      const item = itemsByReference.get(referenceId);
+      if (item) itemByLinkedNode.set(nodeId, item);
+    }
+  }
+
   for (const obs of ranked) {
     const meta = nodeMeta.get(obs.nodeId);
     obs.candidateName = meta?.canonical_name ?? '';
-    const item = meta?.cultural_reference_id ? itemByReference.get(meta.cultural_reference_id) : undefined;
+    const directItem = meta?.cultural_reference_id ? itemByReference.get(meta.cultural_reference_id) : undefined;
+    const item = directItem ?? itemByLinkedNode.get(obs.nodeId);
+    if (!directItem && item) counts.candidatesResolvedByLink++;
     if (!item) {
       counts.candidatesWithoutItems++;
       continue;
@@ -954,10 +1041,20 @@ async function resolveRoots(
     [accountId],
   );
 
-  // Active shared identities for every cultural reference in play.
+  // Active shared identities for every cultural reference in play. A durable
+  // binding resolves directly; references with NO binding at all resolve
+  // through the verified provider-id link (exact confirmed id equality, the
+  // same linkage admission materializes), so real saved/photo subjects reach
+  // the corpus even when they appeared after the last linkage pass. A
+  // reference bound to a non-active identity stays unmapped (its binding
+  // needs repair, not a runtime override), and ambiguous verified matches
+  // stay unresolved.
   const photoReferenceIds = snapshot.captures.flatMap((c) => c.references.map((r) => r.referenceId));
   const edgeReferenceIds = edges.rows.map((e) => e.reference_id).filter((v): v is string => v != null);
-  const nodeByReference = await nodesByReference(tx, [...new Set([...edgeReferenceIds, ...photoReferenceIds])]);
+  const nodeByReference = await nodesByReference(tx, {
+    referenceIds: [...new Set([...edgeReferenceIds, ...photoReferenceIds])],
+    counts,
+  });
 
   const roots: ExpansionRoot[] = [];
   const coveredKeys = new Set<string>();
@@ -1059,14 +1156,44 @@ async function resolveRoots(
   return roots;
 }
 
-async function nodesByReference(tx: Queryable, referenceIds: readonly string[]): Promise<Map<string, string>> {
-  if (referenceIds.length === 0) return new Map();
-  const { rows } = await tx.query<{ cultural_reference_id: string; id: string }>(
+/**
+ * Resolves cultural references to ACTIVE shared identities. A durable
+ * binding is authoritative; only references with no binding at all fall back
+ * to the verified provider-id link (a name never links), and ambiguous
+ * verified matches stay unresolved. Reports the link resolutions and
+ * ambiguities honestly on the run's counts.
+ */
+async function nodesByReference(
+  tx: Queryable,
+  input: { referenceIds: readonly string[]; counts: ExpansionCounts },
+): Promise<Map<string, string>> {
+  const unique = [...new Set(input.referenceIds)];
+  if (unique.length === 0) return new Map();
+  const bound = await tx.query<{ cultural_reference_id: string; id: string }>(
     `SELECT cultural_reference_id, id FROM graph_nodes
       WHERE cultural_reference_id = ANY($1::uuid[]) AND status = 'active'`,
-    [[...referenceIds]],
+    [unique],
   );
-  return new Map(rows.map((r) => [r.cultural_reference_id, r.id]));
+  const byReference = new Map(bound.rows.map((r) => [r.cultural_reference_id, r.id]));
+  // References bound to a non-active identity keep their (stale) binding: the
+  // fallback below only applies to references with no binding row at all.
+  const { rows: anyBinding } = await tx.query<{ cultural_reference_id: string }>(
+    `SELECT cultural_reference_id FROM graph_nodes WHERE cultural_reference_id = ANY($1::uuid[])`,
+    [unique],
+  );
+  const boundReferenceIds = new Set(anyBinding.map((r) => r.cultural_reference_id));
+  const unbound = unique.filter((id) => !boundReferenceIds.has(id));
+  if (unbound.length === 0) return byReference;
+  const linked = await verifiedReferenceNodeMatches(tx, { referenceIds: unbound });
+  for (const [referenceId, nodeIds] of linked) {
+    if (nodeIds.length === 1) {
+      byReference.set(referenceId, nodeIds[0]!);
+      input.counts.referencesLinked++;
+    } else if (nodeIds.length > 1) {
+      input.counts.referenceLinksAmbiguous++;
+    }
+  }
+  return byReference;
 }
 
 async function captureReferenceSupportEdges(
