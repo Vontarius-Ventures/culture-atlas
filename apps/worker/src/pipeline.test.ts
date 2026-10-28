@@ -337,9 +337,11 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     await runJobs(ctx, [job_id]);
     expect((await getJobById(db, job_id))?.state).toBe('complete');
 
-    // The pointer moved exactly once during the compile (progressive publish,
-    // then an idempotent finish), so one durable intent at the account's
-    // current revision — never two.
+    // One durable intent row per (owner, capture, revision): the pointer moved
+    // exactly once during the compile (progressive publish, then an idempotent
+    // finish), and the later reference publication — for the now-ACTIVE
+    // analysis, without another pointer move — re-armed that same row, so the
+    // newest intent (the publication) wins. Never two rows.
     const { rows } = await db.query<{ event_type: string; logical_event_key: string; dispatch_state: string; payload: Record<string, unknown> }>(
       `SELECT event_type, logical_event_key, dispatch_state, payload FROM graph_outbox WHERE owner_account_id = $1`,
       [(ctx.principal as { accountId: string }).accountId],
@@ -349,7 +351,7 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
         event_type: 'analysis',
         logical_event_key: `analysis:${capture_id}`,
         dispatch_state: 'pending',
-        payload: { action: 'analysis_activated', capture_id: capture_id, analysis_id: expect.any(String) },
+        payload: { action: 'references_published', capture_id: capture_id, analysis_id: expect.any(String), stage: 'references' },
       },
     ]);
   });

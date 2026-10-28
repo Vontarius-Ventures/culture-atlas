@@ -36,6 +36,7 @@ import { CATEGORIES, LIMITS, type Category, type ReferenceType, type ResolutionS
 import { AppError } from '../errors';
 import { EXAMPLE_REPLAY_MODEL, examplePickItems, exampleReplay, type ExampleReplay } from '../feed/examples';
 import { ensureSampleItems, sampleKey } from '../feed/samples';
+import { noteAnalysisIntent } from '../interest-graph/intent';
 import type { JobContext } from '../jobs/handler';
 import type { JobOutcome } from '../jobs/types';
 import type { Owner } from '../principal';
@@ -44,6 +45,8 @@ import { activateAnalysis, ensureAnalysisRow } from '../services/analyses';
 import { foodExclusionsFor } from '../services/onboarding';
 import { destinationFromQlooProperties, imageFromQlooProperties, type DisplayImage } from '../services/display';
 import { stripSafetyClaims, violatedExclusions } from '../composer/dietary';
+import { getTasteRevision } from '../services/taste';
+import type { Queryable } from '../db/pool';
 import { JobBudget } from './budget';
 import { composeDishIdeas } from './dishes';
 import { reciprocalRankFusion, selectDiverse, type RankedList } from './fusion';
@@ -105,6 +108,34 @@ export const WARNINGS = {
  */
 export function isEatReference(r: Pick<ResolvedRef, 'type' | 'suggestedCategories'>): boolean {
   return r.type === 'cuisine' || r.suggestedCategories.includes('eat');
+}
+
+/**
+ * The authorized reference support one analysis carries right now, as the
+ * graph support reader (loadExplicitSupport) derives it: the
+ * (reference, relation, effective status) of its resolved/user-confirmed,
+ * never-text-only capture_references rows, sorted for comparison. Correction
+ * overlays (the user's own latest rejections/confirmation) are deliberately
+ * not folded in: they carry their own 'correct' intent, and after a correction
+ * every section publication targets the still-inactive replacement version,
+ * so an overlay change can never land inside one publication transaction.
+ */
+async function authorizedReferenceSupport(db: Queryable, analysisId: string): Promise<string[]> {
+  const { rows } = await db.query<{ reference_id: string; relation: string; status: string }>(
+    `SELECT cr.reference_id, cr.relation,
+            CASE WHEN cr.resolution_status = 'user_confirmed' THEN 'user_confirmed' ELSE 'resolved' END AS status
+       FROM capture_references cr
+      WHERE cr.analysis_id = $1
+        AND cr.resolution_status IN ('resolved','user_confirmed')
+        AND COALESCE(cr.text_only, false) = false
+      ORDER BY cr.reference_id, cr.relation, status`,
+    [analysisId],
+  );
+  return rows.map((r) => `${r.reference_id}:${r.relation}:${r.status}`);
+}
+
+function sameReferenceSupport(before: readonly string[], after: readonly string[]): boolean {
+  return before.length === after.length && before.every((key, i) => key === after[i]);
 }
 
 export interface ResolvedRef {
@@ -1040,9 +1071,52 @@ export class CaptureCompiler {
     return { ...base, referenceId, name: candidate.name, resolution: userSelected ? 'user_confirmed' : 'unmatched', qloo: null, providerQueryId, isReplay: false, isAnchor: false, grounding };
   }
 
+  /**
+   * PR 8 active-reference publication (VAL-PROJ-006/007): activation and
+   * reference publication are separate transactions, so a saved capture can
+   * already have PROJECTED (its activation intent consumed by the dispatcher)
+   * when a later initial or enrichment publication changes the ACTIVE
+   * analysis's authorized reference support without moving the pointer. Such
+   * a publication re-arms the durable projection intent INSIDE its own
+   * publish transaction; without it, a ready equal-revision projection could
+   * omit that support indefinitely. This reads the analysis's current
+   * authorized support so the publication's writes can be bracketed. It
+   * returns null when this publish cannot change projected support — a
+   * session-owned capture, or an analysis that is not the capture's ACTIVE
+   * one (e.g. a pending correction version, which activates with its own
+   * intent at completion) — where the publication stays intent-free.
+   */
+  private async beginActiveReferencePublication(tx: Queryable, capture: CaptureForCompile): Promise<string[] | null> {
+    if (!capture.owner_account_id || capture.active_analysis_id !== this.analysisId) return null;
+    return authorizedReferenceSupport(tx, this.analysisId);
+  }
+
+  /** Re-arm the projection intent when the bracketed publication changed the active analysis's authorized support. */
+  private async noteActiveReferencePublication(
+    tx: Queryable,
+    capture: CaptureForCompile,
+    stage: 'references' | 'enrichment',
+    supportBefore: string[] | null,
+  ): Promise<void> {
+    if (!supportBefore || !capture.owner_account_id) return;
+    const supportAfter = await authorizedReferenceSupport(tx, this.analysisId);
+    // Identical re-publication (a lost-lease retry replaying stored outputs)
+    // changes nothing and must not re-arm the intent.
+    if (sameReferenceSupport(supportBefore, supportAfter)) return;
+    await noteAnalysisIntent(tx, {
+      ownerAccountId: capture.owner_account_id,
+      captureId: capture.id,
+      action: 'references_published',
+      targetTasteRevision: await getTasteRevision(tx, { kind: 'account', accountId: capture.owner_account_id }),
+      config: this.ctx.config,
+      payload: { analysis_id: this.analysisId, stage },
+    });
+  }
+
   private async publishReferences(out: ResolveOutput): Promise<void> {
     const status: SectionStatus = out.refs.length === 0 ? 'complete' : out.qloo === 'ok' ? 'complete' : 'partial';
-    await publishForCapture(this.ctx.db, this.capture.id, this.ctx.ensureActive, async (tx) => {
+    await publishForCapture(this.ctx.db, this.capture.id, this.ctx.ensureActive, async (tx, capture) => {
+      const supportBefore = await this.beginActiveReferencePublication(tx, capture);
       for (const r of out.refs) {
         await tx.query(
           `INSERT INTO capture_references (analysis_id, reference_id, relation, evidence_region, certainty, resolution_status, is_anchor)
@@ -1053,6 +1127,7 @@ export class CaptureCompiler {
           [this.analysisId, r.referenceId, r.relation, JSON.stringify({ region_ids: r.regionIds, boxes: r.boxes }), Math.min(1, Math.max(0, r.certainty)), r.resolution, r.isAnchor],
         );
       }
+      await this.noteActiveReferencePublication(tx, capture, 'references', supportBefore);
       await setAnalysisSection(tx, this.analysisId, 'references', status);
     });
     this.sections.set('references', status);
@@ -1453,7 +1528,8 @@ export class CaptureCompiler {
             whole_photo_choice_id: 'whole',
           }
         : null;
-    await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx) => {
+    await publishForCapture(ctx.db, this.capture.id, ctx.ensureActive, async (tx, capture) => {
+      const supportBefore = await this.beginActiveReferencePublication(tx, capture);
       // Title and interpretation are never rewritten to say more; a question is only added, never replaced.
       await tx.query(
         `UPDATE analyses SET observations = $2::jsonb, candidates = $3::jsonb,
@@ -1510,6 +1586,7 @@ export class CaptureCompiler {
           [this.analysisId, r.referenceId, r.relation, JSON.stringify({ region_ids: r.regionIds, boxes: r.boxes }), Math.min(1, Math.max(0, r.certainty)), r.resolution, r.readText],
         );
       }
+      await this.noteActiveReferencePublication(tx, capture, 'enrichment', supportBefore);
     });
     resolved.refs.push(...newRefs, ...textRefs);
 

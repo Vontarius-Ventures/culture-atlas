@@ -73,7 +73,7 @@ export async function noteExplicitIntent(db: Queryable, input: NoteExplicitInten
 }
 
 /** What happened to one capture's analysis-dependent support. */
-export type AnalysisIntentAction = 'correct' | 'analysis_activated' | 'capture_deleted';
+export type AnalysisIntentAction = 'correct' | 'analysis_activated' | 'capture_deleted' | 'references_published';
 
 export interface NoteAnalysisIntentInput {
   ownerAccountId: string;
@@ -87,10 +87,18 @@ export interface NoteAnalysisIntentInput {
 
 /**
  * Enqueue the durable projection intent for one capture-dependency change:
- * a correction, an analysis activation that replaced the active version, or
- * the capture's deletion withdrawing its lineage. Like the explicit hooks this
- * runs inside the mutation's transaction; while the flag is off nothing is
- * written and the current-state backfill reconciles later.
+ * a correction, an analysis activation that replaced the active version, the
+ * capture's deletion withdrawing its lineage, or a reference publication that
+ * changed the ACTIVE analysis's authorized support (the staged-analysis gap:
+ * activation and reference publication are separate transactions, so a
+ * saved capture can already be projected — its activation intent consumed —
+ * when the pipeline later publishes resolved references for that same active
+ * analysis without moving the pointer; the publication re-arms the intent in
+ * its own transaction, or that support would stay missing from a ready
+ * equal-revision projection until an unrelated user mutation). Like the
+ * explicit hooks this runs inside the publish/mutation transaction; while the
+ * flag is off nothing is written and the current-state backfill reconciles
+ * later.
  *
  * Analysis changes do not bump the taste revision, so a correction and the
  * activation of its replacement can land on the same (owner, capture,
