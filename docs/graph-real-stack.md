@@ -35,17 +35,33 @@ one save and one pick, and `graph_outbox`, `personal_graph_state`,
 
 ## Phase 2 — graph on (`graph-claim.spec.ts`)
 
-Account A is created through the save dialog (an overlapping sample save),
-onboards, and its own material projects: the worker sweeps the committed
-outbox without any new user mutation, the state row reaches `ready`, and
-nothing graph-parented reaches the feed (shadow-only). After signing out, a
-fresh anonymous session prepares a capture, a hide and two legacy
-session-owned saves (one overlapping the account save), then claims through
-the preview-claim sign-in. The merged current state projects exactly once at
-the claim revision:
+Account A is created through the save dialog (an active sample save), onboards,
+and its own material projects: the worker sweeps the committed outbox without
+any new user mutation, the state row reaches `ready`, and nothing
+graph-parented reaches the feed (shadow-only). After signing out, a fresh
+anonymous session prepares a capture, a hide and two legacy session-owned
+saves, and the two prepared histories deliberately CONFLICT over the same
+canonical sample items (claim provenance):
+
+- direction A — the account keeps its active Nina save while the anonymous
+  history withdraws its own save of the same shared row through the real
+  session API (`POST /v1/preferences`, the same surface the app client uses);
+- direction B — the anonymous history keeps its active Amélie save while the
+  account, signed in from a second browser context (which claims only that
+  context's own fresh session, never the prepared one), saves and removes its
+  own Amélie save through the real item-page controls.
+
+The preview-claim sign-in then merges the two histories, and the merged
+current state projects exactly once at the claim revision:
 
 - the claim response reports `{captures: 1, saved_items: 1}` plus the pending
-  save, the overlapping save dedupes and the fresh session save re-owns;
+  save — the session's withdrawn Nina save leaves nothing to dedupe and the
+  surviving anonymous Amélie save transfers;
+- each surviving explicit save keeps its provenance: neither history's
+  historical removal relabels the other's still-active save exposure-only, and
+  the ready projection records the real save event lineage behind each
+  support (Nina's descends from the account's own save, Amélie's from the
+  transferred anonymous save);
 - one canonical save row per item, snapshots for the session are revoked, and
   a retried claim from a second browser adds nothing (identical support
   rows);
@@ -60,7 +76,7 @@ and they project as real confirmed interests: the shared row is ownerless, so
 private edge on the account's OWN `saved_items` row
 (`saved_item_id` target, migration 270), so the support is account-owned and
 isolated without forging an item owner, weakening an owner FK or inventing a
-shared identity. The claim journey asserts this directly: the overlapping
+shared identity. The claim journey asserts this directly: the account's kept
 sample save and the transferred sample save each produce one private
 saved-item edge with `saved_item` support (four explicit roots before the
 claim including the sample save; six after it including the capture card),

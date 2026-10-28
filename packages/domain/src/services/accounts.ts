@@ -132,12 +132,27 @@ export async function claimSession(
       WHERE owner_session_id = $1`,
     [sessionId, accountId],
   );
-  for (const table of ['uploads', 'preference_events', 'discovery_jobs', 'jobs', 'trace_events']) {
+  for (const table of ['uploads', 'discovery_jobs', 'jobs', 'trace_events']) {
     await db.query(`UPDATE ${table} SET owner_account_id = $2, owner_session_id = NULL WHERE owner_session_id = $1`, [
       sessionId,
       accountId,
     ]);
   }
+  // The preference history moves too, but each moved event is labeled with the
+  // anonymous lineage it came from (claimed_session_id + the claim time, in
+  // the same now() clock domain as created_at). The explicit-support reader
+  // uses these stamps to keep each surviving explicit save's provenance
+  // across the merge: one history's historical removal of a canonical item
+  // stays in its own lineage instead of flattening both histories into one
+  // last-remove stream that relabels a still-active save exposure-only
+  // (VAL-PROJ-002/003).
+  await db.query(
+    `UPDATE preference_events
+        SET owner_account_id = $2, owner_session_id = NULL,
+            payload = payload || jsonb_build_object('claimed_session_id', $1::text, 'claimed_at', now())
+      WHERE owner_session_id = $1`,
+    [sessionId, accountId],
+  );
   await db.query('DELETE FROM feed_snapshots WHERE owner_session_id = $1', [sessionId]);
 
   // 5. Taste: the account revision must move forward so cached feeds/recommendations refresh.

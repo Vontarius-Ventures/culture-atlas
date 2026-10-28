@@ -17,13 +17,26 @@ import {
  * VAL-CROSS-001, graph-on phase: the anonymous-to-account claim through the
  * real product's preview-claim option (password sign-in, claim_session) over
  * prepared anonymous material — a session capture, a session hide, and the
- * legacy session-owned save rows (one overlapping an account save, one not) —
- * against the real web app and job worker on the isolated journey database
- * with the projection flag enabled for fresh accounts.
+ * legacy session-owned save rows — against the real web app and job worker on
+ * the isolated journey database with the projection flag enabled for fresh
+ * accounts.
+ *
+ * The prepared histories deliberately CONFLICT over the same canonical items
+ * (claim provenance, VAL-PROJ-002/003):
+ *  - direction A: the account keeps an active save of the Nina sample row
+ *    while the anonymous history saves and then withdraws its own save of the
+ *    same row through the real session API;
+ *  - direction B: the anonymous history keeps an active save of the Amélie
+ *    sample row while the account — signed in from a second browser context
+ *    so the prepared session stays unclaimed — saves and removes its own
+ *    Amélie save through the real item-page controls.
  *
  * What it proves on the real stack:
  *  - the merged canonical state projects once, only after the claim, through
  *    the worker's outbox dispatch (no inline work, no new user mutation);
+ *  - each surviving explicit save keeps its provenance: neither history's
+ *    historical removal relabels the other's still-active save exposure-only,
+ *    and the ready projection records each support's real save event lineage;
  *  - the overlapping save stays exactly one endorsement (claim dedupe);
  *  - a retried claim adds nothing (the rebuilt projection is row-for-row the
  *    same semantic set);
@@ -62,6 +75,45 @@ async function seedLegacySessionSave(sessionId: string, itemId: string) {
        FROM discovery_items WHERE id = $2`,
     [sessionId, itemId],
   );
+}
+
+/**
+ * The real session-authenticated withdrawal (POST /v1/preferences with the
+ * page's own cookies and CSRF token — the exact surface the app client uses;
+ * anonymous sessions may remove their own saves). Returns the undo payload.
+ */
+async function sessionRemove(page: Page, itemId: string) {
+  const res = await page.evaluate(async (id) => {
+    const session = await (await fetch('/v1/session', { cache: 'no-store' })).json();
+    const response = await fetch('/v1/preferences', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/json',
+        'x-csrf-token': session.csrf_token,
+        'idempotency-key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ action: 'remove', target_type: 'discovery_item', target_id: id }),
+    });
+    return { status: response.status, body: await response.json() };
+  }, itemId);
+  expect(res.status).toBe(200);
+  expect(res.body.saved_item).toBeNull();
+  expect(res.body.undo).toMatchObject({ action: 'save', target_type: 'discovery_item', target_id: itemId });
+}
+
+/** The lineage (claimed_session_id) of the save event the projection recorded behind one canonical key's support. */
+async function supportLineage(accountId: string, canonicalKey: string): Promise<string | null | undefined> {
+  const row = await one<{ lineage: string | null }>(
+    `SELECT pe.payload->>'claimed_session_id' AS lineage
+       FROM personal_interest_support s
+       JOIN saved_items si ON si.id = s.saved_item_id
+       JOIN discovery_items di ON di.id = si.discovery_item_id
+       LEFT JOIN preference_events pe ON pe.id = s.originating_event_id
+      WHERE s.owner_account_id = $1 AND di.canonical_key = $2 AND s.origin_kind = 'saved_item'`,
+    [accountId, canonicalKey],
+  );
+  return row?.lineage;
 }
 
 async function answerQuestionnaire(page: Page, info: TestInfo) {
@@ -200,6 +252,58 @@ test('claim projects the merged state once and denies the old anonymous authorit
     );
   });
 
+  await test.step('prepare, direction A: the anonymous history withdraws its own Nina save', async () => {
+    // The account still holds its active Nina save from the creation dialog.
+    // The anonymous history saves the same shared row above and now removes
+    // that save through the real session API — later than the account's save,
+    // so the merged event stream conflicts over the same canonical item.
+    await sessionRemove(pageA, ninaId);
+    expect(
+      await scalar('SELECT count(*) AS n FROM saved_items WHERE owner_session_id = $1', [anonId]),
+    ).toBe(1); // only the Amélie row remains
+    expect(
+      await scalar(`SELECT count(*) AS n FROM preference_events WHERE owner_session_id = $1 AND action = 'remove'`, [
+        anonId,
+      ]),
+    ).toBe(1);
+    await shot(pageA, info, 'claim-03a-conflicting-histories');
+  });
+
+  await test.step('prepare, direction B: the account removes its own Amélie save after the anonymous one', async () => {
+    // A second browser context signs in as the account. This claims that
+    // context's own fresh anonymous session (no prepared material), never the
+    // prepared session above, whose Amélie save stays the still-active one.
+    const contextB = await browser.newContext();
+    const pageB = await contextB.newPage();
+    trackErrors(pageB, apiErrors);
+    await pageB.goto('/settings');
+    await expect(pageB.getByRole('heading', { name: 'Sign in or create an account' })).toBeVisible();
+    await pageB.locator('.account-prompt__switch').getByRole('button', { name: 'Sign in' }).click();
+    await pageB.getByLabel(/^Email/).fill(email);
+    await pageB.getByLabel(/^Password/).fill(password);
+    await pageB.locator('.account-prompt__actions').getByRole('button', { name: 'Sign in' }).click();
+    await expect(pageB.getByRole('heading', { name: 'Your account' })).toBeVisible();
+    const b = await sessionOf(pageB);
+    expect(b.principal.kind).toBe('account');
+    expect(b.principal.account_id).toBe(accountId);
+
+    // The account saves the same canonical Amélie row through the real
+    // item-page controls, then withdraws that save with the returned Unsave
+    // everywhere — after the anonymous history's save of the same row.
+    await pageB.goto(`/items/${amelieId}`);
+    await expect(pageB.getByRole('heading', { name: 'Amélie', level: 1 })).toBeVisible();
+    await pageB.getByRole('button', { name: 'Save', exact: true }).click();
+    const dialog = pageB.getByRole('dialog', { name: 'Save to a collection' });
+    await dialog.getByRole('radio', { name: 'Sunday roots' }).check();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(pageB.getByText('Saved to Sunday roots').first()).toBeVisible();
+    await pageB.getByRole('button', { name: 'Saved', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Unsave everywhere' }).click();
+    await expect(pageB.getByText('Removed from your saves').first()).toBeVisible();
+    await shot(pageB, info, 'claim-03b-account-removes-own-save');
+    await contextB.close();
+  });
+
   const cookiesBeforeClaim = await contextA.cookies();
   const claimResponsePromise = pageA.waitForResponse(
     (r) => r.url().includes('/v1/session/sign-in') && r.request().method() === 'POST',
@@ -222,8 +326,9 @@ test('claim projects the merged state once and denies the old anonymous authorit
       claimed: { captures: number; saved_items: number };
       pending_save: { saved_item_id: string } | null;
     };
-    // The capture transfers; the overlapping save dedupes (deleted, not counted);
-    // the fresh session save is re-owned (counted).
+    // The capture transfers; the session's withdrawn Nina save leaves nothing
+    // to dedupe; the surviving anonymous Amélie save transfers (the account's
+    // own was removed before the claim).
     expect(body.claimed.captures).toBe(1);
     expect(body.claimed.saved_items).toBe(1);
     expect(body.pending_save?.saved_item_id).toBeTruthy();
@@ -261,8 +366,10 @@ test('claim projects the merged state once and denies the old anonymous authorit
       ),
     ).toBe(1);
     expect(await scalar('SELECT count(*) AS n FROM feed_snapshots WHERE owner_session_id = $1', [anonId])).toBe(0);
-    // One canonical endorsement each: the overlap did not double Nina, the
-    // transferred save added Amélie, the pending save added the capture card.
+    // One canonical endorsement each: the account's Nina save survived the
+    // anonymous history's removal of the same row, the anonymous Amélie save
+    // survived the account's removal of its own, and the pending save added
+    // the capture card.
     expect(
       await scalar('SELECT count(*) AS n FROM saved_items si JOIN discovery_items i ON i.id = si.discovery_item_id WHERE si.owner_account_id = $1 AND i.canonical_key = $2', [
         accountId,
@@ -309,6 +416,13 @@ test('claim projects the merged state once and denies the old anonymous authorit
     const ninaSupport = support.filter((r) => r.saved_item_id === ninaSave!.id && r.origin_kind === 'saved_item');
     expect(ninaSupport).toHaveLength(1);
     expect(ninaSupport[0]!.saved_item_source_id).toBe(ninaSave!.id);
+    // Claim provenance: each surviving save's support names ITS OWN history's
+    // save event. Nina's endorsement descends from the account's own save
+    // (native lineage) despite the anonymous history's later removal, and the
+    // transferred Amélie endorsement descends from the anonymous history's
+    // save (claimed lineage) despite the account's later removal of its own.
+    expect(await supportLineage(accountId, 'sample:artist-nina-simone')).toBeNull();
+    expect(await supportLineage(accountId, 'sample:film-amelie')).toBe(anonId);
     await shot(pageA, info, 'claim-05-merged-feed');
   });
 

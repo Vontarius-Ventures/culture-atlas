@@ -23,10 +23,14 @@ import { iso } from '../util/time';
  * preference event or pick, and a save event that a later remove superseded
  * does not come back through the auto-fill. Those rows are reported separately
  * as exposureOnlyItemIds so a projection can keep them out of confirmed
- * roots: recommendations never endorse themselves. Exclusions (item hides) are
- * constraints on the excluded canonical key only — never endorsements, never
- * creator/category exclusion, and food exclusions (accounts.preferences) never
- * appear here at all.
+ * roots: recommendations never endorse themselves. Supersession itself is
+ * lineage-aware (removeSupersedesSaveSql): an anonymous history and the
+ * claiming account are two independent histories, and a claim keeps each
+ * surviving explicit save's provenance — the other history's historical
+ * removal of the same canonical item withdrew its OWN save, never this one.
+ * Exclusions (item hides) are constraints on the excluded canonical key only —
+ * never endorsements, never creator/category exclusion, and food exclusions
+ * (accounts.preferences) never appear here at all.
  *
  * Capture-derived support (VAL-PROJ-006): a SAVED capture keeps its explicit
  * inspiration save as a confirmed root, while the support derived from it
@@ -152,18 +156,58 @@ interface CorrectionRow {
   };
 }
 
-/** A saved item is explicit iff a save event for its canonical key is not superseded by a later remove, or it is an onboarding pick member. */
+/**
+ * One remove event `r` supersedes one save event `e` only when it withdrew a
+ * save from the SAME preference history. `(r.created_at, r.id) >
+ * (e.created_at, e.id)` keeps the ordinary save → remove lifecycle intact
+ * (a superseded save cannot come back through exposure-only auto-fill). The
+ * lineage clause preserves each history's provenance across an
+ * anonymous→account claim: claimSession stamps the events it moves with
+ * `claimed_session_id` and the claim time `claimed_at` (the claim
+ * transaction's now(), the same clock domain as created_at), so
+ *  - a remove supersedes saves of its own lineage only — an anonymous
+ *    history's own save→remove pair stays inert after the merge;
+ *  - a remove from a DIFFERENT lineage never suppresses that history's
+ *    surviving save: before the claim each scope acted only on its own rows,
+ *    so the other history's historical removal of the same canonical item
+ *    stays in its own lineage (VAL-PROJ-002/003, VAL-CROSS-001);
+ *  - an account-native remove suppresses a transferred anonymous save only
+ *    from the claim instant onward (`created_at >= claimed_at`): a remove in
+ *    the claim's own transaction shares its tx-start now(), so a strict `>`
+ *    would let a claim → remove → auto-fill sequence in one outer
+ *    transaction resurrect the withdrawn anonymous support, while removes
+ *    from before the claim transaction keep the surviving save. The boundary
+ *    errs toward suppression (an honest omission) rather than resurrecting a
+ *    withdrawn save through an exposure-only row.
+ *
+ * Known tie limit: two same-lineage events written in one outer transaction
+ * (e.g. a save and a remove composed in a single service transaction) share
+ * created_at, where the (created_at, id) ordering cannot express statement
+ * order; no current writer does that, and such a save's row is withdrawn in
+ * the same transaction anyway.
+ */
+export const removeSupersedesSaveSql = (keySql: string): string => `EXISTS (
+                  SELECT 1 FROM preference_events r
+                   WHERE r.owner_account_id = $1
+                     AND r.action = 'remove'
+                     AND r.payload->>'canonical_key' = ${keySql}
+                     AND (r.created_at, r.id) > (e.created_at, e.id)
+                     AND (r.payload->>'claimed_session_id' IS NOT DISTINCT FROM e.payload->>'claimed_session_id'
+                          OR (e.payload->>'claimed_session_id' IS NOT NULL
+                              AND r.payload->>'claimed_session_id' IS NULL
+                              AND r.created_at >= (e.payload->>'claimed_at')::timestamptz)))`;
+
+/**
+ * A saved item is explicit iff a save event for its canonical key is not
+ * superseded by a remove from the same history (see removeSupersedesSaveSql),
+ * or it is an onboarding pick member.
+ */
 const EXPLICIT_SAVE_SQL = `(EXISTS (
                  SELECT 1 FROM preference_events e
                   WHERE e.owner_account_id = $1
                     AND e.action = 'save'
                     AND e.payload->>'canonical_key' = di.canonical_key
-                    AND NOT EXISTS (
-                        SELECT 1 FROM preference_events r
-                         WHERE r.owner_account_id = $1
-                           AND r.action = 'remove'
-                           AND r.payload->>'canonical_key' = di.canonical_key
-                           AND (r.created_at, r.id) > (e.created_at, e.id)))
+                    AND NOT ${removeSupersedesSaveSql('di.canonical_key')})
                OR EXISTS (
                    SELECT 1 FROM onboarding_pick_items pi
                     WHERE pi.account_id = $1 AND pi.discovery_item_id = di.id))`;

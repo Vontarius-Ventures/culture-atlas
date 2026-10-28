@@ -5,7 +5,7 @@ import { hiddenKeys } from '../library/access';
 import { WEIGHTS } from '../library/taste-fold';
 import { loadFoldSaves } from '../services/taste';
 import { projectionEnabledForAccount, type ProjectionGateConfig } from './intent';
-import { loadExplicitSupport, type ExplicitSupportSnapshot } from './explicit-support';
+import { loadExplicitSupport, removeSupersedesSaveSql, type ExplicitSupportSnapshot } from './explicit-support';
 import { INTEREST_GRAPH_POLICY_VERSION } from './schema';
 import { addEdgeSupport, createGraphRun, setGraphRunState, upsertPersonalEdge } from './store';
 
@@ -559,11 +559,7 @@ async function latestSaveEvents(tx: Queryable, accountId: string, canonicalKeys:
     `SELECT DISTINCT ON (e.payload->>'canonical_key') e.payload->>'canonical_key' AS key, e.id
        FROM preference_events e
       WHERE e.owner_account_id = $1 AND e.action = 'save' AND e.payload->>'canonical_key' = ANY($2::text[])
-        AND NOT EXISTS (
-              SELECT 1 FROM preference_events r
-               WHERE r.owner_account_id = $1 AND r.action = 'remove'
-                 AND r.payload->>'canonical_key' = e.payload->>'canonical_key'
-                 AND (r.created_at, r.id) > (e.created_at, e.id))
+        AND NOT ${removeSupersedesSaveSql(`e.payload->>'canonical_key'`)}
       ORDER BY e.payload->>'canonical_key', e.created_at DESC, e.id DESC`,
     [accountId, [...canonicalKeys]],
   );
