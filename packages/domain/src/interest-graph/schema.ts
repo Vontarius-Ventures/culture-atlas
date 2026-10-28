@@ -139,6 +139,13 @@ export const GraphEvidenceRow = z.object({
   validation_version: z.string(),
   evidence_kind: GraphEvidenceKind,
   expires_at: z.date().nullable(),
+  /**
+   * Review provenance (migration 300): reviewed corpus evidence records who
+   * reviewed it and when. Machine-extracted proposals stay unreviewed (both
+   * NULL) until a review admits them; the pair is all-or-nothing.
+   */
+  reviewed_by: z.string().nullable(),
+  reviewed_at: z.date().nullable(),
   created_at: z.date(),
 });
 export type GraphEvidenceRow = z.infer<typeof GraphEvidenceRow>;
@@ -170,6 +177,28 @@ export const GraphAssertionSupportRow = z.object({
   created_at: z.date(),
 });
 export type GraphAssertionSupportRow = z.infer<typeof GraphAssertionSupportRow>;
+
+// --- Provider rights policies (migration 300) -------------------------------------
+
+/**
+ * Durable operational record of each provider's approved privacy settings and
+ * storage/display rights (no secrets). `transient_only` providers (Qloo while
+ * its response-retention/public-display rights are undocumented) never have
+ * their responses admitted as durable graph evidence; `rights_documented` is
+ * false only while the rights themselves are honestly unresolved.
+ */
+export const ProviderRightsPolicyRow = z.object({
+  provider: z.string(),
+  response_retention: z.enum(['transient_only', 'permitted_documented']),
+  public_display: z.enum(['owned_or_cleared_only', 'permitted_documented']),
+  privacy_settings: z.unknown(),
+  rights_documented: z.boolean(),
+  unresolved_notes: z.string().nullable(),
+  basis: z.string(),
+  recorded_at: z.date(),
+  updated_at: z.date(),
+});
+export type ProviderRightsPolicyRow = z.infer<typeof ProviderRightsPolicyRow>;
 
 // --- Account-owned state ---------------------------------------------------------
 

@@ -1,0 +1,1561 @@
+{
+  "manifest_version": 1,
+  "corpus_version": "pilot-1",
+  "policy_version": "graph-policy-1",
+  "domains": [
+    "art",
+    "ceramics",
+    "interiors",
+    "sculpture"
+  ],
+  "review": {
+    "reviewed_by": "Culture Atlas graph-corpus domain review (PR 8 discovery)",
+    "reviewed_at": "2026-10-28T15:20:00.000Z",
+    "basis": "Every evidence entry was verified against its cited public source on 2026-10-28: The Art Institute of Chicago collection API v1.16 responses (each structured_value holds the exact non-description fields the API returned for that object) and the Wikipedia REST page summary for Bedroom in Arles (extract quoted verbatim, page revision 1374251357). The AIC API response states that all non-description data in the response is licensed CC0 1.0; the AIC open-access policy additionally releases object-page caption metadata under CC0. Wikipedia text is CC BY-SA 4.0 and every excerpt carries its attribution.",
+    "notes": "Assertions state only what the cited metadata supports: CREATED_BY only for a named artist/designer in artist_display (works by unattributed makers, such as the Iznik tankard, the Moche portrait vessel, the Biedermeier desk and the Wikipedia-series Bedroom note, carry no invented creator), USES_TECHNIQUE from medium_display, HAS_ATTRIBUTE from style_title, DOCUMENTED_ASSOCIATION (on_display_at) from the museum's own gallery record. ABOUT and AUDIENCE_AFFINITY are deliberately absent from this pilot: it has no reviewed public-source evidence for those predicates, and no visual-resemblance claim of any kind ships here."
+  },
+  "photo_candidate_inventory": {
+    "location": "Mission research directory (outside this repository): research/photo-candidates.json",
+    "status": "not_a_qualified_holdout",
+    "note": "The 40-entry candidate photo inventory (30 Art Institute of Chicago metadata-reviewed entries and 10 unreviewed Wikimedia Commons interiors) is evaluation-planning material only. It is NOT a qualified blind or holdout evaluation set, NOT reviewed for photographic usefulness, and NEVER becomes graph evidence or corpus content. Photo-analysis model roles remain unqualified and fail closed."
+  },
+  "provider_policy": {
+    "transient_providers": [
+      "qloo"
+    ],
+    "note": "Qloo responses remain transient under the existing adapter semantics (only ids, names and ranks for traceability are stored in provider_queries). Qloo-derived material is never admitted as durable evidence or displayed assets while Qloo's response-retention and public-display rights are undocumented; see the provider_rights_policies record (migration 300) and docs/graph-corpus.md."
+  },
+  "identities": [
+    {
+      "key": "atlas:work:artic-28560",
+      "name": "The Bedroom",
+      "kind": "work",
+      "domain": "art",
+      "sense": "painting"
+    },
+    {
+      "key": "atlas:work:artic-27992",
+      "name": "A Sunday on La Grande Jatte — 1884",
+      "kind": "work",
+      "domain": "art",
+      "sense": "painting"
+    },
+    {
+      "key": "atlas:work:artic-111436",
+      "name": "The Basket of Apples",
+      "kind": "work",
+      "domain": "art",
+      "sense": "painting"
+    },
+    {
+      "key": "atlas:work:artic-73413",
+      "name": "Bust of a Youth (Saint John the Baptist)",
+      "kind": "work",
+      "domain": "sculpture",
+      "sense": "bust"
+    },
+    {
+      "key": "atlas:work:artic-11320",
+      "name": "Adam",
+      "kind": "work",
+      "domain": "sculpture",
+      "sense": "figure"
+    },
+    {
+      "key": "atlas:work:artic-25853",
+      "name": "Wine Cistern",
+      "kind": "work",
+      "domain": "ceramics",
+      "sense": "cistern"
+    },
+    {
+      "key": "atlas:work:artic-69109",
+      "name": "Tankard (Hanap) with Tulips, Hyacinths, Roses, and Carnations",
+      "kind": "work",
+      "domain": "ceramics",
+      "sense": "drinking vessel"
+    },
+    {
+      "key": "atlas:work:artic-91620",
+      "name": "Portrait Vessel",
+      "kind": "work",
+      "domain": "ceramics",
+      "sense": "vessel"
+    },
+    {
+      "key": "atlas:work:artic-186047",
+      "name": "Sideboard",
+      "kind": "work",
+      "domain": "interiors",
+      "sense": "sideboard"
+    },
+    {
+      "key": "atlas:work:artic-103943",
+      "name": "Manxman Piano",
+      "kind": "work",
+      "domain": "interiors",
+      "sense": "piano"
+    },
+    {
+      "key": "atlas:work:artic-50330",
+      "name": "Fall-Front Desk",
+      "kind": "work",
+      "domain": "interiors",
+      "sense": "desk"
+    },
+    {
+      "key": "atlas:creator:vincent-van-gogh",
+      "name": "Vincent van Gogh",
+      "kind": "creator",
+      "domain": "art",
+      "sense": "painter"
+    },
+    {
+      "key": "atlas:creator:georges-seurat",
+      "name": "Georges Seurat",
+      "kind": "creator",
+      "domain": "art",
+      "sense": "painter"
+    },
+    {
+      "key": "atlas:creator:paul-cezanne",
+      "name": "Paul Cézanne",
+      "kind": "creator",
+      "domain": "art",
+      "sense": "painter"
+    },
+    {
+      "key": "atlas:creator:francesco-mochi",
+      "name": "Francesco Mochi",
+      "kind": "creator",
+      "domain": "sculpture",
+      "sense": "sculptor"
+    },
+    {
+      "key": "atlas:creator:auguste-rodin",
+      "name": "Auguste Rodin",
+      "kind": "creator",
+      "domain": "sculpture",
+      "sense": "sculptor"
+    },
+    {
+      "key": "atlas:creator:francesco-durantino",
+      "name": "Francesco Durantino",
+      "kind": "creator",
+      "domain": "ceramics",
+      "sense": "maiolica painter"
+    },
+    {
+      "key": "atlas:creator:edward-william-godwin",
+      "name": "Edward William Godwin",
+      "kind": "creator",
+      "domain": "interiors",
+      "sense": "furniture designer"
+    },
+    {
+      "key": "atlas:creator:mackay-hugh-baillie-scott",
+      "name": "Mackay Hugh Baillie Scott",
+      "kind": "creator",
+      "domain": "interiors",
+      "sense": "furniture designer"
+    },
+    {
+      "key": "atlas:technique:oil-on-canvas",
+      "name": "Oil on canvas",
+      "kind": "technique",
+      "domain": "art",
+      "sense": "painting medium"
+    },
+    {
+      "key": "atlas:technique:marble",
+      "name": "Marble",
+      "kind": "technique",
+      "domain": "sculpture",
+      "sense": "sculpture material"
+    },
+    {
+      "key": "atlas:technique:bronze",
+      "name": "Bronze",
+      "kind": "technique",
+      "domain": "sculpture",
+      "sense": "cast metal"
+    },
+    {
+      "key": "atlas:technique:maiolica",
+      "name": "Maiolica",
+      "kind": "technique",
+      "domain": "ceramics",
+      "sense": "tin-glazed earthenware"
+    },
+    {
+      "key": "atlas:technique:underglaze-painting",
+      "name": "Underglaze painting",
+      "kind": "technique",
+      "domain": "ceramics",
+      "sense": "ceramic decoration"
+    },
+    {
+      "key": "atlas:attribute:baroque",
+      "name": "Baroque",
+      "kind": "attribute",
+      "domain": "sculpture",
+      "sense": "style period"
+    },
+    {
+      "key": "atlas:attribute:post-impressionism-art",
+      "name": "Post-Impressionism",
+      "kind": "attribute",
+      "domain": "art",
+      "sense": "art movement"
+    },
+    {
+      "key": "atlas:attribute:post-impressionism-sculpture",
+      "name": "Post-Impressionism",
+      "kind": "attribute",
+      "domain": "sculpture",
+      "sense": "style period"
+    },
+    {
+      "key": "atlas:attribute:pointillism",
+      "name": "Pointillism",
+      "kind": "attribute",
+      "domain": "art",
+      "sense": "art movement"
+    },
+    {
+      "key": "atlas:attribute:aesthetic-movement",
+      "name": "Aesthetic Movement",
+      "kind": "attribute",
+      "domain": "interiors",
+      "sense": "design movement"
+    },
+    {
+      "key": "atlas:attribute:arts-and-crafts-movement",
+      "name": "Arts and Crafts Movement",
+      "kind": "attribute",
+      "domain": "interiors",
+      "sense": "design movement"
+    },
+    {
+      "key": "atlas:attribute:biedermeier",
+      "name": "Biedermeier",
+      "kind": "attribute",
+      "domain": "interiors",
+      "sense": "furniture style"
+    },
+    {
+      "key": "atlas:attribute:iznik",
+      "name": "Iznik",
+      "kind": "attribute",
+      "domain": "ceramics",
+      "sense": "ware tradition"
+    },
+    {
+      "key": "atlas:attribute:moche",
+      "name": "Moche",
+      "kind": "attribute",
+      "domain": "ceramics",
+      "sense": "archaeological style"
+    },
+    {
+      "key": "atlas:place:art-institute-of-chicago",
+      "name": "Art Institute of Chicago",
+      "kind": "place",
+      "domain": "art",
+      "sense": "museum"
+    }
+  ],
+  "external_ids": [
+    {
+      "identity": "atlas:creator:vincent-van-gogh",
+      "provider": "wikidata",
+      "external_id": "Q5582",
+      "provenance": "Wikidata wbsearchentities 2026-10-28: label 'Vincent van Gogh', description 'Dutch painter (1853–1890)'"
+    },
+    {
+      "identity": "atlas:creator:georges-seurat",
+      "provider": "wikidata",
+      "external_id": "Q34013",
+      "provenance": "Wikidata wbsearchentities 2026-10-28: label 'Georges Seurat', description 'French painter (1859-1891)'"
+    },
+    {
+      "identity": "atlas:creator:paul-cezanne",
+      "provider": "wikidata",
+      "external_id": "Q35548",
+      "provenance": "Wikidata wbsearchentities 2026-10-28: label 'Paul Cézanne', description 'French painter (1839–1906)'"
+    },
+    {
+      "identity": "atlas:creator:auguste-rodin",
+      "provider": "wikidata",
+      "external_id": "Q30755",
+      "provenance": "Wikidata wbsearchentities 2026-10-28: label 'Auguste Rodin', description 'French sculptor (1840–1917)'"
+    }
+  ],
+  "sources": [
+    {
+      "key": "artic:28560:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/28560",
+      "family_key": "artic:28560",
+      "title": "The Bedroom — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0. The cited fields (title, artist_display, date, medium, style, classification, gallery, artwork type, origin, public-domain flag) are non-description data."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:28560:api",
+      "provider": "artic_open_access",
+      "url": "https://api.artic.edu/api/v1/artworks/28560",
+      "family_key": "artic:28560",
+      "title": "The Bedroom — AIC collection API (artworks/28560)",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "api:v1/artworks/28560",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "The AIC API response itself states: all non-description data in this response is licensed under a Creative Commons Zero (CC0) 1.0 designation and the Terms and Conditions of artic.edu."
+      },
+      "retention": {
+        "content": "permitted metadata fields only",
+        "basis": "CC0 metadata release (API license text)"
+      }
+    },
+    {
+      "key": "artic:27992:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/27992",
+      "family_key": "artic:27992",
+      "title": "A Sunday on La Grande Jatte — 1884 — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:111436:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/111436",
+      "family_key": "artic:111436",
+      "title": "The Basket of Apples — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:73413:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/73413",
+      "family_key": "artic:73413",
+      "title": "Bust of a Youth (Saint John the Baptist) — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:11320:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/11320",
+      "family_key": "artic:11320",
+      "title": "Adam — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:25853:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/25853",
+      "family_key": "artic:25853",
+      "title": "Wine Cistern — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:69109:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/69109",
+      "family_key": "artic:69109",
+      "title": "Tankard (Hanap) with Tulips, Hyacinths, Roses, and Carnations — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:91620:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/91620",
+      "family_key": "artic:91620",
+      "title": "Portrait Vessel — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:186047:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/186047",
+      "family_key": "artic:186047",
+      "title": "Sideboard — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:103943:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/103943",
+      "family_key": "artic:103943",
+      "title": "Manxman Piano — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "artic:50330:page",
+      "provider": "artic_open_access",
+      "url": "https://www.artic.edu/artworks/50330",
+      "family_key": "artic:50330",
+      "title": "Fall-Front Desk — The Art Institute of Chicago",
+      "publisher": "The Art Institute of Chicago",
+      "attribution": "The Art Institute of Chicago",
+      "locator": "collection record",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC0 1.0",
+        "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+        "permitted_use": [
+          "storage",
+          "display"
+        ],
+        "expiry": "none",
+        "basis": "AIC open-access policy releases object-page caption metadata under CC0; the AIC API states all non-description data in its responses is CC0 1.0."
+      },
+      "retention": {
+        "content": "permitted metadata fields only (no article text)",
+        "basis": "CC0 metadata release"
+      }
+    },
+    {
+      "key": "wikipedia:bedroom-in-arles",
+      "provider": "wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Bedroom_in_Arles",
+      "family_key": "wikipedia:Bedroom_in_Arles",
+      "title": "Bedroom in Arles — Wikipedia",
+      "publisher": "Wikipedia",
+      "attribution": "Wikipedia contributors",
+      "locator": "REST summary extract (page revision 1374251357)",
+      "retrieved_at": "2026-10-28T15:20:00.000Z",
+      "rights": {
+        "license": "CC BY-SA 4.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+        "permitted_use": [
+          "storage",
+          "display",
+          "attribution_required"
+        ],
+        "expiry": "none",
+        "basis": "Wikipedia article text is CC BY-SA 4.0; the stored excerpt is quoted verbatim and displayed with attribution to Wikipedia contributors and the license link. Requests carry no private data (Wikimedia privacy policy)."
+      },
+      "retention": {
+        "content": "the quoted summary excerpt only, with attribution",
+        "basis": "CC BY-SA 4.0 attribution requirements"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "subject": "atlas:work:artic-28560",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:vincent-van-gogh",
+      "evidence": [
+        {
+          "source": "artic:28560:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Vincent van Gogh (Dutch, 1853–1890)",
+          "structured_value": {
+            "id": 28560,
+            "title": "The Bedroom",
+            "date_display": "1889",
+            "artist_display": "Vincent van Gogh (Dutch, 1853–1890)",
+            "place_of_origin": "Saint-Rémy-de-Provence",
+            "medium_display": "Oil on canvas",
+            "artwork_type_title": "Painting",
+            "classification_title": "oil on canvas",
+            "style_title": "Post-Impressionism",
+            "gallery_title": "Gallery 241",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        },
+        {
+          "source": "artic:28560:api",
+          "kind": "fact",
+          "derivation": "mirror",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Vincent van Gogh (Dutch, 1853–1890)",
+          "structured_value": {
+            "id": 28560,
+            "title": "The Bedroom",
+            "date_display": "1889",
+            "artist_display": "Vincent van Gogh (Dutch, 1853–1890)",
+            "place_of_origin": "Saint-Rémy-de-Provence",
+            "medium_display": "Oil on canvas",
+            "artwork_type_title": "Painting",
+            "classification_title": "oil on canvas",
+            "style_title": "Post-Impressionism",
+            "gallery_title": "Gallery 241",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        },
+        {
+          "source": "wikipedia:bedroom-in-arles",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "curated_passage",
+            "version": "wikipedia-rest-summary-rev-1374251357"
+          },
+          "locator": "extract",
+          "excerpt": "Bedroom in Arles is the title given to three similar paintings by 19th-century Dutch Post-Impressionist painter Vincent van Gogh.",
+          "structured_value": {
+            "title": "Bedroom in Arles",
+            "wikibase_item": "Q724377",
+            "revision": 1374251357,
+            "extract": "Bedroom in Arles is the title given to three similar paintings by 19th-century Dutch Post-Impressionist painter Vincent van Gogh."
+          }
+        }
+      ],
+      "label": "artic-28560-created-by-vincent-van-gogh"
+    },
+    {
+      "subject": "atlas:work:artic-27992",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:georges-seurat",
+      "evidence": [
+        {
+          "source": "artic:27992:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Georges Seurat (French, 1859–1891)",
+          "structured_value": {
+            "id": 27992,
+            "title": "A Sunday on La Grande Jatte — 1884",
+            "date_display": "1884–86, border added 1888–89",
+            "artist_display": "Georges Seurat (French, 1859–1891)",
+            "place_of_origin": "France",
+            "medium_display": "Oil on canvas",
+            "artwork_type_title": "Painting",
+            "classification_title": "oil on canvas",
+            "style_title": "Pointillism",
+            "gallery_title": "Gallery 240",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        }
+      ],
+      "label": "artic-27992-created-by-georges-seurat"
+    },
+    {
+      "subject": "atlas:work:artic-111436",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:paul-cezanne",
+      "evidence": [
+        {
+          "source": "artic:111436:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Paul Cezanne (French, 1839–1906)",
+          "structured_value": {
+            "id": 111436,
+            "title": "The Basket of Apples",
+            "date_display": "c. 1893",
+            "artist_display": "Paul Cezanne (French, 1839–1906)",
+            "place_of_origin": "France",
+            "medium_display": "Oil on canvas",
+            "artwork_type_title": "Painting",
+            "classification_title": "oil on canvas",
+            "style_title": "Post-Impressionism",
+            "gallery_title": "Gallery 248",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        }
+      ],
+      "label": "artic-111436-created-by-paul-cezanne"
+    },
+    {
+      "subject": "atlas:work:artic-73413",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:francesco-mochi",
+      "evidence": [
+        {
+          "source": "artic:73413:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Francesco Mochi (Italian, 1580–1654)",
+          "structured_value": {
+            "id": 73413,
+            "title": "Bust of a Youth (Saint John the Baptist)",
+            "date_display": "1630-40",
+            "artist_display": "Francesco Mochi (Italian, 1580–1654)",
+            "place_of_origin": "Italy",
+            "medium_display": "Marble on variegated black marble socle",
+            "artwork_type_title": "Sculpture",
+            "classification_title": "bust/head",
+            "style_title": "Baroque",
+            "gallery_title": "Gallery 211",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        }
+      ],
+      "label": "artic-73413-created-by-francesco-mochi"
+    },
+    {
+      "subject": "atlas:work:artic-11320",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:auguste-rodin",
+      "evidence": [
+        {
+          "source": "artic:11320:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Auguste Rodin (French, 1840–1917)",
+          "structured_value": {
+            "id": 11320,
+            "title": "Adam",
+            "date_display": "Modeled 1881, cast c. 1924",
+            "artist_display": "Auguste Rodin (French, 1840–1917)",
+            "place_of_origin": "France",
+            "medium_display": "Bronze with dark brown patina",
+            "artwork_type_title": "Sculpture",
+            "classification_title": "large scale",
+            "style_title": "Post-Impressionism",
+            "gallery_title": "Gallery 200",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        }
+      ],
+      "label": "artic-11320-created-by-auguste-rodin"
+    },
+    {
+      "subject": "atlas:work:artic-25853",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:francesco-durantino",
+      "evidence": [
+        {
+          "source": "artic:25853:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Francesco Durantino\nItalian, active 1543-after 1553",
+          "structured_value": {
+            "id": 25853,
+            "title": "Wine Cistern",
+            "date_display": "1553",
+            "artist_display": "Francesco Durantino\nItalian, active 1543-after 1553",
+            "place_of_origin": "Italy",
+            "medium_display": "Tin-glazed earthenware (maiolica)",
+            "artwork_type_title": "Ceramics",
+            "classification_title": "earthenware",
+            "style_title": null,
+            "gallery_title": "Gallery 238",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        }
+      ],
+      "label": "artic-25853-created-by-francesco-durantino"
+    },
+    {
+      "subject": "atlas:work:artic-186047",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:edward-william-godwin",
+      "evidence": [
+        {
+          "source": "artic:186047:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Designed by Edward William Godwin (English, 1833-1886)",
+          "structured_value": {
+            "id": 186047,
+            "title": "Sideboard",
+            "date_display": "Designed 1867, made c. 1876",
+            "artist_display": "Designed by Edward William Godwin (English, 1833-1886)\nMade by William Watt (English, 1834-1885)\nLondon",
+            "place_of_origin": "England",
+            "medium_display": "Ebonized mahogany with glass and silvered brass",
+            "artwork_type_title": "Furniture",
+            "classification_title": "sideboard (furniture)",
+            "style_title": "Aesthetic Movement",
+            "gallery_title": "Gallery 246",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        }
+      ],
+      "label": "artic-186047-created-by-edward-william-godwin"
+    },
+    {
+      "subject": "atlas:work:artic-103943",
+      "predicate": "CREATED_BY",
+      "object": "atlas:creator:mackay-hugh-baillie-scott",
+      "evidence": [
+        {
+          "source": "artic:103943:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "artist_display",
+          "excerpt": "Designed by Mackay Hugh Baillie Scott\nEnglish, 1865-1945",
+          "structured_value": {
+            "id": 103943,
+            "title": "Manxman Piano",
+            "date_display": "1897",
+            "artist_display": "Designed by Mackay Hugh Baillie Scott\nEnglish, 1865-1945\nMade by John Broadwood and Sons\nEngland, founded 1728\nLondon, England",
+            "place_of_origin": "England",
+            "medium_display": "Oak, ebony, ivory, mother-of-pearl, and copper",
+            "artwork_type_title": "Furniture",
+            "classification_title": "musical instrument",
+            "style_title": "Arts and Crafts Movement",
+            "gallery_title": "Gallery 246",
+            "is_public_domain": true,
+            "copyright_notice": null
+          }
+        }
+      ],
+      "label": "artic-103943-created-by-mackay-hugh-baillie-scott"
+    },
+    {
+      "subject": "atlas:work:artic-28560",
+      "predicate": "USES_TECHNIQUE",
+      "object": "atlas:technique:oil-on-canvas",
+      "evidence": [
+        {
+          "source": "artic:28560:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "medium_display",
+          "excerpt": "Oil on canvas",
+          "structured_value": {
+            "id": 28560,
+            "medium_display": "Oil on canvas",
+            "classification_title": "oil on canvas",
+            "artwork_type_title": "Painting"
+          }
+        }
+      ],
+      "label": "artic-28560-uses-technique-oil-on-canvas"
+    },
+    {
+      "subject": "atlas:work:artic-27992",
+      "predicate": "USES_TECHNIQUE",
+      "object": "atlas:technique:oil-on-canvas",
+      "evidence": [
+        {
+          "source": "artic:27992:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "medium_display",
+          "excerpt": "Oil on canvas",
+          "structured_value": {
+            "id": 27992,
+            "medium_display": "Oil on canvas",
+            "classification_title": "oil on canvas",
+            "artwork_type_title": "Painting"
+          }
+        }
+      ],
+      "label": "artic-27992-uses-technique-oil-on-canvas"
+    },
+    {
+      "subject": "atlas:work:artic-111436",
+      "predicate": "USES_TECHNIQUE",
+      "object": "atlas:technique:oil-on-canvas",
+      "evidence": [
+        {
+          "source": "artic:111436:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "medium_display",
+          "excerpt": "Oil on canvas",
+          "structured_value": {
+            "id": 111436,
+            "medium_display": "Oil on canvas",
+            "classification_title": "oil on canvas",
+            "artwork_type_title": "Painting"
+          }
+        }
+      ],
+      "label": "artic-111436-uses-technique-oil-on-canvas"
+    },
+    {
+      "subject": "atlas:work:artic-73413",
+      "predicate": "USES_TECHNIQUE",
+      "object": "atlas:technique:marble",
+      "evidence": [
+        {
+          "source": "artic:73413:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "medium_display",
+          "excerpt": "Marble on variegated black marble socle",
+          "structured_value": {
+            "id": 73413,
+            "medium_display": "Marble on variegated black marble socle",
+            "artwork_type_title": "Sculpture"
+          }
+        }
+      ],
+      "label": "artic-73413-uses-technique-marble"
+    },
+    {
+      "subject": "atlas:work:artic-11320",
+      "predicate": "USES_TECHNIQUE",
+      "object": "atlas:technique:bronze",
+      "evidence": [
+        {
+          "source": "artic:11320:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "medium_display",
+          "excerpt": "Bronze with dark brown patina",
+          "structured_value": {
+            "id": 11320,
+            "medium_display": "Bronze with dark brown patina",
+            "artwork_type_title": "Sculpture"
+          }
+        }
+      ],
+      "label": "artic-11320-uses-technique-bronze"
+    },
+    {
+      "subject": "atlas:work:artic-25853",
+      "predicate": "USES_TECHNIQUE",
+      "object": "atlas:technique:maiolica",
+      "evidence": [
+        {
+          "source": "artic:25853:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "medium_display",
+          "excerpt": "Tin-glazed earthenware (maiolica)",
+          "structured_value": {
+            "id": 25853,
+            "medium_display": "Tin-glazed earthenware (maiolica)",
+            "classification_title": "earthenware",
+            "artwork_type_title": "Ceramics"
+          }
+        }
+      ],
+      "label": "artic-25853-uses-technique-maiolica"
+    },
+    {
+      "subject": "atlas:work:artic-69109",
+      "predicate": "USES_TECHNIQUE",
+      "object": "atlas:technique:underglaze-painting",
+      "evidence": [
+        {
+          "source": "artic:69109:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "medium_display",
+          "excerpt": "Iznik ware, fritware with underglaze painting in blue, turquoise, red, and black",
+          "structured_value": {
+            "id": 69109,
+            "medium_display": "Iznik ware, fritware with underglaze painting in blue, turquoise, red, and black",
+            "classification_title": "drinking vessel",
+            "artwork_type_title": "Ceramics"
+          }
+        }
+      ],
+      "label": "artic-69109-uses-technique-underglaze-painting"
+    },
+    {
+      "subject": "atlas:work:artic-28560",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:post-impressionism-art",
+      "evidence": [
+        {
+          "source": "artic:28560:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "Post-Impressionism",
+          "structured_value": {
+            "id": 28560,
+            "style_title": "Post-Impressionism"
+          }
+        }
+      ],
+      "label": "artic-28560-has-attribute-post-impressionism-art"
+    },
+    {
+      "subject": "atlas:work:artic-27992",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:pointillism",
+      "evidence": [
+        {
+          "source": "artic:27992:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "Pointillism",
+          "structured_value": {
+            "id": 27992,
+            "style_title": "Pointillism"
+          }
+        }
+      ],
+      "label": "artic-27992-has-attribute-pointillism"
+    },
+    {
+      "subject": "atlas:work:artic-111436",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:post-impressionism-art",
+      "evidence": [
+        {
+          "source": "artic:111436:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "Post-Impressionism",
+          "structured_value": {
+            "id": 111436,
+            "style_title": "Post-Impressionism"
+          }
+        }
+      ],
+      "label": "artic-111436-has-attribute-post-impressionism-art"
+    },
+    {
+      "subject": "atlas:work:artic-73413",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:baroque",
+      "evidence": [
+        {
+          "source": "artic:73413:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "Baroque",
+          "structured_value": {
+            "id": 73413,
+            "style_title": "Baroque"
+          }
+        }
+      ],
+      "label": "artic-73413-has-attribute-baroque"
+    },
+    {
+      "subject": "atlas:work:artic-11320",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:post-impressionism-sculpture",
+      "evidence": [
+        {
+          "source": "artic:11320:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "Post-Impressionism",
+          "structured_value": {
+            "id": 11320,
+            "style_title": "Post-Impressionism"
+          }
+        }
+      ],
+      "label": "artic-11320-has-attribute-post-impressionism-sculpture"
+    },
+    {
+      "subject": "atlas:work:artic-69109",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:iznik",
+      "evidence": [
+        {
+          "source": "artic:69109:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "iznik",
+          "structured_value": {
+            "id": 69109,
+            "style_title": "iznik",
+            "medium_display": "Iznik ware, fritware with underglaze painting in blue, turquoise, red, and black"
+          }
+        }
+      ],
+      "label": "artic-69109-has-attribute-iznik"
+    },
+    {
+      "subject": "atlas:work:artic-91620",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:moche",
+      "evidence": [
+        {
+          "source": "artic:91620:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "moche",
+          "structured_value": {
+            "id": 91620,
+            "style_title": "moche",
+            "artist_display": "Ceramist unknown (Moche)\nSouthern Moche region, north coast, Peru"
+          }
+        }
+      ],
+      "label": "artic-91620-has-attribute-moche"
+    },
+    {
+      "subject": "atlas:work:artic-186047",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:aesthetic-movement",
+      "evidence": [
+        {
+          "source": "artic:186047:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "Aesthetic Movement",
+          "structured_value": {
+            "id": 186047,
+            "style_title": "Aesthetic Movement"
+          }
+        }
+      ],
+      "label": "artic-186047-has-attribute-aesthetic-movement"
+    },
+    {
+      "subject": "atlas:work:artic-103943",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:arts-and-crafts-movement",
+      "evidence": [
+        {
+          "source": "artic:103943:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "Arts and Crafts Movement",
+          "structured_value": {
+            "id": 103943,
+            "style_title": "Arts and Crafts Movement"
+          }
+        }
+      ],
+      "label": "artic-103943-has-attribute-arts-and-crafts-movement"
+    },
+    {
+      "subject": "atlas:work:artic-50330",
+      "predicate": "HAS_ATTRIBUTE",
+      "object": "atlas:attribute:biedermeier",
+      "evidence": [
+        {
+          "source": "artic:50330:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "style_title",
+          "excerpt": "biedermeier",
+          "structured_value": {
+            "id": 50330,
+            "style_title": "biedermeier",
+            "medium_display": "Various woods and gilt-bronze mounts"
+          }
+        }
+      ],
+      "label": "artic-50330-has-attribute-biedermeier"
+    },
+    {
+      "subject": "atlas:work:artic-28560",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:28560:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 241",
+          "structured_value": {
+            "id": 28560,
+            "gallery_title": "Gallery 241",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-28560-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-27992",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:27992:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 240",
+          "structured_value": {
+            "id": 27992,
+            "gallery_title": "Gallery 240",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-27992-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-111436",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:111436:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 248",
+          "structured_value": {
+            "id": 111436,
+            "gallery_title": "Gallery 248",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-111436-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-73413",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:73413:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 211",
+          "structured_value": {
+            "id": 73413,
+            "gallery_title": "Gallery 211",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-73413-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-11320",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:11320:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 200",
+          "structured_value": {
+            "id": 11320,
+            "gallery_title": "Gallery 200",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-11320-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-25853",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:25853:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 238",
+          "structured_value": {
+            "id": 25853,
+            "gallery_title": "Gallery 238",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-25853-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-91620",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:91620:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 161",
+          "structured_value": {
+            "id": 91620,
+            "gallery_title": "Gallery 161",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-91620-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-186047",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:186047:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 246",
+          "structured_value": {
+            "id": 186047,
+            "gallery_title": "Gallery 246",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-186047-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:work:artic-103943",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "on_display_at",
+      "evidence": [
+        {
+          "source": "artic:103943:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 246",
+          "structured_value": {
+            "id": 103943,
+            "gallery_title": "Gallery 246",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "artic-103943-on-display-at-art-institute-of-chicago"
+    }
+  ]
+}

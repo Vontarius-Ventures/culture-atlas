@@ -26,6 +26,7 @@ const GRAPH_MIGRATIONS = [
   '270_shared_save_graph_support.sql',
   '280_owner_bound_graph_dependencies.sql',
   '290_projection_support_version.sql',
+  '300_evidence_review_and_provider_policies.sql',
 ];
 
 // --- Fixtures -----------------------------------------------------------------
