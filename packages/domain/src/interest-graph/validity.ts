@@ -8,11 +8,19 @@ import type { GraphPredicate, ProofDependency, RecommendationGraphProofRow } fro
  *
  * Retraction is an AUTHORITATIVE invalidation: in the same transaction that
  * marks the evidence (or its whole source revision) retracted, every valid
- * proof pinning that evidence — and every active frontier candidate whose
- * recorded path pins it — is invalidated immediately, before any
- * asynchronous cleanup. Proofs grounded in independent valid evidence and
+ * proof pinning that evidence — and every LIVE frontier candidate (active or
+ * admitted) whose recorded path pins it — is invalidated immediately, before
+ * any asynchronous cleanup. Proofs grounded in independent valid evidence and
  * accounts' explicit private support survive untouched: a cultural entity is
  * never globally deleted because one source became invalid.
+ *
+ * Overlapping withdrawals serialize: the affected proofs are locked in one
+ * consistent ascending-id order before their survival is decided, so two
+ * concurrent retractions of INDEPENDENT evidence cannot each observe the
+ * other's withdrawal as uncommitted-valid and keep the same proof stored
+ * 'valid' after both commit. A repeated (idempotent) withdrawal retracts
+ * nothing new but re-runs the same dependent revalidation, so raced or
+ * repair-lagged dependents are repaired instead of skipped.
  *
  * Expiry needs no stored flip: evidence rows carry expires_at and their
  * revisions carry rights_expires_at, and every justification and pinned-proof
@@ -283,9 +291,20 @@ async function invalidateDependentsOfEvidence(
   at: Date,
 ): Promise<{ proofsInvalidated: number; frontierEntriesExpired: number }> {
   if (evidenceIds.length === 0) return { proofsInvalidated: 0, frontierEntriesExpired: 0 };
+  // Lock every candidate proof BEFORE deciding survival, in one consistent
+  // ascending-id order (DISC-SCR-003): two retractions of INDEPENDENT
+  // evidence that both reach the same proof serialize here. Under READ
+  // COMMITTED the transaction that waits re-reads the row — and every
+  // dependency it revalidates — after the other commits, so the decision
+  // that commits last sees every committed withdrawal and can never observe
+  // the other's uncommitted withdrawal as surviving support. The shared
+  // ascending order means overlapping retraction transactions cannot
+  // deadlock on these rows.
   const candidateProofs = await tx.query<RecommendationGraphProofRow>(
     `SELECT ${PROOF_COLUMNS} FROM recommendation_graph_proofs
-      WHERE validity_state = 'valid' AND (evidence_ids && $1::uuid[] OR assertion_ids && $2::uuid[])`,
+      WHERE validity_state = 'valid' AND (evidence_ids && $1::uuid[] OR assertion_ids && $2::uuid[])
+      ORDER BY id
+      FOR UPDATE`,
     [evidenceIds, assertionIds],
   );
   let proofsInvalidated = 0;
@@ -306,9 +325,14 @@ async function invalidateDependentsOfEvidence(
   // Frontier candidates whose recorded approved path pinned the retracted
   // evidence (or an assertion it supported) expire immediately, inside the
   // retraction transaction — their lifetime never outlives their grounding.
+  // EVERY live state is covered (DISC-SCR-002): normal expansion promotes
+  // ranked observations to 'admitted' before publication, and unmaterialized
+  // or diversified-out candidates stay admitted (they count as live frontier
+  // capacity), so expiring only 'active' rows would leave an unsupported
+  // candidate live until ordinary expiry. Terminal states keep their record.
   const frontier = await tx.query(
     `UPDATE graph_frontier SET state = 'expired', updated_at = now()
-      WHERE state = 'active'
+      WHERE state IN ('active','admitted')
         AND (
           (path_versions -> 'evidence_ids') ?| $1::text[]
           OR (path_versions -> 'assertion_ids') ?| $2::text[]
@@ -321,8 +345,11 @@ async function invalidateDependentsOfEvidence(
 /**
  * Retracts one evidence row and, in the same transaction, invalidates every
  * currently-valid proof pinning it (or pinning an assertion it supported that
- * is no longer justified) and expires every active frontier candidate whose
- * recorded path pins it. Idempotent: re-retracting changes nothing.
+ * is no longer justified) and expires every live (active or admitted)
+ * frontier candidate whose recorded path pins it. Idempotent: a repeated
+ * withdrawal retracts nothing new but RE-RUNS the dependent revalidation, so
+ * a proof left valid by overlapping withdrawals — or any repair-lagged
+ * dependent — is repaired instead of being skipped by an early return.
  */
 export async function retractGraphEvidence(
   db: Db,
@@ -335,16 +362,24 @@ export async function retractGraphEvidence(
         WHERE id = $1 AND validity_state = 'valid' RETURNING id`,
       [input.evidenceId, at, input.reason],
     );
-    if (updated.rows.length === 0) {
-      const exists = await tx.query<{ id: string }>('SELECT id FROM graph_evidence WHERE id = $1', [input.evidenceId]);
-      if (exists.rows.length === 0) throw new AppError('not_found', { message: 'Evidence row not found.' });
-      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: 0, frontierEntriesExpired: 0, assertionsAffected: 0 };
-    }
     const affected = await tx.query<{ assertion_id: string }>(
       'SELECT assertion_id FROM graph_assertion_support WHERE evidence_id = $1',
       [input.evidenceId],
     );
     const assertionIds = affected.rows.map((r) => r.assertion_id);
+    if (updated.rows.length === 0) {
+      const exists = await tx.query<{ id: string }>('SELECT id FROM graph_evidence WHERE id = $1', [input.evidenceId]);
+      if (exists.rows.length === 0) throw new AppError('not_found', { message: 'Evidence row not found.' });
+      // Already retracted: an idempotent RETRY, never a silent no-op
+      // (DISC-SCR-003's retry-skip-repair consequence). Re-run the dependent
+      // revalidation over the same evidence so a proof raced valid by
+      // concurrent withdrawals cannot stay stored-valid because nothing new
+      // was retracted. The pass is itself idempotent: proofs grounded in
+      // surviving independent evidence keep surviving, invalid dependents
+      // flip at most once, and already-expired frontier rows stay expired.
+      const dependents = await invalidateDependentsOfEvidence(tx, [input.evidenceId], assertionIds, at);
+      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: dependents.proofsInvalidated, frontierEntriesExpired: dependents.frontierEntriesExpired, assertionsAffected: assertionIds.length };
+    }
     const dependents = await invalidateDependentsOfEvidence(tx, [input.evidenceId], assertionIds, at);
     return {
       retracted: true,
@@ -359,7 +394,10 @@ export async function retractGraphEvidence(
 /**
  * Retracts a whole source revision together with every evidence row read from
  * it: a withdrawn page invalidates all of its extractions atomically, while
- * independently sourced evidence of the same assertions survives.
+ * independently sourced evidence of the same assertions survives. A repeated
+ * withdrawal retracts nothing new but re-runs the dependent revalidation over
+ * the revision's FULL evidence set, so raced dependents are repaired rather
+ * than skipped.
  */
 export async function retractGraphSourceRevision(
   db: Db,
@@ -377,7 +415,22 @@ export async function retractGraphSourceRevision(
         input.sourceRevisionId,
       ]);
       if (exists.rows.length === 0) throw new AppError('not_found', { message: 'Source revision not found.' });
-      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: 0, frontierEntriesExpired: 0, assertionsAffected: 0 };
+      // Already retracted: an idempotent RETRY (DISC-SCR-003's retry-skip
+      // repair consequence). The repair rescan covers the revision's FULL
+      // evidence set — including rows an earlier per-row withdrawal already
+      // retracted — because a raced proof pinned those rows even though this
+      // call retracts nothing new. Idempotent like the fresh path.
+      const all = await tx.query<{ id: string }>('SELECT id FROM graph_evidence WHERE source_revision_id = $1', [
+        input.sourceRevisionId,
+      ]);
+      const evidenceIds = all.rows.map((r) => r.id);
+      const affected = await tx.query<{ assertion_id: string }>(
+        'SELECT DISTINCT assertion_id FROM graph_assertion_support WHERE evidence_id = ANY($1::uuid[])',
+        [evidenceIds],
+      );
+      const assertionIds = affected.rows.map((r) => r.assertion_id);
+      const dependents = await invalidateDependentsOfEvidence(tx, evidenceIds, assertionIds, at);
+      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: dependents.proofsInvalidated, frontierEntriesExpired: dependents.frontierEntriesExpired, assertionsAffected: assertionIds.length };
     }
     const evidence = await tx.query<{ id: string }>(
       `UPDATE graph_evidence SET validity_state = 'retracted', invalidated_at = $2, invalidation_reason = $3
