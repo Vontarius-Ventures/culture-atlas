@@ -326,6 +326,18 @@ export interface UpsertFrontierCandidateInput {
   intent?: 'expansion' | 'research';
   supportRootIds?: readonly string[];
   score?: number;
+  /**
+   * The approved path that reached this candidate, as pinned versions:
+   * { template, assertion_ids, assertion_revisions, evidence_ids,
+   *   evidence_revisions }. Recorded so evidence retraction can expire the
+   * candidate inside the retraction transaction (see validity.ts).
+   */
+  pathVersions?: Record<string, unknown>;
+  /**
+   * Evidence/rights expiry cap: the candidate expires no later than this
+   * moment. Lifetime is shortened, never extended (VAL-EVID-004).
+   */
+  expiresAt?: Date;
 }
 
 export interface FrontierUpsertResult {
@@ -380,8 +392,9 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
   });
   const { rows } = await db.query<FrontierUpsertResult['row'] & { created: boolean }>(
     `WITH upsert AS (
-       INSERT INTO graph_frontier (owner_account_id, run_id, node_id, intent, dedupe_key, score, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(days => $7))
+       INSERT INTO graph_frontier (owner_account_id, run_id, node_id, intent, dedupe_key, score, path_versions, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb,
+               LEAST(now() + make_interval(days => $8), $9::timestamptz))
        ON CONFLICT (owner_account_id, dedupe_key) DO UPDATE SET updated_at = now()
        RETURNING id, owner_account_id, run_id, node_id, intent, state, score, dedupe_key,
                  expires_at, created_at, (xmax = 0) AS created
@@ -390,7 +403,7 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
        INSERT INTO graph_frontier_support_roots (frontier_id, owner_account_id, root_id)
        SELECT u.id, u.owner_account_id, r.root_id
          FROM upsert u
-         CROSS JOIN (SELECT DISTINCT n.root_id FROM unnest($8::uuid[]) AS n(root_id)) r
+         CROSS JOIN (SELECT DISTINCT n.root_id FROM unnest($10::uuid[]) AS n(root_id)) r
         WHERE u.created
        RETURNING frontier_id, root_id
      ),
@@ -409,7 +422,9 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
       input.intent ?? 'expansion',
       input.dedupeKey,
       input.score ?? null,
+      JSON.stringify(input.pathVersions ?? {}),
       input.expiresInDays,
+      input.expiresAt ?? null,
       input.supportRootIds ?? [],
     ],
   );

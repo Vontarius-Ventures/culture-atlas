@@ -13,6 +13,7 @@ import {
   type GraphPredicate,
   type ProviderRightsPolicyRow,
 } from './schema';
+import { checkAssertionEndpoints, type NodePolicySummary } from './assertion-policy';
 
 /**
  * Typed writers and readers for the shared versioned evidence layer of
@@ -352,7 +353,8 @@ export interface InsertedEvidence {
 }
 
 const EVIDENCE_COLUMNS = `id, source_revision_id, locator, permitted_excerpt, structured_value, validation_method,
-  validation_version, evidence_kind, expires_at, reviewed_by, reviewed_at, created_at`;
+  validation_version, evidence_kind, expires_at, reviewed_by, reviewed_at, validity_state, invalidated_at,
+  invalidation_reason, created_at`;
 
 /**
  * Appends one evidence row. Identical content within the same source revision
@@ -440,14 +442,57 @@ const ASSERTION_COLUMNS = `id, subject_node_id, predicate, object_node_id, assoc
   valid_from, invalidated_at, recorded_at, superseded_at, created_at, updated_at`;
 
 /**
+ * Loads the identity facts the endpoint/scope policy needs for a set of
+ * nodes. Ids that do not exist are absent from the map; the caller decides
+ * whether that is a not_found or a rejection.
+ */
+export async function loadNodePolicySummaries(
+  db: Queryable,
+  nodeIds: readonly string[],
+): Promise<Map<string, NodePolicySummary>> {
+  if (nodeIds.length === 0) return new Map();
+  const { rows } = await db.query<{ id: string; node_kind: GraphNodeKind; domain: GraphNodeDomain; sense_key: string; status: string }>(
+    `SELECT id, node_kind, domain, sense_key, status FROM graph_nodes WHERE id = ANY($1::uuid[])`,
+    [nodeIds],
+  );
+  const out = new Map<string, NodePolicySummary>();
+  for (const row of rows) {
+    out.set(row.id, {
+      nodeKind: row.node_kind,
+      domain: row.domain,
+      senseKey: row.sense_key,
+      status: row.status as NodePolicySummary['status'],
+    });
+  }
+  return out;
+}
+
+/**
  * Natural-key assertion upsert (one row per subject/predicate/object/subtype).
  * A reviewed corpus admission can validate an existing proposal (the decision
  * is a correction and bumps the revision); it can never silently re-validate
  * a retracted/rejected/disputed assertion, and a proposed replay never
  * downgrades a validated one.
+ *
+ * The predicate-specific endpoint/scope rules (VAL-EVID-002) are enforced
+ * HERE, at the single admission point every writer shares: wrong endpoint
+ * kinds, wrong domain scope, a missing DOCUMENTED_ASSOCIATION subtype and
+ * ambiguous/merged/retired identity endpoints reject with typed rules before
+ * anything is written. A generic RELATED_TO is not an admitted predicate at
+ * all (the typed predicate set and the database CHECK both refuse it).
  */
 export async function upsertGraphAssertion(db: Queryable, input: UpsertGraphAssertionInput): Promise<UpsertedAssertion> {
   const status = input.status ?? 'proposed';
+  const summaries = await loadNodePolicySummaries(db, [input.subjectNodeId, input.objectNodeId]);
+  const subject = summaries.get(input.subjectNodeId);
+  const object = summaries.get(input.objectNodeId);
+  if (!subject || !object) {
+    throw new AppError('not_found', { message: 'Assertion endpoints must be existing canonical identities.' });
+  }
+  const check = checkAssertionEndpoints(subject, input.predicate, object, input.associationSubtype ?? null);
+  if (!check.valid) {
+    throw new AppError('invalid_input', { message: check.rejection!.message, details: { rule: check.rejection!.code } });
+  }
   const existing = await db.query<GraphAssertionRow>(
     `SELECT ${ASSERTION_COLUMNS} FROM graph_assertions
       WHERE subject_node_id = $1 AND predicate = $2 AND object_node_id = $3
@@ -610,6 +655,10 @@ export interface EvidenceVersion {
   evidenceExpiresAt: Date | null;
   reviewedBy: string | null;
   reviewedAt: Date | null;
+  /** Retraction status (migration 310); a retracted row justifies nothing. */
+  validityState: 'valid' | 'retracted';
+  invalidatedAt: Date | null;
+  invalidationReason: string | null;
 }
 
 /**
@@ -632,10 +681,13 @@ export async function loadEvidenceVersions(db: Queryable, evidenceIds: readonly 
     evidence_expires_at: Date | null;
     reviewed_by: string | null;
     reviewed_at: Date | null;
+    validity_state: 'valid' | 'retracted';
+    invalidated_at: Date | null;
+    invalidation_reason: string | null;
   }>(
     `SELECT e.id AS evidence_id, r.revision, e.source_revision_id, r.source_family_key, e.locator,
             e.permitted_excerpt, r.rights, r.rights_expires_at, e.expires_at AS evidence_expires_at,
-            e.reviewed_by, e.reviewed_at
+            e.reviewed_by, e.reviewed_at, e.validity_state, e.invalidated_at, e.invalidation_reason
        FROM graph_evidence e
        JOIN graph_source_revisions r ON r.id = e.source_revision_id
       WHERE e.id = ANY($1::uuid[])`,
@@ -655,6 +707,9 @@ export async function loadEvidenceVersions(db: Queryable, evidenceIds: readonly 
       evidenceExpiresAt: r.evidence_expires_at,
       reviewedBy: r.reviewed_by,
       reviewedAt: r.reviewed_at,
+      validityState: r.validity_state,
+      invalidatedAt: r.invalidated_at,
+      invalidationReason: r.invalidation_reason,
     });
   }
   return out;

@@ -11,6 +11,7 @@ import {
   upsertGraphAssertion,
   upsertGraphIdentity,
 } from './evidence';
+import { currentAssertionJustification } from './validity';
 import type { CorpusManifest } from './corpus-manifest';
 
 /**
@@ -195,6 +196,21 @@ export async function admitGraphCorpus(db: Db, manifest: CorpusManifest): Promis
       'SELECT COALESCE(SUM(revision), 0)::int AS n FROM graph_assertions WHERE id = ANY($1::uuid[])',
       [assertionIds],
     );
+    // The admission gate (VAL-EVID-002): every admitted assertion must be
+    // JUSTIFIED by its reviewed evidence — endpoint/scope rules already ran at
+    // upsert, and this proves the evidence side: at least one reviewed,
+    // currently-valid independent supporting family, with reviewed
+    // subject-matter support for ABOUT. An unjustified manifest entry rolls
+    // the whole admission back.
+    for (const assertionId of assertionIds) {
+      const justification = await currentAssertionJustification(tx, { assertionId });
+      if (!justification.justified) {
+        throw new AppError('invalid_input', {
+          message: `Admitted assertion ${assertionId} does not pass predicate-specific validation (${justification.rejection ?? 'no_valid_support'}).`,
+          details: { rule: justification.rejection ?? 'no_valid_support' },
+        });
+      }
+    }
     return {
       corpusVersion: manifest.corpus_version,
       identitiesCreated,

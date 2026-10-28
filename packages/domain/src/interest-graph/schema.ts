@@ -124,6 +124,13 @@ export const GraphSourceRevisionRow = z.object({
   source_family_key: z.string(),
   rights: z.unknown(),
   rights_expires_at: z.date().nullable(),
+  /**
+   * Retraction status (migration 310): content stays immutable; a retracted
+   * revision takes its evidence with it and invalidates dependent proofs.
+   */
+  validity_state: z.enum(['valid', 'retracted']),
+  invalidated_at: z.date().nullable(),
+  invalidation_reason: z.string().nullable(),
   retrieved_at: z.date(),
   created_at: z.date(),
 });
@@ -146,6 +153,13 @@ export const GraphEvidenceRow = z.object({
    */
   reviewed_by: z.string().nullable(),
   reviewed_at: z.date().nullable(),
+  /**
+   * Retraction status (migration 310): the content columns stay immutable, but
+   * a retracted evidence row no longer justifies anything it supports.
+   */
+  validity_state: z.enum(['valid', 'retracted']),
+  invalidated_at: z.date().nullable(),
+  invalidation_reason: z.string().nullable(),
   created_at: z.date(),
 });
 export type GraphEvidenceRow = z.infer<typeof GraphEvidenceRow>;
