@@ -82,13 +82,8 @@ export async function claimSession(
        JOIN discovery_items a ON a.owner_account_id = $2 AND a.canonical_key = s.canonical_key
       WHERE s.owner_session_id = $1)`;
   const ids = [sessionId, accountId];
-  // Saved items pointing at a merged item: drop when the account already saved it.
-  await db.query(
-    `DELETE FROM saved_items si USING ${pairs} p
-      WHERE si.owner_session_id = $1 AND si.discovery_item_id = p.sid
-        AND EXISTS (SELECT 1 FROM saved_items x WHERE x.owner_account_id = $2 AND x.discovery_item_id = p.aid)`,
-    ids,
-  );
+  // Saved items pointing at a merged item are repointed first; the ones the
+  // account already saved are absorbed below, in step 2.
   await db.query(
     `UPDATE saved_items si SET discovery_item_id = p.aid FROM ${pairs} p
       WHERE si.owner_session_id = $1 AND si.discovery_item_id = p.sid`,
@@ -104,12 +99,40 @@ export async function claimSession(
     [sessionId, accountId],
   );
 
-  // 2. Saved items (remaining ones cannot conflict any more).
-  await db.query(
-    `DELETE FROM saved_items si WHERE si.owner_session_id = $1
-        AND EXISTS (SELECT 1 FROM saved_items x WHERE x.owner_account_id = $2 AND x.discovery_item_id = si.discovery_item_id)`,
+  // 2. Saved items. When the account already saved the same (merged) item,
+  //    the session's row is ABSORBED: dropped here while its save event's
+  //    lineage is continued through the account's own row below. The DELETE
+  //    names the absorbing row in the same statement, so the absorb decision
+  //    and its lineage continuation see one snapshot: a withdrawal of the
+  //    account's row that commits before this statement leaves the session's
+  //    row to transfer instead, and one that commits after still supersedes
+  //    the absorbed event through the row it deleted. Transaction timestamps
+  //    never enter this ordering.
+  const absorbed = await db.query<{ session_row_id: string; account_row_id: string }>(
+    `DELETE FROM saved_items si
+       USING saved_items x
+      WHERE si.owner_session_id = $1
+        AND x.owner_account_id = $2
+        AND x.discovery_item_id = si.discovery_item_id
+      RETURNING si.id AS session_row_id, x.id AS account_row_id`,
     [sessionId, accountId],
   );
+  if (absorbed.rows.length > 0) {
+    // The claim is a canonical merge: an absorbed save continues through the
+    // account's surviving row, so a later withdrawal of that row supersedes
+    // BOTH histories' save events and auto-fill cannot revive either.
+    // (Events written before per-save lineage carry no saved_item_id and
+    // keep the documented legacy fallback semantics.)
+    await db.query(
+      `UPDATE preference_events ev
+          SET payload = jsonb_set(payload, '{saved_item_id}', to_jsonb(ab.account_row_id::text))
+         FROM unnest($2::uuid[], $3::uuid[]) AS ab(session_row_id, account_row_id)
+        WHERE ev.owner_session_id = $1
+          AND ev.action = 'save'
+          AND ev.payload->>'saved_item_id' = ab.session_row_id::text`,
+      [sessionId, absorbed.rows.map((r) => r.session_row_id), absorbed.rows.map((r) => r.account_row_id)],
+    );
+  }
   const saved = await db.query(
     'UPDATE saved_items SET owner_account_id = $2, owner_session_id = NULL WHERE owner_session_id = $1',
     [sessionId, accountId],
@@ -140,12 +163,10 @@ export async function claimSession(
   }
   // The preference history moves too, but each moved event is labeled with the
   // anonymous lineage it came from (claimed_session_id + the claim time, in
-  // the same now() clock domain as created_at). The explicit-support reader
-  // uses these stamps to keep each surviving explicit save's provenance
-  // across the merge: one history's historical removal of a canonical item
-  // stays in its own lineage instead of flattening both histories into one
-  // last-remove stream that relabels a still-active save exposure-only
-  // (VAL-PROJ-002/003).
+  // the same now() clock domain as created_at). Per-save lineage is the
+  // authoritative supersession ordering now; these stamps carry each
+  // surviving save's claimed provenance and remain the fallback semantics for
+  // events written before per-save lineage (VAL-PROJ-002/003).
   await db.query(
     `UPDATE preference_events
         SET owner_account_id = $2, owner_session_id = NULL,

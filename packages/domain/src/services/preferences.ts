@@ -159,10 +159,14 @@ export async function saveItem(
     // An explicit save lifts an earlier hide of the same item.
     const own = ownerPredicate(owner, '', 2);
     await db.query(`DELETE FROM item_exclusions WHERE canonical_key = $1 AND ${own.sql}`, [item.canonical_key, ...own.params]);
+    // saved_item_id is the per-save lineage: it names the exact saved row
+    // this event created, so a later remove can only supersede the save it
+    // actually withdrew (see removeSupersedesSaveSql).
     await writeEvent(ctx, db, 'save', body, {
       canonical_key: item.canonical_key,
       kind: item.kind,
       endorsed_focus: focus,
+      saved_item_id: ins.rows[0]!.id,
       // Taste onboarding picks (amendment 2.2) are ordinary explicit saves, marked by source.
       ...(options.source ? { source: options.source } : {}),
     });
@@ -234,7 +238,16 @@ export async function recordPreference(ctx: ServiceContext, body: PreferenceRequ
             [collectionIds],
           );
         }
-        await writeEvent(ctx, db, 'remove', body, { canonical_key: item.canonical_key, collection_ids: collectionIds });
+        // saved_item_id is the per-save lineage: it names the exact row this
+        // remove withdrew, so only the save events that created that row are
+        // superseded — never a surviving save of the same canonical key that
+        // lives on a different row (a transferred anonymous save, for
+        // instance). See removeSupersedesSaveSql.
+        await writeEvent(ctx, db, 'remove', body, {
+          canonical_key: item.canonical_key,
+          collection_ids: collectionIds,
+          saved_item_id: savedId,
+        });
         const revision = await bumpTasteRevision(db, owner);
         await rebuildTasteProfile(db, owner);
         // PR 8: unsave reverses support intent; it is never a negative vote.

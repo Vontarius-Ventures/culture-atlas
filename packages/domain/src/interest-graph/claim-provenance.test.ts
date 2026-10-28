@@ -29,8 +29,26 @@ afterAll(closeTestDb);
 
 const projectionOn = testConfig({ INTEREST_GRAPH_PROJECTION_ENABLED: 'true' });
 
-/** A prepared anonymous save with its save event: the claimed-history shape. */
+/**
+ * A prepared anonymous save with its save event: the claimed-history shape.
+ * The event carries the per-save lineage (`saved_item_id`) that every save
+ * writer records.
+ */
 async function sessionSave(sessionId: string, itemId: string): Promise<void> {
+  const { rows: item } = await db.query<{ canonical_key: string }>('SELECT canonical_key FROM discovery_items WHERE id = $1', [itemId]);
+  const { rows: saved } = await db.query<{ id: string }>(
+    'INSERT INTO saved_items (owner_session_id, discovery_item_id) VALUES ($1, $2) RETURNING id',
+    [sessionId, itemId],
+  );
+  await db.query(
+    `INSERT INTO preference_events (owner_session_id, action, target_type, target_id, payload)
+     VALUES ($1, 'save', 'discovery_item', $2, $3::jsonb)`,
+    [sessionId, itemId, JSON.stringify({ canonical_key: item[0]!.canonical_key, saved_item_id: saved[0]!.id })],
+  );
+}
+
+/** The pre-lineage event shape: a session save written before per-save lineage. */
+async function sessionSaveLegacy(sessionId: string, itemId: string): Promise<void> {
   const { rows } = await db.query<{ canonical_key: string }>('SELECT canonical_key FROM discovery_items WHERE id = $1', [itemId]);
   await db.query('INSERT INTO saved_items (owner_session_id, discovery_item_id) VALUES ($1, $2)', [sessionId, itemId]);
   await db.query(
@@ -378,6 +396,121 @@ describe('conflicting claim histories preserve each surviving explicit save (VAL
     const after = await loadExplicitSupport(db, account.accountId);
     expect(after.saves).toEqual([]);
     expect(after.exposureOnlyItemIds).toEqual([acctItem]);
+  });
+
+  it('an account remove then the claim in one outer transaction preserves the surviving anonymous support', async () => {
+    const { principal: account, ctx: actx } = await accountCtx({ config: projectionOn });
+    const key = `test:${randomUUID()}`;
+    const shared = await insertItem(null, { key, kind: 'film', title: 'Shared sample' });
+    await recordPreference(actx, { action: 'save', target_type: 'discovery_item', target_id: shared });
+
+    const { principal: anon } = await anonCtx();
+    await sessionSave(anon.sessionId, shared);
+
+    // The REVERSE of the covered claim → remove order: inside one outer
+    // transaction (one tx-start now()), the account withdraws ITS OWN save
+    // first, then the claim merges the session's still-active save in.
+    await db.transaction(async (tx) => {
+      const removed = await recordPreference({ ...actx, db: tx }, {
+        action: 'remove',
+        target_type: 'discovery_item',
+        target_id: shared,
+      });
+      expect(removed.saved_item).toBeNull();
+      const claimed = await claimSession(tx, anon.sessionId, account.accountId, new Date(), projectionOn);
+      expect(claimed).toEqual({ captures: 0, saved_items: 1 });
+    });
+
+    // The transferred anonymous save stays one explicit endorsement.
+    const snapshot = await loadExplicitSupport(db, account.accountId);
+    expect(snapshot.saves.map((s) => s.canonicalKey)).toEqual([key]);
+    expect(snapshot.exposureOnlyItemIds).toEqual([]);
+    expect((await readReconciledInterestGraph(db, account.accountId)).interests).toHaveLength(1);
+
+    await project(account.accountId);
+    expect(await graphState(account.accountId)).toMatchObject({ state: 'ready' });
+    expect(await savedItemSupport(account.accountId)).toEqual([{ canonicalKey: key }]);
+    expect((await supportLineage(account.accountId)).get(key)).toBe(await saveEventId(account.accountId, key, 'claimed'));
+  });
+
+  it('a claim-absorbed save continues through the account’s merged row and never survives its withdrawal', async () => {
+    const { principal: account, ctx: actx } = await accountCtx({ config: projectionOn });
+    const key = `test:${randomUUID()}`;
+    const acctItem = await insertItem({ accountId: account.accountId }, { key, kind: 'film', title: 'Merged twin' });
+    await recordPreference(actx, { action: 'save', target_type: 'discovery_item', target_id: acctItem });
+
+    const { principal: anon } = await anonCtx();
+    const sessItem = await insertItem({ sessionId: anon.sessionId }, { key, kind: 'film', title: 'Merged twin' });
+    await sessionSave(anon.sessionId, sessItem);
+
+    // Both histories saved the same canonical item: the claim merges the
+    // session's item onto the account's and ABSORBS the session's row into
+    // the account's instead of transferring it.
+    const claimed = await claim(anon.sessionId, account.accountId);
+    expect(claimed).toEqual({ captures: 0, saved_items: 0 });
+
+    // The merged state is ONE explicit endorsement on the account's own row,
+    // and the absorbed save event's lineage continues through that row
+    // (payload.saved_item_id repointed by the claim's canonical merge).
+    const snapshot = await loadExplicitSupport(db, account.accountId);
+    expect(snapshot.saves.map((s) => s.canonicalKey)).toEqual([key]);
+    expect(snapshot.exposureOnlyItemIds).toEqual([]);
+    expect(snapshot.saves[0]!.itemId).toBe(acctItem);
+    const accountRow = await db.query<{ id: string }>(
+      'SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+      [account.accountId, acctItem],
+    );
+    const absorbed = await db.query<{ saved_item_id: string | null }>(
+      `SELECT payload->>'saved_item_id' AS saved_item_id FROM preference_events
+        WHERE owner_account_id = $1 AND payload->>'claimed_session_id' = $2 AND action = 'save'`,
+      [account.accountId, anon.sessionId],
+    );
+    expect(absorbed.rows[0]!.saved_item_id).toBe(accountRow.rows[0]!.id);
+
+    await project(account.accountId);
+    expect(await savedItemSupport(account.accountId)).toEqual([{ canonicalKey: key }]);
+
+    // The account withdraws the merged save: BOTH histories' save events are
+    // superseded (the account's own natively, the absorbed one through the
+    // merged row), and auto-fill cannot revive either.
+    const removed = await recordPreference(actx, { action: 'remove', target_type: 'discovery_item', target_id: acctItem });
+    expect(removed.saved_item).toBeNull();
+    expect((await loadExplicitSupport(db, account.accountId)).saves).toEqual([]);
+    await fillInterestsBoard(db, account.accountId, [acctItem]);
+    const after = await loadExplicitSupport(db, account.accountId);
+    expect(after.saves).toEqual([]);
+    expect(after.exposureOnlyItemIds).toEqual([acctItem]);
+    await project(account.accountId);
+    expect(await savedItemSupport(account.accountId)).toEqual([]);
+    expect((await readReconciledInterestGraph(db, account.accountId)).interests).toEqual([]);
+  });
+
+  it('a legacy claimed save (written before per-save lineage) is still withdrawn by a post-claim remove', async () => {
+    const { principal: account, ctx: actx } = await accountCtx({ config: projectionOn });
+    const key = `test:${randomUUID()}`;
+    const { principal: anon } = await anonCtx();
+    const sessItem = await insertItem({ sessionId: anon.sessionId }, { key, kind: 'film', title: 'Transferred twin' });
+
+    // The event shape a pre-lineage history leaves behind: no saved_item_id.
+    await sessionSaveLegacy(anon.sessionId, sessItem);
+    const claimed = await claim(anon.sessionId, account.accountId);
+    expect(claimed).toEqual({ captures: 0, saved_items: 1 });
+    expect((await loadExplicitSupport(db, account.accountId)).saves.map((s) => s.canonicalKey)).toEqual([key]);
+
+    // The transition guarantee: a new (lineage-carrying) remove still
+    // withdraws the legacy transferred save, and a re-file stays
+    // exposure-only. For rows this old the ordering across an overlapping
+    // claim/withdrawal is inherently unknowable — the documented legacy
+    // ambiguity — but the ordinary sequential lifecycle keeps working.
+    const removed = await recordPreference(actx, { action: 'remove', target_type: 'discovery_item', target_id: sessItem });
+    expect(removed.saved_item).toBeNull();
+    expect((await loadExplicitSupport(db, account.accountId)).saves).toEqual([]);
+    await fillInterestsBoard(db, account.accountId, [sessItem]);
+    const after = await loadExplicitSupport(db, account.accountId);
+    expect(after.saves).toEqual([]);
+    expect(after.exposureOnlyItemIds).toEqual([sessItem]);
+    await project(account.accountId);
+    expect(await savedItemSupport(account.accountId)).toEqual([]);
   });
 
   it('the merged account projects the same canonical state as a clean equivalent account (fresh-fold parity)', async () => {
