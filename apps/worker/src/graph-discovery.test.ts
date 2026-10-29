@@ -65,8 +65,8 @@ interface StateRow {
   target: number;
 }
 
-async function stateRow(accountId: string): Promise<StateRow | null> {
-  const { rows } = await db.query<StateRow>(
+async function stateRow(accountId: string, dbFor: PoolDb = db): Promise<StateRow | null> {
+  const { rows } = await dbFor.query<StateRow>(
     `SELECT state, applied_taste_revision AS applied, target_taste_revision AS target
        FROM personal_graph_state WHERE owner_account_id = $1`,
     [accountId],
@@ -75,16 +75,20 @@ async function stateRow(accountId: string): Promise<StateRow | null> {
 }
 
 /** A corpus identity with a linked cultural reference, and an account-owned item on it. */
-async function savedCorpusItem(ctx: Awaited<ReturnType<typeof accountCtx>>, accountId: string) {
+async function savedCorpusItem(
+  ctx: Awaited<ReturnType<typeof accountCtx>>,
+  accountId: string,
+  dbFor: PoolDb = db,
+) {
   const name = `work-${randomUUID().slice(0, 6)}`;
   const reference = (
-    await db.query<{ id: string }>(
+    await dbFor.query<{ id: string }>(
       `INSERT INTO cultural_references (canonical_name, canonical_key, type, external_ids, research_status)
        VALUES ($1, $2, 'style', '{}'::jsonb, 'complete') RETURNING id`,
       [name, `test:${randomUUID()}`],
     )
   ).rows[0]!.id;
-  const node = await upsertGraphIdentity(db, {
+  const node = await upsertGraphIdentity(dbFor, {
     canonicalKey: `atlas:${randomUUID()}`,
     canonicalName: name,
     nodeKind: 'work',
@@ -93,7 +97,7 @@ async function savedCorpusItem(ctx: Awaited<ReturnType<typeof accountCtx>>, acco
     culturalReferenceId: reference,
   });
   const itemId = (
-    await db.query<{ id: string }>(
+    await dbFor.query<{ id: string }>(
       `INSERT INTO discovery_items (owner_account_id, kind, category, canonical_key, title, reference_id)
        VALUES ($1, 'film', 'watch', $2, $3, $4) RETURNING id`,
       [accountId, `test:${randomUUID()}`, name, reference],
@@ -112,8 +116,8 @@ interface JobRow {
   budget: { qloo_requests?: number; deadline_ms?: number };
 }
 
-async function jobsOf(accountId: string, type: string): Promise<JobRow[]> {
-  const { rows } = await db.query<JobRow>(
+async function jobsOf(accountId: string, type: string, dbFor: PoolDb = db): Promise<JobRow[]> {
+  const { rows } = await dbFor.query<JobRow>(
     `SELECT id, state, result_type, result_id, dedupe_key, budget FROM jobs
       WHERE owner_account_id = $1 AND type = $2 ORDER BY created_at`,
     [accountId, type],
@@ -121,17 +125,20 @@ async function jobsOf(accountId: string, type: string): Promise<JobRow[]> {
   return rows;
 }
 
-async function refreshRow(accountId: string): Promise<{ expansion_due_since: Date | null; last_expansion_at: Date | null }> {
-  const { rows } = await db.query<{ expansion_due_since: Date | null; last_expansion_at: Date | null }>(
+async function refreshRow(
+  accountId: string,
+  dbFor: PoolDb = db,
+): Promise<{ expansion_due_since: Date | null; last_expansion_at: Date | null }> {
+  const { rows } = await dbFor.query<{ expansion_due_since: Date | null; last_expansion_at: Date | null }>(
     'SELECT expansion_due_since, last_expansion_at FROM graph_refresh_state WHERE owner_account_id = $1',
     [accountId],
   );
   return rows[0] ?? { expansion_due_since: null, last_expansion_at: null };
 }
 
-function makeWorker(ctx: Awaited<ReturnType<typeof accountCtx>>): Worker {
+function makeWorker(ctx: Awaited<ReturnType<typeof accountCtx>>, dbFor: PoolDb = db): Worker {
   return new Worker({
-    db: getTestDb(),
+    db: dbFor,
     providers: ctx.providers,
     config,
     handlers: JOB_HANDLERS,
@@ -145,61 +152,77 @@ function makeWorker(ctx: Awaited<ReturnType<typeof accountCtx>>): Worker {
 describe('graph discovery through the real worker', () => {
   it('a mutation becomes due work and one bounded expansion with the app closed and no feed read', async () => {
     const { providers } = world({ qloo: {}, research: false, composer: false });
-    const ctx = await accountCtx(providers, config);
-    if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
-    const accountId = ctx.principal.accountId;
-    const saved = await savedCorpusItem(ctx, accountId);
     const qloo = providers.qloo as FakeQloo;
 
-    // The app is closed: no feed read, no discovery GET. The mutation is
-    // committed and the operator's worker alone carries the chain.
-    await makeWorker(ctx).drain();
+    // This test's drain is deliberately UNSCOPED — it is the operator's whole
+    // worker carrying the closed-app chain — so it runs against a provably
+    // isolated queue: a fresh per-test database that holds only this test's
+    // account, its intents and the jobs its own chain enqueues
+    // (docs/ARCHITECTURE.md: scope drains by job id, or isolate the queue).
+    // The shared per-run database instead holds queued work from other files,
+    // which an unscoped drain would claim and spend this test's fake Qloo on.
+    const created = await createIsolatedDatabase('scrdwclosed');
+    const isoDb = created.db;
+    try {
+      const owner = await insertAccount(isoDb);
+      const ctx = testContext(owner, { db: isoDb, providers, config });
+      if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+      const accountId = ctx.principal.accountId;
+      const saved = await savedCorpusItem(ctx, accountId, isoDb);
 
-    // 1. The mutation was projected (state caught up, outbox satisfied).
-    const state = await stateRow(accountId);
-    expect(state?.state).toBe('ready');
-    expect(state?.applied).toBe(state?.target);
-    expect((await jobsOf(accountId, 'project_interest_graph')).every((j) => j.state === 'complete')).toBe(true);
+      // The app is closed: no feed read, no discovery GET. The mutation is
+      // committed and the operator's worker alone carries the chain.
+      await makeWorker(ctx, isoDb).drain();
 
-    // 2. The committed projection's due work was handed to the queue by the
-    //    worker's own expansion sweep, as exactly ONE bounded job.
-    const expansions = await jobsOf(accountId, 'expand_interest_graph');
-    expect(expansions).toHaveLength(1);
-    expect(expansions[0]!.state).toBe('complete');
-    expect(expansions[0]!.result_type).toBe('graph_expansion');
-    expect(expansions[0]!.budget.qloo_requests).toBe(4);
-    expect(expansions[0]!.budget.deadline_ms).toBe(45_000);
+      // 1. The mutation was projected (state caught up, outbox satisfied).
+      const state = await stateRow(accountId, isoDb);
+      expect(state?.state).toBe('ready');
+      expect(state?.applied).toBe(state?.target);
+      expect((await jobsOf(accountId, 'project_interest_graph', isoDb)).every((j) => j.state === 'complete')).toBe(true);
 
-    // 3. The completed run consumed the due marker it covered and closed the
-    //    logical window's durable budget (never resettable by redelivery).
-    const refresh = await refreshRow(accountId);
-    expect(refresh.expansion_due_since).toBeNull();
-    expect(refresh.last_expansion_at).toBeInstanceOf(Date);
-    const budget = (
-      await db.query<{ state: string; qloo_attempts_max: number; qloo_attempts_used: number; deadline_ms: number }>(
-        `SELECT state, qloo_attempts_max, qloo_attempts_used, deadline_ms FROM graph_work_budgets
-          WHERE owner_account_id = $1 AND work_key = $2`,
-        [accountId, expansions[0]!.dedupe_key],
-      )
-    ).rows[0];
-    expect(budget?.state).toBe('complete');
-    expect(budget?.qloo_attempts_max).toBe(4);
-    expect(budget?.qloo_attempts_used).toBeLessThanOrEqual(4);
-    expect(budget?.deadline_ms).toBe(45_000);
+      // 2. The committed projection's due work was handed to the queue by the
+      //    worker's own expansion sweep, as exactly ONE bounded job.
+      const expansions = await jobsOf(accountId, 'expand_interest_graph', isoDb);
+      expect(expansions).toHaveLength(1);
+      expect(expansions[0]!.state).toBe('complete');
+      expect(expansions[0]!.result_type).toBe('graph_expansion');
+      expect(expansions[0]!.budget.qloo_requests).toBe(4);
+      expect(expansions[0]!.budget.deadline_ms).toBe(45_000);
 
-    // 4. Honest spend accounting: every reserved attempt of this window was a
-    //    real Qloo HTTP attempt (the shared test database may hold other
-    //    files' queued work this worker also drained, hence the lower bound).
-    expect(qloo.calls.length).toBeGreaterThanOrEqual(budget?.qloo_attempts_used ?? 0);
-    expect(budget?.qloo_attempts_used).toBeLessThanOrEqual(4);
+      // 3. The completed run consumed the due marker it covered and closed the
+      //    logical window's durable budget (never resettable by redelivery).
+      const refresh = await refreshRow(accountId, isoDb);
+      expect(refresh.expansion_due_since).toBeNull();
+      expect(refresh.last_expansion_at).toBeInstanceOf(Date);
+      const budget = (
+        await isoDb.query<{ state: string; qloo_attempts_max: number; qloo_attempts_used: number; deadline_ms: number }>(
+          `SELECT state, qloo_attempts_max, qloo_attempts_used, deadline_ms FROM graph_work_budgets
+            WHERE owner_account_id = $1 AND work_key = $2`,
+          [accountId, expansions[0]!.dedupe_key],
+        )
+      ).rows[0];
+      expect(budget?.state).toBe('complete');
+      expect(budget?.qloo_attempts_max).toBe(4);
+      expect(budget?.qloo_attempts_used).toBeLessThanOrEqual(4);
+      expect(budget?.deadline_ms).toBe(45_000);
 
-    // 5. The projected root the expansion walked is in the account's graph.
-    const { rows: edges } = await db.query<{ n: number }>(
-      'SELECT count(*)::int AS n FROM personal_interest_edges WHERE owner_account_id = $1',
-      [accountId],
-    );
-    expect(Number(edges[0]!.n)).toBeGreaterThanOrEqual(1);
-    expect(saved.nodeId).toBeDefined();
+      // 4. Honest spend accounting: every reserved attempt of this window was a
+      //    real Qloo HTTP attempt. The drain is provably isolated to this
+      //    test's chain, so this fake saw only this account's work; the lower
+      //    bound stays the conservative check.
+      expect(qloo.calls.length).toBeGreaterThanOrEqual(budget?.qloo_attempts_used ?? 0);
+      expect(budget?.qloo_attempts_used).toBeLessThanOrEqual(4);
+
+      // 5. The projected root the expansion walked is in the account's graph.
+      const { rows: edges } = await isoDb.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM personal_interest_edges WHERE owner_account_id = $1',
+        [accountId],
+      );
+      expect(Number(edges[0]!.n)).toBeGreaterThanOrEqual(1);
+      expect(saved.nodeId).toBeDefined();
+    } finally {
+      await created.drop();
+    }
   });
 
   it('a feed read only enqueues deduplicated due work; it never spends inline', async () => {
@@ -254,9 +277,13 @@ describe('graph discovery through the real worker', () => {
       maxAttempts: 3,
     });
 
-    // Run the legacy job through the real worker: it completes without any
-    // Qloo spend — the graph account's refresh belongs to the graph sweep.
-    await makeWorker(ctx).drain();
+    // Run the legacy job through the real worker, scoped to exactly this
+    // test-created job id (docs/ARCHITECTURE.md: `new Worker({jobIds})`):
+    // the shared per-run database holds queued work from other files, and an
+    // unscoped drain would claim it and spend this test's fake Qloo on it.
+    // The legacy handler still completes without any Qloo spend — the graph
+    // account's refresh belongs to the graph sweep.
+    await runJobs(ctx, [enqueued.job.id]);
 
     const legacy = await jobsOf(accountId, 'interest_expand');
     expect(legacy).toHaveLength(1);
@@ -348,6 +375,115 @@ describe('graph discovery through the real worker', () => {
     );
     expect(Number(runs[0]!.n)).toBe(0);
     expect(qloo.calls).toHaveLength(0);
+  });
+});
+
+describe('real-worker drains stay scoped to owned jobs in the shared queue', () => {
+  /**
+   * The serial gate's historical flake, made deterministic. The per-run test
+   * database is shared by every file of the run, and this file's real-worker
+   * drains used to be UNSCOPED: a queued job left behind by an earlier file
+   * was claimable by a later file's drain, which then ran the FOREIGN work
+   * through the current test's fake providers — observed once as five
+   * unexpected FakeQloo calls inside 'the legacy expansion handler refuses
+   * to spend for a graph-discovery account' (that one full serial gate exit
+   * is preserved as history in library/graph.md). docs/ARCHITECTURE.md
+   * mandates the discipline: when a test drives the queue, claim jobs by id
+   * (`new Worker({jobIds})`), or provably isolate the queue.
+   *
+   * The fixture reproduces the pickup under full control, on a per-test
+   * isolated database holding exactly one owned job and one FOREIGN queued
+   * job that spends Qloo the moment any drain claims it.
+   */
+  it('only the owned job executes: a foreign queued job is never claimed and makes zero Qloo calls', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const qloo = providers.qloo as FakeQloo;
+    const created = await createIsolatedDatabase('scrdwforeign');
+    const isoDb = created.db;
+    try {
+      // The owned job: the exact legacy-refuses shape — a graph-discovery
+      // account's legacy expansion job, which must complete without spend.
+      const ownedOwner = await insertAccount(isoDb);
+      const ownedCtx = testContext(ownedOwner, { db: isoDb, providers, config });
+      if (ownedCtx.principal.kind !== 'account') throw new Error('test requires an account principal');
+      const owned = await enqueueJob(isoDb, {
+        type: 'interest_expand',
+        owner: { kind: 'account', accountId: ownedCtx.principal.accountId },
+        payload: { wave: 0, category: 'watch' },
+        maxAttempts: 3,
+      });
+
+      // The foreign job: another account's queued related discovery — the
+      // durable shape an earlier test file leaves behind — which spends Qloo
+      // (origin resolution + per-category insights) the moment it is claimed.
+      const foreignOwner = await insertAccount(isoDb);
+      const foreignCtx = testContext(foreignOwner, { db: isoDb, providers, config });
+      const foreignItem = (
+        await isoDb.query<{ id: string }>(
+          `INSERT INTO discovery_items (owner_account_id, kind, category, canonical_key, title,
+                                        display_metadata, external_ids)
+           VALUES ($1, 'film', 'watch', $2, $3, '{}'::jsonb, $4::jsonb) RETURNING id`,
+          [foreignOwner.accountId, `test:${randomUUID()}`, 'Playtime', JSON.stringify({ qloo: randomUUID() })],
+        )
+      ).rows[0]!.id;
+      const foreign = await items.startRelatedDiscovery(foreignCtx, { id: foreignItem, body: {} });
+
+      const foreignJob = async () =>
+        (
+          await isoDb.query<{ state: string; attempt: number; lease_owner: string | null }>(
+            'SELECT state, attempt, lease_owner FROM jobs WHERE id = $1',
+            [foreign.job_id],
+          )
+        ).rows[0]!;
+
+      // The corrected harness: a drain scoped to exactly the test-created
+      // job id (docs/ARCHITECTURE.md: `new Worker({jobIds})`). jobIds also
+      // turns the worker's own periodic sweeps off, so nothing beyond the
+      // owned job is even enqueued, let alone claimable.
+      const scoped = new Worker({
+        db: isoDb,
+        providers,
+        config,
+        handlers: JOB_HANDLERS,
+        log: () => undefined,
+        heartbeatMs: 1_000,
+        jobIds: [owned.job.id],
+      });
+      await scoped.drain();
+
+      // Only the owned job executed: it completed, the foreign job was never
+      // claimed (still queued at its initial attempt with no lease owner),
+      // and no unrelated paid/fake Qloo call occurred.
+      const ownedState = (
+        await isoDb.query<{ state: string }>('SELECT state FROM jobs WHERE id = $1', [owned.job.id])
+      ).rows[0]!.state;
+      expect(ownedState).toBe('complete');
+      expect(await foreignJob()).toMatchObject({ state: 'queued', attempt: 0, lease_owner: null });
+      expect(qloo.calls).toHaveLength(0);
+
+      // The reproduction, quarantined on this test's own isolated queue: the
+      // SAME two jobs drained the OLD way (an unscoped worker, exactly this
+      // file's historical makeWorker shape) — the unscoped drain DOES claim
+      // the foreign job and spends through the current test's fake Qloo,
+      // proving the fixture models the real pickup this file's drains are
+      // now scoped against.
+      const unscoped = new Worker({
+        db: isoDb,
+        providers,
+        config,
+        handlers: JOB_HANDLERS,
+        log: () => undefined,
+        heartbeatMs: 1_000,
+        graphDispatchEveryMs: 0,
+        graphExpansionEveryMs: 0,
+      });
+      await unscoped.drain();
+      const claimed = await foreignJob();
+      expect(claimed.attempt).toBeGreaterThan(0);
+      expect(qloo.calls.length).toBeGreaterThan(0);
+    } finally {
+      await created.drop();
+    }
   });
 });
 
