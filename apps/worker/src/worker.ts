@@ -194,8 +194,13 @@ export class Worker {
       ids: this.opts.jobIds,
     });
     for (const job of jobs) {
-      const p = this.execute(job).finally(() => this.running.delete(job.id));
-      this.running.set(job.id, p);
+      // Executions are tracked by (job, attempt): this worker can reclaim its
+      // own lapsed job at a newer attempt while the old execution is still
+      // running, and the old execution settling must never erase the
+      // successor's slot (drain/stop await both executions).
+      const key = `${job.id}#${job.attempt}`;
+      const p = this.execute(job).finally(() => this.running.delete(key));
+      this.running.set(key, p);
     }
     return jobs.length;
   }
@@ -240,7 +245,7 @@ export class Worker {
     };
     const deadline = setTimeout(() => abort('deadline'), deadlineMs);
     const heartbeat = setInterval(() => {
-      heartbeatJob(db, job.id, this.workerId, this.leaseMs)
+      heartbeatJob(db, job.id, this.workerId, job.attempt, this.leaseMs)
         .then((ok) => {
           if (!ok) abort('lease lost or cancelled');
         })
@@ -272,11 +277,11 @@ export class Worker {
         deadlineMs,
       },
       setStage: async (stage) => {
-        if (!(await setJobStage(db, job.id, this.workerId, stage))) abort('lease lost');
+        if (!(await setJobStage(db, job.id, this.workerId, job.attempt, stage))) abort('lease lost');
       },
       runStage: (stage, fn) => runStageOnce(db, { jobId: job.id, stage, attempt: job.attempt }, fn),
       ensureActive: async () => {
-        if (controller.signal.aborted || !(await stillOwnsJob(db, job.id, this.workerId))) {
+        if (controller.signal.aborted || !(await stillOwnsJob(db, job.id, this.workerId, job.attempt))) {
           abort('cancelled');
           throw new JobCancelledError(stopReason ?? 'cancelled');
         }
@@ -296,14 +301,14 @@ export class Worker {
       if (!handler) throw new AppError('internal', { message: `No handler for job type ${job.type}`, retryable: false });
       const outcome = await handler(ctx);
       if (controller.signal.aborted && stopReason !== 'deadline') throw new JobCancelledError(stopReason ?? 'cancelled');
-      const ok = await completeJob(db, job.id, this.workerId, outcome);
+      const ok = await completeJob(db, job.id, this.workerId, job.attempt, outcome);
       if (!ok) this.log('completion rejected (lease lost)', { jobId: job.id });
     } catch (err) {
       if (err instanceof JobCancelledError || (controller.signal.aborted && stopReason !== 'deadline')) {
-        await markJobCancelled(db, job.id, this.workerId);
+        await markJobCancelled(db, job.id, this.workerId, job.attempt);
         this.log('stopped', { jobId: job.id, reason: stopReason ?? (err as Error).message });
       } else if (stopReason === 'deadline') {
-        await failJob(db, job.id, this.workerId, {
+        await failJob(db, job.id, this.workerId, job.attempt, {
           code: 'service_unavailable',
           message: 'The job did not finish in time.',
           retryable: true,
@@ -311,7 +316,7 @@ export class Worker {
       } else {
         const { failure, retryAfterMs } = toFailure(err);
         if (failure.code === 'internal') this.log('handler error', { jobId: job.id, error: (err as Error).message });
-        await failJob(db, job.id, this.workerId, failure, { retryAfterMs });
+        await failJob(db, job.id, this.workerId, job.attempt, failure, { retryAfterMs });
       }
     } finally {
       clearTimeout(deadline);

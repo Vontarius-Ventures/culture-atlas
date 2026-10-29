@@ -131,7 +131,7 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
       // after a lost/superseded lease or after its logical window ended
       // cannot exist.
       fence: async (tx) => {
-        if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new GraphFenceError('lease_lost');
+        if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId, ctx.attempt))) throw new GraphFenceError('lease_lost');
         // The durable deadline, re-read with the transaction's own clock: a
         // delayed SQL/lock wait cannot commit past the original anchor.
         if (await graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey })) {

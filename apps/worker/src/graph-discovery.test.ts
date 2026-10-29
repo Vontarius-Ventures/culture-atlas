@@ -20,6 +20,7 @@ import {
   preferences,
   upsertGraphIdentity,
   type Db,
+  type DomainConfig,
   type JobHandlerMap,
   type PoolDb,
 } from '@culture-atlas/domain';
@@ -592,9 +593,12 @@ describe('scoped Discover more queue attempt fencing through the real worker (DI
   }
 
   /** A fresh scoped library on the isolated corpus database: owner + granted agent + anchored origin. */
-  async function scopedQueueLibrary(providers: Awaited<ReturnType<typeof world>>['providers']): Promise<ScopedQueueLibrary> {
+  async function scopedQueueLibrary(
+    providers: Awaited<ReturnType<typeof world>>['providers'],
+    libraryConfig: DomainConfig = config,
+  ): Promise<ScopedQueueLibrary> {
     const owner = await insertAccount(isoDb);
-    const ownerCtx = testContext(owner, { db: isoDb, providers, config });
+    const ownerCtx = testContext(owner, { db: isoDb, providers, config: libraryConfig });
     const ref = (canonicalKey: string, name: string, qlooId: string) =>
       isoDb
         .query<{ id: string }>(
@@ -628,7 +632,7 @@ describe('scoped Discover more queue attempt fencing through the real worker (DI
       accountId: owner.accountId,
       origin,
       collection,
-      agentCtx: testContext(agent.principal, { db: isoDb, providers, config }),
+      agentCtx: testContext(agent.principal, { db: isoDb, providers, config: libraryConfig }),
     };
   }
 
@@ -749,7 +753,8 @@ describe('scoped Discover more queue attempt fencing through the real worker (DI
       const cancelled = cancelJob(isoDb, jobId);
       void cancelled.catch(() => undefined);
       await waitForLockWaiters('%UPDATE jobs SET cancel_requested_at%', 1);
-      const heartbeat = heartbeatJob(isoDb, jobId, 'w-real', 30_000);
+      // The current attempt's heartbeat (the worker claimed attempt 1).
+      const heartbeat = heartbeatJob(isoDb, jobId, 'w-real', 1, 30_000);
       void heartbeat.catch(() => undefined);
       await waitForLockWaiters('%UPDATE jobs SET lease_expiry%', 1);
 
@@ -868,4 +873,72 @@ describe('scoped Discover more queue attempt fencing through the real worker (DI
     expect(job).toMatchObject({ state: 'complete', lease_owner: null, attempt: 1 });
     expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 1, proofs: 1 });
   }, 20_000);
+
+  it('a SAME-worker reclaim supersedes the parked pass: its cancelled-cleanup cannot cancel the successor the same worker then converges', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    // A real production knob (JOB_MAX_ATTEMPTS) widens the retry budget so
+    // the same worker can reclaim twice: the manually transferred attempt 2
+    // and the converging attempt 3.
+    const fenceConfig = testConfig({
+      INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
+      INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
+      JOB_MAX_ATTEMPTS: '5',
+    });
+    const lib = await scopedQueueLibrary(providers, fenceConfig);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+
+    const park = parkedDb(isoDb, GUARD_PATTERN);
+    const worker = new Worker({
+      db: isoDb,
+      providers,
+      config: fenceConfig,
+      handlers: parkedHandlers(park),
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real',
+      heartbeatMs: 60_000,
+      leaseMs: 30_000,
+      // The parked old execution occupies the worker's only slot, so the
+      // reclaim below is the sole same-worker transfer of the lapsed lease.
+      concurrency: 1,
+    });
+    const drained = worker.drain();
+    try {
+      await park.arrived;
+
+      // The lease lapses and the SAME worker reclaims its own job at a
+      // newer attempt while the old execution is still parked at its guard.
+      await isoDb.query(`UPDATE jobs SET lease_expiry = now() - interval '1 second' WHERE id = $1`, [jobId]);
+      const [reclaimed] = await claimJobs(isoDb, { workerId: 'w-real', limit: 1, leaseMs: 30_000, ids: [jobId] });
+      expect(reclaimed?.attempt).toBe(2);
+
+      park.release();
+      await drained;
+
+      // The superseded pass rejected (its pinned attempt is gone); its
+      // cancelled-cleanup must NOT have cancelled the successor attempt the
+      // same worker now holds, and the old attempt published nothing.
+      const superseded = await jobRowOf(jobId);
+      expect(superseded).toMatchObject({ state: 'running', lease_owner: 'w-real', attempt: 2 });
+      expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 0, proofs: 0 });
+
+      // Successor convergence through the SAME real worker: its own loop
+      // reclaims the lapsed successor lease at attempt 3 and publishes.
+      await isoDb.query(`UPDATE jobs SET lease_expiry = now() - interval '1 second' WHERE id = $1`, [jobId]);
+      const converged = worker.drain();
+      await converged;
+      const jobAfter = await jobRowOf(jobId);
+      expect(jobAfter).toMatchObject({ state: 'complete', lease_owner: null, attempt: 3 });
+      expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 1, proofs: 1 });
+      const { rows: discovery } = await isoDb.query<{ status: string }>(
+        'SELECT status FROM discovery_jobs WHERE id = $1',
+        [discoveryJobId],
+      );
+      expect(discovery[0]!.status).toBe('complete');
+    } finally {
+      park.release();
+      await worker.stop().catch(() => undefined);
+      await drained.catch(() => undefined);
+    }
+  }, 30_000);
 });

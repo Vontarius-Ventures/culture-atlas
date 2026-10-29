@@ -435,7 +435,7 @@ describe('queue writers arriving during the tail wait queue behind the publicati
       const cancelled = cancelJob(isoDb, jobId);
       void cancelled.catch(() => undefined);
       await waitForLockWaiters('%UPDATE jobs SET cancel_requested_at%', 1);
-      const heartbeat = heartbeatJob(isoDb, jobId, 'w1', 60_000);
+      const heartbeat = heartbeatJob(isoDb, jobId, 'w1', attempt, 60_000);
       void heartbeat.catch(() => undefined);
       await waitForLockWaiters('%UPDATE jobs SET lease_expiry%', 1);
 
@@ -443,8 +443,8 @@ describe('queue writers arriving during the tail wait queue behind the publicati
       // its own row (the lock is row-scoped, never a queue-wide stop).
       const other = await scopedLibrary();
       const otherStarted = await enqueueScoped(other);
-      await claimScoped(otherStarted.jobId, 'wother');
-      expect(await heartbeatJob(isoDb, otherStarted.jobId, 'wother', 60_000)).toBe(true);
+      const otherAttempt = await claimScoped(otherStarted.jobId, 'wother');
+      expect(await heartbeatJob(isoDb, otherStarted.jobId, 'wother', otherAttempt, 60_000)).toBe(true);
 
       // The publication commits under exactly the authority it validated…
       gated.open();

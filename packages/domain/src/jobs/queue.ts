@@ -13,10 +13,16 @@ import { JobPayloads, type JobBudget, type JobFailure, type JobPayload, type Job
  *    FOR NO KEY UPDATE SKIP LOCKED; increments attempt. NO KEY: rows that
  *    reference a job (trace_events, job_stages) take FOR KEY SHARE on insert,
  *    which FOR UPDATE would conflict with, silently skipping a queued job.
- *  - heartbeatJob: extend the lease; returns false when the lease was lost or
- *    cancellation was requested (the handler must stop without publishing).
- *  - completeJob / failJob: guarded by lease_owner so a worker that lost its
- *    lease cannot overwrite a newer attempt.
+ *  - heartbeatJob / setJobStage / stillOwnsJob: lease observations are pinned
+ *    to the CLAIMED ATTEMPT. A worker that reclaims its own lapsed job at a
+ *    newer attempt is a different execution: the old attempt's beats, progress
+ *    and ownership reads must neither renew nor legitimate the successor.
+ *  - completeJob / failJob / markJobCancelled: terminal writes are guarded by
+ *    lease_owner AND the claimed attempt, so an execution that lost its lease
+ *    cannot overwrite a newer attempt — including its own successor attempt
+ *    after the same worker reclaimed the job. failJob pins the attempt in both
+ *    its SELECT and its UPDATE, so a reclaim committing between them cannot
+ *    let the old execution mutate the successor row.
  */
 
 const JOB_COLUMNS = '*';
@@ -135,34 +141,40 @@ export async function reapJobs(db: Queryable): Promise<{ failed: number; cancell
   return { failed: failed.rowCount ?? 0, cancelled: cancelled.rowCount ?? 0 };
 }
 
-/** Extends the lease. Returns false if the lease is lost or cancellation was requested. */
+/**
+ * Extends the lease of the claimed attempt. Returns false if the lease was
+ * lost — including a same-worker newer attempt that reclaimed the job — or if
+ * cancellation was requested (the handler must stop without publishing).
+ */
 export async function heartbeatJob(
   db: Queryable,
   jobId: string,
   workerId: string,
+  attempt: number,
   leaseMs: number,
 ): Promise<boolean> {
   const { rows } = await db.query<{ cancel_requested_at: Date | null }>(
-    `UPDATE jobs SET lease_expiry = now() + ($3::int * interval '1 millisecond'),
+    `UPDATE jobs SET lease_expiry = now() + ($4::int * interval '1 millisecond'),
             heartbeat_at = now(), updated_at = now()
-      WHERE id = $1 AND lease_owner = $2 AND state = 'running'
+      WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND state = 'running'
       RETURNING cancel_requested_at`,
-    [jobId, workerId, leaseMs],
+    [jobId, workerId, attempt, leaseMs],
   );
   return rows.length === 1 && rows[0]!.cancel_requested_at === null;
 }
 
-/** Updates the public progress stage. Returns false if the lease was lost. */
+/** Updates the public progress stage of the claimed attempt. Returns false if the lease was lost (including a same-worker newer attempt). */
 export async function setJobStage(
   db: Queryable,
   jobId: string,
   workerId: string,
+  attempt: number,
   stage: string,
 ): Promise<boolean> {
   const r = await db.query(
-    `UPDATE jobs SET stage = $3, updated_at = now()
-      WHERE id = $1 AND lease_owner = $2 AND state = 'running'`,
-    [jobId, workerId, stage],
+    `UPDATE jobs SET stage = $4, updated_at = now()
+      WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND state = 'running'`,
+    [jobId, workerId, attempt, stage],
   );
   return r.rowCount === 1;
 }
@@ -171,15 +183,16 @@ export async function completeJob(
   db: Queryable,
   jobId: string,
   workerId: string,
+  attempt: number,
   outcome: { state: 'complete' | 'partial'; resultType?: string; resultId?: string },
 ): Promise<boolean> {
   const r = await db.query(
-    `UPDATE jobs SET state = $3, result_type = COALESCE($4, result_type),
-            result_id = COALESCE($5, result_id), lease_owner = NULL, lease_expiry = NULL,
+    `UPDATE jobs SET state = $4, result_type = COALESCE($5, result_type),
+            result_id = COALESCE($6, result_id), lease_owner = NULL, lease_expiry = NULL,
             error_code = NULL, error_message = NULL, error_retryable = NULL,
             finished_at = now(), updated_at = now()
-      WHERE id = $1 AND lease_owner = $2 AND state = 'running'`,
-    [jobId, workerId, outcome.state, outcome.resultType ?? null, outcome.resultId ?? null],
+      WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND state = 'running'`,
+    [jobId, workerId, attempt, outcome.state, outcome.resultType ?? null, outcome.resultId ?? null],
   );
   return r.rowCount === 1;
 }
@@ -191,33 +204,38 @@ export function backoffMs(attempt: number, baseMs = 1000, capMs = 60_000): numbe
 }
 
 /**
- * Records a failure. Retryable failures with attempts left are re-queued with
- * backoff (state 'queued'); otherwise the job becomes 'failed'.
+ * Records a failure for the claimed attempt. Retryable failures with attempts
+ * left are re-queued with backoff (state 'queued'); otherwise the job becomes
+ * 'failed'. The attempt is pinned in BOTH statements: the lease_owner guard
+ * cannot distinguish the same worker's own successor attempt after it
+ * reclaimed the job, and a reclaim committing between this SELECT and the
+ * UPDATE below must not let the old execution requeue or fail the successor.
  */
 export async function failJob(
   db: Queryable,
   jobId: string,
   workerId: string,
+  attempt: number,
   failure: JobFailure,
   options: { retryAfterMs?: number } = {},
 ): Promise<{ state: JobState } | null> {
   const { rows } = await db.query<{ attempt: number; max_attempts: number }>(
-    `SELECT attempt, max_attempts FROM jobs WHERE id = $1 AND lease_owner = $2 AND state = 'running'`,
-    [jobId, workerId],
+    `SELECT attempt, max_attempts FROM jobs WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND state = 'running'`,
+    [jobId, workerId, attempt],
   );
   const row = rows[0];
   if (!row) return null;
   const retry = failure.retryable && row.attempt < row.max_attempts;
   const delay = options.retryAfterMs ?? backoffMs(row.attempt);
   const r = await db.query<{ state: JobState }>(
-    `UPDATE jobs SET state = $3, error_code = $4, error_message = $5, error_retryable = $6,
-            available_at = CASE WHEN $3 = 'queued' THEN now() + ($7::int * interval '1 millisecond') ELSE available_at END,
+    `UPDATE jobs SET state = $4, error_code = $5, error_message = $6, error_retryable = $7,
+            available_at = CASE WHEN $4 = 'queued' THEN now() + ($8::int * interval '1 millisecond') ELSE available_at END,
             lease_owner = NULL, lease_expiry = NULL,
-            finished_at = CASE WHEN $3 = 'failed' THEN now() ELSE NULL END,
+            finished_at = CASE WHEN $4 = 'failed' THEN now() ELSE NULL END,
             updated_at = now()
-      WHERE id = $1 AND lease_owner = $2 AND state = 'running'
+      WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND state = 'running'
       RETURNING state`,
-    [jobId, workerId, retry ? 'queued' : 'failed', failure.code, failure.message, failure.retryable, delay],
+    [jobId, workerId, attempt, retry ? 'queued' : 'failed', failure.code, failure.message, failure.retryable, delay],
   );
   return r.rows[0] ?? null;
 }
@@ -256,13 +274,18 @@ export async function cancelJobsForResult(
   return r.rowCount ?? 0;
 }
 
-/** Called by a worker that stopped because cancellation was requested. */
-export async function markJobCancelled(db: Queryable, jobId: string, workerId: string): Promise<boolean> {
+/**
+ * Called by a worker that stopped because cancellation was requested. Only
+ * the claimed attempt's row is finalized: a superseded execution — even this
+ * same worker's, after it reclaimed the job at a newer attempt — cannot
+ * cancel the successor.
+ */
+export async function markJobCancelled(db: Queryable, jobId: string, workerId: string, attempt: number): Promise<boolean> {
   const r = await db.query(
     `UPDATE jobs SET state = 'cancelled', lease_owner = NULL, lease_expiry = NULL,
             finished_at = now(), updated_at = now()
-      WHERE id = $1 AND lease_owner = $2 AND state = 'running'`,
-    [jobId, workerId],
+      WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND state = 'running'`,
+    [jobId, workerId, attempt],
   );
   return r.rowCount === 1;
 }
@@ -272,12 +295,16 @@ export async function getJobById(db: Queryable, jobId: string): Promise<JobRecor
   return rows[0] ?? null;
 }
 
-/** True when the job is still owned by this worker and not cancelled. Use before publishing. */
-export async function stillOwnsJob(db: Queryable, jobId: string, workerId: string): Promise<boolean> {
+/**
+ * True when the claimed attempt of the job is still owned by this worker and
+ * not cancelled. Use before publishing: the claimed attempt separates this
+ * execution from a newer attempt of the same job under the same worker id.
+ */
+export async function stillOwnsJob(db: Queryable, jobId: string, workerId: string, attempt: number): Promise<boolean> {
   const { rows } = await db.query(
-    `SELECT 1 FROM jobs WHERE id = $1 AND lease_owner = $2 AND state = 'running'
+    `SELECT 1 FROM jobs WHERE id = $1 AND lease_owner = $2 AND attempt = $3 AND state = 'running'
         AND cancel_requested_at IS NULL AND lease_expiry > now()`,
-    [jobId, workerId],
+    [jobId, workerId, attempt],
   );
   return rows.length === 1;
 }

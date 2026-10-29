@@ -170,7 +170,7 @@ async function runProjectionJob(jobId: string): Promise<{ state: string; resultT
   };
   const outcome = await projectInterestGraph(ctx);
   if (outcome.state === 'complete' || outcome.state === 'partial') {
-    await completeJob(iso.db, job.id, workerId, outcome);
+    await completeJob(iso.db, job.id, workerId, job.attempt, outcome);
   }
   return outcome;
 }

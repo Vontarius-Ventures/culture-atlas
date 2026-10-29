@@ -421,7 +421,7 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
               details: { rule: 'stale_authority' },
             });
           }
-          if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new JobCancelledError('lease lost');
+          if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId, ctx.attempt))) throw new JobCancelledError('lease lost');
           // The durable deadline, re-read with the transaction's own clock: a
           // delayed extraction or SQL/lock wait cannot commit past the anchor.
           if (await graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey })) {

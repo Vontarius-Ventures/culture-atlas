@@ -207,7 +207,7 @@ describe('Explore authorizes analysis', () => {
       recognition: new UnavailableMusicRecognition('not_configured'),
     });
     expect(outcome.state).toBe('partial');
-    await completeJob(db, claimed!.id, 'audio-test', outcome);
+    await completeJob(db, claimed!.id, 'audio-test', claimed!.attempt, outcome);
     const got = await f.analysis.get(kept.asset_id, requested.analysis_id);
     expect(got.state).toBe('partial');
     const result = got.result as { music: string; qloo_seeds: unknown[]; components: { music_match: { state: string } } };

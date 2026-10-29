@@ -185,7 +185,7 @@ export async function runJob(
       deadlineMs: config.ANALYSIS_DEADLINE_MS,
     },
     setStage: async (stage) => {
-      await setJobStage(db, job.id, workerId, stage);
+      await setJobStage(db, job.id, workerId, job.attempt, stage);
     },
     runStage: (stage, fn) => runStageOnce(db, { jobId: job.id, stage, attempt: job.attempt }, fn),
     ensureActive: async () => {
@@ -193,7 +193,7 @@ export async function runJob(
         hookRan = true;
         await options.beforePublish();
       }
-      if (!(await stillOwnsJob(db, job.id, workerId))) throw new JobCancelledError('cancelled');
+      if (!(await stillOwnsJob(db, job.id, workerId, job.attempt))) throw new JobCancelledError('cancelled');
     },
     trace: async (event) => {
       options.onTrace?.(event);
@@ -203,12 +203,12 @@ export async function runJob(
   const handler = JOB_HANDLERS[job.type as JobType] as (c: JobContext) => Promise<{ state: 'complete' | 'partial'; resultType?: string; resultId?: string }>;
   try {
     const outcome = await handler(ctx);
-    await completeJob(db, job.id, workerId, outcome);
+    await completeJob(db, job.id, workerId, job.attempt, outcome);
   } catch (err) {
     if (err instanceof JobCancelledError) {
-      await markJobCancelled(db, job.id, workerId);
+      await markJobCancelled(db, job.id, workerId, job.attempt);
     } else {
-      await failJob(db, job.id, workerId, {
+      await failJob(db, job.id, workerId, job.attempt, {
         code: isAppError(err) ? err.code : 'internal',
         message: (err as Error).message,
         retryable: false,

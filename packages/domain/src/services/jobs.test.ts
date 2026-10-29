@@ -32,10 +32,10 @@ describe('job polling', () => {
     expect(running.sections).toEqual([{ name: 'observe', status: 'complete' }]);
 
     // A transient failure re-queues (still active); a second failure is terminal with a structured error.
-    await failJob(db, job.id, 'w1', { code: 'provider_unavailable', message: 'Related discoveries are taking longer.', retryable: true }, { retryAfterMs: 0 });
+    await failJob(db, job.id, 'w1', claimed!.attempt, { code: 'provider_unavailable', message: 'Related discoveries are taking longer.', retryable: true }, { retryAfterMs: 0 });
     expect((await getJob(ctx, { id: job.id })).state).toBe('queued');
-    await claimJobs(db, { workerId: 'w2', limit: 1, leaseMs: 30_000, ids: [job.id] });
-    await failJob(db, job.id, 'w2', { code: 'provider_unavailable', message: 'Related discoveries are taking longer.', retryable: true });
+    const [reclaimed] = await claimJobs(db, { workerId: 'w2', limit: 1, leaseMs: 30_000, ids: [job.id] });
+    await failJob(db, job.id, 'w2', reclaimed!.attempt, { code: 'provider_unavailable', message: 'Related discoveries are taking longer.', retryable: true });
     const failed = await getJob(ctx, { id: job.id });
     expect(failed).toMatchObject({
       state: 'failed',
@@ -45,7 +45,7 @@ describe('job polling', () => {
 
     const ok = await sensorJob({ kind: 'session', sessionId: anon.sessionId });
     await claimJobs(db, { workerId: 'w3', limit: 1, leaseMs: 30_000, ids: [ok.id] });
-    await completeJob(db, ok.id, 'w3', { state: 'partial', resultType: 'sensor_connection', resultId: randomUUID() });
+    await completeJob(db, ok.id, 'w3', 1, { state: 'partial', resultType: 'sensor_connection', resultId: randomUUID() });
     expect(await getJob(ctx, { id: ok.id })).toMatchObject({ state: 'partial', poll_after_ms: null, result: { type: 'sensor_connection' } });
 
     const c = await sensorJob({ kind: 'session', sessionId: anon.sessionId });
