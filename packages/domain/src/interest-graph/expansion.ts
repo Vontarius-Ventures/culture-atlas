@@ -835,6 +835,10 @@ async function runExpansion(
         pinAssertionIds,
       ]);
     }
+    // DISC-SCR-025: the evidence pin lock is a SECOND independent wait inside
+    // this one pin stage — the bound is re-tightened to the CURRENT remainder
+    // so the time the assertion wait consumed cannot widen this one.
+    await enforceDeadline();
     if (pinEvidenceIds.length > 0) {
       await tx.query(`SELECT id FROM graph_evidence WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
         pinEvidenceIds,
@@ -1142,6 +1146,9 @@ async function runExpansion(
     // Retained-only pins a dedupe refresh KEEPS commit with this pass too
     // (DISC-SCR-024): the same last-word dependency recheck covers them.
     retainedFrontier: retainedCommitting,
+    // The fence's own successive lock waits each re-tighten to the CURRENT
+    // remainder through this hook (DISC-SCR-025).
+    bound: enforceDeadline,
   });
   if (violation) throw new GraphFenceError(violation);
   // The caller's fence hook runs last, closest to the commit: the queue
@@ -1227,6 +1234,17 @@ export interface GraphPublicationFenceInput {
     assertions: ReadonlyArray<{ id: string }>;
     evidence: ReadonlyArray<{ id: string }>;
   }>;
+  /**
+   * Re-tightens the SQL bound to the window's CURRENT remainder before EACH
+   * of the fence's own lock waits — the account publication-authority lock
+   * and the ranked photo's capture lock (DISC-SCR-025). The engine's stage
+   * check bounds the fence's FIRST wait; a bound computed before an earlier
+   * wait must never be reused by a later one, or the fence's successive
+   * waits could cumulatively run past the anchored deadline before any
+   * later check rolls the pass back. Absent keeps default statement limits
+   * (direct race-matrix callers).
+   */
+  bound?: () => Promise<void>;
 }
 
 /**
@@ -1268,6 +1286,9 @@ export async function checkGraphPublicationFence(
   // longer land between the pause check and the publication commit. FOR NO
   // KEY UPDATE keeps the ordering off foreign-key key-share work (projection
   // passes, support removal, cleanup), which are never blocked by it.
+  // DISC-SCR-025: the bound is re-tightened HERE, immediately before this
+  // wait — the first of the fence's several independent lock waits.
+  await input.bound?.();
   const present = await lockAccountPublicationAuthority(tx, accountId);
   if (!present) return 'account_missing';
   const { rows: state } = await tx.query<{ projection_revision: number; deletion_generation: number }>(
@@ -1354,10 +1375,14 @@ export async function checkGraphPublicationFence(
     // locked live capture queues behind the publication like an activation.
     // The lock is per-capture (never per-account), so other accounts'
     // captures never wait; the wait itself is bounded by the pass's
-    // deadline-tightened lock_timeout.
+    // deadline-tightened lock_timeout. DISC-SCR-025: that bound is
+    // re-tightened HERE, immediately before this SECOND independent wait of
+    // the fence — the time the account-authority wait consumed above must not
+    // widen this wait's allowance past the anchored deadline.
     const photoRanked = input.ranked.filter((o) => o.relevance.kind === 'photo');
     if (photoRanked.length > 0) {
       const captureIds = [...new Set(photoRanked.map((o) => (o.relevance as PhotoExpansionRelevance).captureId))];
+      await input.bound?.();
       await tx.query(`SELECT id FROM captures WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL FOR NO KEY UPDATE`, [
         captureIds,
       ]);
@@ -1495,14 +1520,25 @@ export async function currentAccountAuthorityVersions(
 export async function lockAccountAuthorityVersions(
   db: Queryable,
   accountId: string,
+  /**
+   * Re-tightens the SQL bound to the window's CURRENT remainder before EACH
+   * of this helper's own lock waits — the state row, the materializing taste
+   * insert and the taste row (DISC-SCR-025): one bound computed before an
+   * earlier wait must never be reused by a later one, or successive waits
+   * inside this single helper could cumulatively run past the anchor.
+   */
+  bound?: () => Promise<void>,
 ): Promise<{ tasteRevision: number; projectionRevision: number; generation: number }> {
+  await bound?.();
   const { rows: state } = await db.query<{ projection_revision: number; deletion_generation: number }>(
     'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1 FOR NO KEY UPDATE',
     [accountId],
   );
+  await bound?.();
   await db.query('INSERT INTO taste_profiles (owner_account_id, revision) VALUES ($1, 0) ON CONFLICT (owner_account_id) DO NOTHING', [
     accountId,
   ]);
+  await bound?.();
   const { rows: taste } = await db.query<{ revision: number }>(
     'SELECT revision FROM taste_profiles WHERE owner_account_id = $1 FOR NO KEY UPDATE',
     [accountId],

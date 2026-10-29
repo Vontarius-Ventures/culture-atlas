@@ -2223,5 +2223,78 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
     );
     expect(after.rows[0]!.active_analysis_id).toBe(analysisB);
   });
+
+  it("the publication fence's successive account-then-capture waits each honor the CURRENT remainder (DISC-SCR-025)", async () => {
+    // The publication fence is ONE helper with SEVERAL independent lock
+    // waits: the account publication-authority lock, then the ranked photo's
+    // capture lock. A bound computed once at fence entry is stale by the
+    // second wait — the first wait's consumed time must not widen the second
+    // wait's allowance past the anchor. Two connections hold the two waits:
+    // the account holder releases INSIDE the window, the capture holder never
+    // releases. The pass must reject AT the anchored deadline — never a full
+    // entry-bound later, never on the second holder's release.
+    const { accountId, captureId } = await photoFixture();
+    const deadlineAt = new Date(Date.now() + 4_000);
+
+    const accountHolder = await db.pool.connect();
+    const captureHolder = await db.pool.connect();
+    let pass: Promise<ExpansionResult> | undefined;
+    try {
+      // Wait #2 first, on the ground: the capture row lock is held before the
+      // pass starts, so the fence's live-capture check deterministically
+      // parks on it once the account wait released.
+      await captureHolder.query('BEGIN');
+      await captureHolder.query('SELECT id FROM captures WHERE id = $1 FOR NO KEY UPDATE', [captureId]);
+
+      // Wait #1: the fence parks on the held account-authority lock (a short
+      // wait that fits the fence-entry bound).
+      await accountHolder.query('BEGIN');
+      await accountHolder.query('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
+      pass = expandAccountInterestGraph(db, {
+        accountId,
+        config: graphOn,
+        at: new Date(),
+        deadline: { at: deadlineAt },
+      });
+      void pass.catch(() => undefined);
+      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      await accountHolder.query('COMMIT');
+
+      // The pass proceeds past the short first wait and parks on the capture
+      // holder's row — a LATE wait, started well after the bound was last
+      // computed at the fence's entry.
+      await waitForLockWaiters('%FROM captures%FOR NO KEY UPDATE%', 1);
+
+      // The rejection is the typed deadline-expired result and lands AT the
+      // anchored deadline: the second wait was bounded by the CURRENT
+      // remainder — never by the fence-entry bound (a full window past it)
+      // and never by the capture holder's release (which stays held).
+      const result = await pass;
+      expect(result.expanded).toBe(false);
+      expect(result.reason).toBe('deadline_expired');
+      expect(Date.now() - deadlineAt.getTime()).toBeLessThanOrEqual(700);
+    } finally {
+      await accountHolder.query('ROLLBACK').catch(() => undefined);
+      await captureHolder.query('ROLLBACK').catch(() => undefined);
+      accountHolder.release();
+      captureHolder.release();
+    }
+
+    // The whole pass rolled back: no run, no recommendation, no proof, no
+    // frontier — the successive-wait overrun published nothing.
+    const { rows: runs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion'`,
+      [accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(0);
+    expect(await activeFrontierCount(accountId)).toBe(0);
+    expect(await proofRows(accountId)).toHaveLength(0);
+    const { rows: recs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM recommendations WHERE owner_account_id = $1 AND graph_run_id IS NOT NULL`,
+      [accountId],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
+  });
 });
 

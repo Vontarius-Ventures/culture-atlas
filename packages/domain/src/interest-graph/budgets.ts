@@ -230,6 +230,21 @@ export class GraphWorkDeadlineExpiredError extends AppError {
   }
 }
 
+/**
+ * True when err is ALREADY the typed logical-deadline terminal outcome:
+ * GraphWorkDeadlineExpiredError itself, or any AppError carrying the
+ * `logical_deadline_expired` rule (the windowLive boundary refusals). Used
+ * where a window's cancellation is translated into the typed outcome
+ * (DISC-SCR-026): an already-typed error keeps its exact identity, and only
+ * untyped errors — e.g. a raw provider abort the deadline signal caused —
+ * are mapped.
+ */
+export function isGraphWorkDeadlineOutcome(err: unknown): boolean {
+  if (!(err instanceof AppError)) return false;
+  const details = err.details as { rule?: unknown } | undefined | null;
+  return details?.rule === 'logical_deadline_expired';
+}
+
 export interface GraphWorkDeadlineSignal {
   /** Aborts when the worker's signal aborts OR the logical deadline passes. */
   signal: AbortSignal;

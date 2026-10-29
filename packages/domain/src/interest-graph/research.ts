@@ -224,8 +224,14 @@ export async function proposeResearchAssertions(
   input: {
     sources: ResearchSourceInput[];
     proposals: ResearchProposalInput[];
-    /** Publication fence, run inside the storage transaction before any write. */
-    fence?: (tx: Queryable) => Promise<void>;
+    /**
+     * Publication fence, run inside the storage transaction before any write.
+     * It receives the pass's window-bound refresher: a fence with SEVERAL
+     * successive lock waits calls it before EACH wait so every wait is bounded
+     * by the window's CURRENT remainder, never one stale helper-entry bound
+     * (DISC-SCR-025).
+     */
+    fence?: (tx: Queryable, bound: () => Promise<void>) => Promise<void>;
     /**
      * The logical window's ABSOLUTE deadline (VAL-DISC-006, DISC-SCR-018):
      * every statement and lock wait of the storage pass is bounded by the
@@ -298,8 +304,11 @@ export async function proposeResearchAssertions(
     };
     await boundSqlToWindow();
     // Transactional publication recheck: authority that changed after the paid
-    // call rejects the storage here — delayed work publishes nothing.
-    await input.fence?.(tx);
+    // call rejects the storage here — delayed work publishes nothing. The
+    // fence's OWN successive waits (account authority, then the taste/state
+    // authority locks) receive the bound refresher so each one honors the
+    // CURRENT remainder (DISC-SCR-025), never the single entry bound above.
+    await input.fence?.(tx, boundSqlToWindow);
     const sources: ResearchProposalResult['sources'] = [];
     const revisions = new Map<string, { sourceRevisionId: string; familyKey: string }>();
     for (const source of input.sources) {

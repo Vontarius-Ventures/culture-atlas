@@ -752,10 +752,13 @@ describe('the anchored logical deadline governs research work', () => {
     expect(budget?.state).toBe('stopped');
   });
 
-  it('the paid extraction cannot outlive its window: the deadline aborts the call', async () => {
+  it('the paid extraction cannot outlive its window: the deadline aborts the call and reports the typed outcome', async () => {
     // An extraction that would never finish on its own: only the deadline's
     // abort can end it. The pass entered legally, so the call is bound by the
-    // remaining window, not by a fresh per-attempt allowance.
+    // remaining window, not by a fresh per-attempt allowance. The abort IS the
+    // window expiring, so the outcome is the typed non-retryable
+    // logical_deadline_expired result (DISC-SCR-026) — never a raw abort
+    // error the production Worker would classify as provider_unavailable.
     const calls = { extractClaims: 0 };
     const available = { status: 'available' as const, provider: 'fake' };
     const hangingProvider = {
@@ -791,13 +794,145 @@ describe('the anchored logical deadline governs research work', () => {
       deadlineMs: 300,
     });
 
-    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toThrow(
-      /aborted at the logical deadline/,
-    );
+    // The typed window-expired outcome — never the raw abort error.
+    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toMatchObject({
+      details: { rule: 'logical_deadline_expired' },
+    });
     expect(calls.extractClaims).toBe(1);
     expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
     const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
     expect(budget?.state).toBe('stopped');
+    const { rows: failedJob } = await db.query<{ state: string; error_code: string; error_retryable: boolean }>(
+      `SELECT state, error_code, error_retryable FROM jobs WHERE id = $1`,
+      [jobId],
+    );
+    expect(failedJob[0]!.state).toBe('failed');
+    expect(failedJob[0]!.error_code).toBe('service_unavailable');
+    expect(failedJob[0]!.error_retryable).toBe(false);
+  });
+
+  it("a real adapter's window-expiry abort is the typed logical-deadline outcome, never a raw provider abort (DISC-SCR-026)", async () => {
+    // The production Wikipedia adapter reports a caller-signal cancel as
+    // ProviderError('research', 'aborted') (wikipedia.ts getJson; withRetries
+    // throws the same shape before an attempt and during backoff). When the
+    // cancel came from the EXPIRED DURABLE WINDOW — the combined deadline
+    // signal aborted on its own while the worker's own grant is still live —
+    // that abort IS the deadline firing and must surface as the typed
+    // non-retryable logical_deadline_expired outcome. Rethrown unchanged, the
+    // real Worker's classifier records provider_unavailable instead: the
+    // exact near-expiry-redelivery misclassification round 4 found.
+    const calls = { findSources: 0, extractClaims: 0 };
+    const available = { status: 'available' as const, provider: 'fake' };
+    const abortingProvider = {
+      id: 'research:fake',
+      capability: () => ({ sources: available, claims: available }),
+      findSources: async (_query: { name: string }, options?: { signal?: AbortSignal }) => {
+        calls.findSources++;
+        await new Promise<void>((resolve, reject) => {
+          const fallback = setTimeout(() => reject(new Error('the window never aborted the lookup')), 5_000);
+          if (!options?.signal) {
+            clearTimeout(fallback);
+            reject(new Error('findSources received no deadline signal'));
+            return;
+          }
+          if (options.signal.aborted) {
+            clearTimeout(fallback);
+            resolve();
+            return;
+          }
+          options.signal.addEventListener('abort', () => {
+            clearTimeout(fallback);
+            resolve();
+          }, { once: true });
+        });
+        // The real adapter's exact production shape for this cancel.
+        throw new ProviderError('research', 'aborted', 'aborted');
+      },
+      extractClaims: async () => {
+        calls.extractClaims++;
+        throw new Error('extraction must never run after the window aborted the lookup');
+      },
+    } as unknown as ProviderRegistry['research'];
+    const { accountId, jobId, workKey, subjectNodeId, objectNodeId } = await dispatchedResearch(abortingProvider);
+    const providers = registryWithDurableLedger(abortingProvider);
+
+    await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'research',
+      workKey,
+      qlooAttemptsMax: 0,
+      deadlineMs: 300,
+    });
+
+    const err = await runJob(jobId, { providers, config: researchOn }).then(
+      () => {
+        throw new Error('the window-expired lookup must not complete');
+      },
+      (e: unknown) => e,
+    );
+    // The typed outcome — not the raw provider abort.
+    expect(err).toMatchObject({ code: 'service_unavailable', details: { rule: 'logical_deadline_expired' } });
+    expect((err as { name?: string }).name).not.toBe('ProviderError');
+    expect(calls.findSources).toBe(1);
+    expect(calls.extractClaims).toBe(0);
+    // Honest terminal state: the run failed, the window durably stopped, no
+    // lookup was recorded as completed, nothing published, and the job holds
+    // the typed non-retryable failure.
+    expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('stopped');
+    const { rows: lookups } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM provider_queries WHERE owner_account_id = $1 AND operation = 'find_sources'`,
+      [accountId],
+    );
+    expect(Number(lookups[0]!.n)).toBe(0);
+    const { rows: assertions } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_assertions WHERE subject_node_id = $1 AND object_node_id = $2`,
+      [subjectNodeId, objectNodeId],
+    );
+    expect(Number(assertions[0]!.n)).toBe(0);
+    const { rows: failedJob } = await db.query<{ state: string; error_code: string; error_retryable: boolean }>(
+      `SELECT state, error_code, error_retryable FROM jobs WHERE id = $1`,
+      [jobId],
+    );
+    expect(failedJob[0]!.state).toBe('failed');
+    expect(failedJob[0]!.error_code).toBe('service_unavailable');
+    expect(failedJob[0]!.error_retryable).toBe(false);
+  });
+
+  it('a still-live provider failure keeps its own shape: the raw error is never relabeled deadline-expired (DISC-SCR-026)', async () => {
+    // Truthful classification cuts both ways: only the window's OWN expiry is
+    // the typed deadline outcome. A provider failing while the window is
+    // still live — the combined deadline signal never fired — surfaces as its
+    // raw provider error (the real Worker classifies that provider_unavailable),
+    // and the window is neither consumed nor stopped.
+    const calls = { findSources: 0 };
+    const available = { status: 'available' as const, provider: 'fake' };
+    const failingProvider = {
+      id: 'research:fake',
+      capability: () => ({ sources: available, claims: available }),
+      findSources: async () => {
+        calls.findSources++;
+        throw new ProviderError('research', 'server', 'wikipedia search HTTP 503');
+      },
+      extractClaims: async () => {
+        throw new Error('extraction must never run after the source failure');
+      },
+    } as unknown as ProviderRegistry['research'];
+    const { accountId, jobId, workKey } = await dispatchedResearch(failingProvider);
+    const providers = registryWithDurableLedger(failingProvider);
+
+    // The handler anchors the default durable window: live throughout.
+    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toMatchObject({
+      provider: 'research',
+      kind: 'server',
+    });
+    expect(calls.findSources).toBe(1);
+    // The window is untouched — still active — and the attempt failed
+    // honestly, as the PROVIDER failure it is, not a deadline expiry.
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('active');
+    expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
   });
 
   it('the deadline canceling the storage pass itself is the typed window-expired outcome, never a raw database error', async () => {
@@ -864,6 +999,106 @@ describe('the anchored logical deadline governs research work', () => {
     expect(Number(assertions[0]!.n)).toBe(0);
     // The run is an honest failure, the window durably stopped, the job
     // failed non-retryably: the terminal outcome is the typed one.
+    expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('stopped');
+    const { rows: failedJob } = await db.query<{ state: string; error_code: string; error_retryable: boolean }>(
+      `SELECT state, error_code, error_retryable FROM jobs WHERE id = $1`,
+      [jobId],
+    );
+    expect(failedJob[0]!.state).toBe('failed');
+    expect(failedJob[0]!.error_code).toBe('service_unavailable');
+    expect(failedJob[0]!.error_retryable).toBe(false);
+  });
+
+  it("the storage fence's successive account-then-taste waits each honor the CURRENT remainder (DISC-SCR-025)", async () => {
+    // The storage fence is ONE helper with SEVERAL independent lock waits:
+    // the account publication-authority lock, then the taste/state authority
+    // locks inside lockAccountAuthorityVersions. A bound computed once before
+    // the fence is stale by the second wait — the first wait's consumed time
+    // must not widen the second wait's allowance past the anchor. Two
+    // connections hold the two waits: the account holder releases INSIDE the
+    // window, the taste holder never releases. The pass must reject AT the
+    // anchored deadline — never a full entry-bound later, never on the second
+    // holder's release.
+    const research = countingResearch(
+      (name) => [sourceDoc(name, `https://en.wikipedia.org/wiki/${encodeURIComponent(name)}`)],
+      extraction,
+    );
+    const { accountId, jobId, workKey, subjectNodeId, objectNodeId } = await dispatchedResearch(research.provider);
+    const providers = registryWithDurableLedger(research.provider);
+
+    // Room for the entry checks, the paid call and the FIRST (short) wait —
+    // but the second wait must be bounded by what is LEFT, not this entry
+    // allowance.
+    const anchored = await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'research',
+      workKey,
+      qlooAttemptsMax: 0,
+      deadlineMs: 3_200,
+    });
+    const deadlineAt = anchored.deadlineAt;
+
+    const accountHolder = await db.pool.connect();
+    const tasteHolder = await db.pool.connect();
+    let run: Promise<{ state: string }> | undefined;
+    try {
+      // Wait #2 first, on the ground: the holder's UNCOMMITTED taste row for
+      // this fresh account is in place before the pass starts, so the fence's
+      // materializing taste INSERT deterministically parks on it.
+      await tasteHolder.query('BEGIN');
+      await tasteHolder.query('INSERT INTO taste_profiles (owner_account_id, revision) VALUES ($1, 0)', [accountId]);
+
+      // Wait #1: the storage fence parks on the held account-authority lock
+      // (a short wait that fits the entry bound).
+      await accountHolder.query('BEGIN');
+      await accountHolder.query('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
+      run = runJob(jobId, { providers, config: researchOn });
+      void run.catch(() => undefined);
+      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      await new Promise((resolve) => setTimeout(resolve, 1_600));
+      await accountHolder.query('COMMIT');
+
+      // The pass proceeds past the short first wait and parks on the taste
+      // holder's uncommitted row — a LATE wait, started well after the bound
+      // was last computed at the storage pass's entry.
+      await waitForLockWaiters('%INSERT INTO taste_profiles%', 1);
+
+      // The rejection is the typed window-expired outcome and lands AT the
+      // anchored deadline: the second wait was bounded by the CURRENT
+      // remainder — never by the entry bound (a full window past it) and
+      // never by the taste holder's release (which stays held).
+      await expect(run).rejects.toMatchObject({ details: { rule: 'logical_deadline_expired' } });
+      expect(Date.now() - deadlineAt.getTime()).toBeLessThanOrEqual(700);
+    } finally {
+      await accountHolder.query('ROLLBACK').catch(() => undefined);
+      await tasteHolder.query('ROLLBACK').catch(() => undefined);
+      accountHolder.release();
+      tasteHolder.release();
+    }
+
+    // Nothing committed: no proposal for the researched pair and no source
+    // revision for either document URL — the whole storage pass rolled back.
+    const { rows: assertions } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_assertions WHERE subject_node_id = $1 AND object_node_id = $2`,
+      [subjectNodeId, objectNodeId],
+    );
+    expect(Number(assertions[0]!.n)).toBe(0);
+    const { rows: nodes } = await db.query<{ canonical_name: string }>(
+      'SELECT canonical_name FROM graph_nodes WHERE id = ANY($1::uuid[])',
+      [[subjectNodeId, objectNodeId]],
+    );
+    const familyKeys = nodes.map(
+      (n) => `research:https://en.wikipedia.org/wiki/${encodeURIComponent(n.canonical_name)}`,
+    );
+    const { rows: sourceRows } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_source_revisions WHERE source_family_key = ANY($1)`,
+      [familyKeys],
+    );
+    expect(Number(sourceRows[0]!.n)).toBe(0);
+    // The run is an honest failure, the window durably stopped, the job
+    // failed non-retryably: the successive-wait overrun published nothing.
     expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
     const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
     expect(budget?.state).toBe('stopped');
@@ -1100,9 +1335,12 @@ describe('the anchored logical deadline governs research work', () => {
       deadlineMs: 300,
     });
 
-    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toThrow(
-      /findSources aborted at the logical deadline/,
-    );
+    // The abort IS the window expiring, so the outcome is the typed
+    // logical-deadline result (DISC-SCR-026) — never the raw abort error the
+    // production Worker would misclassify as provider_unavailable.
+    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toMatchObject({
+      details: { rule: 'logical_deadline_expired' },
+    });
     // The lookup received the anchored combined signal and the remaining
     // window as its per-attempt bound — the abort, not a fallback timer, is
     // what ended it.

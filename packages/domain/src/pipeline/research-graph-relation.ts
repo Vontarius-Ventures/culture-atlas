@@ -9,6 +9,7 @@ import {
   graphWorkDeadlineSignal,
   graphWorkWindowEnded,
   isDeadlineCanceledStatement,
+  isGraphWorkDeadlineOutcome,
   setGraphWorkBudgetState,
   stopGraphWorkBudgetIfExpired,
   type GraphWorkBudgetState,
@@ -377,13 +378,16 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
           at: liveBeforeExtraction.deadlineAt,
           ended: (tx) => graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey }),
         },
-        fence: async (tx) => {
+        fence: async (tx, bound) => {
           // The per-account publication-authority lock (DISC-SCR-008), acquired
           // FIRST and held through this transaction's commit: the same row lock
           // pause/resume take, so a pause either commits before this read
           // (rejected just below) or waits for the publication commit — it can
           // no longer slip between the check and the commit. The lock never
           // blocks projection or support removal (foreign-key key-share work).
+          // DISC-SCR-025: this is the fence's FIRST lock wait — it re-tightens
+          // the SQL bound to the CURRENT remainder right before parking.
+          await bound();
           if (!(await lockAccountPublicationAuthority(tx, accountId))) throw new JobCancelledError('account deleted');
           if ((await graphDiscoveryPausedAt(tx, accountId)) != null) {
             throw new AppError('conflict', { message: 'Discovery is paused; research cannot publish.', retryable: false });
@@ -401,8 +405,11 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
           // commits before the read (rejected here) or queues for the storage
           // commit: it can no longer land between the comparison and the
           // commit, and the run's original input versions are never rewritten
-          // by the guard.
-          const current = await lockAccountAuthorityVersions(tx, accountId);
+          // by the guard. DISC-SCR-025: the version locks are this fence's
+          // LATER, independent waits — each one re-tightens to the CURRENT
+          // remainder inside lockAccountAuthorityVersions too, so the time the
+          // account wait consumed above cannot widen them past the anchor.
+          const current = await lockAccountAuthorityVersions(tx, accountId, bound);
           if (
             current.tasteRevision !== inputAuthority.tasteRevision ||
             current.projectionRevision !== inputAuthority.projectionRevision ||
@@ -459,6 +466,24 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     // no later redelivery can re-open the spent window (VAL-DISC-006).
     await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'failed' }).catch(() => undefined);
     await stopGraphWorkBudgetIfExpired(ctx.db, { ownerAccountId: accountId, workKey }).catch(() => undefined);
+    // DISC-SCR-026: classify a provider abort CAUSED by the expired durable
+    // window as the typed logical-deadline outcome. The combined window signal
+    // aborts on its own exactly when the anchored deadline passes (the
+    // worker's own grant — lease loss, cancellation, the per-attempt timer —
+    // would have aborted ctx.signal first), so an attempt error surfacing
+    // with that signal fired and the worker still live is the deadline
+    // itself ending the in-flight source lookup or paid extraction — a real
+    // adapter reports it as ProviderError('research','aborted'), which the
+    // production Worker would otherwise misclassify as retryable
+    // provider_unavailable. The typed outcome is non-retryable and matches
+    // what the next redelivery of this expired window would report anyway.
+    // Genuine worker/lease cancellation (ctx.signal aborted) and still-live
+    // provider failures (the window signal never fired) keep their own
+    // classifications, and an error that is already the typed outcome keeps
+    // its exact identity.
+    if (window.signal.aborted && !ctx.signal.aborted && !isGraphWorkDeadlineOutcome(err)) {
+      throw new GraphWorkDeadlineExpiredError();
+    }
     throw err;
   } finally {
     window.dispose();
