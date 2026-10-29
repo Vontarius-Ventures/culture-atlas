@@ -8,6 +8,11 @@ import { SAMPLE_ITEMS, sampleKey } from '../feed/samples';
 import { enqueueJob, relatedDiscoveryDedupeKey } from '../jobs';
 import { GRAPH_EXPANSION_DEADLINE_MS } from '../interest-graph/budgets';
 import { lockAgentGrantEpoch, recordDiscoveryGrantAuthority, resolveScopedOriginSave } from '../interest-graph/scoped-discovery';
+import {
+  scopedGraphReadEnabled,
+  scopedRecommendationServes,
+  scopedResultServingVerdicts,
+} from '../interest-graph/scoped-reads';
 import { loadItemAnchors } from '../library/anchors';
 import {
   grantedIds,
@@ -65,6 +70,9 @@ interface RecRow {
   display_reason: string | null;
   source_ids: string[];
   destination_url: string | null;
+  discovery_job_id: string | null;
+  /** True when the rec's parent is a scoped-authority discovery job. */
+  job_scoped: boolean | null;
 }
 
 async function loadItem(db: Queryable, id: string): Promise<ItemRow> {
@@ -87,6 +95,15 @@ async function loadItem(db: Queryable, id: string): Promise<ItemRow> {
  * grant (e.g. "Connected to <brand> in your photo.").
  * A taste-seed recommendation (amendment 2.2) derives from the whole taste
  * (onboarding picks), so only full-library principals of the account see it.
+ *
+ * Two round-8 read-authority rules (DISC-SCR-034/036):
+ *  - the job grant correlates to the discovery's EXACT origin collection: the
+ *    origin must still be a member of dj.origin_collection_id itself — a
+ *    second granted membership elsewhere keeps the origin visible but never
+ *    keeps the lost context's recommendation readable (matching getJob);
+ *  - a scoped-branch result serves only while its pinned proof currently
+ *    holds. A withdrawn scoped reason steps aside for the next independent
+ *    context (an older valid scoped result, a taste seed, ...) or none.
  */
 async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: string, recommendationId?: string): Promise<RecRow | null> {
   const own = (alias: string) => ownerPredicate(owner, alias, 3).sql;
@@ -105,11 +122,24 @@ async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: st
     captureGrant = `AND (c.created_by_agent_connection_id = ${conn}::uuid
                       OR EXISTS (SELECT 1 FROM discovery_items cdi
                                   WHERE cdi.capture_id = c.id AND cdi.owner_account_id = $3 AND cdi.id IN ${members}))`;
-    jobGrant = `AND dj.origin_collection_id = ANY(${g}::uuid[]) AND dj.origin_item_id IN ${members}`;
+    // EXACT origin-collection correlation (DISC-SCR-036): the job's origin
+    // collection is granted AND the origin is still its member. Membership in
+    // any OTHER granted collection does not keep this context's result.
+    jobGrant = `AND dj.origin_collection_id = ANY(${g}::uuid[])
+                AND EXISTS (SELECT 1 FROM collection_items ci
+                              JOIN saved_items si ON si.id = ci.saved_item_id
+                             WHERE ci.collection_id = dj.origin_collection_id
+                               AND si.discovery_item_id = dj.origin_item_id
+                               AND ci.owner_account_id = $3)`;
     planGrant = `AND pl.selected_item_ids <@ ARRAY${members}`;
   }
-  const { rows } = await ctx.db.query<RecRow>(
-    `SELECT r.id, r.origin, r.display_reason, r.source_ids, r.destination_url
+  // Scoped results whose pinned proof no longer holds step aside (DISC-SCR-
+  // 034): each excluded row re-runs the same query, next context first.
+  let excluded: string[] = [];
+  params.push(excluded);
+  const excludedParam = `$${params.length}`;
+  const sql = `SELECT r.id, r.origin, r.display_reason, r.source_ids, r.destination_url,
+            r.discovery_job_id, dj.scoped_authority_required AS job_scoped
        FROM recommendations r
        LEFT JOIN analyses a ON a.id = r.analysis_id
        LEFT JOIN captures c ON c.id = a.capture_id
@@ -117,14 +147,22 @@ async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: st
        LEFT JOIN plans pl ON pl.id = r.plan_id
        LEFT JOIN taste_seed_runs ts ON ts.id = r.taste_seed_run_id
       WHERE r.discovery_item_id = $1 AND ($2::uuid IS NULL OR r.id = $2)
+        AND r.id <> ALL(${excludedParam}::uuid[])
         AND ((c.id IS NOT NULL AND c.deleted_at IS NULL AND ${own('c')} ${captureGrant})
           OR (dj.id IS NOT NULL AND ${own('dj')} ${jobGrant})
           OR (pl.id IS NOT NULL AND ${planOwner} ${planGrant})
           OR (ts.id IS NOT NULL AND ${seedOwner}))
-      ORDER BY r.created_at DESC LIMIT 1`,
-    params,
-  );
-  return rows[0] ?? null;
+      ORDER BY r.created_at DESC LIMIT 1`;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    params[params.length - 1] = excluded;
+    const { rows } = await ctx.db.query<RecRow>(sql, params);
+    const row = rows[0];
+    if (!row) return null;
+    if (!row.job_scoped) return row;
+    if (await scopedRecommendationServes(ctx.db, { recommendationId: row.id, at: ctx.now() })) return row;
+    excluded = [...excluded, row.id];
+  }
+  return null;
 }
 
 async function loadSources(db: Queryable, ids: readonly string[]): Promise<SourceDto[]> {
@@ -218,10 +256,19 @@ async function latestDiscoveryJobs(ctx: ServiceContext, owner: Owner, itemId: st
   let grant = '';
   if (limited) {
     params.push(grantedIds(ctx.principal));
-    grant = `AND dj.origin_collection_id = ANY($${params.length}::uuid[])`;
+    // EXACT origin-collection correlation (DISC-SCR-036): the job's origin
+    // collection is granted AND the origin is still its CURRENT member — a
+    // surviving membership in another granted collection never keeps a lost
+    // context's job readable (matching getJob's rule).
+    grant = `AND dj.origin_collection_id = ANY($${params.length}::uuid[])
+             AND EXISTS (SELECT 1 FROM collection_items ci
+                           JOIN saved_items si ON si.id = ci.saved_item_id
+                          WHERE ci.collection_id = dj.origin_collection_id
+                            AND si.discovery_item_id = dj.origin_item_id
+                            AND ci.owner_account_id = $2)`;
   }
-  const { rows } = await ctx.db.query<{ id: string; job_id: string | null; status: string; job_state: string | null }>(
-    `SELECT dj.id, dj.job_id, dj.status, j.state AS job_state
+  const { rows } = await ctx.db.query<{ id: string; job_id: string | null; status: string; job_state: string | null; scoped: boolean }>(
+    `SELECT dj.id, dj.job_id, dj.status, j.state AS job_state, dj.scoped_authority_required AS scoped
        FROM discovery_jobs dj LEFT JOIN jobs j ON j.id = dj.job_id
       WHERE dj.origin_item_id = $1 AND ${own.sql} ${grant}
       ORDER BY dj.created_at DESC LIMIT 5`,
@@ -258,6 +305,7 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   let relatedIds: string[] = [];
   let relatedState: ItemDetailResponse['related_state'] = 'none';
   let relatedJobId: string | null = null;
+  let scopedContext = false;
   if (item.is_sample) {
     const { rows } = await ctx.db.query<{ id: string; canonical_key: string; category: Category | null }>(
       `SELECT id, canonical_key, category FROM discovery_items WHERE is_sample AND canonical_key = ANY($1::text[])`,
@@ -271,23 +319,43 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
     const jobs = await latestDiscoveryJobs(ctx, owner, item.id);
     const active = jobs.find((j) => j.job_state === 'queued' || j.job_state === 'running');
     const done = jobs.find((j) => j.status === 'complete' || j.status === 'partial');
+    scopedContext = Boolean(active?.scoped || done?.scoped);
     if (active) {
       relatedState = 'pending';
       relatedJobId = active.job_id;
     }
     if (done) {
-      const { rows } = await ctx.db.query<{ item_id: string; canonical_key: string }>(
-        `SELECT r.discovery_item_id AS item_id, di.canonical_key FROM recommendations r
+      const { rows } = await ctx.db.query<{ item_id: string; canonical_key: string; recommendation_id: string }>(
+        `SELECT r.discovery_item_id AS item_id, di.canonical_key, r.id AS recommendation_id
+           FROM recommendations r
            JOIN discovery_items di ON di.id = r.discovery_item_id
           WHERE r.discovery_job_id = $1 ORDER BY r.rank, r.created_at`,
         [done.id],
       );
-      relatedIds = rows.filter((r) => !hidden.has(r.canonical_key) && r.item_id !== item.id).map((r) => r.item_id);
+      // Scoped graph results serve only while their pinned proof currently
+      // holds (DISC-SCR-034): sole-source retraction, natural evidence or
+      // rights expiry and revision drift withdraw a published result at read
+      // time — the stored recommendation row survives as the durable record.
+      let serving = rows;
+      if (done.scoped) {
+        const verdicts = await scopedResultServingVerdicts(ctx.db, { discoveryJobId: done.id, at: ctx.now() });
+        serving = rows.filter((r) => verdicts.get(r.recommendation_id) !== false);
+      }
+      relatedIds = serving.filter((r) => !hidden.has(r.canonical_key) && r.item_id !== item.id).map((r) => r.item_id);
       if (!active) relatedJobId = done.job_id;
       if (!active && relatedIds.length) relatedState = 'cached';
     }
   }
-  if (!item.is_sample && relatedIds.length < LIMITS.relatedCachedMax) {
+  // Graph-on scoped rails carry ONLY the authorized exact discovery context's
+  // own admitted results (DISC-SCR-033): honestly empty stays empty — the
+  // unrelated interest pool never pads a scoped response, for the owner or a
+  // grant-limited agent. Graph-off reads (and non-scoped contexts) keep the
+  // unchanged legacy padding.
+  const scopedRail =
+    scopedContext && owner.kind === 'account'
+      ? await scopedGraphReadEnabled(ctx.db, { accountId: owner.accountId, config: ctx.config })
+      : false;
+  if (!item.is_sample && !scopedRail && relatedIds.length < LIMITS.relatedCachedMax) {
     const poolIds = await interestPoolRelatedIds(ctx, owner, item, hidden, LIMITS.relatedCachedMax);
     for (const id of poolIds) {
       if (relatedIds.includes(id)) continue;

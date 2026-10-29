@@ -14,7 +14,9 @@ import { ownerOf, ownerPredicate, type Owner, type Principal } from '../principa
  *  - the compiled context of a capture in a granted collection (its analysis
  *    recommendations) and captures created by this connection;
  *  - related discoveries whose discovery job originated from a granted
- *    collection item that is still a member;
+ *    collection the origin item is STILL a member of (the exact origin
+ *    collection — DISC-SCR-036: a second granted membership elsewhere never
+ *    keeps a lost context's results readable);
  *  - items of plans derived entirely from currently granted items;
  *  - public sample items.
  * Not-owned or not-granted records are 404, never 403.
@@ -109,9 +111,10 @@ export async function visibleItemIds(ctx: ServiceContext, ids: readonly string[]
                 WHERE r.discovery_item_id = di.id AND cdi.id IN (SELECT id FROM member_items))
           OR EXISTS (
                SELECT 1 FROM recommendations r JOIN discovery_jobs dj ON dj.id = r.discovery_job_id
+                 JOIN collection_items ci ON ci.collection_id = dj.origin_collection_id
+                 JOIN saved_items si ON si.id = ci.saved_item_id AND si.discovery_item_id = dj.origin_item_id
                 WHERE r.discovery_item_id = di.id AND dj.owner_account_id = $1
-                  AND dj.origin_collection_id = ANY($2::uuid[])
-                  AND dj.origin_item_id IN (SELECT id FROM member_items))
+                  AND dj.origin_collection_id = ANY($2::uuid[]))
           OR EXISTS (
                SELECT 1 FROM recommendations r JOIN plans pl ON pl.id = r.plan_id
                 WHERE r.discovery_item_id = di.id AND pl.owner_account_id = $1

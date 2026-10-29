@@ -584,5 +584,117 @@ describe('scoped Discover more revocation and narrowing over MCP (VAL-DISC-007, 
       await s.iso.drop();
     }
   });
+
+  it("a surviving second granted membership never keeps a lost collection context readable over MCP; the surviving context restores it (DISC-SCR-036)", async () => {
+    const iso = await createIsolatedDatabase('scollmcp');
+    try {
+      await admitGraphCorpus(iso.db, getCorpusManifestFile());
+      const graphOn = testConfig({
+        INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
+        INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
+      });
+      const owner = await insertAccount(iso.db);
+      const ownerCtx = testContext(owner, { db: iso.db, config: graphOn });
+      const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+      const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+      const rodinRef = await upsertReference(iso.db, {
+        canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+        name: 'Auguste Rodin',
+        type: 'creator',
+        externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+      });
+      await upsertReference(iso.db, {
+        canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+        name: 'Georges Seurat',
+        type: 'creator',
+        externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+      });
+      const origin = await insertItem(
+        { accountId: owner.accountId },
+        { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+        iso.db,
+      );
+      // The origin is a member of TWO granted collections: losing its
+      // membership in A must not keep A's cached context readable through B.
+      const colA = await collections.createCollection(ownerCtx, { name: 'Museum visits' });
+      const colB = await collections.createCollection(ownerCtx, { name: 'More museums' });
+      await collections.addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+      await collections.addCollectionItem(ownerCtx, { id: colB.id, item_id: origin, body: {} });
+      await linkGraphReferenceIdentities(iso.db);
+      const { credential } = await insertAgentConnection(
+        owner,
+        { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id, colB.id] },
+        iso.db,
+      );
+      const providers = testProviders({ qloo: new FakeQloo({}, { live: true }) });
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: credential,
+        fetch: mcpFetch(providers, { db: iso.db, config: graphOn }),
+      });
+      try {
+        const started = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: origin,
+          collection_id: colA.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+        await runJob(jobId, { db: iso.db, config: graphOn, providers });
+
+        // Control: the agent reads the published scoped context.
+        const control = await client.callTool<{ related: { id: string; title: string }[]; related_state: string }>(
+          'get_item',
+          { item_id: origin, collection_id: colA.id },
+        );
+        expect(control.ok && control.data.related_state).toBe('cached');
+        expect(control.ok && control.data.related.map((r) => r.title)).toEqual(['Georges Seurat']);
+        const candidateId = control.ok ? control.data.related[0]!.id : '';
+
+        // The owner removes the origin from collection A only.
+        await collections.removeCollectionItem(ownerCtx, { id: colA.id, item_id: origin });
+
+        // Job polling denies (the existing exact-context rule)...
+        const jobAfter = await client.callTool('get_job', { job_id: jobId });
+        expect(jobAfter.ok).toBe(false);
+        expect(!jobAfter.ok && jobAfter.error.code).toBe('not_found');
+        // ...and the item reads agree with it: the origin stays readable
+        // through collection B, but A's cached result left its rail...
+        const originAfter = await client.callTool<{ related: { id: string }[]; related_state: string }>('get_item', {
+          item_id: origin,
+          collection_id: colB.id,
+        });
+        expect(originAfter.ok).toBe(true);
+        expect(originAfter.ok && originAfter.data.related).toEqual([]);
+        // ...and the published candidate is no longer readable under the grant.
+        const candidateAfter = await client.callTool('get_item', { item_id: candidateId, collection_id: colB.id });
+        expect(candidateAfter.ok).toBe(false);
+        expect(!candidateAfter.ok && candidateAfter.error.code).toBe('not_found');
+
+        // A fresh scoped discovery under the SURVIVING granted context B is
+        // independently authorized: it restores the rail and the candidate.
+        const again = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: origin,
+          collection_id: colB.id,
+          category: 'play',
+        });
+        expect(again.ok).toBe(true);
+        const jobIdB = again.ok ? again.data.job_id : '';
+        await runJob(jobIdB, { db: iso.db, config: graphOn, providers });
+        const restored = await client.callTool<{ related: { id: string }[]; related_state: string }>('get_item', {
+          item_id: origin,
+          collection_id: colB.id,
+        });
+        expect(restored.ok && restored.data.related_state).toBe('cached');
+        expect(restored.ok && restored.data.related.map((r) => r.id)).toEqual([candidateId]);
+        const candidateRestored = await client.callTool('get_item', { item_id: candidateId, collection_id: colB.id });
+        expect(candidateRestored.ok).toBe(true);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await iso.drop();
+    }
+  });
 });
 
