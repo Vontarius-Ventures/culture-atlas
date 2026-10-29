@@ -6,7 +6,7 @@ import { isDeadlineCanceledStatement } from './budgets';
 import { GRAPH_FRONTIER_MAX_LIFETIME_DAYS, INTEREST_GRAPH_POLICY_VERSION } from './schema';
 import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
-import { loadExplicitSupport } from './explicit-support';
+import { loadExplicitSupport, type ExplicitSupportSnapshot } from './explicit-support';
 import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from './refresh';
 import { currentAssertionJustification, frontierPathPins, revalidateFrontierPathVersions, revalidatePinnedDependencies } from './validity';
 import { bilaterallyVerifiedReferenceNodes } from './identity-links';
@@ -561,6 +561,117 @@ function frontierDedupeKey(intent: 'personal' | 'photo', nodeId: string): string
   return `expansion:${intent}:node:${nodeId}`;
 }
 
+/**
+ * The intent a retained frontier row's own recorded path declares. The row's
+ * admission story decides which live authority its roots must still carry
+ * (DISC-SCR-028): a PHOTO row's roots are capture-reference support edges
+ * whose live capture-analysis authority must hold, while a PERSONAL row's
+ * roots are explicit edges whose presence and live state are their authority.
+ * Rows recorded without an intent (hand-seeded fixtures) read as personal —
+ * the presence-only standard — and still reconcile when their edge is gone.
+ */
+function recordedFrontierIntent(pathVersions: unknown): 'personal' | 'photo' {
+  const recorded = (pathVersions ?? {}) as Record<string, unknown>;
+  return recorded.intent === 'photo' ? 'photo' : 'personal';
+}
+
+/**
+ * Resolves a retained frontier row's ACTUAL owner-bound support roots from
+ * the live stored row — never the selected observation's roots (DISC-SCR-028:
+ * a changed winning photo root leaves the stored row rooted in the OLD
+ * capture's support) — and decides whether their support, reference and live
+ * capture-analysis authority still hold.
+ *
+ * A root edge is live iff it still exists in a live state (confirmed or
+ * tentative — suppression and the projector's withdrawal sweep both end it),
+ * and, for a PHOTO row, iff it still carries an ACTIVE capture_reference
+ * support row whose exact (capture, analysis/version, capture_references)
+ * dependency the CURRENT authoritative snapshot still authorizes: the capture
+ * is still explicitly saved, its CURRENT active analysis is exactly the
+ * support's analysis, and the exact capture_references row is still one of
+ * that analysis's authorized references. An analysis activation A→B that
+ * committed before the pass therefore reads as withdrawn HERE (the snapshot
+ * is the same live state the pass walked from), while one landing later is
+ * the publication fence's to catch under its capture lock.
+ *
+ * Returns the root authority entries the publication fence re-checks through
+ * the commit — one bare entry per live personal root, one capture-bearing
+ * entry per live capture-reference support tuple of a live photo root — or
+ * null when no recorded root's authority still holds: the caller coherently
+ * reconciles the row (pins AND roots together) to the just-validated
+ * observation instead of committing a refresh with no live private
+ * grounding. A row's roots survive on ANY live root (they are the union of
+ * everything that reached it), the same disjunctive support standard the
+ * read path applies.
+ */
+async function liveRetainedRootAuthority(
+  tx: Queryable,
+  input: {
+    accountId: string;
+    snapshot: ExplicitSupportSnapshot;
+    intent: 'personal' | 'photo';
+    rootEdgeIds: readonly string[];
+  },
+): Promise<GraphFenceRetainedRoot[] | null> {
+  if (input.rootEdgeIds.length === 0) return null;
+  const { rows } = await tx.query<{
+    edge_id: string;
+    edge_state: string;
+    capture_id: string | null;
+    analysis_id: string | null;
+    capture_reference_id: string | null;
+    analysis_version: number | null;
+  }>(
+    `SELECT e.id AS edge_id, e.state AS edge_state,
+            s.capture_id, s.analysis_id, s.capture_reference_id, a.version AS analysis_version
+       FROM personal_interest_edges e
+       LEFT JOIN personal_interest_support s
+              ON s.edge_id = e.id AND s.owner_account_id = e.owner_account_id
+             AND s.active AND s.origin_kind = 'capture_reference'
+       LEFT JOIN analyses a ON a.id = s.analysis_id
+      WHERE e.owner_account_id = $1 AND e.id = ANY($2::uuid[])`,
+    [input.accountId, [...new Set(input.rootEdgeIds)]],
+  );
+  const liveEdgeById = new Map<string, boolean>();
+  const tuplesByEdge = new Map<
+    string,
+    Array<{ captureId: string; analysisId: string; analysisVersion: number; captureReferenceId: string }>
+  >();
+  for (const row of rows) {
+    if (!liveEdgeById.has(row.edge_id)) {
+      liveEdgeById.set(row.edge_id, row.edge_state === 'confirmed' || row.edge_state === 'tentative');
+      tuplesByEdge.set(row.edge_id, []);
+    }
+    if (row.capture_id && row.analysis_id && row.capture_reference_id && row.analysis_version != null) {
+      tuplesByEdge.get(row.edge_id)!.push({
+        captureId: row.capture_id,
+        analysisId: row.analysis_id,
+        analysisVersion: row.analysis_version,
+        captureReferenceId: row.capture_reference_id,
+      });
+    }
+  }
+  const liveCaptureById = new Map(input.snapshot.captures.map((c) => [c.captureId, c]));
+  const entries: GraphFenceRetainedRoot[] = [];
+  for (const edgeId of input.rootEdgeIds) {
+    if (liveEdgeById.get(edgeId) !== true) continue; // withdrawn or deleted by the projector
+    if (input.intent !== 'photo') {
+      entries.push({ edgeId });
+      continue;
+    }
+    for (const tuple of tuplesByEdge.get(edgeId) ?? []) {
+      const capture = liveCaptureById.get(tuple.captureId);
+      if (!capture) continue; // unsaved or deleted: withdrawn support
+      if (capture.analysisId !== tuple.analysisId || capture.analysisVersion !== tuple.analysisVersion) continue;
+      if (!capture.references.some((r) => r.captureReferenceId === tuple.captureReferenceId)) continue;
+      entries.push({ edgeId, capture: tuple });
+    }
+    // A photo root edge whose every capture-reference tuple lost its live
+    // capture-analysis authority is a withdrawn root: no bare entry.
+  }
+  return entries.length > 0 ? entries : null;
+}
+
 async function runExpansion(
   tx: Queryable,
   input: { accountId: string; jobId?: string; at: Date; fence?: (tx: Queryable) => Promise<void>; deadline?: ExpansionDeadlineInput },
@@ -910,6 +1021,7 @@ async function runExpansion(
   const retainedCommitting: Array<{
     assertions: ReadonlyArray<{ id: string }>;
     evidence: ReadonlyArray<{ id: string }>;
+    roots: ReadonlyArray<GraphFenceRetainedRoot>;
   }> = [];
   for (const obs of best.values()) {
     const pathVersions = {
@@ -952,9 +1064,31 @@ async function runExpansion(
           pathVersions: upserted.row.path_versions,
           at: publishAt,
         });
-        if (!retained.valid) {
-          // Reconcile, don't overwrite blind: the retained pins no longer
-          // hold, but THIS observation's pins just revalidated at the fresh
+        // DISC-SCR-028: the retained pins revalidated, but the stored row's
+        // private support roots are its OWN — a changed winning root does NOT
+        // re-pin them (a valid dedupe hit keeps the recorded roots; only a
+        // failed retained path reconciles). Resolve the ACTUAL owner-bound
+        // roots from the live stored row and check their support, reference
+        // and live capture-analysis authority: a retained photo root whose
+        // capture no longer activates its analysis — or no longer authorizes
+        // its capture_references row — is withdrawn authority, and the
+        // refresh must reconcile the row coherently (path AND roots together,
+        // exactly like the failed-pins path) instead of committing a live
+        // admitted row rooted in authority the capture abandoned. Roots that
+        // still hold join the publication fence below as the row's OWN
+        // relevance-bearing population — never the selected winner's.
+        const retainedRoots = retained.valid
+          ? await liveRetainedRootAuthority(tx, {
+              accountId,
+              snapshot,
+              intent: recordedFrontierIntent(upserted.row.path_versions),
+              rootEdgeIds: upserted.row.support_root_ids,
+            })
+          : null;
+        if (!retained.valid || retainedRoots == null) {
+          // Reconcile, don't overwrite blind: the retained grounding no
+          // longer holds (its pins, or its private roots' live authority),
+          // but THIS observation's pins just revalidated at the fresh
           // publication clock, so the candidate survives on the newly
           // validated coherent path — pins and the private roots it was
           // reached from, owner-bound, lifetime only shortened by the new
@@ -967,7 +1101,9 @@ async function runExpansion(
             expiresAtCap: obs.expiresAtCap,
           });
           counts.frontierReconciled++;
-          noteRejection(`retained_${retained.reason ?? 'evidence_missing'}`);
+          noteRejection(
+            `retained_${retained.valid ? 'root_support_withdrawn' : (retained.reason ?? 'evidence_missing')}`,
+          );
         } else {
           // DISC-SCR-024: the retained path revalidated UNDER the shared
           // FOR SHARE pin locks this pass holds through its commit, so the
@@ -978,6 +1114,11 @@ async function runExpansion(
           retainedCommitting.push({
             assertions: pins.assertions.map((a) => ({ id: a.id })),
             evidence: pins.evidence.map((e) => ({ id: e.id })),
+            // DISC-SCR-028: the retained row's ACTUAL private root authority
+            // joins the fence's relevance-bearing population — its support
+            // edges, and for photo roots its capture-reference support and
+            // live capture-analysis authority under the capture lock.
+            roots: retainedRoots,
           });
         }
       }
@@ -1201,6 +1342,36 @@ async function runExpansion(
 // --- Publication fence (VAL-DISC-007) --------------------------------------------------
 
 /**
+ * One ACTUAL owner-bound private support root of a retained frontier row, as
+ * the publication fence re-checks it (DISC-SCR-028). A valid dedupe refresh
+ * KEEPS the stored row's roots — they can differ from every newly selected
+ * observation's (a changed winning photo root) — so the fence must see the
+ * row's OWN root authority, never the selected winner's.
+ */
+export interface GraphFenceRetainedRoot {
+  /** The retained row's stored support-root edge (owner-bound). */
+  edgeId: string;
+  /**
+   * The root edge's live capture-reference authority at the refresh read:
+   * present when the root edge carries an ACTIVE capture_reference support
+   * row (a photo root). The fence re-checks that the exact support row is
+   * still active on that edge and that the LIVE capture still explicitly
+   * saves, still activates exactly this analysis/version and still
+   * authorizes exactly this capture_references row — under the same capture
+   * row lock the selected photo observations take, so real
+   * activation/deletion writers are ordered with the publication commit.
+   * Absent for personal roots (an explicit edge): its live presence is its
+   * authority.
+   */
+  capture?: {
+    captureId: string;
+    analysisId: string;
+    analysisVersion: number;
+    captureReferenceId: string;
+  };
+}
+
+/**
  * One relevance-bearing COMMITTING observation as the publication fence
  * re-checks it: the pinned shared dependencies (assertions/evidence) plus
  * the private relevance/support authority its commit pins. Ranked cards and
@@ -1243,20 +1414,30 @@ export interface GraphPublicationFenceInput {
    */
   admittedUnranked?: ReadonlyArray<GraphFenceCommittingObservation>;
   /**
-   * The RETAINED-ONLY frontier dependency populations this pass commits
-   * (DISC-SCR-024): dedupe-refreshed live rows whose VALID retained pins are
-   * KEPT — recorded paths that can differ from every newly selected
+   * The RETAINED-ONLY frontier populations this pass commits
+   * (DISC-SCR-024/028): dedupe-refreshed live rows whose VALID retained pins
+   * are KEPT — recorded paths that can differ from every newly selected
    * observation (a changed winning root), so they appear in no `ranked` or
    * `admittedUnranked` entry. They get the same last-word dependency
    * recheck: a late expiry or invalidation of a retained pin rejects the
-   * whole pass instead of committing an immediately invalid live row. No
-   * relevance shape exists for a retained recorded path — its private
-   * support roots were re-pinned by the surviving observation's own
-   * authority, which `admittedUnranked`/`ranked` already checks.
+   * whole pass instead of committing an immediately invalid live row. And
+   * because a valid dedupe hit PRESERVES the stored row's private support
+   * roots (only a failed retained path reconciles them), each entry also
+   * carries the row's ACTUAL owner-bound roots with their live
+   * capture-reference authority (`roots`, DISC-SCR-028): their support edges
+   * join the support-withdrawal check, and their captures join the same
+   * capture lock and live capture-analysis reread the selected photo
+   * observations take — so a real analysis activation or capture deletion is
+   * ordered with the publication commit for the RETAINED population too, and
+   * a changed-winning-photo-root refresh can no longer commit a live
+   * admitted row rooted in authority its capture abandoned after the fence.
+   * A row whose every root lost its authority reconciles at the refresh
+   * itself and carries no entry here.
    */
   retainedFrontier?: ReadonlyArray<{
     assertions: ReadonlyArray<{ id: string }>;
     evidence: ReadonlyArray<{ id: string }>;
+    roots?: ReadonlyArray<GraphFenceRetainedRoot>;
   }>;
   /**
    * Re-tightens the SQL bound to the window's CURRENT remainder before EACH
@@ -1353,7 +1534,17 @@ export async function checkGraphPublicationFence(
     ...input.ranked,
     ...(input.admittedUnranked ?? []),
   ];
-  if (committingRooted.length > 0) {
+  // DISC-SCR-028: the retained rows that KEEP their stored roots are a
+  // relevance-bearing committing population of their OWN. A changed winning
+  // photo root leaves the stored row rooted in the OLD capture's support, so
+  // checking only the selected observations' relevance (the new winner Y)
+  // fenced Y while the committed row still carried X/A-rooted private
+  // support. The actual retained roots join every check below; a retained
+  // row whose every root lost its authority reconciles at the refresh itself
+  // and never reaches the fence.
+  const retainedRooted = (input.retainedFrontier ?? []).filter((row) => (row.roots?.length ?? 0) > 0);
+  const retainedPhotoRoots = retainedRooted.flatMap((row) => row.roots!).filter((root) => root.capture != null);
+  if (committingRooted.length > 0 || retainedRooted.length > 0) {
     // Exclusions: a hide landing on a personal root about to publish.
     const personalKeys = committingRooted
       .filter((o) => o.relevance.kind === 'personal')
@@ -1422,9 +1613,18 @@ export async function checkGraphPublicationFence(
     // the locked/reread population is EVERY committing photo observation,
     // ranked cards AND admitted-unranked frontier survivors — the fence is
     // the last word for the whole private authority the pass commits.
+    // DISC-SCR-028: the RETAINED photo roots' captures join the same lock and
+    // reread — the fence is also the last word for the stored roots a
+    // changed-winning-root dedupe refresh keeps, never just the newly
+    // selected observations'.
     const photoCommitting = committingRooted.filter((o) => o.relevance.kind === 'photo');
-    if (photoCommitting.length > 0) {
-      const captureIds = [...new Set(photoCommitting.map((o) => (o.relevance as PhotoExpansionRelevance).captureId))];
+    const captureIds = [
+      ...new Set([
+        ...photoCommitting.map((o) => (o.relevance as PhotoExpansionRelevance).captureId),
+        ...retainedPhotoRoots.map((root) => root.capture!.captureId),
+      ]),
+    ];
+    if (captureIds.length > 0) {
       await input.bound?.();
       await tx.query(`SELECT id FROM captures WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL FOR NO KEY UPDATE`, [
         captureIds,
@@ -1440,6 +1640,53 @@ export async function checkGraphPublicationFence(
         }
         if (!capture.references.some((r) => r.captureReferenceId === relevance.captureReferenceId)) {
           return 'support_withdrawn';
+        }
+      }
+      // DISC-SCR-028: the retained rows' ACTUAL stored roots. A retained row
+      // keeps its roots while ANY one of them still holds its full live
+      // authority: the edge is still present in a live state (confirmed or
+      // tentative — suppression and the projector's withdrawal sweep both end
+      // it), and for a photo root the exact capture_reference support row is
+      // still ACTIVE on that edge while the LIVE capture still explicitly
+      // saves, still activates exactly the support's analysis/version and
+      // still authorizes exactly that capture_references row. The
+      // account-authority lock held above fences the projector (the only
+      // writer of these rows — its pass takes the same lock first), and the
+      // capture lock just taken fences the real activation/deletion writers,
+      // so a writer either commits before these reads (rejected here) or
+      // queues for this publication commit.
+      if (retainedRooted.length > 0) {
+        const rootEdgeIds = [...new Set(retainedRooted.flatMap((row) => row.roots!.map((root) => root.edgeId)))];
+        const { rows: rootEdges } = await tx.query<{ id: string }>(
+          `SELECT id FROM personal_interest_edges
+            WHERE owner_account_id = $1 AND id = ANY($2::uuid[]) AND state IN ('confirmed','tentative')`,
+          [accountId, rootEdgeIds],
+        );
+        const liveEdgeIds = new Set(rootEdges.map((row) => row.id));
+        let activePairs = new Set<string>();
+        if (retainedPhotoRoots.length > 0) {
+          const { rows: supportRows } = await tx.query<{ edge_id: string; capture_reference_id: string }>(
+            `SELECT edge_id, capture_reference_id FROM personal_interest_support
+              WHERE owner_account_id = $1 AND active AND origin_kind = 'capture_reference'
+                AND edge_id = ANY($2::uuid[])`,
+            [accountId, [...new Set(retainedPhotoRoots.map((root) => root.edgeId))]],
+          );
+          activePairs = new Set(supportRows.map((row) => `${row.edge_id}:${row.capture_reference_id}`));
+        }
+        for (const retained of retainedRooted) {
+          const grounded = retained.roots!.some((root) => {
+            if (!liveEdgeIds.has(root.edgeId)) return false;
+            const authority = root.capture;
+            if (!authority) return true; // a personal root: live presence is its authority
+            if (!activePairs.has(`${root.edgeId}:${authority.captureReferenceId}`)) return false;
+            const capture = liveByCapture.get(authority.captureId);
+            if (!capture) return false;
+            if (capture.analysisId !== authority.analysisId || capture.analysisVersion !== authority.analysisVersion) {
+              return false;
+            }
+            return capture.references.some((ref) => ref.captureReferenceId === authority.captureReferenceId);
+          });
+          if (!grounded) return 'support_withdrawn';
         }
       }
     }

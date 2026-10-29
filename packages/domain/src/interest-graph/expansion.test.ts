@@ -25,7 +25,7 @@ import { projectAccountInterestGraph } from './projector';
 import { pauseGraphDiscovery } from './refresh';
 import { createGraphRun } from './store';
 import { GRAPH_EXPANSION_DEADLINE_MS } from './budgets';
-import { currentAssertionJustification, retractGraphEvidence } from './validity';
+import { currentAssertionJustification, frontierPathPins, retractGraphEvidence } from './validity';
 import {
   EXPANSION_BOUNDS,
   GraphFenceError,
@@ -2629,6 +2629,395 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
       checkGraphPublicationFence(serializedTx(tx), { accountId, start, ranked: [], admittedUnranked: [photo] }),
     );
     expect(stale).toBe('support_withdrawn');
+  });
+
+  // --- DISC-SCR-028: the retained photo root of a changed-winner dedupe refresh ---
+
+  /** The account's live frontier row for one candidate node (with its stored pins and roots). */
+  async function retainedPhotoRow(accountId: string, nodeId: string) {
+    const { rows } = await db.query<{
+      id: string;
+      state: string;
+      path: Record<string, unknown>;
+      root_ids: string[];
+    }>(
+      `SELECT f.id, f.state, f.path_versions AS path,
+              COALESCE(array_agg(sr.root_id ORDER BY sr.root_id), ARRAY[]::uuid[]) AS root_ids
+         FROM graph_frontier f
+         LEFT JOIN graph_frontier_support_roots sr
+           ON sr.frontier_id = f.id AND sr.owner_account_id = f.owner_account_id
+        WHERE f.owner_account_id = $1 AND f.node_id = $2
+        GROUP BY f.id, f.state, f.path_versions`,
+      [accountId, nodeId],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * The changed-winning-photo-root fixture (the DISC-SCR-028 schedule). Pass
+   * one runs with ONE photo root: saved capture X's analysis A authorizes a
+   * depicted, resolved, anchor reference to work NA, whose creator also made
+   * the four same-creator candidates — so rail diversification leaves the
+   * largest-node-id candidate ADMITTED-UNRANKED, rooted in X's
+   * capture-reference support edge with X's recorded path. A second saved
+   * capture Y — depicting a DIFFERENT work NB by the SAME creator, with
+   * STRONGER authorized relevance (user-confirmed + anchor: photo root weight
+   * 0.35 versus X's 0.30) — is then saved and projected, so every later pass
+   * selects Y's observation for every candidate while the survivor's dedupe
+   * hit RETAINS its stored private roots in X.
+   */
+  async function changedWinnerPhotoFixture() {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const subjectA = await corpusNode({ kind: 'work', name: 'X subject' });
+    const capX = await photoCapture(ctx, accountId, {
+      referenceId: subjectA.referenceId!,
+      certainty: 0.72,
+      anchor: true,
+    });
+    const creator = await plainNode({ kind: 'creator', sense: 'painter' });
+    const edgeXA = await justifiedEdge({ subject: subjectA.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    const candidates: Array<{ nodeId: string; edge: Awaited<ReturnType<typeof justifiedEdge>> }> = [];
+    for (let i = 0; i < 4; i += 1) {
+      const candidate = await corpusNode({ kind: 'work' });
+      const edge = await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+      await candidateItem(accountId, candidate.referenceId);
+      candidates.push({ nodeId: candidate.node.id, edge });
+    }
+    await project(accountId);
+    const first = await expand(accountId);
+    if (!first.expanded) throw new Error(`fixture pass one did not publish: ${first.reason}`);
+    const byNode = [...candidates].sort((a, b) => (a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0));
+    const survivorNodeId = byNode[3]!.nodeId;
+    const survivorEdge = byNode[3]!.edge;
+    const rankedEdges = byNode.slice(0, 3).map((c) => c.edge);
+    const { rows: refRowsA } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [capX.analysisId, subjectA.referenceId],
+    );
+    const captureReferenceA = refRowsA[0]!;
+    const xEdge = await captureReferenceEdge(accountId, captureReferenceA.id);
+    expect(xEdge).not.toBeNull();
+    // Pass one's survivor: ADMITTED (diversified out), rooted in X's
+    // capture-reference support edge, recording X's walked path.
+    const survivor = await retainedPhotoRow(accountId, survivorNodeId);
+    expect(survivor?.state).toBe('admitted');
+    expect(survivor?.root_ids).toEqual([xEdge]);
+    expect(survivor!.path.assertion_ids).toEqual([edgeXA.assertionId, survivorEdge.assertionId]);
+
+    // Stage two: the stronger capture Y (a different work by the same creator).
+    const subjectB = await corpusNode({ kind: 'work', name: 'Y subject' });
+    const capY = await photoCapture(ctx, accountId, {
+      referenceId: subjectB.referenceId!,
+      certainty: 0.9,
+      anchor: true,
+      resolution: 'user_confirmed',
+    });
+    const edgeYB = await justifiedEdge({ subject: subjectB.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await project(accountId);
+    const { rows: refRowsB } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [capY.analysisId, subjectB.referenceId],
+    );
+    const captureReferenceB = refRowsB[0]!;
+    expect(await captureReferenceEdge(accountId, captureReferenceB.id)).not.toBeNull();
+    return {
+      accountId,
+      captureX: capX.captureId,
+      analysisA: capX.analysisId,
+      captureReferenceA,
+      captureY: capY.captureId,
+      analysisY: capY.analysisId,
+      captureReferenceB,
+      survivorNodeId,
+      survivorEdge,
+      rankedEdges,
+      edgeXA,
+      edgeYB,
+      xEdge: xEdge!,
+    };
+  }
+
+  it('a changed winning photo root preserves the RETAINED X roots through an unchanged refresh (DISC-SCR-028)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+
+    // Pass two selects Y's observation for every candidate (stronger root),
+    // so the survivor's dedupe hit RETAINS its stored roots in X. X's live
+    // capture-analysis authority still holds, so the retained roots and
+    // recorded path are exactly what must stay — the documented valid-retained
+    // preservation rule, now fenced through the commit.
+    const second = await expand(fx.accountId);
+    expect(second.expanded).toBe(true);
+    expect(second.counts.photoRoots).toBe(2);
+    expect(second.counts.frontierDeduped).toBe(4);
+    expect(second.counts.frontierReconciled).toBe(0);
+    const kept = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(kept?.state).toBe('admitted');
+    expect(kept?.root_ids).toEqual([fx.xEdge]);
+    expect(kept!.path.assertion_ids).toEqual([fx.edgeXA.assertionId, fx.survivorEdge.assertionId]);
+  });
+
+  it('retained X root, activation-first: an activation committed before the fence rejects the stale X/A-rooted dedupe refresh despite lagging projection (DISC-SCR-028)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+    const analysisB = await analysisBWithReference(fx.captureX);
+
+    // The REAL activation writer holds capture X's row lock open: the A→B
+    // pointer move is uncommitted while the pass reaches its publication
+    // fence with ranked EMPTY and one admitted-unranked photo survivor whose
+    // RETAINED root is X's (the selected relevance names Y only).
+    const captureHolder = await db.pool.connect();
+    let captureOpen = true;
+    let pass: Promise<ExpansionResult> | undefined;
+    try {
+      await captureHolder.query('BEGIN');
+      expect(await activateAnalysis(openTransactionDb(captureHolder), { captureId: fx.captureX, analysisId: analysisB })).toBe(
+        true,
+      );
+
+      ({ pass } = await startEmptyRankedPhotoPass(fx.accountId, fx.rankedEdges));
+
+      // The fence's capture lock must cover the RETAINED X root too — the
+      // selected Y observation alone (pre-repair) locks nothing this holder
+      // owns, and the stale X/A-rooted refresh would sail through and commit.
+      await waitForLockWaiters('%FROM captures%FOR NO KEY UPDATE%', 1);
+
+      await captureHolder.query('COMMIT');
+      captureOpen = false;
+    } finally {
+      if (captureOpen) await captureHolder.query('ROLLBACK').catch(() => undefined);
+      captureHolder.release();
+    }
+
+    // Activation-first: the fence read the writer's COMMITTED pointer B, so
+    // the stale X/A-rooted refresh is rejected — while projection still lags
+    // (X's A-support edge is live), proving the rejection came from live
+    // capture authority, not from projection having caught up.
+    const result = await pass!;
+    expect(result.expanded).toBe(false);
+    expect(result.reason).toBe('support_withdrawn');
+    expect(await captureReferenceEdge(fx.accountId, fx.captureReferenceA.id)).not.toBeNull();
+    const after = await db.query<{ active_analysis_id: string | null }>(
+      'SELECT active_analysis_id FROM captures WHERE id = $1',
+      [fx.captureX],
+    );
+    expect(after.rows[0]!.active_analysis_id).toBe(analysisB);
+    // The whole pass rolled back: the survivor row keeps exactly its pass-one
+    // record (still admitted, still rooted in X's edge, still pinning X's
+    // path) and no second expansion run exists.
+    const survivor = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(survivor?.state).toBe('admitted');
+    expect(survivor?.root_ids).toEqual([fx.xEdge]);
+    expect(survivor!.path.assertion_ids).toEqual([fx.edgeXA.assertionId, fx.survivorEdge.assertionId]);
+    const { rows: runs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion'`,
+      [fx.accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(1);
+  });
+
+  it('retained X root, publisher-first: an activation arriving after the live check queues for the publication commit; the next refresh reconciles coherently (DISC-SCR-028)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+    const analysisB = await analysisBWithReference(fx.captureX);
+
+    // Park the pass INSIDE its publication transaction at the caller's fence
+    // hook — past the fence's live capture check (which now covers the
+    // retained X root), before the commit.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let parked!: () => void;
+    const parkedPastLiveCheck = new Promise<void>((resolve) => {
+      parked = resolve;
+    });
+    const { pass } = await startEmptyRankedPhotoPass(fx.accountId, fx.rankedEdges, {
+      fence: async () => {
+        parked();
+        await gate;
+      },
+    });
+    await withDeadline(parkedPastLiveCheck, 'the pass never reached its post-fence hook');
+
+    // The REAL activation writer arrives after the live check. It must queue
+    // for the capture X row the publication now HOLDS through its commit —
+    // Y-only locking (pre-repair) holds nothing the writer needs, so it would
+    // commit B while the pass is parked and the refresh would commit stale.
+    const activation = db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: analysisB }));
+    void activation.catch(() => undefined);
+    try {
+      await waitForLockWaiters('%UPDATE captures%', 1);
+      // PROOF of held authority: while the publication is parked, the
+      // activation has NOT committed — the live pointer is still analysis A.
+      const parkedPointer = await db.query<{ active_analysis_id: string | null }>(
+        'SELECT active_analysis_id FROM captures WHERE id = $1',
+        [fx.captureX],
+      );
+      expect(parkedPointer.rows[0]!.active_analysis_id).toBe(fx.analysisA);
+    } finally {
+      release();
+    }
+
+    // The publication committed the survivor under the authority it walked
+    // (X/A), still rooted in X's retained edge — with ranked EMPTY the whole
+    // way: no card. ...and only then did the activation land (B).
+    const result = await pass;
+    expect(result.expanded).toBe(true);
+    expect(result.counts.stalePinsBlocked).toBe(3);
+    expect(result.counts.frontierDeduped).toBe(1);
+    expect(result.counts.frontierReconciled).toBe(0);
+    expect(result.counts.recommendationsPublished).toBe(0);
+    expect(await activation).toBe(true);
+    const after = await db.query<{ active_analysis_id: string | null }>(
+      'SELECT active_analysis_id FROM captures WHERE id = $1',
+      [fx.captureX],
+    );
+    expect(after.rows[0]!.active_analysis_id).toBe(analysisB);
+    const committed = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(committed?.state).toBe('admitted');
+    expect(committed?.root_ids).toEqual([fx.xEdge]);
+
+    // Post-commit staleness is honest and repaired, never wedged: the NEXT
+    // refresh sees X's live authority withdrawn (pointer B; projection still
+    // lags) and coherently reconciles the survivor's path AND roots together
+    // to the still-live Y observation.
+    expect(await captureReferenceEdge(fx.accountId, fx.captureReferenceA.id)).not.toBeNull();
+    const third = await expand(fx.accountId);
+    expect(third.expanded).toBe(true);
+    expect(third.counts.frontierReconciled).toBe(1);
+    expect(third.rejections['retained_root_support_withdrawn'] ?? 0).toBe(1);
+    const reconciled = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(reconciled?.state).toBe('admitted');
+    const yEdge = await captureReferenceEdge(fx.accountId, fx.captureReferenceB.id);
+    expect(yEdge).not.toBeNull();
+    expect(reconciled?.root_ids).toEqual([yEdge]);
+    expect(reconciled!.path.assertion_ids).toEqual([fx.edgeYB.assertionId, fx.survivorEdge.assertionId]);
+  });
+
+  it('an already-withdrawn retained X root reconciles coherently instead of wedging the pass (DISC-SCR-028)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+    const analysisB = await analysisBWithReference(fx.captureX);
+
+    // The real activation commits BEFORE the refresh (no projection
+    // catch-up: X's A-support edge is still live). The retained X root's live
+    // capture-analysis authority is therefore already withdrawn at the
+    // refresh read, so the survivor must reconcile to the still-live Y
+    // observation — path AND roots together — and the pass must still
+    // publish, never reject forever on a dead root.
+    expect(await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: analysisB }))).toBe(true);
+    expect(await captureReferenceEdge(fx.accountId, fx.captureReferenceA.id)).not.toBeNull();
+
+    const second = await expand(fx.accountId);
+    expect(second.expanded).toBe(true);
+    expect(second.counts.frontierReconciled).toBe(1);
+    expect(second.rejections['retained_root_support_withdrawn'] ?? 0).toBe(1);
+    const reconciled = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(reconciled?.state).toBe('admitted');
+    const yEdge = await captureReferenceEdge(fx.accountId, fx.captureReferenceB.id);
+    expect(yEdge).not.toBeNull();
+    expect(reconciled?.root_ids).toEqual([yEdge]);
+    expect(reconciled!.path.assertion_ids).toEqual([fx.edgeYB.assertionId, fx.survivorEdge.assertionId]);
+  });
+
+  it('the fence decides the retained photo root directly: the actual stored X roots reject after A→B, and the Y-only shape cannot (DISC-SCR-028)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+    // A committed changed-winner refresh (the control above): the survivor's
+    // stored row still pins X's path and RETAINS X's support root.
+    const second = await expand(fx.accountId);
+    expect(second.expanded).toBe(true);
+    const stored = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(stored?.root_ids).toEqual([fx.xEdge]);
+
+    // Build the retained population exactly as the engine carries it: the
+    // row's ACTUAL stored pins, and its ACTUAL stored root with the live
+    // capture-reference support tuple the root edge carries.
+    const pins = frontierPathPins(stored!.path);
+    const { rows: supportRows } = await db.query<{
+      capture_id: string;
+      analysis_id: string;
+      capture_reference_id: string;
+      analysis_version: number;
+    }>(
+      `SELECT s.capture_id, s.analysis_id, s.capture_reference_id, a.version AS analysis_version
+         FROM personal_interest_support s
+         JOIN analyses a ON a.id = s.analysis_id
+        WHERE s.owner_account_id = $1 AND s.edge_id = $2 AND s.active AND s.origin_kind = 'capture_reference'`,
+      [fx.accountId, fx.xEdge],
+    );
+    expect(supportRows).toHaveLength(1);
+    const authority = supportRows[0]!;
+    const retainedEntry = {
+      assertions: pins.assertions.map((a) => ({ id: a.id })),
+      evidence: pins.evidence.map((e) => ({ id: e.id })),
+      roots: [
+        {
+          edgeId: fx.xEdge,
+          capture: {
+            captureId: authority.capture_id,
+            analysisId: authority.analysis_id,
+            analysisVersion: authority.analysis_version,
+            captureReferenceId: authority.capture_reference_id,
+          },
+        },
+      ],
+    };
+    const { rows: state } = await db.query<{ projection_revision: number; deletion_generation: number }>(
+      'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1',
+      [fx.accountId],
+    );
+    const start = {
+      projectionRevision: state[0]!.projection_revision,
+      generation: state[0]!.deletion_generation,
+      tasteRevision: (
+        await db.query<{ revision: number }>('SELECT revision FROM taste_profiles WHERE owner_account_id = $1', [fx.accountId])
+      ).rows[0]!.revision,
+    };
+
+    // Pre-activation, the retained root's live capture authority holds.
+    const clean = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), {
+        accountId: fx.accountId,
+        start,
+        ranked: [],
+        admittedUnranked: [],
+        retainedFrontier: [retainedEntry],
+      }),
+    );
+    expect(clean).toBeNull();
+
+    // The real activation commits mid-pass (no projection catch-up: X's
+    // A-support edge is still live), changing neither the taste nor the
+    // projection revision.
+    const analysisB = await analysisBWithReference(fx.captureX);
+    expect(await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: analysisB }))).toBe(true);
+    expect(await captureReferenceEdge(fx.accountId, fx.captureReferenceA.id)).not.toBeNull();
+
+    // The same retained population is now stale X/A-rooted authority: the
+    // fence rejects the whole pass (pre-repair the retained root was never
+    // carried, so the fence could not see it at all).
+    const stale = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), {
+        accountId: fx.accountId,
+        start,
+        ranked: [],
+        admittedUnranked: [],
+        retainedFrontier: [retainedEntry],
+      }),
+    );
+    expect(stale).toBe('support_withdrawn');
+
+    // The Y-only shape — the same retained row WITHOUT its actual roots —
+    // fences nothing: this is exactly the population the pre-repair fence
+    // saw, and it cannot protect the retained X root.
+    const yOnly = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), {
+        accountId: fx.accountId,
+        start,
+        ranked: [],
+        admittedUnranked: [],
+        retainedFrontier: [{ assertions: retainedEntry.assertions, evidence: retainedEntry.evidence }],
+      }),
+    );
+    expect(yOnly).toBeNull();
   });
 });
 
