@@ -866,6 +866,12 @@ export async function runScopedGraphDiscovery(
       }
       const publishing: Array<{ obs: ScopedObservation; reference: CandidateReference }> = [];
       for (const obs of diversified) {
+        // Each candidate's dependency revalidation runs its own real lock
+        // waits on the pinned rows (DISC-SCR-041): the bound is re-tightened
+        // to the CURRENT remainder at every actual wait, not once for the
+        // whole loop, so successive waits cannot cumulatively outrun the
+        // anchor while this pass still holds its grant and collection locks.
+        await enforceDeadline();
         const reference = references.get(obs.nodeId);
         if (!reference) {
           counts.candidatesWithoutReferences++;
@@ -893,10 +899,16 @@ export async function runScopedGraphDiscovery(
       }
 
       // --- Results: existing owner items first, materialized catalog items otherwise --
+      // Both reads between the per-candidate revalidation and the
+      // materialization loop are real lock waits too (DISC-SCR-041): each
+      // gets its own remainder-tight bound, so neither inherits the time the
+      // candidate loop already consumed.
+      await enforceDeadline();
       const hidden = await hiddenKeys(tx, owner);
       const referenceIds = [...new Set(publishing.map((p) => p.reference.referenceId))];
       const existingItems = new Map<string, { id: string; canonical_key: string }>();
       if (referenceIds.length > 0) {
+        await enforceDeadline();
         const { rows } = await tx.query<{ id: string; canonical_key: string; reference_id: string }>(
           `SELECT id, canonical_key, reference_id FROM discovery_items
             WHERE owner_account_id = $1 AND reference_id = ANY($2::uuid[])
@@ -909,6 +921,14 @@ export async function runScopedGraphDiscovery(
       }
       const finalEntries: Array<{ obs: ScopedObservation; reference: CandidateReference; itemId: string; category: Category | null }> = [];
       for (const { obs, reference } of publishing) {
+        // The materialization upsert is a real INSERT ... ON CONFLICT on the
+        // (owner, canonical_key) unique index that other scoped jobs and the
+        // real compiler write too (DISC-SCR-041): its lock wait is bounded by
+        // the window's CURRENT remainder, refreshed at every candidate — one
+        // early bound for the whole loop let a first short wait hand the
+        // second upsert a stale remainder, parking grant and collection locks
+        // past the anchor until the final rollback caught up.
+        await enforceDeadline();
         if (reference.byLink) counts.candidatesResolvedByLink++;
         const existing = existingItems.get(reference.referenceId);
         // A candidate hidden by canonical key (its own item's or its
@@ -993,6 +1013,10 @@ export async function runScopedGraphDiscovery(
       const parent: RecommendationParent = { kind: 'discovery_job', discoveryJobId: authority.discovery_job_id };
       const results: ScopedGraphResult[] = [];
       if (capped.length > 0) {
+        // The tail recommendation writes are a per-row helper loop
+        // (DISC-SCR-041): the deadline stage is threaded in so each row's
+        // INSERT is bounded by the CURRENT remainder, never one earlier
+        // relative timeout for the whole batch.
         const recIds = await insertRecommendations(
           tx,
           parent,
@@ -1008,9 +1032,14 @@ export async function runScopedGraphDiscovery(
             contributing_reference_ids: contributingReferenceIds,
             destination_url: null,
           })),
+          enforceDeadline,
         );
         for (let i = 0; i < capped.length; i += 1) {
           const entry = capped[i]!;
+          // Each proof INSERT is its own real lock wait behind the same
+          // re-tightened remainder (DISC-SCR-041), like every materialization
+          // wait above.
+          await enforceDeadline();
           await tx.query(
             `INSERT INTO scoped_discovery_result_proofs
                (owner_account_id, discovery_job_id, recommendation_id,
@@ -1044,6 +1073,10 @@ export async function runScopedGraphDiscovery(
       }
       counts.resultsPublished = results.length;
       const state: 'complete' | 'partial' = results.length > 0 ? 'complete' : 'partial';
+      // The terminal status UPDATE is the tail's last real write wait
+      // (DISC-SCR-041): bounded by the CURRENT remainder too, before the
+      // fresh-clock final boundary below takes the last word.
+      await enforceDeadline();
       await tx.query(`UPDATE discovery_jobs SET status = $2 WHERE id = $1`, [authority.discovery_job_id, state]);
 
       // --- The final publication boundary (DISC-SCR-035/038) ------------------------

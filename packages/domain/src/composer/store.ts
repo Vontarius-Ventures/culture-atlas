@@ -193,14 +193,23 @@ export interface RecommendationInsert {
   destination_url?: string | null;
 }
 
+/**
+ * `bound` is invoked before each row's INSERT (DISC-SCR-041): the caller's
+ * deadline stage re-tightens its SQL bound to the CURRENT window remainder,
+ * so the per-row lock waits cannot cumulatively outrun the caller's anchor
+ * by reusing one earlier relative timeout. Callers that pass none keep the
+ * raw, unbounded loop exactly as before.
+ */
 export async function insertRecommendations(
   db: Queryable,
   parent: RecommendationParent,
   recs: readonly RecommendationInsert[],
+  bound?: () => Promise<void>,
 ): Promise<string[]> {
   const p = parentColumns(parent);
   const ids: string[] = [];
   for (const r of recs) {
+    await bound?.();
     const { rows } = await db.query<{ id: string }>(
       `INSERT INTO recommendations (analysis_id, plan_id, plan_version, discovery_job_id, discovery_item_id, category,
                                     section, rank, title, external_ids, display_reason, origin, source_ids,
