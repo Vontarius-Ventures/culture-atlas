@@ -8,12 +8,13 @@ import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
 import { loadExplicitSupport } from './explicit-support';
 import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from './refresh';
-import { currentAssertionJustification, revalidatePinnedDependencies } from './validity';
+import { currentAssertionJustification, revalidateFrontierPathVersions, revalidatePinnedDependencies } from './validity';
 import { bilaterallyVerifiedReferenceNodes } from './identity-links';
 import {
   createGraphRun,
   insertGraphRecommendation,
   insertRecommendationProof,
+  reconcileFrontierCandidatePath,
   setGraphRunState,
   upsertFrontierCandidate,
 } from './store';
@@ -258,6 +259,14 @@ export interface ExpansionCounts {
   proofsPublished: number;
   frontierCreated: number;
   frontierDeduped: number;
+  /**
+   * Dedupe refreshes whose RETAINED row failed revalidation and were
+   * reconciled to the just-validated observation's pins/roots (DISC-SCR-022):
+   * a live frontier row never keeps stale recorded path_versions behind a
+   * passing refresh. Counted once per reconciled row and also recorded in
+   * `rejections` as `retained_<reason>`.
+   */
+  frontierReconciled: number;
   frontierExpired: number;
   frontierPruned: number;
   /**
@@ -532,6 +541,7 @@ function emptyCounts(): ExpansionCounts {
     proofsPublished: 0,
     frontierCreated: 0,
     frontierDeduped: 0,
+    frontierReconciled: 0,
     frontierExpired: 0,
     frontierPruned: 0,
     stalePinsBlocked: 0,
@@ -756,9 +766,14 @@ async function runExpansion(
   // whatever this pass published. Nothing can slip between the validation
   // and the commit.
   checkDeadline();
+  // The FRESH publication clock for every committing pin decision in this
+  // pass: the pre-write pin validation below, and the retained-pin
+  // revalidation of the dedupe refreshes in the frontier loop (DISC-SCR-022),
+  // both decide at this one instant.
+  let publishAt = at;
   if (best.size > 0) {
     const publishClock = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');
-    const publishAt = publishClock.rows[0]!.now;
+    publishAt = publishClock.rows[0]!.now;
     const pinAssertionIds = [...new Set([...best.values()].flatMap((o) => o.assertions.map((a) => a.id)))].sort();
     const pinEvidenceIds = [...new Set([...best.values()].flatMap((o) => o.evidence.map((e) => e.id)))].sort();
     if (pinAssertionIds.length > 0) {
@@ -830,6 +845,16 @@ async function runExpansion(
   }
 
   for (const obs of best.values()) {
+    const pathVersions = {
+      template: obs.templateKey,
+      grammar_version: obs.grammarVersion,
+      ranking_policy_version: RANKING_POLICY_VERSION,
+      intent: obs.intent,
+      assertion_ids: obs.assertions.map((a) => a.id),
+      assertion_revisions: obs.assertions.map((a) => a.revision),
+      evidence_ids: obs.evidence.map((e) => e.id),
+      evidence_revisions: obs.evidence.map((e) => e.revision),
+    };
     const upserted = await upsertFrontierCandidate(tx, {
       ownerAccountId: accountId,
       runId: run.id,
@@ -838,21 +863,47 @@ async function runExpansion(
       dedupeKey: `expansion:${obs.intent}:node:${obs.nodeId}`,
       supportRootIds: obs.supportEdgeIds,
       score: obs.score,
-      pathVersions: {
-        template: obs.templateKey,
-        grammar_version: obs.grammarVersion,
-        ranking_policy_version: RANKING_POLICY_VERSION,
-        intent: obs.intent,
-        assertion_ids: obs.assertions.map((a) => a.id),
-        assertion_revisions: obs.assertions.map((a) => a.revision),
-        evidence_ids: obs.evidence.map((e) => e.id),
-        evidence_revisions: obs.evidence.map((e) => e.revision),
-      },
+      pathVersions,
       expiresInDays: EXPANSION_BOUNDS.frontierLifetimeDays,
       expiresAt: obs.expiresAtCap ?? undefined,
     });
     if (upserted.created) counts.frontierCreated++;
-    else counts.frontierDeduped++;
+    else {
+      counts.frontierDeduped++;
+      // DISC-SCR-022: a dedupe hit RETAINS the stored row and only refreshes
+      // its live state, so the refresh must validate the ACTUAL retained
+      // observation pins — not just this pass's newly proposed pins, which
+      // the pre-write check above already validated. An admitted
+      // diversified-out candidate still pinning assertion revision R would
+      // otherwise be refreshed live after a revision-R+1 observation passed,
+      // while its stored path_versions keep naming R — a committed frontier
+      // row that immediately fails the same shared read validator at read
+      // time. Terminal rows keep their historical record: never revived,
+      // never rewritten, never refreshed.
+      if (upserted.row.state === 'active' || upserted.row.state === 'admitted') {
+        const retained = await revalidateFrontierPathVersions(tx, {
+          pathVersions: upserted.row.path_versions,
+          at: publishAt,
+        });
+        if (!retained.valid) {
+          // Reconcile, don't overwrite blind: the retained pins no longer
+          // hold, but THIS observation's pins just revalidated at the fresh
+          // publication clock, so the candidate survives on the newly
+          // validated coherent path — pins and the private roots it was
+          // reached from, owner-bound, lifetime only shortened by the new
+          // grounding's evidence/rights expiry cap.
+          await reconcileFrontierCandidatePath(tx, {
+            ownerAccountId: accountId,
+            frontierId: upserted.row.id,
+            pathVersions,
+            supportRootIds: obs.supportEdgeIds,
+            expiresAtCap: obs.expiresAtCap,
+          });
+          counts.frontierReconciled++;
+          noteRejection(`retained_${retained.reason ?? 'evidence_missing'}`);
+        }
+      }
+    }
     // Refresh the admission record without regressing terminal states: a
     // published/expired/pruned entry keeps its historical record.
     await tx.query(

@@ -1,7 +1,7 @@
 import { AppError } from '../errors';
 import type { Db, Queryable } from '../db/pool';
 import { PREDICATE_ENDPOINT_POLICY } from './assertion-policy';
-import type { GraphPredicate, ProofDependency, RecommendationGraphProofRow } from './schema';
+import type { GraphPredicate, RecommendationGraphProofRow } from './schema';
 
 /**
  * Source retraction and expiry dependency invalidation (VAL-EVID-004).
@@ -12,7 +12,11 @@ import type { GraphPredicate, ProofDependency, RecommendationGraphProofRow } fro
  * admitted) whose recorded path pins it — is invalidated immediately, before
  * any asynchronous cleanup. Proofs grounded in independent valid evidence and
  * accounts' explicit private support survive untouched: a cultural entity is
- * never globally deleted because one source became invalid.
+ * never globally deleted because one source became invalid. The SAME
+ * live-witness rule decides proof and frontier survival alike (DISC-SCR-015):
+ * a dependent keeps living while its RECORDED pins still hold — a shared
+ * assertion's independent surviving witness preserves it, while losing every
+ * recorded witness (or the walked assertion's sole support) expires it.
  *
  * Overlapping withdrawals serialize: the affected proofs are locked in one
  * consistent ascending-id order before their survival is decided, so two
@@ -162,6 +166,18 @@ export interface PinnedDependencyVerdict {
   reason: PinnedDependencyRejection | null;
 }
 
+/**
+ * One pinned dependency reference. Proofs always record the exact revision;
+ * a frontier row stored before revisions were recorded (or with a short
+ * parallel array) yields a null revision, which means the identity is
+ * checked LIVE — existence, validity, expiry and justification still apply —
+ * with no recorded pin to drift.
+ */
+export interface PinnedDependencyRef {
+  id: string;
+  revision?: number | null;
+}
+
 const UNJUSTIFIED_MAP: Partial<Record<string, PinnedDependencyRejection>> = {
   assertion_missing: 'assertion_missing',
   assertion_not_validated: 'assertion_not_validated',
@@ -182,7 +198,7 @@ const UNJUSTIFIED_MAP: Partial<Record<string, PinnedDependencyRejection>> = {
  */
 export async function revalidatePinnedDependencies(
   db: Queryable,
-  input: { assertions: readonly ProofDependency[]; evidence: readonly ProofDependency[]; at?: Date },
+  input: { assertions: readonly PinnedDependencyRef[]; evidence: readonly PinnedDependencyRef[]; at?: Date },
 ): Promise<PinnedDependencyVerdict> {
   const at = input.at ?? new Date();
 
@@ -221,7 +237,7 @@ export async function revalidatePinnedDependencies(
         evidenceFailure ??= 'rights_expired';
         continue;
       }
-      if (current.revision !== pinned.revision) {
+      if (pinned.revision != null && current.revision !== pinned.revision) {
         evidenceFailure ??= 'evidence_revision_changed';
         continue;
       }
@@ -239,7 +255,7 @@ export async function revalidatePinnedDependencies(
     );
     const current = rows[0];
     if (!current) return { valid: false, reason: 'assertion_missing' };
-    if (current.revision !== pinned.revision) return { valid: false, reason: 'assertion_revision_changed' };
+    if (pinned.revision != null && current.revision !== pinned.revision) return { valid: false, reason: 'assertion_revision_changed' };
     if (current.status !== 'validated') return { valid: false, reason: 'assertion_not_validated' };
     if (current.invalidated_at) return { valid: false, reason: 'assertion_invalidated' };
     const justification = await currentAssertionJustification(db, { assertionId: pinned.id, at });
@@ -270,6 +286,54 @@ export async function revalidateGraphProof(
     evidence: proof.evidence_ids.map((id, i) => ({ id, revision: proof.evidence_revisions[i]! })),
     at: input.at,
   });
+}
+
+/**
+ * The recorded pin arrays of a frontier candidate's approved path
+ * (path_versions jsonb): parallel id/revision arrays. Rows stored before
+ * revisions were recorded (or with short parallel arrays) read as null
+ * revisions — identity liveness without a pin to drift.
+ */
+export interface FrontierPathPins {
+  assertions: PinnedDependencyRef[];
+  evidence: PinnedDependencyRef[];
+}
+
+export function frontierPathPins(pathVersions: unknown): FrontierPathPins {
+  const path = (pathVersions ?? {}) as Record<string, unknown>;
+  const ids = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+  const zip = (idList: string[], revisionList: unknown): PinnedDependencyRef[] =>
+    idList.map((id, i) => {
+      const revision = Array.isArray(revisionList) ? revisionList[i] : undefined;
+      return { id, revision: typeof revision === 'number' && Number.isInteger(revision) ? revision : null };
+    });
+  const assertionIds = ids(path.assertion_ids);
+  const evidenceIds = ids(path.evidence_ids);
+  return {
+    assertions: zip(assertionIds, path.assertion_revisions),
+    evidence: zip(evidenceIds, path.evidence_revisions),
+  };
+}
+
+/**
+ * Revalidates a frontier candidate's RECORDED observation pins under the same
+ * live-witness rule the read path applies to proofs: every recorded assertion
+ * must still be `validated` at its recorded revision and currently justified,
+ * and the recorded path must retain at least one currently-valid recorded
+ * evidence row as a live grounding witness — retracting SOLE evidence still
+ * expires the row, while independent surviving evidence preserves it. This is
+ * the shared read validator a LIVE frontier row must satisfy: the retraction
+ * path decides a row's survival with it (DISC-SCR-015), and an expansion
+ * dedupe refresh reconciles a retained row whose recorded pins fail it
+ * (DISC-SCR-022).
+ */
+export async function revalidateFrontierPathVersions(
+  db: Queryable,
+  input: { pathVersions: unknown; at?: Date },
+): Promise<PinnedDependencyVerdict> {
+  const pins = frontierPathPins(input.pathVersions);
+  return revalidatePinnedDependencies(db, { assertions: pins.assertions, evidence: pins.evidence, at: input.at });
 }
 
 // --- Retraction: the authoritative invalidation path ----------------------------------
@@ -322,7 +386,7 @@ async function invalidateDependentsOfEvidence(
     );
     proofsInvalidated += 1;
   }
-  // Frontier candidates whose recorded approved path pinned the retracted
+  // Frontier candidates whose recorded approved path overlaps the withdrawn
   // evidence (or an assertion it supported) expire immediately, inside the
   // retraction transaction — their lifetime never outlives their grounding.
   // EVERY live state is covered (DISC-SCR-002): normal expansion promotes
@@ -330,16 +394,49 @@ async function invalidateDependentsOfEvidence(
   // or diversified-out candidates stay admitted (they count as live frontier
   // capacity), so expiring only 'active' rows would leave an unsupported
   // candidate live until ordinary expiry. Terminal states keep their record.
-  const frontier = await tx.query(
-    `UPDATE graph_frontier SET state = 'expired', updated_at = now()
+  //
+  // DISC-SCR-015: the overlap only SELECTS candidates; SURVIVAL is decided by
+  // the RECORDED pins under the same live-witness rule the read path applies.
+  // Withdrawing ONE independent witness of a shared assertion leaves the
+  // recorded path fully grounded (the surviving witness still justifies the
+  // assertion and keeps a live evidence pin), so the row must stay live —
+  // expiring on overlap alone destroyed candidates whose proofs survived the
+  // same withdrawal. A row expires only when its recorded path actually
+  // fails: every recorded witness withdrawn, a walked assertion that lost its
+  // sole support, a retracted/expired/rights-expired sole grounding, or
+  // recorded revisions that drifted past the current dependency versions.
+  //
+  // The candidate rows are locked FOR UPDATE in ONE consistent ascending-id
+  // order — the same discipline as the proof locks above: two withdrawals of
+  // INDEPENDENT evidence that both reach the same live row serialize here.
+  // Under READ COMMITTED the transaction that waits re-reads the row — and
+  // every dependency it revalidates — after the other commits, so the
+  // decision that commits last sees every committed withdrawal and a raced
+  // row can never stay live on support that no longer exists; the shared
+  // ascending order keeps overlapping withdrawals deadlock-free.
+  const frontier = await tx.query<{ id: string; path_versions: unknown }>(
+    `SELECT id, path_versions FROM graph_frontier
       WHERE state IN ('active','admitted')
         AND (
           (path_versions -> 'evidence_ids') ?| $1::text[]
           OR (path_versions -> 'assertion_ids') ?| $2::text[]
-        )`,
+        )
+      ORDER BY id
+      FOR UPDATE`,
     [evidenceIds, assertionIds],
   );
-  return { proofsInvalidated, frontierEntriesExpired: frontier.rowCount ?? 0 };
+  let frontierEntriesExpired = 0;
+  for (const row of frontier.rows) {
+    const verdict = await revalidateFrontierPathVersions(tx, { pathVersions: row.path_versions, at });
+    if (verdict.valid) continue;
+    await tx.query(
+      `UPDATE graph_frontier SET state = 'expired', updated_at = now()
+        WHERE id = $1 AND state IN ('active','admitted')`,
+      [row.id],
+    );
+    frontierEntriesExpired += 1;
+  }
+  return { proofsInvalidated, frontierEntriesExpired };
 }
 
 /**

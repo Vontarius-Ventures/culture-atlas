@@ -369,6 +369,13 @@ export interface FrontierUpsertResult {
     node_id: string;
     intent: 'expansion' | 'research';
     support_root_ids: string[];
+    /**
+     * The row's stored pin record. On a dedupe hit this is the RETAINED
+     * tuple's path_versions (read back from the conflicting tuple exactly
+     * like `state`), so callers can validate the ACTUAL retained observation
+     * pins rather than only the ones they proposed (DISC-SCR-022).
+     */
+    path_versions: unknown;
     state: string;
     score: number | null;
     dedupe_key: string;
@@ -417,7 +424,7 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
                LEAST(now() + make_interval(days => $8), $9::timestamptz))
        ON CONFLICT (owner_account_id, dedupe_key) DO UPDATE SET updated_at = now()
        RETURNING id, owner_account_id, run_id, node_id, intent, state, score, dedupe_key,
-                 expires_at, created_at, (xmax = 0) AS created
+                 expires_at, created_at, path_versions, (xmax = 0) AS created
      ),
      new_roots AS (
        INSERT INTO graph_frontier_support_roots (frontier_id, owner_account_id, root_id)
@@ -432,7 +439,7 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
      )
      SELECT u.id, u.owner_account_id, u.run_id, u.node_id, u.intent,
             COALESCE(nra.roots, ARRAY[]::uuid[]) AS support_root_ids,
-            u.state, u.score, u.dedupe_key, u.expires_at, u.created_at, u.created
+            u.state, u.score, u.dedupe_key, u.expires_at, u.created_at, u.path_versions, u.created
        FROM upsert u
        LEFT JOIN new_roots_agg nra ON nra.frontier_id = u.id`,
     [
@@ -461,6 +468,72 @@ export async function upsertFrontierCandidate(db: Queryable, input: UpsertFronti
     [row.id, input.ownerAccountId],
   );
   return { created, row: { ...row, support_root_ids: retained[0]!.roots } };
+}
+
+export interface ReconcileFrontierCandidatePathInput {
+  ownerAccountId: string;
+  frontierId: string;
+  /** The just-validated observation's pinned path, recorded in place of the failed retained pins. */
+  pathVersions: Record<string, unknown>;
+  /** The validating observation's own support roots (replace the retained roots coherently). */
+  supportRootIds: readonly string[];
+  /**
+   * Evidence/rights expiry cap of the new grounding: the candidate's lifetime
+   * is shortened, never extended (VAL-EVID-004).
+   */
+  expiresAtCap?: Date | null;
+}
+
+/**
+ * Reconciles a RETAINED live frontier candidate whose recorded path pins no
+ * longer revalidate (DISC-SCR-022) to the just-validated observation's
+ * coherent pin/root set — never leaving a live row with stale recorded
+ * path_versions behind a passing refresh.
+ *
+ * A dedupe conflict keeps the stored row (roots and pins recorded by whoever
+ * created it), so a refresh that only flips live state/score would leave an
+ * admitted candidate pinning assertion revision R live after a revision-R+1
+ * observation passed validation — a committed frontier row that immediately
+ * fails the shared read validator. When the retained pins fail, the pins and
+ * the roots are rewritten TOGETHER (the path and the private roots it was
+ * reached from are one story), the lifetime only ever shortens, and the
+ * terminal history is untouched: the rewrite applies to live rows only.
+ *
+ * Owner-bound like every frontier writer: the pin rewrite is scoped to the
+ * account's own row, and the root swap lives in the owner-bound relation of
+ * migration 280, whose composite foreign keys reject a foreign or
+ * nonexistent root id even through direct SQL — so a rejected writer leaves
+ * no half-reconciled row behind.
+ */
+export async function reconcileFrontierCandidatePath(
+  db: Queryable,
+  input: ReconcileFrontierCandidatePathInput,
+): Promise<boolean> {
+  const updated = await db.query(
+    `UPDATE graph_frontier
+        SET path_versions = $3::jsonb,
+            expires_at = CASE WHEN $4::timestamptz IS NULL THEN expires_at
+                              ELSE LEAST(expires_at, $4::timestamptz) END,
+            updated_at = now()
+      WHERE id = $1 AND owner_account_id = $2 AND state IN ('active','admitted')`,
+    [input.frontierId, input.ownerAccountId, JSON.stringify(input.pathVersions ?? {}), input.expiresAtCap ?? null],
+  );
+  if ((updated.rowCount ?? 0) === 0) return false;
+  // Roots follow the path atomically: the retained grounding's roots are
+  // replaced by the validating observation's own.
+  await db.query(`DELETE FROM graph_frontier_support_roots WHERE frontier_id = $1 AND owner_account_id = $2`, [
+    input.frontierId,
+    input.ownerAccountId,
+  ]);
+  const roots = [...new Set(input.supportRootIds)];
+  if (roots.length > 0) {
+    await db.query(
+      `INSERT INTO graph_frontier_support_roots (frontier_id, owner_account_id, root_id)
+       SELECT $1, $2, r.root_id FROM (SELECT DISTINCT n.root_id FROM unnest($3::uuid[]) AS n(root_id)) r`,
+      [input.frontierId, input.ownerAccountId, roots],
+    );
+  }
+  return true;
 }
 
 // --- Graph-parented recommendations and provider queries ----------------------------
