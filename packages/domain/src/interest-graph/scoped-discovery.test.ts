@@ -6,9 +6,10 @@ import type { Scope } from '../enums';
 import type { AgentPrincipal } from '../principal';
 import { revokeAgentConnection, updateAgentConnection } from '../services/agent-connections';
 import { narrowConnection } from '../services/agent-platform';
+import { resolvePrincipal } from '../services/auth';
 import { addCollectionItem, createCollection } from '../services/collections';
 import { startRelatedDiscovery } from '../services/items';
-import { accountCtx, ctxFor, insertItem, runJob } from '../test-support/library';
+import { accountCtx, ctxFor, insertItem, runJob, saveDirect } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAgentConnection, testProviders } from '../testing';
 import { INTEREST_GRAPH_POLICY_VERSION } from './schema';
 import { discoveryGrantAuthorityForJob, requireDiscoveryGrantAuthorityForJob } from './scoped-discovery';
@@ -25,6 +26,15 @@ import { createGraphRun, graphRunForOwner } from './store';
  * remove/regrant advance or otherwise invalidate the recorded epoch without
  * touching independent account-owned graph work; the legacy whole-library
  * operation keeps its unchanged shape and persists no authority.
+ *
+ * The DISC-SCR-030/031 repairs: a shared public sample saved into the exact
+ * owner/granted collection stays an eligible origin, with private authority
+ * bound through the owner's save row (never through the shared item's
+ * ownership, which is never mutated, and never through an implicit save);
+ * and the initiating epoch is VALIDATED under the enqueue lock — a stale
+ * authenticated principal is not silently adopted at a narrowed epoch —
+ * while unchanged versionless legacy principals keep the live-permission
+ * policy.
  */
 
 const db = getTestDb();
@@ -54,18 +64,48 @@ interface AuthorityRow {
   collection_granted_at: Date | null;
   origin_collection_id: string;
   origin_item_id: string;
+  origin_saved_item_id: string;
   created_at: Date;
 }
 
 async function authorities(ownerAccountId?: string): Promise<AuthorityRow[]> {
   const { rows } = await db.query<AuthorityRow>(
     `SELECT id, owner_account_id, discovery_job_id, job_id, agent_connection_id, authorization_version,
-            collection_granted_at, origin_collection_id, origin_item_id, created_at
+            collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id, created_at
        FROM discovery_grant_authorities ${ownerAccountId ? 'WHERE owner_account_id = $1' : ''}
       ORDER BY created_at, id`,
     ownerAccountId ? [ownerAccountId] : [],
   );
   return rows;
+}
+
+/** The owner's save row that grounds an origin's membership in a collection. */
+async function ownerSaveOf(accountId: string, itemId: string): Promise<string> {
+  const { rows } = await db.query<{ id: string }>(
+    'SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+    [accountId, itemId],
+  );
+  return rows[0]!.id;
+}
+
+/**
+ * Fails honestly on timeout, so a race barrier test cannot pass by racing
+ * past the park: the mutator's in-flight query MUST be observed as a lock
+ * waiter first (same discipline as the publication-fence races).
+ */
+async function waitForLockWaiters(pattern: string, atLeast: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock' AND query ILIKE $1 AND datname = current_database()`,
+      [pattern],
+    );
+    if (Number(rows[0]!.n) >= atLeast) return;
+    if (Date.now() >= deadline)
+      throw new Error(`expected at least ${atLeast} lock waiter(s) matching ${pattern} within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 /** One fresh scoped library: owner account + member collection + granted agent. */
@@ -76,7 +116,7 @@ async function scopedLibrary(input: { agentScopes?: Scope[]; libraryAccess?: 'al
   const col = await createCollection(ctx, { name: `Scoped ${prefix}` });
   await addCollectionItem(ctx, { id: col.id, item_id: item, body: {} });
   const libraryAccess = input.libraryAccess ?? 'selected_collections';
-  const { principal: agent } = await insertAgentConnection(owner, {
+  const { principal: agent, credential } = await insertAgentConnection(owner, {
     scopes: input.agentScopes ?? (['collections:read', 'captures:read'] as Scope[]),
     libraryAccess,
     collectionIds: libraryAccess === 'all' ? [] : [col.id],
@@ -86,7 +126,7 @@ async function scopedLibrary(input: { agentScopes?: Scope[]; libraryAccess?: 'al
     'SELECT granted_at FROM agent_connection_collections WHERE agent_connection_id = $1 AND collection_id = $2',
     [agent.connectionId, col.id],
   );
-  return { owner, ctx, prefix, item, col, agent, actx, grantedAt: grants.rows[0]?.granted_at ?? null };
+  return { owner, ctx, prefix, item, col, agent, credential, actx, grantedAt: grants.rows[0]?.granted_at ?? null };
 }
 
 /** An account-owned graph run: independent of any agent grant. */
@@ -237,8 +277,11 @@ describe('revoke, narrow and remove/regrant transitions', () => {
     await startRelatedDiscovery(lib.actx, { id: lib.item, body: { collection_id: lib.col.id } });
     const run = await accountOwnedRun(lib.owner.accountId);
     const before = (await authorities(lib.owner.accountId))[0]!;
-    // Real owner grant replacement removing the collection.
-    await updateAgentConnection(lib.ctx, { id: lib.agent.connectionId, body: { collection_ids: [] } });
+    // Real owner grant replacement removing the scoped collection. The payload
+    // is route-valid for the public v1 schema (collection_ids min(1)): the
+    // replacement retains a second owned collection instead of an empty list.
+    const keep = await createCollection(lib.ctx, { name: `Kept ${lib.prefix}` });
+    await updateAgentConnection(lib.ctx, { id: lib.agent.connectionId, body: { collection_ids: [keep.id] } });
     // The next request's fresh principal sees no grant...
     const narrowed: AgentPrincipal = { ...lib.agent, allowedCollectionIds: [] };
     await expect(
@@ -257,9 +300,12 @@ describe('revoke, narrow and remove/regrant transitions', () => {
     const j1 = await startRelatedDiscovery(lib.actx, { id: lib.item, body: { collection_id: lib.col.id, category: 'watch' } });
     const j2 = await startRelatedDiscovery(lib.actx, { id: lib.item, body: { collection_id: lib.col.id, category: 'play' } });
     const run = await accountOwnedRun(lib.owner.accountId);
-    // The owner removes the collection grant and grants it again (the real v1 replace path).
-    await updateAgentConnection(lib.ctx, { id: lib.agent.connectionId, body: { collection_ids: [] } });
-    await updateAgentConnection(lib.ctx, { id: lib.agent.connectionId, body: { collection_ids: [lib.col.id] } });
+    // The owner removes the collection grant and grants it again (the real v1
+    // replace path). Both payloads are route-valid for the public v1 schema
+    // (collection_ids min(1)): the replacement retains a second collection.
+    const keep = await createCollection(lib.ctx, { name: `Kept ${lib.prefix}` });
+    await updateAgentConnection(lib.ctx, { id: lib.agent.connectionId, body: { collection_ids: [keep.id] } });
+    await updateAgentConnection(lib.ctx, { id: lib.agent.connectionId, body: { collection_ids: [keep.id, lib.col.id] } });
     const newGrant = (
       await db.query<{ granted_at: Date }>(
         'SELECT granted_at FROM agent_connection_collections WHERE agent_connection_id = $1 AND collection_id = $2',
@@ -279,6 +325,218 @@ describe('revoke, narrow and remove/regrant transitions', () => {
     // The v1 replace does not bump the version; the grant timestamp carries the epoch.
     expect(byJob.get(j3.discovery_job_id)!.authorization_version).toBe(1);
     expect(await graphRunForOwner(db, { runId: run.id, ownerAccountId: lib.owner.accountId })).toEqual(run);
+  });
+});
+
+describe('shared public sample origins stay eligible through the owner-bound save', () => {
+  it('a public sample saved into the granted collection enqueues under owner-bound save authority', async () => {
+    const lib = await scopedLibrary();
+    // A reviewed public sample: a shared, ownerless discovery item (is_sample).
+    const sample = await insertItem(null, { kind: 'film', title: `Sample film ${lib.prefix}` });
+    await addCollectionItem(lib.ctx, { id: lib.col.id, item_id: sample, body: {} });
+    const savedItemId = await ownerSaveOf(lib.owner.accountId, sample);
+    const started = await startRelatedDiscovery(lib.actx, { id: sample, body: { collection_id: lib.col.id, category: 'watch' } });
+    const rows = await authorities(lib.owner.accountId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      owner_account_id: lib.owner.accountId,
+      agent_connection_id: lib.agent.connectionId,
+      origin_collection_id: lib.col.id,
+      origin_item_id: sample,
+      origin_saved_item_id: savedItemId,
+      discovery_job_id: started.discovery_job_id,
+      job_id: started.job_id,
+    });
+    // The shared sample itself is never mutated: still ownerless, still a
+    // sample, and exactly the one save the owner made (no implicit save).
+    const item = await db.query<{ owner_account_id: string | null; is_sample: boolean }>(
+      'SELECT owner_account_id, is_sample FROM discovery_items WHERE id = $1',
+      [sample],
+    );
+    expect(item.rows[0]).toEqual({ owner_account_id: null, is_sample: true });
+    const saves = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+      [lib.owner.accountId, sample],
+    );
+    expect(saves.rows[0]!.n).toBe(1);
+  });
+
+  it('an owner-initiated sample enqueue records the same owner-bound authority without a connection epoch', async () => {
+    const lib = await scopedLibrary();
+    const sample = await insertItem(null, { kind: 'film', title: `Sample film ${lib.prefix}` });
+    await addCollectionItem(lib.ctx, { id: lib.col.id, item_id: sample, body: {} });
+    const savedItemId = await ownerSaveOf(lib.owner.accountId, sample);
+    const started = await startRelatedDiscovery(lib.ctx, { id: sample, body: { collection_id: lib.col.id } });
+    const rows = await authorities(lib.owner.accountId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      agent_connection_id: null,
+      authorization_version: null,
+      collection_granted_at: null,
+      origin_item_id: sample,
+      origin_saved_item_id: savedItemId,
+      discovery_job_id: started.discovery_job_id,
+    });
+  });
+
+  it('a sample origin runs the enqueued job graph-off without touching the shared item', async () => {
+    const lib = await scopedLibrary();
+    const sample = await insertItem(null, { kind: 'film', title: `Sample film ${lib.prefix}` });
+    await addCollectionItem(lib.ctx, { id: lib.col.id, item_id: sample, body: {} });
+    const started = await startRelatedDiscovery(lib.actx, { id: sample, body: { collection_id: lib.col.id, category: 'watch' } });
+    const out = await runJob(started.job_id, { providers: testProviders({ qloo: qloo(lib.prefix) }) });
+    expect(['complete', 'partial']).toContain(out.state);
+    const item = await db.query<{ owner_account_id: string | null; is_sample: boolean }>(
+      'SELECT owner_account_id, is_sample FROM discovery_items WHERE id = $1',
+      [sample],
+    );
+    expect(item.rows[0]).toEqual({ owner_account_id: null, is_sample: true });
+  });
+
+  it('a foreign private item is never admitted as a scoped origin: not_found, nothing persisted', async () => {
+    const foreign = await accountCtx();
+    const foreignItem = await insertItem({ accountId: foreign.principal.accountId }, { kind: 'film', qloo: `x-${randomUUID()}` });
+    const lib = await scopedLibrary();
+    // Corrupted state no product path can create (visibility blocks it): the
+    // owner's collection somehow holds a membership of a foreign private item.
+    await saveDirect(lib.owner.accountId, foreignItem, [lib.col.id]);
+    const before = (await authorities()).length;
+    await expect(
+      startRelatedDiscovery(lib.actx, { id: foreignItem, body: { collection_id: lib.col.id, category: 'watch' } }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(await authorities()).toHaveLength(before);
+  });
+});
+
+describe('the initiating epoch is validated under the enqueue lock', () => {
+  it('a stale authenticated principal is not adopted at a narrowed epoch: rejects without jobs, quota or authority rows', async () => {
+    const lib = await scopedLibrary();
+    // The request was authenticated while the connection held version 1 with
+    // collections:read + captures:read: the per-request principal resolution
+    // pins the live version at authentication time.
+    const authenticated = await resolvePrincipal(db, { authorization: `Bearer ${lib.credential}` });
+    expect(authenticated).toMatchObject({ kind: 'agent', authorizationVersion: 1 });
+    // The real owner narrow lands before the request reaches the enqueue
+    // lock: the collection grant stays, collections:read is gone (version 2).
+    await narrowConnection(lib.ctx, lib.agent.connectionId, { scopes: ['captures:read'] });
+    await expect(
+      startRelatedDiscovery(ctxFor(authenticated!), { id: lib.item, body: { collection_id: lib.col.id, category: 'watch' } }),
+    ).rejects.toMatchObject({ code: 'token_revoked' });
+    // Stale authenticated requests reject WITHOUT jobs, quota or authority rows.
+    expect(await authorities(lib.owner.accountId)).toHaveLength(0);
+    const djs = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM discovery_jobs WHERE owner_account_id = $1',
+      [lib.owner.accountId],
+    );
+    expect(djs.rows[0]!.n).toBe(0);
+    const jobs = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM jobs WHERE owner_account_id = $1', [
+      lib.owner.accountId,
+    ]);
+    expect(jobs.rows[0]!.n).toBe(0);
+    const quota = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM usage_counters WHERE bucket = $1 AND metric = $2',
+      [`account:${lib.owner.accountId}`, 'analyses'],
+    );
+    expect(quota.rows[0]!.n).toBe(0);
+  });
+
+  it('an unchanged versionless legacy principal retains the live-permission policy', async () => {
+    const lib = await scopedLibrary();
+    // v1 in-process callers carry no authorization version: their authority is
+    // the LIVE permission state, revalidated under the enqueue lock.
+    expect(lib.agent.authorizationVersion).toBeUndefined();
+    const first = await startRelatedDiscovery(lib.actx, { id: lib.item, body: { collection_id: lib.col.id, category: 'watch' } });
+    expect(first.reused).toBe(false);
+    expect((await authorities(lib.owner.accountId))[0]).toMatchObject({
+      agent_connection_id: lib.agent.connectionId,
+      authorization_version: 1,
+    });
+    // The live scope later narrows away collections:read: a versionless
+    // principal's cached scopes are never trusted, the live permission fails.
+    await narrowConnection(lib.ctx, lib.agent.connectionId, { scopes: ['captures:read'] });
+    const cachedStillReadable: AgentPrincipal = { ...lib.agent, scopes: ['collections:read', 'captures:read'] };
+    await expect(
+      startRelatedDiscovery(ctxFor(cachedStillReadable), { id: lib.item, body: { collection_id: lib.col.id, category: 'play' } }),
+    ).rejects.toMatchObject({ code: 'scope_denied' });
+    expect(await authorities(lib.owner.accountId)).toHaveLength(1);
+    expect((await authorities(lib.owner.accountId))[0]!.authorization_version).toBe(1);
+  });
+
+  it('the enqueue-before-narrowing barrier: a committed enqueue pins its epoch; dedupe reuse and fresh work never adopt the newer one', async () => {
+    const lib = await scopedLibrary();
+    // The request that will go stale after the enqueue commits below.
+    const stale = await resolvePrincipal(db, { authorization: `Bearer ${lib.credential}` });
+    expect(stale).toMatchObject({ kind: 'agent', authorizationVersion: 1 });
+    // The enqueue commits FIRST, pinning its epoch.
+    const first = await startRelatedDiscovery(lib.actx, { id: lib.item, body: { collection_id: lib.col.id, category: 'watch' } });
+    // The real owner narrow lands AFTER that commit (version 2, collections:read preserved).
+    await narrowConnection(lib.ctx, lib.agent.connectionId, { scopes: ['collections:read'] });
+    expect((await authorities(lib.owner.accountId))).toHaveLength(1);
+    expect((await authorities(lib.owner.accountId))[0]!.authorization_version).toBe(1);
+    // A request re-authenticated at version 2 dedupe-reuses the v1-authority
+    // job: reuse adopts nothing, and the pinned epoch never moves.
+    const fresh = await resolvePrincipal(db, { authorization: `Bearer ${lib.credential}` });
+    expect(fresh).toMatchObject({ kind: 'agent', authorizationVersion: 2 });
+    const second = await startRelatedDiscovery(ctxFor(fresh!), { id: lib.item, body: { collection_id: lib.col.id, category: 'watch' } });
+    expect(second.reused).toBe(true);
+    expect(second.job_id).toBe(first.job_id);
+    expect(second.discovery_job_id).toBe(first.discovery_job_id);
+    expect((await authorities(lib.owner.accountId))[0]!.authorization_version).toBe(1);
+    // The stale version-1 principal is rejected on a fresh key too: a
+    // narrowed/stale initiating principal is never silently adopted at the
+    // new enqueue epoch.
+    await expect(
+      startRelatedDiscovery(ctxFor(stale!), { id: lib.item, body: { collection_id: lib.col.id, category: 'play' } }),
+    ).rejects.toMatchObject({ code: 'token_revoked' });
+    expect(await authorities(lib.owner.accountId)).toHaveLength(1);
+    expect((await authorities(lib.owner.accountId))[0]!.authorization_version).toBe(1);
+  });
+
+  it('the real enqueue lock serializes the owner narrow with the enqueue: both orders converge safely', async () => {
+    const lib = await scopedLibrary();
+    // A versioned request principal, authenticated at the live version 1.
+    const authenticated = await resolvePrincipal(db, { authorization: `Bearer ${lib.credential}` });
+    // The in-flight enqueue's connection row lock, held exactly as the enqueue
+    // transaction holds it (FOR UPDATE through its commit).
+    const holder = await db.pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT 1 FROM agent_connections WHERE id = $1 AND owner_account_id = $2 FOR UPDATE', [
+        lib.agent.connectionId,
+        lib.owner.accountId,
+      ]);
+      // Both the real owner narrow and the real enqueue queue behind the lock.
+      const narrow = narrowConnection(lib.ctx, lib.agent.connectionId, { scopes: ['captures:read'] });
+      await waitForLockWaiters('%agent_connections%', 1);
+      const enqueue = startRelatedDiscovery(ctxFor(authenticated!), {
+        id: lib.item,
+        body: { collection_id: lib.col.id, category: 'watch' },
+      });
+      await waitForLockWaiters('%agent_connections%', 2);
+      // Release the holder: the two real waiters now race for the lock in
+      // EITHER order, and both orders must converge on a safe state.
+      await holder.query('ROLLBACK');
+      const [, enqueued] = await Promise.allSettled([narrow, enqueue]);
+      // The narrow always lands (version 2).
+      const conn = await db.query<{ v: number }>('SELECT authorization_version AS v FROM agent_connections WHERE id = $1', [
+        lib.agent.connectionId,
+      ]);
+      expect(conn.rows[0]!.v).toBe(2);
+      const rows = await authorities(lib.owner.accountId);
+      if (rows.length > 0) {
+        // The enqueue won the lock: its authority pinned the pre-narrow
+        // epoch, and the later narrow can never rewrite it.
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.authorization_version).toBe(1);
+        expect(enqueued.status).toBe('fulfilled');
+      } else {
+        // The narrow won the lock: the stale version-1 request rejected
+        // closed, with no job, quota or authority rows.
+        expect(enqueued.status).toBe('rejected');
+      }
+    } finally {
+      holder.release();
+    }
   });
 });
 
@@ -309,41 +567,61 @@ describe('authorization matrix and legacy compatibility', () => {
   it('database constraints bind the authority to its owner and one authority per discovery', async () => {
     const lib = await scopedLibrary();
     const started = await startRelatedDiscovery(lib.actx, { id: lib.item, body: { collection_id: lib.col.id, category: 'watch' } });
+    const savedItemId = await ownerSaveOf(lib.owner.accountId, lib.item);
     // A legacy (non-collection) discovery carries no authority; its real rows anchor the constraint checks.
     const legacy = await startRelatedDiscovery(lib.ctx, { id: lib.item, body: { category: 'eat' } });
     const other = await accountCtx();
     // A different owner cannot adopt the discovery's authority.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [other.principal.accountId, legacy.discovery_job_id, legacy.job_id, lib.col.id, lib.item],
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [other.principal.accountId, legacy.discovery_job_id, legacy.job_id, lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/violates foreign key/);
     // Exactly one authority per discovery job.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [lib.owner.accountId, started.discovery_job_id, started.job_id, lib.col.id, lib.item],
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [lib.owner.accountId, started.discovery_job_id, started.job_id, lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/duplicate key|unique constraint/);
     // An initiating connection is recorded together with its authorization version.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, agent_connection_id, origin_collection_id, origin_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, lib.agent.connectionId, lib.col.id, lib.item],
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, agent_connection_id, origin_collection_id, origin_item_id, origin_saved_item_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, lib.agent.connectionId, lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/check constraint/);
     // An owner-only authority cannot claim a grant timestamp.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, collection_granted_at, origin_collection_id, origin_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, new Date(), lib.col.id, lib.item],
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, new Date(), lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/check constraint/);
+    // The pinned origin item must be exactly the pinned save's own item: a
+    // private authority cannot pair one owner's save with another item.
+    const otherOwned = await insertItem({ accountId: lib.owner.accountId }, { kind: 'film', qloo: `x-${randomUUID()}` });
+    await expect(
+      db.query(
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, lib.col.id, otherOwned, savedItemId],
+      ),
+    ).rejects.toThrow(/violates foreign key/);
+    // The pinned save must be the owner's own save row, never a foreign one.
+    const foreignSave = await saveDirect(other.principal.accountId, otherOwned);
+    await expect(
+      db.query(
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, lib.col.id, otherOwned, foreignSave],
+      ),
+    ).rejects.toThrow(/violates foreign key/);
     expect(started.reused).toBe(false);
   });
 
@@ -378,9 +656,9 @@ describe('authorization matrix and legacy compatibility', () => {
       [lib.owner.accountId, lib.item],
     );
     await db.query(
-      `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [lib.owner.accountId, dj.rows[0]!.id, foreignJob.rows[0]!.id, lib.col.id, lib.item],
+      `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [lib.owner.accountId, dj.rows[0]!.id, foreignJob.rows[0]!.id, lib.col.id, lib.item, await ownerSaveOf(lib.owner.accountId, lib.item)],
     );
     expect(
       await discoveryGrantAuthorityForJob(db, { ownerAccountId: lib.owner.accountId, discoveryJobId: dj.rows[0]!.id }),

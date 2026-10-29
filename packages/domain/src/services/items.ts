@@ -6,7 +6,7 @@ import { LIMITS, type Category, type ItemKind, type RecommendationOrigin, type R
 import { AppError } from '../errors';
 import { SAMPLE_ITEMS, sampleKey } from '../feed/samples';
 import { enqueueJob, relatedDiscoveryDedupeKey } from '../jobs';
-import { lockAgentGrantEpoch, recordDiscoveryGrantAuthority } from '../interest-graph/scoped-discovery';
+import { lockAgentGrantEpoch, recordDiscoveryGrantAuthority, resolveScopedOriginSave } from '../interest-graph/scoped-discovery';
 import { loadItemAnchors } from '../library/anchors';
 import {
   grantedIds,
@@ -378,6 +378,39 @@ export async function startRelatedDiscovery(
   });
 
   return ctx.db.transaction(async (db) => {
+    // Approved grant-scoped extension: FIRST, under the enqueue lock, validate
+    // the initiating epoch and the live operation permission (DISC-SCR-031).
+    // The lock serializes with owner grant mutations, and the request's
+    // authenticated version must still be the live one with collections:read
+    // still in the live scope set — revoke, expiry, a narrowed/stale
+    // authenticated principal or a vanished grant fail the enqueue closed
+    // here, BEFORE any job, quota or authority row exists. Versionless legacy
+    // principals keep the live-permission policy (live scope + grant recheck).
+    const grantEpoch =
+      originCollectionId && p.kind === 'agent'
+        ? await lockAgentGrantEpoch(db, {
+            accountId: p.accountId,
+            connectionId: p.connectionId,
+            collectionId: originCollectionId,
+            now: ctx.now(),
+            expectedAuthorizationVersion: p.authorizationVersion,
+            requiredScope: 'collections:read',
+          })
+        : null;
+    // The owner's save row that grounds this origin's membership in the exact
+    // collection (DISC-SCR-030): an owned item or a validated public sample,
+    // saved by this owner into this collection. Resolving it inside the
+    // enqueue transaction keeps the authority bound through the save, and a
+    // foreign private item, an arbitrary ownerless item or an ungrounded
+    // membership rejects non-disclosing before anything is written.
+    const originSavedItemId =
+      originCollectionId && owner.kind === 'account'
+        ? await resolveScopedOriginSave(db, {
+            ownerAccountId: owner.accountId,
+            originCollectionId,
+            originItemId: item.id,
+          })
+        : null;
     const existing = await db.query<{ id: string; payload: { discovery_job_id: string } }>(
       `SELECT id, payload FROM jobs WHERE dedupe_key = $1 AND state NOT IN ('failed', 'cancelled')`,
       [dedupeKey],
@@ -386,20 +419,6 @@ export async function startRelatedDiscovery(
       return { job_id: existing.rows[0].id, discovery_job_id: existing.rows[0].payload.discovery_job_id, reused: true };
     }
     await consumeDailyQuota(db, { principal: p, metric: 'analyses', config: ctx.config, now: ctx.now() });
-    // Approved grant-scoped extension: a selected-collection enqueue pins the
-    // live grant epoch (the connection's authorization version plus the
-    // collection grant's granted_at) under the connection's row lock,
-    // serialized with owner grant mutations. Revoke, expiry or a grant that
-    // vanished since the request's checks fail the enqueue closed here.
-    const grantEpoch =
-      originCollectionId && p.kind === 'agent'
-        ? await lockAgentGrantEpoch(db, {
-            accountId: p.accountId,
-            connectionId: p.connectionId,
-            collectionId: originCollectionId,
-            now: ctx.now(),
-          })
-        : null;
     const cols = ownerColumns(owner);
     const dj = await db.query<{ id: string }>(
       `INSERT INTO discovery_jobs (owner_account_id, owner_session_id, origin_item_id, agent_connection_id,
@@ -445,10 +464,11 @@ export async function startRelatedDiscovery(
     // Durable producer authority for the approved scoped graph branch: the
     // selected-collection operation pins owner, initiating connection,
     // enqueue-time authorization version, granted collection and origin item in
-    // one immutable row (migration 360), written after the dedupe arbiter
-    // decided this transaction owns the job, so retry, redelivery and dedupe
-    // cannot adopt a later grant epoch, owner or resource. Legacy
-    // whole-library enqueues (no collection) write none.
+    // one immutable row (migration 360), bound through the owner's save row
+    // (migration 390), written after the dedupe arbiter decided this
+    // transaction owns the job, so retry, redelivery and dedupe cannot adopt a
+    // later grant epoch, owner or resource. Legacy whole-library enqueues (no
+    // collection) write none.
     if (originCollectionId && owner.kind === 'account') {
       await recordDiscoveryGrantAuthority(db, {
         ownerAccountId: owner.accountId,
@@ -459,6 +479,7 @@ export async function startRelatedDiscovery(
         collectionGrantedAt: grantEpoch?.collectionGrantedAt ?? null,
         originCollectionId,
         originItemId: item.id,
+        originSavedItemId: originSavedItemId!,
       });
     }
     await db.query('UPDATE discovery_jobs SET job_id = $2 WHERE id = $1', [discoveryJobId, job.id]);

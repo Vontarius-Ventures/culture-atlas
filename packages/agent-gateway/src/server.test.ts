@@ -218,6 +218,55 @@ describe('selected-collection grant over MCP', () => {
     }
   });
 
+  it('discover_related works for a saved public sample origin under the same grant, without mutating the sample', async () => {
+    const lib = await buildLibrary();
+    // A reviewed public sample (ownerless shared item) saved into the granted
+    // collection: the legitimate selected-collection origin of DISC-SCR-030.
+    const sample = await insertItem(null, { kind: 'film', title: 'In the Mood for Love' });
+    await collections.addCollectionItem(lib.ownerCtx, { id: lib.granted.id, item_id: sample, body: {} });
+    const { credential } = await connect(lib);
+    const client = await mcpClient(credential);
+    try {
+      const started = await client.callTool<{ job_id: string; discovery_job_id: string }>('discover_related', {
+        item_id: sample,
+        collection_id: lib.granted.id,
+        category: 'watch',
+      });
+      expect(started.ok).toBe(true);
+      const ids = started.ok ? started.data : { job_id: '', discovery_job_id: '' };
+      expect(ids.job_id).not.toBe('');
+      // The enqueued job runs the unchanged legacy path (graph-off) instead of
+      // failing closed on the scoped enqueue.
+      await runJob(ids.job_id);
+      const job = await client.callTool<{ state: string }>('get_job', { job_id: ids.job_id });
+      expect(['complete', 'partial']).toContain(job.ok ? job.data.state : '');
+      // The durable authority pins the owner's save of the shared sample.
+      const auth = await db.query<{ origin_saved_item_id: string }>(
+        'SELECT origin_saved_item_id FROM discovery_grant_authorities WHERE discovery_job_id = $1',
+        [ids.discovery_job_id],
+      );
+      const save = await db.query<{ id: string }>(
+        'SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+        [lib.owner.accountId, sample],
+      );
+      expect(auth.rows[0]!.origin_saved_item_id).toBe(save.rows[0]!.id);
+      // The shared sample itself stays ownerless, and exactly one save of it
+      // exists (no implicit second save, no ownership mutation).
+      const item = await db.query<{ owner_account_id: string | null; is_sample: boolean }>(
+        'SELECT owner_account_id, is_sample FROM discovery_items WHERE id = $1',
+        [sample],
+      );
+      expect(item.rows[0]).toEqual({ owner_account_id: null, is_sample: true });
+      const saves = await db.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+        [lib.owner.accountId, sample],
+      );
+      expect(saves.rows[0]!.n).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('revoking a collection grant or the connection takes effect on the next call', async () => {
     const lib = await buildLibrary();
     const c = await connect(lib, { collection_ids: [lib.granted.id, lib.other.id] });

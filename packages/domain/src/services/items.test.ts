@@ -126,6 +126,47 @@ describe('related discovery job', () => {
     expect(after.item.is_example).toBe(false);
   });
 
+  it('a public sample saved into a collection keeps its Discover more working without mutating the sample', async () => {
+    const { principal, ctx } = await accountCtx();
+    const prefix = randomUUID().slice(0, 6);
+    // A reviewed public sample (ownerless shared item) saved into the owner's
+    // collection: the legitimate selected-collection origin of DISC-SCR-030.
+    const sample = await insertItem(null, { kind: 'film', title: 'In the Mood for Love' });
+    const col = await createCollection(ctx, { name: 'Samples' });
+    await addCollectionItem(ctx, { id: col.id, item_id: sample, body: {} });
+    const { rows: saveRows } = await db.query<{ id: string }>(
+      'SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+      [principal.accountId, sample],
+    );
+    // The scoped enqueue succeeds (the sample is not an owned item): the
+    // durable authority is bound through the owner's save of the sample.
+    const started = await startRelatedDiscovery(ctx, { id: sample, body: { collection_id: col.id, category: 'watch' } });
+    expect(started.reused).toBe(false);
+    const out = await runJob(started.job_id, { providers: testProviders({ qloo: qloo(prefix) }) });
+    expect(['complete', 'partial']).toContain(out.state);
+    const authority = await db.query<{ origin_item_id: string; origin_saved_item_id: string }>(
+      'SELECT origin_item_id, origin_saved_item_id FROM discovery_grant_authorities WHERE discovery_job_id = $1',
+      [started.discovery_job_id],
+    );
+    expect(authority.rows[0]).toEqual({ origin_item_id: sample, origin_saved_item_id: saveRows[0]!.id });
+    // The shared sample stays exactly as it was: ownerless, still a sample,
+    // with only the owner's one explicit save (no implicit second save).
+    const item = await db.query<{ owner_account_id: string | null; is_sample: boolean }>(
+      'SELECT owner_account_id, is_sample FROM discovery_items WHERE id = $1',
+      [sample],
+    );
+    expect(item.rows[0]).toEqual({ owner_account_id: null, is_sample: true });
+    const saves = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+      [principal.accountId, sample],
+    );
+    expect(saves.rows[0]!.n).toBe(1);
+    // The sample origin still serves its (honest, possibly empty) results.
+    const detail = await getItem(ctx, { id: sample, query: { collection_id: col.id } });
+    expect(detail.item.is_example).toBe(true);
+    expect(detail.item.id).toBe(sample);
+  });
+
   it('fills Similar from pictured interest-pool cards when no related job has run', async () => {
     const { principal, ctx } = await accountCtx();
     const owner = { accountId: principal.accountId };

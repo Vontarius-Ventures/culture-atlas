@@ -418,8 +418,13 @@ export async function runScopedGraphDiscovery(
       authority.owner_account_id,
     ]);
     if (!parentRow.rowCount) throw new JobCancelledError('origin deleted');
+    // The origin is the owner's own item OR a validated public sample (the
+    // shared ownerless items the owner saved into the granted collection —
+    // DISC-SCR-030): never another account's private item and never an
+    // arbitrary ownerless row, exactly like the enqueue-time eligibility rule.
     const origin = await tx.query<{ id: string; canonical_key: string }>(
-      'SELECT id, canonical_key FROM discovery_items WHERE id = $1 AND owner_account_id = $2',
+      `SELECT id, canonical_key FROM discovery_items
+        WHERE id = $1 AND (owner_account_id = $2 OR (owner_account_id IS NULL AND is_sample))`,
       [authority.origin_item_id, authority.owner_account_id],
     );
     if (!origin.rows[0]) throw new JobCancelledError('origin deleted');

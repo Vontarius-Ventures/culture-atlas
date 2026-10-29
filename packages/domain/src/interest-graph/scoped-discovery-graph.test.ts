@@ -365,6 +365,47 @@ describe('scoped graph Discover more execution (VAL-DISC-008)', () => {
     expect(detail.related.length).toBe(1);
   });
 
+  it('a shared public sample origin enqueues under owner-bound save authority and publishes nothing fabricated', async () => {
+    const lib = await scopedLibrary(isoDb);
+    // A reviewed public sample saved into the granted collection: ownerless
+    // shared item, membership grounded by the owner's own save row.
+    const sample = await insertItem(null, { kind: 'film', title: 'Sample film for the graph pass' }, isoDb);
+    await addCollectionItem(lib.ownerCtx, { id: lib.col.id, item_id: sample, body: {} });
+    const { rows: saveRows } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2',
+      [lib.accountId, sample],
+    );
+    const accountWideBefore = await accountWideState(isoDb, lib.accountId);
+
+    const started = await startRelatedDiscovery(lib.actx, {
+      id: sample,
+      body: { collection_id: lib.col.id, category: 'watch' },
+    });
+    const authority = await discoveryGrantAuthorityForJob(isoDb, {
+      ownerAccountId: lib.accountId,
+      discoveryJobId: started.discovery_job_id,
+    });
+    expect(authority).toMatchObject({
+      job_type: 'discover_related',
+      origin_item_id: sample,
+      origin_saved_item_id: saveRows[0]!.id,
+    });
+
+    // A public sample carries no graph identities: the pass publishes nothing
+    // rather than padding from another origin, account-wide state or taste.
+    const qloo = noCallQloo();
+    const out = await runJob(started.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo }) });
+    expect(out.state).toBe('partial');
+    expect(qloo.calls).toEqual([]);
+    expect(await scopedRecommendations(isoDb, started.discovery_job_id)).toEqual([]);
+    expect(await accountWideState(isoDb, lib.accountId)).toEqual(accountWideBefore);
+    const item = await isoDb.query<{ owner_account_id: string | null; is_sample: boolean }>(
+      'SELECT owner_account_id, is_sample FROM discovery_items WHERE id = $1',
+      [sample],
+    );
+    expect(item.rows[0]).toEqual({ owner_account_id: null, is_sample: true });
+  });
+
   it('replay/redelivery converges on the scoped parent without adopting a new epoch or duplicating results', async () => {
     const lib = await scopedLibrary(isoDb);
     await linkGraphReferenceIdentities(isoDb);
