@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { FakeQloo } from '@culture-atlas/providers/testing';
 import {
   SCOPES,
@@ -20,6 +21,7 @@ import {
   testProviders,
 } from '@culture-atlas/domain/testing';
 import { upsertReference } from '../../domain/src/compiler/store';
+import { ensureSampleItems, sampleKey } from '../../domain/src/feed/samples';
 import { insertItem, runJob } from '../../domain/src/test-support/library';
 import { connectMcp, ConnectionRefusedError } from '../../../apps/demo-agent/src/client';
 import { SPEC_TOOL_NAMES } from './tools';
@@ -694,6 +696,239 @@ describe('scoped Discover more revocation and narrowing over MCP (VAL-DISC-007, 
       }
     } finally {
       await iso.drop();
+    }
+  });
+});
+
+describe('scoped Discover more rail context selection over MCP (DISC-SCR-043/044; VAL-DISC-009)', () => {
+  const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+  const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+
+  /** One fresh scoped corpus library: owner, granted agent (A and B), Rodin origin in both. */
+  async function railMcpLibrary() {
+    const iso = await createIsolatedDatabase('scrdrlmcp');
+    await admitGraphCorpus(iso.db, getCorpusManifestFile());
+    const graphOn = testConfig({
+      INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
+      INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
+    });
+    const graphOff = testConfig();
+    const owner = await insertAccount(iso.db);
+    const ownerCtx = testContext(owner, { db: iso.db, config: graphOn });
+    const rodinRef = await upsertReference(iso.db, {
+      canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+      name: 'Auguste Rodin',
+      type: 'creator',
+      externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    await upsertReference(iso.db, {
+      canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+      name: 'Georges Seurat',
+      type: 'creator',
+      externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      iso.db,
+    );
+    const colA = await collections.createCollection(ownerCtx, { name: 'Museum A' });
+    const colB = await collections.createCollection(ownerCtx, { name: 'Museum B' });
+    await collections.addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+    await collections.addCollectionItem(ownerCtx, { id: colB.id, item_id: origin, body: {} });
+    await linkGraphReferenceIdentities(iso.db);
+    const { credential } = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id, colB.id] },
+      iso.db,
+    );
+    const providers = testProviders({ qloo: new FakeQloo({}, { live: true }) });
+    return { iso, graphOn, graphOff, owner, ownerCtx, origin, colA, colB, credential, providers, rodinRef };
+  }
+
+  it("get_item never serves another granted collection's newer results: A's honest empty rail stays empty (DISC-SCR-043)", async () => {
+    const s = await railMcpLibrary();
+    try {
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        // A's watch-filtered scoped discovery honestly admits nothing.
+        const underA = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.colA.id,
+          category: 'watch',
+        });
+        expect(underA.ok).toBe(true);
+        const jobIdA = underA.ok ? underA.data.job_id : '';
+        await runJob(jobIdA, { db: s.iso.db, config: s.graphOn, providers: s.providers });
+
+        // B's NEWER scoped discovery is enqueued: its pending context is honest.
+        const underB = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.colB.id,
+          category: 'play',
+        });
+        expect(underB.ok).toBe(true);
+        const jobIdB = underB.ok ? underB.data.job_id : '';
+        const pending = await client.callTool<{
+          related: unknown[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: s.origin, collection_id: s.colB.id });
+        expect(pending.ok && pending.data.related).toEqual([]);
+        expect(pending.ok && pending.data.related_state).toBe('pending');
+        expect(pending.ok && pending.data.related_job_id).toBe(jobIdB);
+        await runJob(jobIdB, { db: s.iso.db, config: s.graphOn, providers: s.providers });
+
+        // A's read serves A's honest empty rail — never B's newer results.
+        const aRead = await client.callTool<{
+          related: { id: string; title: string }[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: s.origin, collection_id: s.colA.id });
+        expect(aRead.ok && aRead.data.related).toEqual([]);
+        expect(aRead.ok && aRead.data.related_state).toBe('none');
+        expect(aRead.ok && aRead.data.related_job_id).toBe(jobIdA);
+
+        // B's read serves exactly B's admitted result.
+        const bRead = await client.callTool<{
+          related: { id: string; title: string }[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: s.origin, collection_id: s.colB.id });
+        expect(bRead.ok && bRead.data.related_state).toBe('cached');
+        expect(bRead.ok && bRead.data.related.map((r) => r.title)).toEqual(['Georges Seurat']);
+        expect(bRead.ok && bRead.data.related_job_id).toBe(jobIdB);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await s.iso.drop();
+    }
+  });
+
+  it('a saved public sample serves its scoped outcome over MCP: honest empty, never the example carousel (DISC-SCR-044)', async () => {
+    const s = await railMcpLibrary();
+    try {
+      await ensureSampleItems(s.iso.db);
+      const { rows } = await s.iso.db.query<{ id: string }>(
+        'SELECT id FROM discovery_items WHERE is_sample AND canonical_key = $1',
+        [sampleKey('film-playtime')],
+      );
+      const sample = rows[0]!.id;
+      await collections.addCollectionItem(s.ownerCtx, { id: s.colA.id, item_id: sample, body: {} });
+
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        // Control: before the scoped operation, the ordinary example carousel serves.
+        const before = await client.callTool<{ related: { is_example: boolean }[]; related_state: string }>('get_item', {
+          item_id: sample,
+          collection_id: s.colA.id,
+        });
+        expect(before.ok && before.data.related_state).toBe('cached');
+        expect(before.ok && before.data.related.length).toBeGreaterThan(0);
+        expect(before.ok && before.data.related.every((r) => r.is_example)).toBe(true);
+
+        // The explicit graph-on scoped operation runs and honestly admits
+        // nothing (the shipped sample carries no graph identities).
+        const started = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: sample,
+          collection_id: s.colA.id,
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+        await runJob(jobId, { db: s.iso.db, config: s.graphOn, providers: s.providers });
+
+        // get_item serves the honest empty scoped outcome: no unrelated
+        // public example cards stand in for the scoped rail.
+        const after = await client.callTool<{
+          related: { is_example: boolean }[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: sample, collection_id: s.colA.id });
+        expect(after.ok && after.data.related).toEqual([]);
+        expect(after.ok && after.data.related_state).toBe('none');
+        expect(after.ok && after.data.related_job_id).toBe(jobId);
+      } finally {
+        await client.close();
+      }
+
+      // Graph-off control through the same transport: the ordinary example
+      // carousel is unchanged.
+      const offClient = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOff }),
+      });
+      try {
+        const off = await offClient.callTool<{ related: { is_example: boolean }[]; related_state: string }>('get_item', {
+          item_id: sample,
+          collection_id: s.colA.id,
+        });
+        expect(off.ok && off.data.related_state).toBe('cached');
+        expect(off.ok && off.data.related.length).toBeGreaterThan(0);
+        expect(off.ok && off.data.related.every((r) => r.is_example)).toBe(true);
+      } finally {
+        await offClient.close();
+      }
+    } finally {
+      await s.iso.drop();
+    }
+  });
+
+  it('a saved sample with admitted scoped results serves exactly those results over MCP (DISC-SCR-044)', async () => {
+    const s = await railMcpLibrary();
+    try {
+      // A public shared sample carrying the verified Rodin subject identity,
+      // grounded by the owner's save into the granted collection A.
+      const sample = await insertItem(
+        null,
+        {
+          kind: 'artist',
+          category: 'play',
+          title: 'Auguste Rodin',
+          key: `sample:rodin-mcp-${randomUUID().slice(0, 6)}`,
+          qloo: RODIN_QLOO_ID,
+          referenceId: s.rodinRef,
+        },
+        s.iso.db,
+      );
+      await collections.addCollectionItem(s.ownerCtx, { id: s.colA.id, item_id: sample, body: {} });
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        const started = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: sample,
+          collection_id: s.colA.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+        await runJob(jobId, { db: s.iso.db, config: s.graphOn, providers: s.providers });
+        const read = await client.callTool<{
+          related: { id: string; title: string; is_example: boolean }[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: sample, collection_id: s.colA.id });
+        expect(read.ok && read.data.related_state).toBe('cached');
+        expect(read.ok && read.data.related.map((r) => r.title)).toEqual(['Georges Seurat']);
+        expect(read.ok && read.data.related.every((r) => !r.is_example)).toBe(true);
+        expect(read.ok && read.data.related_job_id).toBe(jobId);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await s.iso.drop();
     }
   });
 });

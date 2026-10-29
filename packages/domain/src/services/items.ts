@@ -248,33 +248,135 @@ function sampleRelated(item: ItemRow, available: { id: string; canonical_key: st
   return out;
 }
 
-/** Latest related-discovery context for this item visible under the principal's grant. */
-async function latestDiscoveryJobs(ctx: ServiceContext, owner: Owner, itemId: string) {
-  const own = ownerPredicate(owner, 'dj', 2);
+/** One related-discovery job row as the item reads see it. */
+interface DiscoveryJobRow {
+  id: string;
+  job_id: string | null;
+  status: string;
+  job_state: string | null;
+  scoped: boolean;
+  /** The job's one compatible context: its origin collection, null = legacy whole-library. */
+  origin_collection_id: string | null;
+}
+
+/**
+ * The related-discovery jobs of ONE compatible origin context, visible under
+ * the principal's grant (DISC-SCR-043, the remaining leg of DISC-SCR-033).
+ * The context is selected BEFORE any active/completed parent choice:
+ *  - with `collectionId` (the request's explicit collection, already checked
+ *    for accessibility): only that exact collection's jobs — another granted
+ *    collection's newer discovery never lends its results to this read;
+ *  - without: the origin's NEWEST visible discovery context (its
+ *    origin_collection_id — the collection and the graph/legacy class are one
+ *    key, since only a selected-collection enqueue is scoped), so a fresh
+ *    scoped request supersedes older legacy results instead of borrowing
+ *    them. Legacy requests keep their own compatible path the same way.
+ * `scopedOnly` restricts the selection to explicit selected-collection
+ * (scoped graph) contexts — the saved-sample read (DISC-SCR-044) honors only
+ * an explicit scoped operation and never lets a legacy job replace the
+ * sample's ordinary carousel.
+ * The grant-limited filter keeps the EXACT origin-collection correlation
+ * (DISC-SCR-036): the job's origin collection is granted AND the origin is
+ * still its CURRENT member; a surviving membership in another granted
+ * collection never keeps a lost context's job readable (matching getJob).
+ */
+async function latestDiscoveryJobs(
+  ctx: ServiceContext,
+  owner: Owner,
+  itemId: string,
+  opts: { collectionId?: string | null; scopedOnly?: boolean } = {},
+) {
   const limited = isGrantLimited(ctx.principal);
-  const params: unknown[] = [itemId, ...own.params];
-  let grant = '';
-  if (limited) {
-    params.push(grantedIds(ctx.principal));
-    // EXACT origin-collection correlation (DISC-SCR-036): the job's origin
-    // collection is granted AND the origin is still its CURRENT member — a
-    // surviving membership in another granted collection never keeps a lost
-    // context's job readable (matching getJob's rule).
-    grant = `AND dj.origin_collection_id = ANY($${params.length}::uuid[])
-             AND EXISTS (SELECT 1 FROM collection_items ci
-                           JOIN saved_items si ON si.id = ci.saved_item_id
-                          WHERE ci.collection_id = dj.origin_collection_id
-                            AND si.discovery_item_id = dj.origin_item_id
-                            AND ci.owner_account_id = $2)`;
+  const params: unknown[] = [itemId, ...ownerPredicate(owner, 'dj', 2).params];
+  const own = (alias: string) => ownerPredicate(owner, alias, 2).sql;
+  const grantFor = (alias: string) =>
+    limited
+      ? `AND ${alias}.origin_collection_id = ANY($3::uuid[])
+         AND EXISTS (SELECT 1 FROM collection_items ci
+                       JOIN saved_items si ON si.id = ci.saved_item_id
+                      WHERE ci.collection_id = ${alias}.origin_collection_id
+                        AND si.discovery_item_id = ${alias}.origin_item_id
+                        AND ci.owner_account_id = $2)`
+      : '';
+  if (limited) params.push(grantedIds(ctx.principal));
+  const scopedOnly = (alias: string) => (opts.scopedOnly ? `AND ${alias}.scoped_authority_required` : '');
+  let contextFilter: string;
+  if (opts.collectionId) {
+    params.push(opts.collectionId);
+    contextFilter = `AND dj.origin_collection_id = $${params.length}`;
+  } else {
+    contextFilter = `AND dj.origin_collection_id IS NOT DISTINCT FROM (
+        SELECT d2.origin_collection_id
+          FROM discovery_jobs d2
+         WHERE d2.origin_item_id = $1 AND ${own('d2')} ${grantFor('d2')} ${scopedOnly('d2')}
+         ORDER BY d2.created_at DESC, d2.id DESC LIMIT 1)`;
   }
-  const { rows } = await ctx.db.query<{ id: string; job_id: string | null; status: string; job_state: string | null; scoped: boolean }>(
-    `SELECT dj.id, dj.job_id, dj.status, j.state AS job_state, dj.scoped_authority_required AS scoped
+  const { rows } = await ctx.db.query<DiscoveryJobRow>(
+    `SELECT dj.id, dj.job_id, dj.status, j.state AS job_state,
+            dj.scoped_authority_required AS scoped, dj.origin_collection_id
        FROM discovery_jobs dj LEFT JOIN jobs j ON j.id = dj.job_id
-      WHERE dj.origin_item_id = $1 AND ${own.sql} ${grant}
-      ORDER BY dj.created_at DESC LIMIT 5`,
+      WHERE dj.origin_item_id = $1 AND ${own('dj')} ${grantFor('dj')} ${scopedOnly('dj')} ${contextFilter}
+      ORDER BY dj.created_at DESC, dj.id DESC LIMIT 5`,
     params,
   );
   return rows;
+}
+
+/** One selected discovery context's related rail, as getItem serves it. */
+interface DiscoveryRail {
+  relatedIds: string[];
+  relatedState: ItemDetailResponse['related_state'];
+  relatedJobId: string | null;
+  scopedContext: boolean;
+}
+
+/**
+ * Serve one ALREADY-SELECTED discovery context's rail. The jobs list is one
+ * compatible context (see latestDiscoveryJobs), so the active and completed
+ * parents are chosen only within it: another collection's discovery and a
+ * legacy whole-library discovery can never lend their results here
+ * (DISC-SCR-043). While the context's newest job runs, the rail stays honest
+ * ('pending' with no unrelated filler); its own latest completed results
+ * serve as the cached rail. Scoped graph results serve only while their
+ * pinned proof currently holds (DISC-SCR-034): sole-source retraction,
+ * natural evidence or rights expiry and revision drift withdraw a published
+ * result at read time — the stored row survives as the durable record. An
+ * honestly empty context stays empty ('none' with its job id).
+ */
+async function discoveryContextRail(
+  ctx: ServiceContext,
+  item: ItemRow,
+  hidden: Set<string>,
+  jobs: DiscoveryJobRow[],
+): Promise<DiscoveryRail> {
+  let relatedIds: string[] = [];
+  let relatedState: ItemDetailResponse['related_state'] = 'none';
+  let relatedJobId: string | null = null;
+  const active = jobs.find((j) => j.job_state === 'queued' || j.job_state === 'running');
+  const done = jobs.find((j) => j.status === 'complete' || j.status === 'partial');
+  const scopedContext = Boolean(active?.scoped || done?.scoped);
+  if (active) {
+    relatedState = 'pending';
+    relatedJobId = active.job_id;
+  }
+  if (done) {
+    const { rows } = await ctx.db.query<{ item_id: string; canonical_key: string; recommendation_id: string }>(
+      `SELECT r.discovery_item_id AS item_id, di.canonical_key, r.id AS recommendation_id
+         FROM recommendations r
+         JOIN discovery_items di ON di.id = r.discovery_item_id
+        WHERE r.discovery_job_id = $1 ORDER BY r.rank, r.created_at`,
+      [done.id],
+    );
+    let serving = rows;
+    if (done.scoped) {
+      const verdicts = await scopedResultServingVerdicts(ctx.db, { discoveryJobId: done.id, at: ctx.now() });
+      serving = rows.filter((r) => verdicts.get(r.recommendation_id) !== false);
+    }
+    relatedIds = serving.filter((r) => !hidden.has(r.canonical_key) && r.item_id !== item.id).map((r) => r.item_id);
+    if (!active) relatedJobId = done.job_id;
+    if (!active && relatedIds.length) relatedState = 'cached';
+  }
+  return { relatedIds, relatedState, relatedJobId, scopedContext };
 }
 
 /** GET /v1/items/{id} */
@@ -302,49 +404,44 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
 
   // Related: cached only. Opening an item never starts generation.
   const hidden = await hiddenKeys(ctx.db, owner);
-  let relatedIds: string[] = [];
-  let relatedState: ItemDetailResponse['related_state'] = 'none';
+  const requestCollectionId = input.query.collection_id ?? null;
+  let relatedIds: string[];
+  let relatedState: ItemDetailResponse['related_state'];
   let relatedJobId: string | null = null;
   let scopedContext = false;
   if (item.is_sample) {
-    const { rows } = await ctx.db.query<{ id: string; canonical_key: string; category: Category | null }>(
-      `SELECT id, canonical_key, category FROM discovery_items WHERE is_sample AND canonical_key = ANY($1::text[])`,
-      [SAMPLE_ITEMS.map((s) => sampleKey(s.slug))],
-    );
-    const byKey = new Map(rows.map((r) => [r.canonical_key, r]));
-    const ordered = SAMPLE_ITEMS.flatMap((s) => byKey.get(sampleKey(s.slug)) ?? []).filter((r) => !hidden.has(r.canonical_key));
-    relatedIds = sampleRelated(item, ordered);
-    relatedState = relatedIds.length ? 'cached' : 'none';
-  } else {
-    const jobs = await latestDiscoveryJobs(ctx, owner, item.id);
-    const active = jobs.find((j) => j.job_state === 'queued' || j.job_state === 'running');
-    const done = jobs.find((j) => j.status === 'complete' || j.status === 'partial');
-    scopedContext = Boolean(active?.scoped || done?.scoped);
-    if (active) {
-      relatedState = 'pending';
-      relatedJobId = active.job_id;
-    }
-    if (done) {
-      const { rows } = await ctx.db.query<{ item_id: string; canonical_key: string; recommendation_id: string }>(
-        `SELECT r.discovery_item_id AS item_id, di.canonical_key, r.id AS recommendation_id
-           FROM recommendations r
-           JOIN discovery_items di ON di.id = r.discovery_item_id
-          WHERE r.discovery_job_id = $1 ORDER BY r.rank, r.created_at`,
-        [done.id],
+    // A saved public sample's ordinary rail is the example carousel. Its one
+    // exception (DISC-SCR-044) is an EXPLICIT graph-on scoped operation:
+    // that context's own honest rail (pending, admitted results or honest
+    // empty) replaces the carousel, so unrelated public example cards never
+    // stand in for a scoped outcome. Legacy whole-library jobs on a sample
+    // never served sample rails and still never do; graph-off reads keep the
+    // ordinary carousel unchanged.
+    const scopedJobs = await latestDiscoveryJobs(ctx, owner, item.id, {
+      collectionId: requestCollectionId,
+      scopedOnly: true,
+    });
+    const scopedRailLive =
+      scopedJobs.length > 0 &&
+      owner.kind === 'account' &&
+      (await scopedGraphReadEnabled(ctx.db, { accountId: owner.accountId, config: ctx.config }));
+    if (scopedRailLive) {
+      ({ relatedIds, relatedState, relatedJobId, scopedContext } = await discoveryContextRail(ctx, item, hidden, scopedJobs));
+    } else {
+      const { rows } = await ctx.db.query<{ id: string; canonical_key: string; category: Category | null }>(
+        `SELECT id, canonical_key, category FROM discovery_items WHERE is_sample AND canonical_key = ANY($1::text[])`,
+        [SAMPLE_ITEMS.map((s) => sampleKey(s.slug))],
       );
-      // Scoped graph results serve only while their pinned proof currently
-      // holds (DISC-SCR-034): sole-source retraction, natural evidence or
-      // rights expiry and revision drift withdraw a published result at read
-      // time — the stored recommendation row survives as the durable record.
-      let serving = rows;
-      if (done.scoped) {
-        const verdicts = await scopedResultServingVerdicts(ctx.db, { discoveryJobId: done.id, at: ctx.now() });
-        serving = rows.filter((r) => verdicts.get(r.recommendation_id) !== false);
-      }
-      relatedIds = serving.filter((r) => !hidden.has(r.canonical_key) && r.item_id !== item.id).map((r) => r.item_id);
-      if (!active) relatedJobId = done.job_id;
-      if (!active && relatedIds.length) relatedState = 'cached';
+      const byKey = new Map(rows.map((r) => [r.canonical_key, r]));
+      const ordered = SAMPLE_ITEMS.flatMap((s) => byKey.get(sampleKey(s.slug)) ?? []).filter((r) => !hidden.has(r.canonical_key));
+      relatedIds = sampleRelated(item, ordered);
+      relatedState = relatedIds.length ? 'cached' : 'none';
     }
+  } else {
+    // Non-sample origins: one compatible context's rail (DISC-SCR-043) — the
+    // request's explicit collection, else the origin's newest visible context.
+    const jobs = await latestDiscoveryJobs(ctx, owner, item.id, { collectionId: requestCollectionId });
+    ({ relatedIds, relatedState, relatedJobId, scopedContext } = await discoveryContextRail(ctx, item, hidden, jobs));
   }
   // Graph-on scoped rails carry ONLY the authorized exact discovery context's
   // own admitted results (DISC-SCR-033): honestly empty stays empty — the
