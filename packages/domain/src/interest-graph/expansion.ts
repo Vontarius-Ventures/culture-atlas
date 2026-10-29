@@ -7,7 +7,7 @@ import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
 import { loadExplicitSupport } from './explicit-support';
 import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from './refresh';
-import { currentAssertionJustification } from './validity';
+import { currentAssertionJustification, revalidatePinnedDependencies } from './validity';
 import { verifiedReferenceNodeMatches } from './identity-links';
 import {
   createGraphRun,
@@ -252,6 +252,15 @@ export interface ExpansionCounts {
   frontierDeduped: number;
   frontierExpired: number;
   frontierPruned: number;
+  /**
+   * Committing observations dropped at the publication pin check: their exact
+   * pinned (id, revision) pairs no longer revalidate at the FRESH publication
+   * clock (DISC-SCR-009) — a mid-run assertion revision change, a
+   * sole-evidence/source withdrawal, or an evidence/rights expiry. Independent
+   * currently-valid support publishes; the per-reason drop is also counted in
+   * `rejections` as `pinned_<reason>`.
+   */
+  stalePinsBlocked: number;
 }
 
 /**
@@ -523,6 +532,7 @@ function emptyCounts(): ExpansionCounts {
     frontierDeduped: 0,
     frontierExpired: 0,
     frontierPruned: 0,
+    stalePinsBlocked: 0,
   };
 }
 
@@ -721,6 +731,71 @@ async function runExpansion(
     for (const obs of ranked.filter((o) => o.intent === intent)) obs.rank = rank++;
   }
 
+  // --- Publication pins: exact revisions at a fresh clock (DISC-SCR-009) --------
+  // Every COMMITTING observation — ranked cards AND admitted-unranked frontier
+  // candidates alike — revalidates its exact pinned (id, revision) pairs at a
+  // FRESH publication clock inside this transaction, under the same
+  // live-witness rule the read path applies. Checking only the ranked
+  // assertions' CURRENT justification at the run-start clock (the old fence
+  // shape) discarded the pinned revisions, never validated the pinned evidence
+  // rows, and never looked at unranked candidates, so an assertion revision
+  // change, a sole-evidence/source withdrawal or an evidence/rights expiry
+  // that landed mid-pass published stale output that was already invalid the
+  // moment it was stored. Stale observations are dropped BEFORE any write —
+  // their frontier record, card and proof never exist — while independent
+  // currently-valid support publishes.
+  //
+  // The pinned dependency rows are locked FOR SHARE in ONE consistent
+  // ascending-id order and held to this transaction's commit, coordinating
+  // with the retraction path's ordering (it withdraws the same rows in the
+  // same ascending order): a withdrawal or revision change either commits
+  // before these locked reads — visible here, so the observation is dropped —
+  // or waits for this commit, and its dependent scan then invalidates
+  // whatever this pass published. Nothing can slip between the validation
+  // and the commit.
+  checkDeadline();
+  if (best.size > 0) {
+    const publishClock = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+    const publishAt = publishClock.rows[0]!.now;
+    const pinAssertionIds = [...new Set([...best.values()].flatMap((o) => o.assertions.map((a) => a.id)))].sort();
+    const pinEvidenceIds = [...new Set([...best.values()].flatMap((o) => o.evidence.map((e) => e.id)))].sort();
+    if (pinAssertionIds.length > 0) {
+      await tx.query(`SELECT id FROM graph_assertions WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
+        pinAssertionIds,
+      ]);
+    }
+    if (pinEvidenceIds.length > 0) {
+      await tx.query(`SELECT id FROM graph_evidence WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
+        pinEvidenceIds,
+      ]);
+    }
+    checkDeadline();
+    const dropped = new Set<string>();
+    for (const obs of best.values()) {
+      const verdict = await revalidatePinnedDependencies(tx, {
+        assertions: obs.assertions,
+        evidence: obs.evidence,
+        at: publishAt,
+      });
+      if (verdict.valid) continue;
+      dropped.add(`${obs.intent}:${obs.nodeId}`);
+      noteRejection(`pinned_${verdict.reason ?? 'evidence_missing'}`);
+      counts.stalePinsBlocked++;
+    }
+    if (dropped.size > 0) {
+      for (const key of dropped) best.delete(key);
+      for (let i = ranked.length - 1; i >= 0; i -= 1) {
+        const obs = ranked[i]!;
+        if (dropped.has(`${obs.intent}:${obs.nodeId}`)) ranked.splice(i, 1);
+      }
+      // The published rails keep dense, deterministic ranks after the drop.
+      for (const intent of ['personal', 'photo'] as const) {
+        let rank = 1;
+        for (const obs of ranked.filter((o) => o.intent === intent)) obs.rank = rank++;
+      }
+    }
+  }
+
   // --- Bounded frontier: expire due, evict to capacity, then record admissions ------
   const expired = await tx.query(
     `UPDATE graph_frontier SET state = 'expired', updated_at = now()
@@ -917,13 +992,15 @@ async function runExpansion(
   checkDeadline();
   const violation = await checkGraphPublicationFence(tx, {
     accountId,
-    at,
     start: {
       projectionRevision: run.input_projection_revision,
       generation: run.input_generation,
       tasteRevision: snapshot.tasteRevision,
     },
     ranked,
+    // Admitted-unranked candidates commit frontier rows without a card: their
+    // pins get the same last-word dependency recheck (DISC-SCR-009).
+    admittedUnranked: [...best.values()].filter((o) => !ranked.includes(o)),
   });
   if (violation) throw new GraphFenceError(violation);
   // The caller's fence hook runs last, closest to the commit: the queue
@@ -968,15 +1045,28 @@ async function runExpansion(
 
 export interface GraphPublicationFenceInput {
   accountId: string;
-  at: Date;
   /** The authority versions the pass read at its start. */
   start: { projectionRevision: number; generation: number; tasteRevision: number };
   /** The ranked observations about to be published (empty when nothing publishes). */
   ranked: ReadonlyArray<{
     intent: 'personal' | 'photo';
     assertions: ReadonlyArray<{ id: string }>;
+    /** The observation's pinned evidence rows (the live-witness recheck). */
+    evidence: ReadonlyArray<{ id: string }>;
     supportEdgeIds: readonly string[];
     relevance: ExpansionRelevance | PhotoExpansionRelevance;
+  }>;
+  /**
+   * The admitted-unranked observations about to commit frontier candidate
+   * rows without a card (diversified-out candidates). Their pinned
+   * assertions/evidence get the same last-word dependency recheck
+   * (DISC-SCR-009): a withdrawal or expiry discovered here — after the
+   * pre-write pin validation, in the drift window before the commit — rejects
+   * the whole pass.
+   */
+  admittedUnranked?: ReadonlyArray<{
+    assertions: ReadonlyArray<{ id: string }>;
+    evidence: ReadonlyArray<{ id: string }>;
   }>;
 }
 
@@ -991,14 +1081,24 @@ export interface GraphPublicationFenceInput {
  * ('account_missing'), taste/projection change or deletion-generation change
  * ('stale_authority'), discovery pause ('paused'), an exclusion landing on a
  * root about to publish ('exclusion_landed'), source invalidation of a pinned
- * assertion ('source_invalidated') and withdrawn support for a root
+ * assertion or loss of every pinned live evidence witness
+ * ('source_invalidated') and withdrawn support for a root
  * ('support_withdrawn'). Lease loss is the caller's fence hook, run after this.
+ *
+ * Dependency checks read the database's OWN clock (DISC-SCR-009), never the
+ * run-start clock the engine was given: a sole-evidence/source withdrawal or
+ * an evidence/rights expiry that committed mid-pass — including during the
+ * drift window after the pre-write pin validation — is decided by the
+ * publication instant. Exact (id, revision) pin agreement and per-observation
+ * dropping already happened before the writes; a violation found here is a
+ * late landing, and the whole pass is rejected so the next window rebuilds
+ * from current state.
  */
 export async function checkGraphPublicationFence(
   tx: Queryable,
   input: GraphPublicationFenceInput,
 ): Promise<Exclude<ExpansionRejectionReason, 'disabled' | 'lease_lost'> | null> {
-  const { accountId, at } = input;
+  const { accountId } = input;
 
   // Account deletion is about the account row itself (the state row also
   // cascades away, but a never-projected account has no state row either).
@@ -1044,14 +1144,6 @@ export async function checkGraphPublicationFence(
         [accountId, personalKeys],
       );
       if (hidden.length > 0) return 'exclusion_landed';
-    }
-
-    // Source invalidation: every pinned assertion must still be currently
-    // justified (a retraction/expiry that committed mid-pass flips this).
-    const assertionIds = [...new Set(input.ranked.flatMap((o) => o.assertions.map((a) => a.id)))];
-    for (const assertionId of assertionIds) {
-      const justification = await currentAssertionJustification(tx, { assertionId, at });
-      if (!justification.justified) return 'source_invalidated';
     }
 
     // Support withdrawal: the private support edges a proof pins must still be
@@ -1104,6 +1196,51 @@ export async function checkGraphPublicationFence(
           return 'support_withdrawn';
         }
       }
+    }
+  }
+
+  // Source invalidation at the FRESH publication clock (DISC-SCR-009), over
+  // EVERY committing observation — ranked cards and admitted-unranked
+  // frontier candidates alike. Exact (id, revision) pin agreement and the
+  // per-observation drop already happened before the writes (the pinned rows
+  // are locked FOR SHARE through this commit, so their STATE cannot have
+  // changed since); what can still land in the drift window before the commit
+  // is time itself: an evidence/rights expiry. Both checks reuse the read
+  // path's own rules — a pinned assertion must still be currently justified,
+  // and every committing observation must retain at least one currently-valid
+  // pinned evidence row as a live grounding witness — so publication-time and
+  // read-time validity agree on every emitted proof. A violation found here is
+  // a late landing and rejects the whole pass (the next window rebuilds).
+  const committing: ReadonlyArray<{ assertions: ReadonlyArray<{ id: string }>; evidence: ReadonlyArray<{ id: string }> }> = [
+    ...input.ranked,
+    ...(input.admittedUnranked ?? []),
+  ];
+  if (committing.length > 0) {
+    const { rows: clockRows } = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+    const fenceAt = clockRows[0]!.now;
+    const assertionIds = [...new Set(committing.flatMap((o) => o.assertions.map((a) => a.id)))];
+    for (const assertionId of assertionIds) {
+      const justification = await currentAssertionJustification(tx, { assertionId, at: fenceAt });
+      if (!justification.justified) return 'source_invalidated';
+    }
+    const evidenceIds = [...new Set(committing.flatMap((o) => o.evidence.map((e) => e.id)))];
+    const liveById = new Map<string, boolean>();
+    if (evidenceIds.length > 0) {
+      const { rows: evidenceRows } = await tx.query<{ id: string; live: boolean }>(
+        `SELECT e.id,
+                (e.validity_state = 'valid'
+                  AND (e.expires_at IS NULL OR e.expires_at > $2)
+                  AND (r.rights_expires_at IS NULL OR r.rights_expires_at > $2)) AS live
+           FROM graph_evidence e
+           JOIN graph_source_revisions r ON r.id = e.source_revision_id
+          WHERE e.id = ANY($1::uuid[])`,
+        [evidenceIds, fenceAt],
+      );
+      for (const row of evidenceRows) liveById.set(row.id, row.live);
+    }
+    for (const obs of committing) {
+      if (obs.evidence.length === 0) continue;
+      if (!obs.evidence.some((e) => liveById.get(e.id) === true)) return 'source_invalidated';
     }
   }
   return null;

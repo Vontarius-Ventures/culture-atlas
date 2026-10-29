@@ -1044,7 +1044,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
     const start = await startVersions(accountId);
     await db.query('DELETE FROM accounts WHERE id = $1', [accountId]);
     const violation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked: [] }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked: [] }),
     );
     expect(violation).toBe('account_missing');
   });
@@ -1056,7 +1056,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
     // A taste change commits mid-pass (the projection has not caught up yet).
     await db.query('UPDATE taste_profiles SET revision = revision + 1 WHERE owner_account_id = $1', [accountId]);
     const tasteViolation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked }),
     );
     expect(tasteViolation).toBe('stale_authority');
 
@@ -1067,7 +1067,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
       [accountId],
     );
     const projectionViolation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked }),
     );
     expect(projectionViolation).toBe('stale_authority');
   });
@@ -1077,7 +1077,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
     const start = await startVersions(accountId);
     await pauseGraphDiscovery(db, accountId);
     const violation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked }),
     );
     expect(violation).toBe('paused');
   });
@@ -1093,7 +1093,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
       [accountId, personal.relevance.canonicalKey],
     );
     const violation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked }),
     );
     expect(violation).toBe('exclusion_landed');
   });
@@ -1113,7 +1113,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
     // justification is gone (the sanctioned invalidation path).
     await retractGraphEvidence(db, { evidenceId: evidenceRows[0]!.evidence_id, reason: 'mid-pass retraction test' });
     const violation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked }),
     );
     expect(violation).toBe('source_invalidated');
   });
@@ -1130,7 +1130,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
       [accountId, edgeIds],
     );
     const violation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked }),
     );
     expect(violation).toBe('support_withdrawn');
   });
@@ -1186,7 +1186,7 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
     const { accountId, ranked } = await publishableFixture();
     const start = await startVersions(accountId);
     const violation = await db.transaction(async (tx) =>
-      checkGraphPublicationFence(tx, { accountId, at: new Date(), start, ranked }),
+      checkGraphPublicationFence(tx, { accountId, start, ranked }),
     );
     expect(violation).toBeNull();
   });

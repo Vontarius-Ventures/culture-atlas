@@ -432,11 +432,30 @@ export async function retractGraphSourceRevision(
       const dependents = await invalidateDependentsOfEvidence(tx, evidenceIds, assertionIds, at);
       return { retracted: false, evidenceRetracted: 0, proofsInvalidated: dependents.proofsInvalidated, frontierEntriesExpired: dependents.frontierEntriesExpired, assertionsAffected: assertionIds.length };
     }
-    const evidence = await tx.query<{ id: string }>(
-      `UPDATE graph_evidence SET validity_state = 'retracted', invalidated_at = $2, invalidation_reason = $3
-        WHERE source_revision_id = $1 AND validity_state = 'valid' RETURNING id`,
-      [input.sourceRevisionId, at, input.reason],
+    // Lock the revision's evidence rows in ONE consistent ascending-id order
+    // BEFORE the withdrawal (DISC-SCR-009 lock coordination): the expansion
+    // publication fence locks the pinned evidence rows FOR SHARE in the same
+    // ascending order and holds them to its commit, so an unordered multi-row
+    // withdrawal here could take its locks in any order and deadlock against a
+    // publication transaction that holds one pinned row and wants the next.
+    // Both sides ascending keeps the wait graph acyclic; the FOR UPDATE
+    // re-check also drops any row a concurrent transaction retracted while
+    // this one waited.
+    const toRetract = await tx.query<{ id: string }>(
+      `SELECT id FROM graph_evidence
+        WHERE source_revision_id = $1 AND validity_state = 'valid'
+        ORDER BY id FOR UPDATE`,
+      [input.sourceRevisionId],
     );
+    const retractIds = toRetract.rows.map((r) => r.id);
+    const evidence =
+      retractIds.length > 0
+        ? await tx.query<{ id: string }>(
+            `UPDATE graph_evidence SET validity_state = 'retracted', invalidated_at = $2, invalidation_reason = $3
+              WHERE id = ANY($1::uuid[]) AND validity_state = 'valid' RETURNING id`,
+            [retractIds, at, input.reason],
+          )
+        : { rows: [] as Array<{ id: string }>, rowCount: 0 };
     const evidenceIds = evidence.rows.map((r) => r.id);
     const affected = await tx.query<{ assertion_id: string }>(
       'SELECT DISTINCT assertion_id FROM graph_assertion_support WHERE evidence_id = ANY($1::uuid[])',
