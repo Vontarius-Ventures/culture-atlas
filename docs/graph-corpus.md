@@ -126,6 +126,41 @@ references the same way at read time:
   (`referencesLinked`, `referenceLinksAmbiguous`,
   `candidatesResolvedByLink`).
 
+### What the default corpus actually serves (DISC-SCR-016)
+
+The pilot manifest imports its identities with provider mappings, but a
+mapping only connects the application when the reference's provider id
+matches it. **Pilot-2** ships exactly the mappings a bounded live Qloo
+`/search` verification (2026-10-29, recorded in each mapping's provenance and
+the manifest review) could confirm, and no others:
+
+- **Two verified Qloo identity mappings** — Auguste Rodin
+  (`0A4E018D-ED71-43C0-B16E-0431CDC5C403`) and Georges Seurat
+  (`9E815B4D-1392-4952-AA23-996274BACD45`), each confirmed by a lookup that
+  returned exactly one exact-name person entity. Id traceability only: no
+  Qloo content is admitted.
+- **One supported default path.** Two reviewed `DOCUMENTED_ASSOCIATION
+  (work_on_display_at)` assertions connect those creators to the Art
+  Institute of Chicago place (each evidenced by the museum's own object
+  record: *Adam*, Gallery 200 for Rodin; *A Sunday on La Grande Jatte —
+  1884*, Gallery 240 for Seurat). A normal compiler-shaped saved reference
+  or authorized photo reference on either creator becomes a root, walks the
+  approved `co_documented_association` template through the museum, and
+  materializes the candidate onto the account's own item on the other
+  creator's reference. This is the one production-compatible path the
+  shipped corpus serves today; the dedicated tests are
+  `interest-graph/default-corpus-path.test.ts`.
+- **Honest limits.** A name or a plurality of same-named results never
+  infers identity: the live lookups for Vincent van Gogh returned five
+  same-named persons and for Paul Cézanne two, so those creators keep only
+  their Wikidata mappings and stay unreachable from Qloo references; the
+  work lookups returned no artwork entity, so pilot works carry no Qloo
+  mapping at all (normal work references fail closed as unmapped). An
+  unknown provider id is never a root and never a card, and no claim is made
+  that every pilot identity, every live vision pipeline, or any
+  not-yet-verified Qloo entity is qualified — each addition needs its own
+  single-result verification recorded in the manifest provenance.
+
 ## Review and rights
 
 - **Reviewed only:** corpus admission requires a review record
@@ -147,7 +182,7 @@ references the same way at read time:
   manifest schema rejects photo-candidate entries (image URLs, HEAD checks,
   license-evidence blobs) outright.
 
-### Pilot corpus sources (all verified 2026-10-28)
+### Pilot corpus sources (all verified 2026-10-28; Qloo mappings verified 2026-10-29)
 
 - **Art Institute of Chicago** (11 object records, `artic_open_access`): the
   museum's open-access policy releases object-page caption metadata under CC0
@@ -164,14 +199,21 @@ references the same way at read time:
   van Gogh (Q5582), Georges Seurat (Q34013), Paul Cézanne (Q35548), Auguste
   Rodin (Q30755), each confirmed by a label+description lookup recorded in the
   mapping provenance.
+- **Qloo** identity mappings (pilot-2, id traceability only) for the two
+  creators a bounded live `/search` resolved unambiguously: Auguste Rodin and
+  Georges Seurat, each confirmed by a single exact-name person entity result
+  (2026-10-29, recorded in the mapping provenance and the manifest review
+  basis). Qloo content remains transient and is never admitted (see below).
 
 The pilot asserts only what the cited metadata supports: `CREATED_BY` for
 named artists/designers (unattributed works carry no creator claim),
 `USES_TECHNIQUE` from `medium_display`, `HAS_ATTRIBUTE` from `style_title`,
-and `DOCUMENTED_ASSOCIATION (on_display_at)` from the museum's gallery record.
-It deliberately contains no `ABOUT` or `AUDIENCE_AFFINITY` assertion (no
-reviewed public-source evidence for those predicates in this pilot) and no
-visual-resemblance claim of any kind.
+`DOCUMENTED_ASSOCIATION (on_display_at)` from the museum's gallery record, and
+`DOCUMENTED_ASSOCIATION (work_on_display_at)` for the two creators whose cited
+AIC object records name them and state their gallery. It deliberately contains
+no `ABOUT` or `AUDIENCE_AFFINITY` assertion (no reviewed public-source
+evidence for those predicates in this pilot) and no visual-resemblance claim of
+any kind.
 
 ## Qloo remains transient (VAL-EVID-005)
 
@@ -205,4 +247,5 @@ replay) and the corpus summary, plus the verified-linkage counts
 content versions the affected sources (new revision + new evidence rows)
 without ever rewriting a pinned pair. Typed contracts live in
 `packages/domain/src/interest-graph/{evidence,identity-links,corpus-manifest,corpus}.ts`;
-tests in `interest-graph/{evidence,corpus,identity-links,expansion}.test.ts`.
+tests in
+`interest-graph/{evidence,corpus,identity-links,expansion,default-corpus-path}.test.ts`.

@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "corpus_version": "pilot-1",
+  "corpus_version": "pilot-2",
   "policy_version": "graph-policy-1",
   "domains": [
     "art",
@@ -10,9 +10,9 @@
   ],
   "review": {
     "reviewed_by": "Culture Atlas graph-corpus domain review (PR 8 discovery)",
-    "reviewed_at": "2026-10-28T15:20:00.000Z",
-    "basis": "Every evidence entry was verified against its cited public source on 2026-10-28: The Art Institute of Chicago collection API v1.16 responses (each structured_value holds the exact non-description fields the API returned for that object) and the Wikipedia REST page summary for Bedroom in Arles (extract quoted verbatim, page revision 1374251357). The AIC API response states that all non-description data in the response is licensed CC0 1.0; the AIC open-access policy additionally releases object-page caption metadata under CC0. Wikipedia text is CC BY-SA 4.0 and every excerpt carries its attribution.",
-    "notes": "Assertions state only what the cited metadata supports: CREATED_BY only for a named artist/designer in artist_display (works by unattributed makers, such as the Iznik tankard, the Moche portrait vessel, the Biedermeier desk and the Wikipedia-series Bedroom note, carry no invented creator), USES_TECHNIQUE from medium_display, HAS_ATTRIBUTE from style_title, DOCUMENTED_ASSOCIATION (on_display_at) from the museum's own gallery record. ABOUT and AUDIENCE_AFFINITY are deliberately absent from this pilot: it has no reviewed public-source evidence for those predicates, and no visual-resemblance claim of any kind ships here."
+    "reviewed_at": "2026-10-29T18:30:00.000Z",
+    "basis": "Every evidence entry was verified against its cited public source on 2026-10-28: The Art Institute of Chicago collection API v1.16 responses (each structured_value holds the exact non-description fields the API returned for that object) and the Wikipedia REST page summary for Bedroom in Arles (extract quoted verbatim, page revision 1374251357). The AIC API response states that all non-description data in the response is licensed CC0 1.0; the AIC open-access policy additionally releases object-page caption metadata under CC0. Wikipedia text is CC BY-SA 4.0 and every excerpt carries its attribution. The two Qloo identity mappings added in pilot-2 were verified by bounded Qloo /search lookups on 2026-10-29: each returned exactly one exact-name person entity for its creator ('Auguste Rodin', 'Georges Seurat'). Lookups that returned several same-named persons (Vincent van Gogh: five; Paul Cézanne: two) and the work lookups (Qloo returned no artwork entity) ship NO mapping — a name, an incompatible sense/domain, or a plurality of results never infers identity. Qloo mappings are id traceability only: no Qloo content is admitted as evidence.",
+    "notes": "Assertions state only what the cited metadata supports: CREATED_BY only for a named artist/designer in artist_display (works by unattributed makers, such as the Iznik tankard, the Moche portrait vessel, the Biedermeier desk and the Wikipedia-series Bedroom note, carry no invented creator), USES_TECHNIQUE from medium_display, HAS_ATTRIBUTE from style_title, DOCUMENTED_ASSOCIATION (on_display_at) from the museum's own gallery record, and DOCUMENTED_ASSOCIATION (work_on_display_at) for a creator whose cited AIC object record names them in artist_display and states the gallery — the one reviewed bridge normal Qloo application references can reach, so a default-corpus import actually connects saved and photo references to supported candidates. ABOUT and AUDIENCE_AFFINITY are deliberately absent from this pilot: it has no reviewed public-source evidence for those predicates, and no visual-resemblance claim of any kind ships here."
   },
   "photo_candidate_inventory": {
     "location": "Mission research directory (outside this repository): research/photo-candidates.json",
@@ -289,6 +289,18 @@
       "provider": "wikidata",
       "external_id": "Q30755",
       "provenance": "Wikidata wbsearchentities 2026-10-28: label 'Auguste Rodin', description 'French sculptor (1840–1917)'"
+    },
+    {
+      "identity": "atlas:creator:auguste-rodin",
+      "provider": "qloo",
+      "external_id": "0A4E018D-ED71-43C0-B16E-0431CDC5C403",
+      "provenance": "Qloo /search 2026-10-29: label 'Auguste Rodin', exactly one exact-name person entity (urn:entity:person). Id traceability only; no Qloo content is admitted."
+    },
+    {
+      "identity": "atlas:creator:georges-seurat",
+      "provider": "qloo",
+      "external_id": "9E815B4D-1392-4952-AA23-996274BACD45",
+      "provenance": "Qloo /search 2026-10-29: label 'Georges Seurat', exactly one exact-name person entity (urn:entity:person). Id traceability only; no Qloo content is admitted."
     }
   ],
   "sources": [
@@ -1556,6 +1568,60 @@
         }
       ],
       "label": "artic-103943-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:creator:auguste-rodin",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "work_on_display_at",
+      "evidence": [
+        {
+          "source": "artic:11320:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 200",
+          "structured_value": {
+            "id": 11320,
+            "title": "Adam",
+            "artist_display": "Auguste Rodin (French, 1840–1917)",
+            "gallery_title": "Gallery 200",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "rodin-work-on-display-at-art-institute-of-chicago"
+    },
+    {
+      "subject": "atlas:creator:georges-seurat",
+      "predicate": "DOCUMENTED_ASSOCIATION",
+      "object": "atlas:place:art-institute-of-chicago",
+      "association_subtype": "work_on_display_at",
+      "evidence": [
+        {
+          "source": "artic:27992:page",
+          "kind": "fact",
+          "derivation": "primary",
+          "validation": {
+            "method": "provider_metadata",
+            "version": "artic-api-1.16"
+          },
+          "locator": "gallery_title",
+          "excerpt": "Gallery 240",
+          "structured_value": {
+            "id": 27992,
+            "title": "A Sunday on La Grande Jatte — 1884",
+            "artist_display": "Georges Seurat (French, 1859–1891)",
+            "gallery_title": "Gallery 240",
+            "publisher": "The Art Institute of Chicago"
+          }
+        }
+      ],
+      "label": "seurat-work-on-display-at-art-institute-of-chicago"
     }
   ]
 }
