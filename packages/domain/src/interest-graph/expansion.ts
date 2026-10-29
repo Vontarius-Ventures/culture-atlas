@@ -90,8 +90,13 @@ export const EXPANSION_BOUNDS = {
   frontierLifetimeDays: GRAPH_FRONTIER_MAX_LIFETIME_DAYS,
 } as const;
 
-/** Template specificity: stronger cultural specificity weighs more. */
-const TEMPLATE_WEIGHTS: Record<string, number> = {
+/**
+ * Template specificity: stronger cultural specificity weighs more. Shared by
+ * every ranking pass that admits approved-path observations (the account
+ * expansion and the grant-scoped Discover more branch), so both rank the same
+ * cultural connection with the same weight.
+ */
+export const TEMPLATE_WEIGHTS: Record<string, number> = {
   same_creator: 0.4,
   shared_subject: 0.35,
   shared_technique: 0.3,
@@ -402,7 +407,7 @@ interface ProjectedEdgeRow {
   reference_id: string | null;
 }
 
-interface WalkEdge {
+export interface WalkEdge {
   id: string;
   /** Endpoint this edge is walked from (the root on hop 1, the midpoint on hop 2). */
   near: string;
@@ -410,7 +415,7 @@ interface WalkEdge {
   far: string;
 }
 
-interface EdgeRow {
+export interface EdgeRow {
   id: string;
   subject_node_id: string;
   object_node_id: string;
@@ -2160,8 +2165,49 @@ async function nodesByReference(
   tx: Queryable,
   input: { referenceIds: readonly string[]; counts: ExpansionCounts },
 ): Promise<Map<string, string>> {
-  const unique = [...new Set(input.referenceIds)];
-  if (unique.length === 0) return new Map();
+  const resolution = await resolveReferenceNodes(tx, input.referenceIds);
+  input.counts.referenceLinksAmbiguous += resolution.ambiguousReferenceIds.length;
+  input.counts.referenceLinksConflicting += resolution.conflictingReferenceIds.length;
+  input.counts.referencesLinked += resolution.linkedReferenceIds.length;
+  return resolution.byReference;
+}
+
+/** The shared reference→identity resolution pass, without engine-only counts. */
+export interface ReferenceNodeResolution {
+  /** Each scoped reference's ACTIVE shared identity (absent when unresolved). */
+  byReference: Map<string, string>;
+  /** References resolved only through the read-time verified link. */
+  linkedReferenceIds: string[];
+  /** References whose verified match violates GLOBAL one-to-one cardinality. */
+  ambiguousReferenceIds: string[];
+  /** References whose verified match contradicts an existing durable binding. */
+  conflictingReferenceIds: string[];
+}
+
+/**
+ * Resolves cultural references to ACTIVE shared identities — the one
+ * resolution rule every graph reader uses (expansion roots, and the scoped
+ * Discover more branch's origin roots). A durable binding is authoritative;
+ * only references with no binding row at all fall back to the verified
+ * provider-id link, and that fallback accepts a pair ONLY when the DURABLE
+ * linker would bind the same pair (DISC-SCR-017): exact confirmed
+ * provider-id equality, GLOBAL one-to-one cardinality in BOTH directions,
+ * an active identity and compatible existing bindings on both sides. Nothing
+ * is written; ambiguous and conflicting references stay unresolved.
+ */
+export async function resolveReferenceNodes(
+  tx: Queryable,
+  referenceIds: readonly string[],
+): Promise<ReferenceNodeResolution> {
+  const unique = [...new Set(referenceIds)];
+  if (unique.length === 0) {
+    return {
+      byReference: new Map(),
+      linkedReferenceIds: [],
+      ambiguousReferenceIds: [],
+      conflictingReferenceIds: [],
+    };
+  }
   const bound = await tx.query<{ cultural_reference_id: string; id: string }>(
     `SELECT cultural_reference_id, id FROM graph_nodes
       WHERE cultural_reference_id = ANY($1::uuid[]) AND status = 'active'`,
@@ -2176,20 +2222,26 @@ async function nodesByReference(
   );
   const boundReferenceIds = new Set(anyBinding.map((r) => r.cultural_reference_id));
   const unbound = unique.filter((id) => !boundReferenceIds.has(id));
-  if (unbound.length === 0) return byReference;
-  // The read-time fallback binds NOTHING durably: it resolves roots only
+  if (unbound.length === 0) {
+    return { byReference, linkedReferenceIds: [], ambiguousReferenceIds: [], conflictingReferenceIds: [] };
+  }
+  // The read-time fallback binds NOTHING durably: it resolves references only
   // through the durable linker's own bilateral rules, so an identity already
   // claimed elsewhere (by another reference's provider id, or by a competing
   // durable binding) never becomes a root and never publishes from the
   // wrong identity.
   const verdict = await bilaterallyVerifiedReferenceNodes(tx, { referenceIds: unbound });
-  input.counts.referenceLinksAmbiguous += verdict.ambiguousReferenceIds.length;
-  input.counts.referenceLinksConflicting += verdict.conflictingReferenceIds.length;
+  const linkedReferenceIds: string[] = [];
   for (const [referenceId, nodeId] of verdict.acceptedByReference) {
     byReference.set(referenceId, nodeId);
-    input.counts.referencesLinked++;
+    linkedReferenceIds.push(referenceId);
   }
-  return byReference;
+  return {
+    byReference,
+    linkedReferenceIds,
+    ambiguousReferenceIds: verdict.ambiguousReferenceIds,
+    conflictingReferenceIds: verdict.conflictingReferenceIds,
+  };
 }
 
 async function captureReferenceSupportEdges(
@@ -2209,7 +2261,14 @@ async function captureReferenceSupportEdges(
 
 // --- Walk helpers -------------------------------------------------------------------------
 
-async function traversalRows(
+/**
+ * One bounded hop's validated assertion rows: currently-validatable
+ * (`status = 'validated'`, not invalidated, within `valid_from`) assertions
+ * touching the endpoint set, deterministic by id. Shared by the account
+ * expansion and the grant-scoped Discover more branch so both walk the same
+ * graph under the same bounds.
+ */
+export async function traversalRows(
   tx: Queryable,
   endpointIds: readonly string[],
   excludeIds: readonly string[],
@@ -2232,7 +2291,7 @@ async function traversalRows(
 }
 
 /** Records an edge under every endpoint it is walked from (near → far). */
-function addOrientation(map: Map<string, WalkEdge[]>, row: EdgeRow, nearSet: Set<string>): void {
+export function addOrientation(map: Map<string, WalkEdge[]>, row: EdgeRow, nearSet: Set<string>): void {
   if (nearSet.has(row.subject_node_id)) {
     const list = map.get(row.subject_node_id) ?? [];
     list.push({ id: row.id, near: row.subject_node_id, far: row.object_node_id });

@@ -148,10 +148,18 @@ export async function saveDirect(accountId: string, itemId: string, collectionId
 /**
  * Run one queued job through its registered handler with the same contract
  * as apps/worker (lease, idempotent stages, ensureActive, completion).
+ * `onTrace` observes the handler's trace events (the production worker
+ * persists them; tests usually only assert their shape).
  */
 export async function runJob(
   jobId: string,
-  options: { providers?: ProviderRegistry; config?: DomainConfig; db?: PoolDb; beforePublish?: () => Promise<void> } = {},
+  options: {
+    providers?: ProviderRegistry;
+    config?: DomainConfig;
+    db?: PoolDb;
+    beforePublish?: () => Promise<void>;
+    onTrace?: (event: { kind: string; name: string; data?: Record<string, unknown> }) => void;
+  } = {},
 ): Promise<{ state: string }> {
   const db = options.db ?? getTestDb();
   const config = options.config ?? testConfig();
@@ -187,7 +195,9 @@ export async function runJob(
       }
       if (!(await stillOwnsJob(db, job.id, workerId))) throw new JobCancelledError('cancelled');
     },
-    trace: async () => undefined,
+    trace: async (event) => {
+      options.onTrace?.(event);
+    },
     log: () => undefined,
   };
   const handler = JOB_HANDLERS[job.type as JobType] as (c: JobContext) => Promise<{ state: 'complete' | 'partial'; resultType?: string; resultId?: string }>;

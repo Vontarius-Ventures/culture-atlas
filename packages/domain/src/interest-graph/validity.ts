@@ -343,6 +343,8 @@ export interface RetractionResult {
   retracted: boolean;
   evidenceRetracted: number;
   proofsInvalidated: number;
+  /** Scoped Discover more result proofs invalidated by this withdrawal. */
+  scopedProofsInvalidated: number;
   frontierEntriesExpired: number;
   /** Assertions whose support included the retracted evidence. */
   assertionsAffected: number;
@@ -353,8 +355,10 @@ async function invalidateDependentsOfEvidence(
   evidenceIds: readonly string[],
   assertionIds: readonly string[],
   at: Date,
-): Promise<{ proofsInvalidated: number; frontierEntriesExpired: number }> {
-  if (evidenceIds.length === 0) return { proofsInvalidated: 0, frontierEntriesExpired: 0 };
+): Promise<{ proofsInvalidated: number; scopedProofsInvalidated: number; frontierEntriesExpired: number }> {
+  if (evidenceIds.length === 0) {
+    return { proofsInvalidated: 0, scopedProofsInvalidated: 0, frontierEntriesExpired: 0 };
+  }
   // Lock every candidate proof BEFORE deciding survival, in one consistent
   // ascending-id order (DISC-SCR-003): two retractions of INDEPENDENT
   // evidence that both reach the same proof serialize here. Under READ
@@ -385,6 +389,42 @@ async function invalidateDependentsOfEvidence(
       [proof.id, at],
     );
     proofsInvalidated += 1;
+  }
+  // Scoped Discover more results join the same dependent population (the
+  // same ascending FOR UPDATE discipline, after the account-owned proofs):
+  // their pinned per-result paths rest on the same shared evidence, so a
+  // withdrawal that breaks a scoped result's grounding invalidates its
+  // recorded proof exactly like an account-owned card's, and a published
+  // scoped reason can never silently outlive the evidence it rested on.
+  const scopedProofs = await tx.query<{
+    id: string;
+    assertion_ids: string[];
+    assertion_revisions: number[];
+    evidence_ids: string[];
+    evidence_revisions: number[];
+  }>(
+    `SELECT id, assertion_ids, assertion_revisions, evidence_ids, evidence_revisions
+       FROM scoped_discovery_result_proofs
+      WHERE validity_state = 'valid' AND (evidence_ids && $1::uuid[] OR assertion_ids && $2::uuid[])
+      ORDER BY id
+      FOR UPDATE`,
+    [evidenceIds, assertionIds],
+  );
+  let scopedProofsInvalidated = 0;
+  for (const proof of scopedProofs.rows) {
+    const verdict = await revalidatePinnedDependencies(tx, {
+      assertions: proof.assertion_ids.map((id, i) => ({ id, revision: proof.assertion_revisions[i]! })),
+      evidence: proof.evidence_ids.map((id, i) => ({ id, revision: proof.evidence_revisions[i]! })),
+      at,
+    });
+    if (verdict.valid) continue;
+    await tx.query(
+      `UPDATE scoped_discovery_result_proofs
+         SET validity_state = 'invalid', invalidated_at = $2, invalidation_reason = $3, updated_at = now()
+        WHERE id = $1 AND validity_state = 'valid'`,
+      [proof.id, at, verdict.reason ?? 'dependency_invalid'],
+    );
+    scopedProofsInvalidated += 1;
   }
   // Frontier candidates whose recorded approved path overlaps the withdrawn
   // evidence (or an assertion it supported) expire immediately, inside the
@@ -436,7 +476,7 @@ async function invalidateDependentsOfEvidence(
     );
     frontierEntriesExpired += 1;
   }
-  return { proofsInvalidated, frontierEntriesExpired };
+  return { proofsInvalidated, scopedProofsInvalidated, frontierEntriesExpired };
 }
 
 /**
@@ -475,13 +515,14 @@ export async function retractGraphEvidence(
       // surviving independent evidence keep surviving, invalid dependents
       // flip at most once, and already-expired frontier rows stay expired.
       const dependents = await invalidateDependentsOfEvidence(tx, [input.evidenceId], assertionIds, at);
-      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: dependents.proofsInvalidated, frontierEntriesExpired: dependents.frontierEntriesExpired, assertionsAffected: assertionIds.length };
+      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: dependents.proofsInvalidated, scopedProofsInvalidated: dependents.scopedProofsInvalidated, frontierEntriesExpired: dependents.frontierEntriesExpired, assertionsAffected: assertionIds.length };
     }
     const dependents = await invalidateDependentsOfEvidence(tx, [input.evidenceId], assertionIds, at);
     return {
       retracted: true,
       evidenceRetracted: 1,
       proofsInvalidated: dependents.proofsInvalidated,
+      scopedProofsInvalidated: dependents.scopedProofsInvalidated,
       frontierEntriesExpired: dependents.frontierEntriesExpired,
       assertionsAffected: assertionIds.length,
     };
@@ -527,7 +568,7 @@ export async function retractGraphSourceRevision(
       );
       const assertionIds = affected.rows.map((r) => r.assertion_id);
       const dependents = await invalidateDependentsOfEvidence(tx, evidenceIds, assertionIds, at);
-      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: dependents.proofsInvalidated, frontierEntriesExpired: dependents.frontierEntriesExpired, assertionsAffected: assertionIds.length };
+      return { retracted: false, evidenceRetracted: 0, proofsInvalidated: dependents.proofsInvalidated, scopedProofsInvalidated: dependents.scopedProofsInvalidated, frontierEntriesExpired: dependents.frontierEntriesExpired, assertionsAffected: assertionIds.length };
     }
     // Lock the revision's evidence rows in ONE consistent ascending-id order
     // BEFORE the withdrawal (DISC-SCR-009 lock coordination): the expansion
@@ -564,6 +605,7 @@ export async function retractGraphSourceRevision(
       retracted: true,
       evidenceRetracted: evidenceIds.length,
       proofsInvalidated: dependents.proofsInvalidated,
+      scopedProofsInvalidated: dependents.scopedProofsInvalidated,
       frontierEntriesExpired: dependents.frontierEntriesExpired,
       assertionsAffected: assertionIds.length,
     };

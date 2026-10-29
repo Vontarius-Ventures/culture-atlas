@@ -19,6 +19,9 @@ import {
 import { CATEGORIES, LIMITS, type Category, type ItemKind, type RecommendationOrigin, type SectionStatus } from '../enums';
 import type { Queryable } from '../db/pool';
 import { JobCancelledError, type JobHandler } from '../jobs/handler';
+import { discoveryEnabledForAccount } from '../interest-graph/expansion';
+import { runScopedGraphDiscovery } from '../interest-graph/scoped-discovery-graph';
+import { discoveryGrantAuthorityForJob } from '../interest-graph/scoped-discovery';
 import { loadItemAnchors } from '../library/anchors';
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
@@ -176,6 +179,56 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
   const owner: Owner = job.owner_account_id
     ? { kind: 'account', accountId: job.owner_account_id }
     : { kind: 'session', sessionId: job.owner_session_id! };
+
+  // Approved grant-scoped graph branch (scoped-discover-graph-results): when
+  // this discovery was enqueued by the selected-collection operation (its
+  // immutable migration-360 authority row pins the grant, owner, collection,
+  // origin and job identities) and graph discovery is enabled for the owning
+  // account, the job runs the bounded graph-backed pass INSTEAD of the
+  // provider path — zero Qloo/model calls, only the origin's own qualified
+  // identities and reviewed shared evidence participate, and results attach
+  // to the scoped discovery parent. Legacy jobs (no authority row:
+  // whole-library or anonymous enqueues) and graph-off accounts keep the
+  // unchanged provider behavior below, so graph-off responses stay identical.
+  if (owner.kind === 'account') {
+    const authority = await discoveryGrantAuthorityForJob(ctx.db, {
+      ownerAccountId: owner.accountId,
+      discoveryJobId: discovery_job_id,
+    });
+    if (
+      authority?.job_type === 'discover_related' &&
+      (await discoveryEnabledForAccount(ctx.db, { accountId: owner.accountId, config: ctx.config }))
+    ) {
+      await ctx.setStage('graph');
+      const outcome = await ctx.runStage('graph', () =>
+        runScopedGraphDiscovery(ctx.db, {
+          authority,
+          category: ctx.payload.category ?? null,
+          ensureActive: ctx.ensureActive,
+        }),
+      );
+      // Bounded-work telemetry: ids, versions, counters and rejection codes
+      // only — no private interest text (VAL-OPS-003).
+      await ctx.trace({
+        kind: 'note',
+        name: 'scoped_graph_discovery',
+        data: {
+          discovery_job_id: authority.discovery_job_id,
+          job_id: authority.job_id,
+          authority_id: authority.id,
+          state: outcome.state,
+          results: outcome.counts.resultsPublished,
+          counts: outcome.counts,
+          rejections: outcome.rejections,
+          truncated: outcome.truncated,
+          ranking_policy_version: outcome.rankingPolicyVersion,
+          grammar_version: outcome.grammarVersion,
+        },
+      });
+      return { state: outcome.state, resultType: 'discovery_job', resultId: discovery_job_id };
+    }
+  }
+
   // Music Mode: the reason names what the user heard; results join the feed.
   const fromMusic = job.source === 'music_mode';
   const connectedReason = fromMusic

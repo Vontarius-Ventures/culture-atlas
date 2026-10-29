@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { agentConnections, collections, type AgentPrincipal, type Scope, type ServiceContext } from '@culture-atlas/domain';
+import { agentConnections, collections, type AgentPrincipal, type DomainConfig, type PoolDb, type Scope, type ServiceContext } from '@culture-atlas/domain';
 import { getTestDb, insertAccount, testConfig, testContext, testProviders } from '@culture-atlas/domain/testing';
 import type { ProviderRegistry } from '@culture-atlas/providers';
 // Test-only factories shared with the domain's own library tests.
@@ -15,8 +15,9 @@ import { createMcpHandler } from './server';
 
 export const MCP_URL = 'http://localhost:3000/mcp';
 
-export function mcpFetch(providers: ProviderRegistry = testProviders()) {
-  const handler = createMcpHandler({ db: getTestDb(), config: testConfig(), providers });
+/** In-process MCP transport over the real handler (no network). */
+export function mcpFetch(providers: ProviderRegistry = testProviders(), opts: { db?: PoolDb; config?: DomainConfig } = {}) {
+  const handler = createMcpHandler({ db: opts.db ?? getTestDb(), config: opts.config ?? testConfig(), providers });
   return (input: string | URL, init?: RequestInit) => handler(new Request(input, init));
 }
 
