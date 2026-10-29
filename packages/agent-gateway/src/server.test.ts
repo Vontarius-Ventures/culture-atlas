@@ -23,6 +23,7 @@ import {
   testProviders,
 } from '@culture-atlas/domain/testing';
 import { upsertReference } from '../../domain/src/compiler/store';
+import { GraphWorkDeadlineExpiredError } from '../../domain/src/interest-graph/budgets';
 import { ensureSampleItems, sampleKey } from '../../domain/src/feed/samples';
 import { insertItem, runJob } from '../../domain/src/test-support/library';
 import { connectMcp, ConnectionRefusedError } from '../../../apps/demo-agent/src/client';
@@ -926,6 +927,166 @@ describe('scoped Discover more rail context selection over MCP (DISC-SCR-043/044
         expect(read.ok && read.data.related.map((r) => r.title)).toEqual(['Georges Seurat']);
         expect(read.ok && read.data.related.every((r) => !r.is_example)).toBe(true);
         expect(read.ok && read.data.related_job_id).toBe(jobId);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await s.iso.drop();
+    }
+  });
+
+  it('get_item never borrows an older same-collection graph-off provider completion over MCP (DISC-SCR-047)', async () => {
+    const s = await railMcpLibrary();
+    try {
+      // The graph-off era: the selected-collection Discover more ran the
+      // LEGACY provider branch (same origin_collection_id and scoped marker
+      // as a graph job) and completed with one provider card.
+      const legacy = await items.startRelatedDiscovery(s.ownerCtx, {
+        id: s.origin,
+        body: { collection_id: s.colA.id, category: 'watch' },
+      });
+      const legacyQloo = new FakeQloo(
+        {
+          insights: (req) => ({
+            entities: [
+              {
+                entity_id: `xmcp-${req.filterType.split(':').pop()}`,
+                name: 'Provider pick xmcp',
+                types: [],
+                properties: {},
+                tags: [],
+              },
+            ],
+            tags: [],
+          }),
+        },
+        { live: true },
+      );
+      await runJob(legacy.job_id, { db: s.iso.db, config: s.graphOff, providers: testProviders({ qloo: legacyQloo }) });
+      const { rows: legacyRows } = await s.iso.db.query<{ discovery_item_id: string }>(
+        'SELECT discovery_item_id FROM recommendations WHERE discovery_job_id = $1',
+        [legacy.discovery_job_id],
+      );
+      expect(legacyRows.length).toBeGreaterThan(0);
+
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        // Rollout: a genuinely fresh scoped request for the same origin/A is
+        // enqueued over MCP. Its pending rail is honest — the old provider
+        // completion is a different execution class and never fills it.
+        const fresh = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.colA.id,
+          category: 'play',
+        });
+        expect(fresh.ok).toBe(true);
+        const jobId = fresh.ok ? fresh.data.job_id : '';
+        const pending = await client.callTool<{
+          related: { id: string }[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: s.origin, collection_id: s.colA.id });
+        expect(pending.ok && pending.data.related).toEqual([]);
+        expect(pending.ok && pending.data.related_state).toBe('pending');
+        expect(pending.ok && pending.data.related_job_id).toBe(jobId);
+
+        // The fresh graph pass admits the reviewed Rodin→museum→Seurat path:
+        // its completed rail serves exactly that result — the provider card
+        // never returns on the graph class's rail.
+        await runJob(jobId, { db: s.iso.db, config: s.graphOn, providers: s.providers });
+        const done = await client.callTool<{
+          related: { id: string; title: string }[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: s.origin, collection_id: s.colA.id });
+        expect(done.ok && done.data.related_state).toBe('cached');
+        expect(done.ok && done.data.related.map((r) => r.title)).toEqual(['Georges Seurat']);
+        expect(done.ok && done.data.related_job_id).toBe(jobId);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await s.iso.drop();
+    }
+  });
+
+  it('a scoped context whose only parent failed at its immutable deadline serves honest empty over MCP: the other granted collection’s saved card never stands in (DISC-SCR-048)', async () => {
+    const s = await railMcpLibrary();
+    try {
+      // The legacy interest-pool padding source: a completed taste seed with
+      // one unrelated account-wide card, saved into the agent's SECOND
+      // granted collection B.
+      const seedCard = await insertItem(
+        { accountId: s.owner.accountId },
+        { kind: 'brand', category: 'wear', title: 'Unrelated taste brand' },
+        s.iso.db,
+      );
+      const run = await s.iso.db.query<{ id: string }>(
+        `INSERT INTO taste_seed_runs (owner_account_id, taste_revision, state, signal_count)
+         VALUES ($1, 0, 'complete', 1) RETURNING id`,
+        [s.owner.accountId],
+      );
+      const pq = randomUUID();
+      await s.iso.db.query(
+        `INSERT INTO provider_queries (id, taste_seed_run_id, provider, operation, sanitized_request, results, status)
+         VALUES ($1, $2, 'qloo', 'insights', '{}'::jsonb, NULL, 'ok')`,
+        [pq, run.rows[0]!.id],
+      );
+      await s.iso.db.query(
+        `INSERT INTO recommendations (taste_seed_run_id, discovery_item_id, category, rank, title,
+                                      external_ids, display_reason, origin, provider_query_ids)
+         VALUES ($1, $2, 'wear', 1, 'Unrelated taste brand', '{}'::jsonb, 'From your interests.', 'qloo', ARRAY[$3::uuid])`,
+        [run.rows[0]!.id, seedCard, pq],
+      );
+      await collections.addCollectionItem(s.ownerCtx, { id: s.colB.id, item_id: seedCard, body: {} });
+
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        // The origin's first graph-on scoped discovery is delayed past its
+        // immutable work window and fails nonretryably BEFORE any results:
+        // the durable 'graph' stage records the executed class and nothing
+        // is published (re-anchored through the authority row's own closed
+        // path — fixture setup, not production retry semantics).
+        const started = await client.callTool<{ job_id: string; discovery_job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.colA.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+        const discoveryJobId = started.ok ? started.data.discovery_job_id : '';
+        await s.iso.db.query(
+          `WITH old AS (DELETE FROM discovery_grant_authorities WHERE discovery_job_id = $1 RETURNING *)
+           INSERT INTO discovery_grant_authorities
+             (owner_account_id, discovery_job_id, job_id, agent_connection_id, authorization_version,
+              collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+           SELECT owner_account_id, discovery_job_id, job_id, agent_connection_id, authorization_version,
+                  collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id,
+                  now() - interval '1 minute'
+             FROM old`,
+          [discoveryJobId],
+        );
+        await expect(runJob(jobId, { db: s.iso.db, config: s.graphOn, providers: s.providers })).rejects.toThrow(
+          GraphWorkDeadlineExpiredError,
+        );
+
+        // The A+B-granted agent reading the failed A context over MCP sees
+        // the honest empty rail: its B-saved seed card is independently
+        // visible, yet never fills the scoped response.
+        const read = await client.callTool<{ related: { id: string }[]; related_state: string }>('get_item', {
+          item_id: s.origin,
+          collection_id: s.colA.id,
+        });
+        expect(read.ok && read.data.related).toEqual([]);
+        expect(read.ok && read.data.related_state).toBe('none');
       } finally {
         await client.close();
       }

@@ -5,7 +5,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { upsertReference } from '../compiler/store';
 import type { ServiceContext } from '../context';
 import type { PoolDb } from '../db/pool';
+import type { Category, ItemKind } from '../enums';
 import { ensureSampleItems, sampleKey } from '../feed/samples';
+import { GraphWorkDeadlineExpiredError } from './budgets';
+import { cancelJob } from '../jobs/queue';
 import { resolvePrincipal } from '../services/auth';
 import { addCollectionItem, createCollection } from '../services/collections';
 import { getItem, startRelatedDiscovery } from '../services/items';
@@ -43,6 +46,22 @@ import { linkGraphReferenceIdentities } from './identity-links';
  *    outcome — never unrelated public example cards standing in for the
  *    scoped rail. The ordinary example carousel remains for graph-off reads
  *    and samples without a scoped operation.
+ *  - DISC-SCR-047 (round 10): the compatible context is the PAIR of the
+ *    origin collection and the actual EXECUTION CLASS of its work. The
+ *    class is durable evidence of which producer branch ran — the `graph`
+ *    job stage proves the scoped graph pass executed, other stage rows
+ *    prove the legacy provider path executed, and work with no stage rows
+ *    has not started (it claims no provenance and follows today's graph-on
+ *    eligibility). The scoped_authority_required marker is NOT the class:
+ *    graph-off selected-collection jobs carry it too. A fresh graph-on
+ *    request never borrows an older same-collection provider completion,
+ *    and a graph-on sample read never mistakes one for explicit graph work.
+ *  - DISC-SCR-048 (round 10): a scoped context whose only parent failed,
+ *    was cancelled or expired before results keeps its scoped isolation —
+ *    the owner and an A+B-granted agent see an honest empty rail, never
+ *    unrelated account taste cards or the other granted collection's saved
+ *    card. Graph-off reads keep the legacy interest-pool fallback on their
+ *    own compatible path.
  *
  * Everything runs the REAL enqueue + handler path on isolated databases with
  * the committed reviewed corpus and zero live provider calls.
@@ -384,5 +403,355 @@ describe('saved public sample scoped result reads (DISC-SCR-044)', () => {
     const newest = await getItem(ownerCtx, { id: sample, query: {} });
     expect(newest.related.map((r) => r.id)).toEqual([candidate]);
     expect(newest.related_job_id).toBe(started.job_id);
+  });
+});
+
+describe('execution class and failed-context isolation on item reads (DISC-SCR-047/048)', () => {
+  let isoDb: PoolDb;
+  let dropIso: () => Promise<void>;
+
+  beforeAll(async () => {
+    const created = await createIsolatedDatabase('scrdxec');
+    isoDb = created.db;
+    dropIso = created.drop;
+    await admitGraphCorpus(isoDb, getCorpusManifestFile());
+  });
+  afterAll(async () => {
+    await dropIso();
+  });
+
+  /**
+   * The legacy interest-pool padding source: a completed taste seed carrying
+   * one unrelated account-wide card (the pool `interestPoolRelatedIds`
+   * reads), also saved into a second granted collection so an A+B agent can
+   * independently see it (the ordinary pool/grant arrangement of the
+   * read-context tests).
+   */
+  async function seedPoolCard(db: PoolDb, accountId: string, opts: { kind: ItemKind; category: Category; title: string }): Promise<string> {
+    const item = await insertItem({ accountId }, { kind: opts.kind, category: opts.category, title: opts.title }, db);
+    const run = await db.query<{ id: string }>(
+      `INSERT INTO taste_seed_runs (owner_account_id, taste_revision, state, signal_count)
+       VALUES ($1, 0, 'complete', 1) RETURNING id`,
+      [accountId],
+    );
+    const seedRunId = run.rows[0]!.id;
+    const pq = randomUUID();
+    await db.query(
+      `INSERT INTO provider_queries (id, taste_seed_run_id, provider, operation, sanitized_request, results, status)
+       VALUES ($1, $2, 'qloo', 'insights', '{}'::jsonb, NULL, 'ok')`,
+      [pq, seedRunId],
+    );
+    await db.query(
+      `INSERT INTO recommendations (taste_seed_run_id, discovery_item_id, category, rank, title,
+                                    external_ids, display_reason, origin, provider_query_ids)
+       VALUES ($1, $2, $3, 1, $4, '{}'::jsonb, 'From your interests.', 'qloo', ARRAY[$5::uuid])`,
+      [seedRunId, item, opts.category, opts.title, pq],
+    );
+    return item;
+  }
+
+  /**
+   * Re-anchor one scoped discovery's immutable work window into the past
+   * through the row's own closed path (DELETE + fresh INSERT, exactly the
+   * enqueue transaction's dedupe-race cleanup — the migration-360 trigger
+   * rejects in-place rewrites). Test-fixture setup for a delayed execution,
+   * not production retry semantics.
+   */
+  async function expireWorkWindow(db: PoolDb, discoveryJobId: string): Promise<void> {
+    await db.query(
+      `WITH old AS (DELETE FROM discovery_grant_authorities WHERE discovery_job_id = $1 RETURNING *)
+       INSERT INTO discovery_grant_authorities
+         (owner_account_id, discovery_job_id, job_id, agent_connection_id, authorization_version,
+          collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+       SELECT owner_account_id, discovery_job_id, job_id, agent_connection_id, authorization_version,
+              collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id,
+              now() - interval '1 minute'
+         FROM old`,
+      [discoveryJobId],
+    );
+  }
+
+  it('a fresh graph-on scoped request never borrows an older same-collection graph-off provider completion (DISC-SCR-047)', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'film', category: 'watch', title: 'Rollout discovery film', qloo: `film-${randomUUID()}` },
+      isoDb,
+    );
+    const col = await createCollection(ownerCtx, { name: `Movie nights ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: col.id, item_id: origin, body: {} });
+
+    // The graph-off era: this selected-collection Discover more ran the
+    // LEGACY provider branch — the same origin_collection_id and scoped
+    // marker a graph job would carry — and completed with a provider card.
+    const legacy = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'watch' } });
+    const legacyOut = await runJob(legacy.job_id, { db: isoDb, config: graphOff, providers: testProviders({ qloo: legacyResultsQloo('xcl') }) });
+    expect(legacyOut.state).toBe('complete');
+    const legacyIds = await publishedItemIds(isoDb, legacy.discovery_job_id);
+    expect(legacyIds.length).toBeGreaterThan(0);
+
+    // Graph-off reads keep the provider card on its own compatible legacy path.
+    const offCached = await getItem(ownerOffCtx, { id: origin, query: { collection_id: col.id } });
+    expect(offCached.related_state).toBe('cached');
+    expect(offCached.related.map((r) => r.id)).toEqual(legacyIds);
+
+    // Rollout: graph discovery is enabled and a GENUINELY FRESH request for
+    // the same origin/A is enqueued (a different category is new work). Its
+    // pending rail is honest — the old provider completion is a different
+    // execution class and never fills it.
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'play' } });
+    const pending = await getItem(ownerCtx, { id: origin, query: {} });
+    expect(pending.related).toEqual([]);
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(scoped.job_id);
+    const pendingScoped = await getItem(ownerCtx, { id: origin, query: { collection_id: col.id } });
+    expect(pendingScoped.related).toEqual([]);
+    expect(pendingScoped.related_state).toBe('pending');
+    expect(pendingScoped.related_job_id).toBe(scoped.job_id);
+
+    // Graph-off control: the same stored state keeps the legacy pairing —
+    // pending fresh work with the older provider card as the cached rail.
+    const offPending = await getItem(ownerOffCtx, { id: origin, query: { collection_id: col.id } });
+    expect(offPending.related_state).toBe('pending');
+    expect(offPending.related_job_id).toBe(scoped.job_id);
+    expect(offPending.related.map((r) => r.id)).toEqual(legacyIds);
+
+    // The fresh graph pass runs and honestly admits nothing (unmapped
+    // origin): its completed rail stays empty — the provider cards never
+    // return on the graph class's rail.
+    const qloo = noCallQloo();
+    const out = await runJob(scoped.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo }) });
+    expect(out.state).toBe('partial');
+    expect(qloo.calls).toEqual([]);
+    const ownerEmpty = await getItem(ownerCtx, { id: origin, query: {} });
+    expect(ownerEmpty.related).toEqual([]);
+    expect(ownerEmpty.related_state).toBe('none');
+    expect(ownerEmpty.related_job_id).toBe(scoped.job_id);
+  });
+
+  it('a graph-on sample read never mistakes an older graph-off selected-collection provider job for explicit graph work (DISC-SCR-047)', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    await ensureSampleItems(isoDb);
+    // A public shared sample with a provider-resolvable identity.
+    const sample = await insertItem(
+      null,
+      {
+        kind: 'artist',
+        category: 'play',
+        title: 'Sample sculptor',
+        key: `sample:sculptor-${randomUUID().slice(0, 6)}`,
+        qloo: `artist-${randomUUID()}`,
+      },
+      isoDb,
+    );
+    const col = await createCollection(ownerCtx, { name: `Sample shelf ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: col.id, item_id: sample, body: {} });
+
+    // Control: before any discovery the ordinary example carousel serves.
+    const before = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(before.related_state).toBe('cached');
+    expect(before.related.length).toBeGreaterThan(0);
+    expect(before.related.every((r) => r.is_example)).toBe(true);
+
+    // The graph-off era: the selected-collection operation runs the LEGACY
+    // provider branch and publishes one provider card for this sample.
+    const legacy = await startRelatedDiscovery(ownerCtx, { id: sample, body: { collection_id: col.id, category: 'play' } });
+    await runJob(legacy.job_id, { db: isoDb, config: graphOff, providers: testProviders({ qloo: legacyResultsQloo('xcs') }) });
+    const legacyIds = await publishedItemIds(isoDb, legacy.discovery_job_id);
+    expect(legacyIds.length).toBeGreaterThan(0);
+
+    // The graph-on sample read keeps the ordinary example carousel: the old
+    // provider job is NOT explicit graph work and never takes the sample rail.
+    const carousel = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(carousel.related_state).toBe('cached');
+    expect(carousel.related.length).toBeGreaterThan(0);
+    expect(carousel.related.every((r) => r.is_example)).toBe(true);
+
+    // Graph-off control: the carousel is unchanged there too.
+    const offRead = await getItem(ownerOffCtx, { id: sample, query: {} });
+    expect(offRead.related_state).toBe('cached');
+    expect(offRead.related.length).toBeGreaterThan(0);
+    expect(offRead.related.every((r) => r.is_example)).toBe(true);
+
+    // A fresh explicit graph-on scoped operation takes the sample rail
+    // honestly: pending, then its own completed empty outcome — never the
+    // provider card, never the carousel.
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: sample, body: { collection_id: col.id, category: 'watch' } });
+    const pending = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(pending.related).toEqual([]);
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(scoped.job_id);
+    const qloo = noCallQloo();
+    await runJob(scoped.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo }) });
+    expect(qloo.calls).toEqual([]);
+    const empty = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(empty.related).toEqual([]);
+    expect(empty.related_state).toBe('none');
+    expect(empty.related_job_id).toBe(scoped.job_id);
+  });
+
+  it('a scoped context whose newer graph parent failed at its immutable deadline stays isolated: no same-collection provider card, no interest pool, no other granted collection save (DISC-SCR-047/048)', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'film', category: 'watch', title: 'Failed window film', qloo: `film-${randomUUID()}` },
+      isoDb,
+    );
+    const colA = await createCollection(ownerCtx, { name: `Museum A ${randomUUID().slice(0, 6)}` });
+    const colB = await createCollection(ownerCtx, { name: `Museum B ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+    const seedCard = await seedPoolCard(isoDb, owner.accountId, { kind: 'brand', category: 'wear', title: 'Unrelated taste brand' });
+    await addCollectionItem(ownerCtx, { id: colB.id, item_id: seedCard, body: {} });
+    const agent = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id, colB.id] },
+      isoDb,
+    );
+
+    // The graph-off era's provider completion in the SAME collection A.
+    const legacy = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colA.id, category: 'watch' } });
+    await runJob(legacy.job_id, { db: isoDb, config: graphOff, providers: testProviders({ qloo: legacyResultsQloo('xcf') }) });
+    const legacyIds = await publishedItemIds(isoDb, legacy.discovery_job_id);
+    expect(legacyIds.length).toBeGreaterThan(0);
+
+    // The origin's first graph-on scoped discovery is delayed past its
+    // immutable 45-second work window and fails nonretryably BEFORE any
+    // results (the real deadline outcome): the durable 'graph' stage records
+    // the executed class, and nothing is published.
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colA.id, category: 'play' } });
+    await expireWorkWindow(isoDb, scoped.discovery_job_id);
+    const qloo = noCallQloo();
+    await expect(
+      runJob(scoped.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo }) }),
+    ).rejects.toThrow(GraphWorkDeadlineExpiredError);
+    expect(qloo.calls).toEqual([]);
+    const { rows: stages } = await isoDb.query<{ stage: string; status: string }>(
+      'SELECT stage, status FROM job_stages WHERE job_id = $1',
+      [scoped.job_id],
+    );
+    expect(stages).toEqual([{ stage: 'graph', status: 'failed' }]);
+    const { rows: recs } = await isoDb.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+      [scoped.discovery_job_id],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
+
+    // The owner's reads of the failed exact context are honest: the same-
+    // collection provider completion and the unrelated interest pool never
+    // fill the scoped rail.
+    const ownerEmpty = await getItem(ownerCtx, { id: origin, query: {} });
+    expect(ownerEmpty.related).toEqual([]);
+    expect(ownerEmpty.related_state).toBe('none');
+    const ownerScoped = await getItem(ownerCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(ownerScoped.related).toEqual([]);
+    expect(ownerScoped.related_state).toBe('none');
+
+    // The A+B-granted agent reading the failed A context sees the same
+    // honest empty — its B-saved seed card is independently visible, yet
+    // never stands in for the scoped outcome.
+    const actx = await freshAgentCtx(isoDb, agent.credential);
+    const agentRead = await getItem(actx, { id: origin, query: { collection_id: colA.id } });
+    expect(agentRead.related).toEqual([]);
+    expect(agentRead.related_state).toBe('none');
+
+    // Graph-off control: the same stored state keeps the legacy rail — the
+    // provider card and the interest-pool padding (the compatible path).
+    const offRead = await getItem(ownerOffCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(offRead.related.map((r) => r.id)).toEqual(expect.arrayContaining([...legacyIds, seedCard]));
+  });
+
+  it('a scoped context whose only parent was cancelled before any stage stays isolated: honest empty, never the account pool or another granted collection save (DISC-SCR-048)', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'film', category: 'watch', title: 'Cancelled window film', qloo: `film-${randomUUID()}` },
+      isoDb,
+    );
+    const colA = await createCollection(ownerCtx, { name: `Museum A ${randomUUID().slice(0, 6)}` });
+    const colB = await createCollection(ownerCtx, { name: `Museum B ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+    const seedCard = await seedPoolCard(isoDb, owner.accountId, { kind: 'brand', category: 'wear', title: 'Unrelated taste brand' });
+    await addCollectionItem(ownerCtx, { id: colB.id, item_id: seedCard, body: {} });
+    const agent = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id, colB.id] },
+      isoDb,
+    );
+
+    // The origin's first scoped discovery is CANCELLED while still queued,
+    // before any stage ran: no execution provenance exists at all.
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colA.id } });
+    expect(await cancelJob(isoDb, scoped.job_id)).toBe('cancelled');
+    const { rows: stages } = await isoDb.query<{ stage: string }>(
+      'SELECT stage FROM job_stages WHERE job_id = $1',
+      [scoped.job_id],
+    );
+    expect(stages).toEqual([]);
+
+    // Graph-on reads of the cancelled exact context stay isolated: honest
+    // empty — the unrelated interest-pool card (and the B-saved seed card
+    // for the A+B agent) never fills the scoped rail.
+    const ownerEmpty = await getItem(ownerCtx, { id: origin, query: {} });
+    expect(ownerEmpty.related).toEqual([]);
+    expect(ownerEmpty.related_state).toBe('none');
+    const ownerScoped = await getItem(ownerCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(ownerScoped.related).toEqual([]);
+    expect(ownerScoped.related_state).toBe('none');
+    const actx = await freshAgentCtx(isoDb, agent.credential);
+    const agentRead = await getItem(actx, { id: origin, query: { collection_id: colA.id } });
+    expect(agentRead.related).toEqual([]);
+    expect(agentRead.related_state).toBe('none');
+
+    // Graph-off control: the same context keeps the legacy fallback — the
+    // interest pool fills the empty rail there.
+    const offRead = await getItem(ownerOffCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(offRead.related.map((r) => r.id)).toEqual([seedCard]);
+    expect(offRead.related_state).toBe('cached');
+  });
+
+  it('one graph context keeps its own older results as the cached rail while newer same-class work runs (compatible cache control)', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const rodinRef = await qlooPersonReference(isoDb, RODIN_QLOO_ID, 'Auguste Rodin');
+    await qlooPersonReference(isoDb, SEURAT_QLOO_ID, 'Georges Seurat');
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      isoDb,
+    );
+    const col = await createCollection(ownerCtx, { name: `Museum visits ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: col.id, item_id: origin, body: {} });
+    await linkGraphReferenceIdentities(isoDb);
+
+    // The first scoped graph pass publishes the reviewed Rodin→museum→Seurat path.
+    const first = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'play' } });
+    await runJob(first.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo: noCallQloo() }) });
+    const candidate = (await publishedItemIds(isoDb, first.discovery_job_id))[0]!;
+    expect(candidate).toBeTruthy();
+
+    // A NEWER scoped request in the SAME collection/class is enqueued: while
+    // it runs, its rail stays pending with the context's own cached result —
+    // same-class older work is the compatible cache, never a fallback.
+    const second = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'watch' } });
+    const pending = await getItem(ownerCtx, { id: origin, query: {} });
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(second.job_id);
+    expect(pending.related.map((r) => r.id)).toEqual([candidate]);
+
+    // The newer watch-filtered pass honestly admits nothing: the completed
+    // rail reports that context's own outcome.
+    await runJob(second.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo: noCallQloo() }) });
+    const empty = await getItem(ownerCtx, { id: origin, query: {} });
+    expect(empty.related).toEqual([]);
+    expect(empty.related_state).toBe('none');
+    expect(empty.related_job_id).toBe(second.job_id);
   });
 });

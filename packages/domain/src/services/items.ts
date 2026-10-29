@@ -276,20 +276,34 @@ interface DiscoveryJobRow {
 
 /**
  * The related-discovery jobs of ONE compatible origin context, visible under
- * the principal's grant (DISC-SCR-043, the remaining leg of DISC-SCR-033).
- * The context is selected BEFORE any active/completed parent choice:
- *  - with `collectionId` (the request's explicit collection, already checked
- *    for accessibility): only that exact collection's jobs — another granted
- *    collection's newer discovery never lends its results to this read;
- *  - without: the origin's NEWEST visible discovery context (its
- *    origin_collection_id — the collection and the graph/legacy class are one
- *    key, since only a selected-collection enqueue is scoped), so a fresh
- *    scoped request supersedes older legacy results instead of borrowing
- *    them. Legacy requests keep their own compatible path the same way.
- * `scopedOnly` restricts the selection to explicit selected-collection
- * (scoped graph) contexts — the saved-sample read (DISC-SCR-044) honors only
- * an explicit scoped operation and never lets a legacy job replace the
- * sample's ordinary carousel.
+ * the principal's grant (DISC-SCR-043/047, the remaining legs of
+ * DISC-SCR-033). A context is the PAIR of the origin collection and the
+ * actual EXECUTION CLASS of its work, selected BEFORE any active/completed
+ * parent choice:
+ *
+ *  - the execution class is the durable record of which producer branch ran
+ *    (DISC-SCR-047), NOT the scoped_authority_required marker — graph-off
+ *    selected-collection enqueues carry that marker too and then run the
+ *    legacy provider path. A `job_stages` row with stage 'graph' proves the
+ *    scoped GRAPH pass actually executed (whatever its outcome: completed,
+ *    honestly empty, or failed at its immutable deadline); any other stage
+ *    rows prove the LEGACY provider path executed; work with NO stage rows
+ *    has not started and claims no historical provenance — it is classified
+ *    by TODAY's authorized graph-on eligibility (`graphEligible`, the branch
+ *    a pickup would run now). So a fresh graph-on request never pairs with
+ *    an older same-collection provider completion, and a graph-off request
+ *    keeps its own compatible legacy pairing;
+ *  - the class dimension applies to GRAPH-ON reads: with `collectionId` (the
+ *    request's explicit collection, already checked for accessibility) the
+ *    context is that exact collection in its newest execution class —
+ *    another granted collection's newer discovery, and older same-collection
+ *    work of the other class, never lend results to this read. Without it,
+ *    the origin's NEWEST visible context wins. Graph-off reads keep the
+ *    legacy collection-only context unchanged.
+ * `scopedOnly` restricts the selection to selected-collection jobs of the
+ * GRAPH execution class — the saved-sample read (DISC-SCR-044) honors only
+ * an explicit scoped graph operation and never mistakes a graph-off
+ * provider job (or the ordinary example carousel) for one.
  * The grant-limited filter keeps the EXACT origin-collection correlation
  * (DISC-SCR-036): the job's origin collection is granted AND the origin is
  * still its CURRENT member; a surviving membership in another granted
@@ -299,7 +313,7 @@ async function latestDiscoveryJobs(
   ctx: ServiceContext,
   owner: Owner,
   itemId: string,
-  opts: { collectionId?: string | null; scopedOnly?: boolean } = {},
+  opts: { collectionId?: string | null; scopedOnly?: boolean; graphEligible?: boolean } = {},
 ) {
   const limited = isGrantLimited(ctx.principal);
   const params: unknown[] = [itemId, ...ownerPredicate(owner, 'dj', 2).params];
@@ -314,24 +328,45 @@ async function latestDiscoveryJobs(
                         AND ci.owner_account_id = $2)`
       : '';
   if (limited) params.push(grantedIds(ctx.principal));
-  const scopedOnly = (alias: string) => (opts.scopedOnly ? `AND ${alias}.scoped_authority_required` : '');
-  let contextFilter: string;
+  // The eligibility parameter is embedded only where the class expression is
+  // used (the sample scopedOnly filter, and the graph-on class-context
+  // clause); a graph-off non-sample read keeps today's collection-only
+  // context and never binds it.
+  const classifies = Boolean(opts.graphEligible) || Boolean(opts.scopedOnly);
+  if (classifies) params.push(Boolean(opts.graphEligible));
+  const eligibleParam = classifies ? `$${params.length}` : '';
+  // The job's actual execution class: durable 'graph' stage evidence, else
+  // legacy provider stage evidence, else (no stages yet) today's authorized
+  // graph-on eligibility for scoped work — never the shared marker alone.
+  const graphClass = (alias: string) => `(EXISTS (SELECT 1 FROM job_stages gs
+                                                    WHERE gs.job_id = ${alias}.job_id AND gs.stage = 'graph')
+    OR (NOT EXISTS (SELECT 1 FROM job_stages ns WHERE ns.job_id = ${alias}.job_id)
+        AND ${alias}.scoped_authority_required AND ${classifies ? `${eligibleParam}::boolean` : 'FALSE'}))`;
+  const scopedOnly = (alias: string) =>
+    opts.scopedOnly ? `AND ${alias}.scoped_authority_required AND ${graphClass(alias)}` : '';
+  let collectionFilter = '';
   if (opts.collectionId) {
     params.push(opts.collectionId);
-    contextFilter = `AND dj.origin_collection_id = $${params.length}`;
-  } else {
-    contextFilter = `AND dj.origin_collection_id IS NOT DISTINCT FROM (
-        SELECT d2.origin_collection_id
-          FROM discovery_jobs d2
-         WHERE d2.origin_item_id = $1 AND ${own('d2')} ${grantFor('d2')} ${scopedOnly('d2')}
-         ORDER BY d2.created_at DESC, d2.id DESC LIMIT 1)`;
+    collectionFilter = `AND dj.origin_collection_id = $${params.length}`;
   }
+  // The one newest visible job defines the context (deterministic order, the
+  // same statement for the collection and the class), and every job of that
+  // one context — and nothing else — is returned. Graph-off reads drop the
+  // class dimension: their compatible path is the unchanged legacy rail.
+  const newest = (select: string) =>
+    `(SELECT ${select} FROM visible_jobs d2 ORDER BY d2.created_at DESC, d2.id DESC LIMIT 1)`;
   const { rows } = await ctx.db.query<DiscoveryJobRow>(
-    `SELECT dj.id, dj.job_id, dj.status, j.state AS job_state,
-            dj.scoped_authority_required AS scoped, dj.origin_collection_id
-       FROM discovery_jobs dj LEFT JOIN jobs j ON j.id = dj.job_id
-      WHERE dj.origin_item_id = $1 AND ${own('dj')} ${grantFor('dj')} ${scopedOnly('dj')} ${contextFilter}
-      ORDER BY dj.created_at DESC, dj.id DESC LIMIT 5`,
+    `WITH visible_jobs AS (
+       SELECT dj.id, dj.job_id, dj.status, j.state AS job_state, dj.created_at,
+              dj.scoped_authority_required AS scoped, dj.scoped_authority_required, dj.origin_collection_id
+         FROM discovery_jobs dj LEFT JOIN jobs j ON j.id = dj.job_id
+        WHERE dj.origin_item_id = $1 AND ${own('dj')} ${grantFor('dj')} ${scopedOnly('dj')} ${collectionFilter}
+     )
+     SELECT id, job_id, status, job_state, scoped, origin_collection_id
+       FROM visible_jobs
+      WHERE origin_collection_id IS NOT DISTINCT FROM ${newest('d2.origin_collection_id')}
+        ${opts.graphEligible ? `AND (${graphClass('visible_jobs')}) IS NOT DISTINCT FROM ${newest(graphClass('d2'))}` : ''}
+      ORDER BY created_at DESC, id DESC LIMIT 5`,
     params,
   );
   return rows;
@@ -347,16 +382,25 @@ interface DiscoveryRail {
 
 /**
  * Serve one ALREADY-SELECTED discovery context's rail. The jobs list is one
- * compatible context (see latestDiscoveryJobs), so the active and completed
- * parents are chosen only within it: another collection's discovery and a
- * legacy whole-library discovery can never lend their results here
- * (DISC-SCR-043). While the context's newest job runs, the rail stays honest
- * ('pending' with no unrelated filler); its own latest completed results
- * serve as the cached rail. Scoped graph results serve only while their
- * pinned proof currently holds (DISC-SCR-034): sole-source retraction,
- * natural evidence or rights expiry and revision drift withdraw a published
- * result at read time — the stored row survives as the durable record. An
- * honestly empty context stays empty ('none' with its job id).
+ * compatible context — the origin collection AND the actual execution class
+ * (see latestDiscoveryJobs) — so the active and completed parents are chosen
+ * only within it: another collection's discovery and a same-collection
+ * discovery of the other graph/legacy class can never lend their results
+ * here (DISC-SCR-043/047). While the context's newest job runs, the rail
+ * stays honest ('pending' with no unrelated filler); its own latest
+ * completed results serve as the cached rail. Scoped graph results serve
+ * only while their pinned proof currently holds (DISC-SCR-034): sole-source
+ * retraction, natural evidence or rights expiry and revision drift withdraw
+ * a published result at read time — the stored row survives as the durable
+ * record. An honestly empty context stays empty ('none' with its job id).
+ *
+ * The scoped no-padding classification belongs to the SELECTED context
+ * itself, not to its active or successful parents (DISC-SCR-048): a scoped
+ * context whose only parent failed, was cancelled or expired before results
+ * (including a pre-stage cancellation) keeps its isolation — the caller
+ * never pads it from unrelated interest pools — instead of silently turning
+ * into a global/other-collection fallback. Graph-off reads keep the
+ * unchanged legacy padding through the caller's gate.
  */
 async function discoveryContextRail(
   ctx: ServiceContext,
@@ -369,7 +413,10 @@ async function discoveryContextRail(
   let relatedJobId: string | null = null;
   const active = jobs.find((j) => j.job_state === 'queued' || j.job_state === 'running');
   const done = jobs.find((j) => j.status === 'complete' || j.status === 'partial');
-  const scopedContext = Boolean(active?.scoped || done?.scoped);
+  // The whole context is scoped-authority work (one origin collection ⟺
+  // its scoped marker), so the no-padding classification survives a
+  // failed/cancelled/expired-only context — active/done are irrelevant here.
+  const scopedContext = jobs.some((j) => j.scoped);
   if (active) {
     relatedState = 'pending';
     relatedJobId = active.job_id;
@@ -420,26 +467,37 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   // Related: cached only. Opening an item never starts generation.
   const hidden = await hiddenKeys(ctx.db, owner);
   const requestCollectionId = input.query.collection_id ?? null;
+  // Today's authorized graph-on eligibility, resolved ONCE: it gates scoped
+  // reads AND classifies the origin's not-yet-started scoped work (see
+  // latestDiscoveryJobs — unstarted work claims no execution provenance).
+  // `scopedGraphReadEnabled` mirrors the producer's gate and costs no query
+  // when the graph flags are off, so graph-off reads keep byte-identical
+  // behavior.
+  const graphReadOn =
+    owner.kind === 'account'
+      ? await scopedGraphReadEnabled(ctx.db, { accountId: owner.accountId, config: ctx.config })
+      : false;
   let relatedIds: string[];
   let relatedState: ItemDetailResponse['related_state'];
   let relatedJobId: string | null = null;
   let scopedContext = false;
   if (item.is_sample) {
     // A saved public sample's ordinary rail is the example carousel. Its one
-    // exception (DISC-SCR-044) is an EXPLICIT graph-on scoped operation:
+    // exception (DISC-SCR-044/047) is an EXPLICIT graph-on scoped operation:
     // that context's own honest rail (pending, admitted results or honest
     // empty) replaces the carousel, so unrelated public example cards never
-    // stand in for a scoped outcome. Legacy whole-library jobs on a sample
-    // never served sample rails and still never do; graph-off reads keep the
-    // ordinary carousel unchanged.
+    // stand in for a scoped outcome. Only work of the actual GRAPH execution
+    // class qualifies — a graph-off selected-collection provider job carries
+    // the same scoped marker but is not explicit graph work and never takes
+    // the sample rail. Legacy whole-library jobs on a sample never served
+    // sample rails and still never do; graph-off reads keep the ordinary
+    // carousel unchanged.
     const scopedJobs = await latestDiscoveryJobs(ctx, owner, item.id, {
       collectionId: requestCollectionId,
       scopedOnly: true,
+      graphEligible: graphReadOn,
     });
-    const scopedRailLive =
-      scopedJobs.length > 0 &&
-      owner.kind === 'account' &&
-      (await scopedGraphReadEnabled(ctx.db, { accountId: owner.accountId, config: ctx.config }));
+    const scopedRailLive = scopedJobs.length > 0 && graphReadOn;
     if (scopedRailLive) {
       ({ relatedIds, relatedState, relatedJobId, scopedContext } = await discoveryContextRail(ctx, item, hidden, scopedJobs));
     } else {
@@ -453,20 +511,22 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
       relatedState = relatedIds.length ? 'cached' : 'none';
     }
   } else {
-    // Non-sample origins: one compatible context's rail (DISC-SCR-043) — the
-    // request's explicit collection, else the origin's newest visible context.
-    const jobs = await latestDiscoveryJobs(ctx, owner, item.id, { collectionId: requestCollectionId });
+    // Non-sample origins: one compatible context's rail (DISC-SCR-043/047) —
+    // the request's explicit collection, else the origin's newest visible
+    // context, each in its actual execution class.
+    const jobs = await latestDiscoveryJobs(ctx, owner, item.id, {
+      collectionId: requestCollectionId,
+      graphEligible: graphReadOn,
+    });
     ({ relatedIds, relatedState, relatedJobId, scopedContext } = await discoveryContextRail(ctx, item, hidden, jobs));
   }
   // Graph-on scoped rails carry ONLY the authorized exact discovery context's
-  // own admitted results (DISC-SCR-033): honestly empty stays empty — the
+  // own admitted results (DISC-SCR-033/048): honestly empty stays empty — the
   // unrelated interest pool never pads a scoped response, for the owner or a
-  // grant-limited agent. Graph-off reads (and non-scoped contexts) keep the
-  // unchanged legacy padding.
-  const scopedRail =
-    scopedContext && owner.kind === 'account'
-      ? await scopedGraphReadEnabled(ctx.db, { accountId: owner.accountId, config: ctx.config })
-      : false;
+  // grant-limited agent, even when the context's only parent failed or was
+  // cancelled. Graph-off reads (and non-scoped contexts) keep the unchanged
+  // legacy padding.
+  const scopedRail = scopedContext && graphReadOn;
   if (!item.is_sample && !scopedRail && relatedIds.length < LIMITS.relatedCachedMax) {
     const poolIds = await interestPoolRelatedIds(ctx, owner, item, hidden, LIMITS.relatedCachedMax);
     for (const id of poolIds) {
