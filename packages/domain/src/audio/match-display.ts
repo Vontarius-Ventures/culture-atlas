@@ -1,5 +1,6 @@
 import type { QlooEntity } from '@culture-atlas/providers';
 import type { JobHandler } from '../jobs/handler';
+import { qlooReplayEntity, type QlooInsightsReplay } from './provider-rights';
 import type { MusicRecognitionHit } from './recognition';
 
 const ARTIST_TYPE = 'urn:entity:artist';
@@ -45,19 +46,30 @@ async function relatedArtists(ctx: Ctx, seedId: string): Promise<AudioMatchArtis
   if (ctx.budget.qlooRequests <= 1) return [];
   const res = await ctx.runStage('related-qloo', async () => {
     try {
-      return await ctx.providers.qloo.insights({
+      const live = await ctx.providers.qloo.insights({
         filterType: ARTIST_TYPE,
         signalEntities: [seedId],
         take: AUDIO_RELATED_MAX + 2,
       });
+      // The stage cache is durable storage (DISC-SCR-014): persist only the
+      // rights-safe minimal replay projection. is_replay is kept so replayed
+      // example data stays excluded from the result screen (VAL-EVID-005).
+      const replay: QlooInsightsReplay = {
+        is_replay: live.is_replay,
+        data: { entities: live.data.entities.map(qlooReplayEntity) },
+      };
+      return replay;
     } catch {
       return null;
     }
   });
   if (!res || res.is_replay) return [];
+  // A stage row written before the repair may hold the legacy full response;
+  // re-project whatever the replay returns so restricted fields are never
+  // consumed either way.
   const seen = new Set([seedId]);
   const picked: QlooEntity[] = [];
-  for (const e of res.data.entities) {
+  for (const e of res.data.entities.map(qlooReplayEntity)) {
     if (!e.entity_id || !e.name?.trim() || seen.has(e.entity_id)) continue;
     if (!e.types.includes(ARTIST_TYPE)) continue;
     seen.add(e.entity_id);

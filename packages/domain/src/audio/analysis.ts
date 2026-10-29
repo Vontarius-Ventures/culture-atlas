@@ -9,6 +9,7 @@ import { authorizeCaptureAgent } from '../capture-v2/agent-fence';
 import { consumeDailyQuota } from '../services/captures';
 import type { CaptureV2Context } from '../capture-v2/types';
 import { AUDIO_LIMITS } from './limits';
+import { sanitizeAudioAnalysisResult } from './provider-rights';
 
 const MUSIC_ONLY = ['music_match'] as const;
 
@@ -180,11 +181,16 @@ export class AudioAnalysis {
    * Music Mode suggestions: the related discovery the heard artist started.
    * Read live (the related job finishes after the audio job), so a client
    * polling the analysis sees the cards arrive ("Because you heard <artist>").
+   *
+   * The stored result is sanitized first (DISC-SCR-013): a pre-repair row can
+   * still carry Qloo-returned imagery, and only owned/cleared display assets
+   * may serve.
    */
   private async withRelated(result: unknown): Promise<unknown> {
-    const r = result as { artist?: { discovery_job_id?: string } | null } | null;
+    const sanitized = sanitizeAudioAnalysisResult(result);
+    const r = sanitized as { artist?: { discovery_job_id?: string } | null } | null;
     const djId = r?.artist?.discovery_job_id;
-    if (!r || !djId) return result;
+    if (!r || !djId) return sanitized;
     const dj = await this.ctx.db.query<{ status: string }>(
       'SELECT status FROM discovery_jobs WHERE id = $1 AND owner_account_id = $2',
       [djId, this.ctx.authority.accountId],

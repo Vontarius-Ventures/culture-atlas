@@ -14,6 +14,7 @@ import type { Queryable } from '../db/pool';
 import { destinationFromQlooProperties } from '../services/display';
 import { getTasteRevision } from '../services/taste';
 import { audioMatchDisplay, type AudioMatchDisplay } from './match-display';
+import { qlooReplayEntity, type QlooSearchReplay } from './provider-rights';
 import { artistSeedsFromQlooEntities, queriesFromTranscript, searchQueryForHit } from './qloo-seeds';
 import {
   musicRecognitionFromConfig,
@@ -215,16 +216,24 @@ async function searchArtists(
   if (!query || ctx.budget.qlooRequests <= 0) return [];
   const found = await ctx.runStage('resolve-qloo', async () => {
     try {
-      return await ctx.providers.qloo.searchEntities({
+      const res = await ctx.providers.qloo.searchEntities({
         query,
         types: ['urn:entity:artist'],
         take: 5,
       });
+      // The stage cache is durable storage (DISC-SCR-014): persist only the
+      // rights-safe minimal replay projection, never the full provider
+      // response with its prose, image URLs and raw body (VAL-EVID-005).
+      const replay: QlooSearchReplay = { data: res.data.map(qlooReplayEntity) };
+      return replay;
     } catch {
       return null;
     }
   });
-  return found?.data ?? [];
+  // A stage row written before the repair may hold the legacy full response;
+  // re-project whatever the replay returns so restricted fields are never
+  // consumed either way.
+  return (found?.data ?? []).map(qlooReplayEntity);
 }
 
 export async function runAnalyzeAudio(
