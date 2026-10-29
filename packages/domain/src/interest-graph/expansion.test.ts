@@ -2723,6 +2723,7 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
     expect(await captureReferenceEdge(accountId, captureReferenceB.id)).not.toBeNull();
     return {
       accountId,
+      subjectAReferenceId: subjectA.referenceId,
       captureX: capX.captureId,
       analysisA: capX.analysisId,
       captureReferenceA,
@@ -3018,6 +3019,550 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
       }),
     );
     expect(yOnly).toBeNull();
+  });
+
+  // --- DISC-SCR-029: retained photo witnesses must ground the recorded path ---
+
+  /**
+   * A corpus identity reachable ONLY through the verified provider-id link:
+   * a CONFIRMED qloo external id but NO durable cultural-reference binding,
+   * with an application reference carrying the same external id. The
+   * projector (durable bindings only) therefore falls back to the saved
+   * capture's own EXPLICIT item edge for that reference's capture-reference
+   * support, while expansion still resolves the subject identity for the
+   * walk — the reference-after-corpus fallback that can carry UNRELATED
+   * references on one shared explicit edge.
+   */
+  async function verifiedLinkSubject(name: string) {
+    const providerId = `ent-${randomUUID()}`;
+    const node = await upsertGraphIdentity(db, {
+      canonicalKey: `atlas:work:${randomUUID()}`,
+      canonicalName: `${name}-${randomUUID().slice(0, 6)}`,
+      nodeKind: 'work',
+      domain: 'art',
+      senseKey: 'painting',
+      culturalReferenceId: null,
+    });
+    await mapGraphExternalId(db, {
+      nodeId: node.id,
+      provider: 'qloo',
+      externalId: providerId,
+      matchStatus: 'confirmed',
+      matchVersion: 'test-1',
+      provenance: 'test: verified provider-id mapping',
+    });
+    const referenceId = await upsertReference(db, {
+      canonicalKey: `qloo:${providerId}`,
+      name: `${name} reference ${providerId.slice(4, 12)}`,
+      type: 'work',
+      externalIds: { qloo: providerId },
+    });
+    return { nodeId: node.id, referenceId };
+  }
+
+  /**
+   * A fresh replacement analysis for a capture whose single authorized
+   * reference is fully controlled: the exact cultural reference id, relation
+   * and resolution the replacement carries (the default `depicted`/`resolved`
+   * shape of analysisBWithReference, but on a chosen reference).
+   */
+  async function analysisWithControlledReference(
+    captureId: string,
+    ref: {
+      referenceId: string;
+      relation: 'depicted' | 'resembles' | 'user_selected';
+      resolution?: string;
+      certainty?: number;
+      version?: number;
+    },
+  ): Promise<string> {
+    const analysis = (
+      await db.query<{ id: string }>(
+        `INSERT INTO analyses (capture_id, version, compiler_version, title, interpretation, section_statuses)
+         VALUES ($1, $2, 'test', 'A cloudy harbor pier', 'Different references stood out.', '{"observations":"complete"}')
+         RETURNING id`,
+        [captureId, ref.version ?? 2],
+      )
+    ).rows[0]!;
+    await db.query(
+      `INSERT INTO capture_references (analysis_id, reference_id, relation, certainty, resolution_status, is_anchor, text_only, read_text)
+       VALUES ($1, $2, $3, $4, $5, true, false, NULL)`,
+      [analysis.id, ref.referenceId, ref.relation, ref.certainty ?? 0.9, ref.resolution ?? 'resolved'],
+    );
+    return analysis.id;
+  }
+
+  /**
+   * The DISC-SCR-029 changed-winner fixture in the reference-after-corpus
+   * FALLBACK shape: saved capture X's subject NA resolves ONLY through the
+   * verified provider-id link (no durable binding), so the projector keeps
+   * X's capture-reference support on the saved capture's own EXPLICIT item
+   * edge — never a subject-specific derived edge — while expansion still
+   * walks from NA's identity. Pass one leaves the diversified-out survivor
+   * ADMITTED-UNRANKED, rooted in that shared explicit edge with NA's
+   * recorded path; a stronger saved capture Y (same creator) then wins every
+   * later observation for those candidates.
+   */
+  async function fallbackSubjectPhotoFixture() {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const subjectA = await verifiedLinkSubject('X subject');
+    const capX = await photoCapture(ctx, accountId, {
+      referenceId: subjectA.referenceId,
+      certainty: 0.72,
+      anchor: true,
+    });
+    const creator = await plainNode({ kind: 'creator', sense: 'painter' });
+    const edgeXA = await justifiedEdge({ subject: subjectA.nodeId, predicate: 'CREATED_BY', object: creator.node.id });
+    const candidates: Array<{ nodeId: string; edge: Awaited<ReturnType<typeof justifiedEdge>> }> = [];
+    for (let i = 0; i < 4; i += 1) {
+      const candidate = await corpusNode({ kind: 'work' });
+      const edge = await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+      await candidateItem(accountId, candidate.referenceId);
+      candidates.push({ nodeId: candidate.node.id, edge });
+    }
+    await project(accountId);
+    const first = await expand(accountId);
+    if (!first.expanded) throw new Error(`fixture pass one did not publish: ${first.reason}`);
+    expect(first.counts.photoRoots).toBe(1);
+    expect(first.counts.referencesLinked).toBe(1);
+    const byNode = [...candidates].sort((a, b) => (a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0));
+    const survivorNodeId = byNode[3]!.nodeId;
+    const survivorEdge = byNode[3]!.edge;
+    const { rows: refRowsA } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [capX.analysisId, subjectA.referenceId],
+    );
+    const captureReferenceA = refRowsA[0]!;
+    const xEdge = await captureReferenceEdge(accountId, captureReferenceA.id);
+    expect(xEdge).not.toBeNull();
+    // The FALLBACK shape itself: the retained root edge is the saved
+    // capture's own EXPLICIT item edge with no subject node target, so the
+    // edge identity alone can never say which subject grounds the row's
+    // recorded path.
+    const { rows: xEdgeRows } = await db.query<{ node_id: string | null; discovery_item_id: string | null }>(
+      'SELECT node_id, discovery_item_id FROM personal_interest_edges WHERE id = $1',
+      [xEdge],
+    );
+    expect(xEdgeRows[0]!.node_id).toBeNull();
+    expect(xEdgeRows[0]!.discovery_item_id).toBe(capX.itemId);
+    const survivor = await retainedPhotoRow(accountId, survivorNodeId);
+    expect(survivor?.state).toBe('admitted');
+    expect(survivor?.root_ids).toEqual([xEdge]);
+    expect(survivor!.path.assertion_ids).toEqual([edgeXA.assertionId, survivorEdge.assertionId]);
+
+    // Stage two: the stronger capture Y (a different work by the same creator).
+    const subjectB = await corpusNode({ kind: 'work', name: 'Y subject' });
+    const capY = await photoCapture(ctx, accountId, {
+      referenceId: subjectB.referenceId!,
+      certainty: 0.9,
+      anchor: true,
+      resolution: 'user_confirmed',
+    });
+    const edgeYB = await justifiedEdge({ subject: subjectB.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await project(accountId);
+    const { rows: refRowsB } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [capY.analysisId, subjectB.referenceId],
+    );
+    const captureReferenceB = refRowsB[0]!;
+    expect(await captureReferenceEdge(accountId, captureReferenceB.id)).not.toBeNull();
+    return {
+      accountId,
+      captureX: capX.captureId,
+      analysisA: capX.analysisId,
+      captureReferenceA,
+      captureReferenceB,
+      survivorNodeId,
+      survivorEdge,
+      edgeXA,
+      edgeYB,
+      xEdge: xEdge!,
+    };
+  }
+
+  it('actual projector catch-up replacing the retained fallback-edge support with an unrelated unbound reference reconciles the recorded path (DISC-SCR-029)', async () => {
+    const fx = await fallbackSubjectPhotoFixture();
+
+    // Unchanged-refresh control: while X's A-reference is still authorized
+    // and verified-links to the recorded root identity, the retained
+    // fallback edge is a VALID witness and the changed winner PRESERVES it.
+    const second = await expand(fx.accountId);
+    expect(second.expanded).toBe(true);
+    expect(second.counts.frontierReconciled).toBe(0);
+    const kept = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(kept?.root_ids).toEqual([fx.xEdge]);
+    expect(kept!.path.assertion_ids).toEqual([fx.edgeXA.assertionId, fx.survivorEdge.assertionId]);
+    const preRepairPins = frontierPathPins(kept!.path);
+
+    // The real activation X/A→B carries an UNRELATED, identity-unresolvable
+    // depicted reference D (no durable binding, no provider-id link), and
+    // the REAL projector catches up: X's explicit capture item edge survives
+    // on its save, but its live capture-reference support is now exactly B/D.
+    const analysisB = await analysisBWithReference(fx.captureX);
+    expect(await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: analysisB }))).toBe(true);
+    await project(fx.accountId);
+    const { rows: liveTuples } = await db.query<{
+      capture_id: string;
+      analysis_id: string;
+      capture_reference_id: string;
+    }>(
+      `SELECT s.capture_id, s.analysis_id, s.capture_reference_id
+         FROM personal_interest_support s
+        WHERE s.owner_account_id = $1 AND s.edge_id = $2 AND s.active AND s.origin_kind = 'capture_reference'`,
+      [fx.accountId, fx.xEdge],
+    );
+    expect(liveTuples).toHaveLength(1);
+    expect(liveTuples[0]!.analysis_id).toBe(analysisB);
+    expect(liveTuples[0]!.capture_id).toBe(fx.captureX);
+
+    // The refreshed winner (Y) selects the survivor's candidate, and the
+    // retained root's ONLY live tuple is the unrelated B/D. A live edge with
+    // a current tuple is not authority for NA's recorded path: the row must
+    // reconcile path AND roots together to the still-live Y observation
+    // instead of keeping NA's cultural path validated by a witness that
+    // grounds nothing.
+    const third = await expand(fx.accountId);
+    expect(third.expanded).toBe(true);
+    expect(third.counts.frontierReconciled).toBe(1);
+    expect(third.rejections['retained_root_support_withdrawn'] ?? 0).toBe(1);
+    const reconciled = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(reconciled?.state).toBe('admitted');
+    const yEdge = await captureReferenceEdge(fx.accountId, fx.captureReferenceB.id);
+    expect(yEdge).not.toBeNull();
+    expect(reconciled?.root_ids).toEqual([yEdge]);
+    expect(reconciled!.path.assertion_ids).toEqual([fx.edgeYB.assertionId, fx.survivorEdge.assertionId]);
+
+    // The fence decides the same population directly: the retained entry the
+    // pre-repair engine would have carried — NA's recorded pins with the live
+    // unrelated B/D tuple as the root's authority — must be rejected. A live
+    // tuple on the shared edge is not a witness for the recorded path.
+    const { rows: state } = await db.query<{ projection_revision: number; deletion_generation: number }>(
+      'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1',
+      [fx.accountId],
+    );
+    const start = {
+      projectionRevision: state[0]!.projection_revision,
+      generation: state[0]!.deletion_generation,
+      tasteRevision: (
+        await db.query<{ revision: number }>('SELECT revision FROM taste_profiles WHERE owner_account_id = $1', [fx.accountId])
+      ).rows[0]!.revision,
+    };
+    const unrelatedEntry = {
+      assertions: preRepairPins.assertions.map((a) => ({ id: a.id })),
+      evidence: preRepairPins.evidence.map((e) => ({ id: e.id })),
+      roots: [
+        {
+          edgeId: fx.xEdge,
+          capture: {
+            captureId: liveTuples[0]!.capture_id,
+            analysisId: liveTuples[0]!.analysis_id,
+            analysisVersion: (await db.query<{ version: number }>('SELECT version FROM analyses WHERE id = $1', [
+              liveTuples[0]!.analysis_id,
+            ])).rows[0]!.version,
+            captureReferenceId: liveTuples[0]!.capture_reference_id,
+          },
+        },
+      ],
+    };
+    const unrelatedVerdict = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), {
+        accountId: fx.accountId,
+        start,
+        ranked: [],
+        admittedUnranked: [],
+        retainedFrontier: [unrelatedEntry],
+      }),
+    );
+    expect(unrelatedVerdict).toBe('support_withdrawn');
+  });
+
+  it('a relation-ineligible (resembles) replacement reference on the retained node edge is no photo witness: the refresh reconciles (DISC-SCR-029)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+    // B's single authorized reference IS the recorded root's own cultural
+    // reference (same subject identity, durably bound) but declares a VISUAL
+    // claim — `resembles` — which resolveRoots denies as a photo root.
+    const analysisB = await analysisWithControlledReference(fx.captureX, {
+      referenceId: fx.subjectAReferenceId!,
+      relation: 'resembles',
+    });
+    expect(await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: analysisB }))).toBe(true);
+    // The real projector catches up: the retained derived node edge survives
+    // (B's reference still binds the same node) but its only live tuple is
+    // the ineligible visual claim.
+    await project(fx.accountId);
+
+    const third = await expand(fx.accountId);
+    expect(third.expanded).toBe(true);
+    expect(third.counts.photoReferencesDenied).toBe(1);
+    expect(third.counts.frontierReconciled).toBe(1);
+    expect(third.rejections['retained_root_support_withdrawn'] ?? 0).toBe(1);
+    const reconciled = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(reconciled?.state).toBe('admitted');
+    const yEdge = await captureReferenceEdge(fx.accountId, fx.captureReferenceB.id);
+    expect(yEdge).not.toBeNull();
+    expect(reconciled?.root_ids).toEqual([yEdge]);
+    expect(reconciled!.path.assertion_ids).toEqual([fx.edgeYB.assertionId, fx.survivorEdge.assertionId]);
+  });
+
+  it('an eligible same-path replacement analysis keeps the retained row through the catch-up refresh (DISC-SCR-029 control)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+    // B's single authorized reference is the recorded root's own cultural
+    // reference with an ELIGIBLE depicted relation: a genuine same-path
+    // replacement analysis that still grounds the recorded walk.
+    const analysisB = await analysisWithControlledReference(fx.captureX, {
+      referenceId: fx.subjectAReferenceId!,
+      relation: 'depicted',
+    });
+    expect(await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: analysisB }))).toBe(true);
+    await project(fx.accountId);
+
+    // The retained root edge (the subject's derived node edge) survives the
+    // rebuild with the replacement tuple, and the replacement genuinely
+    // grounds the recorded path: the refresh must PRESERVE the retained row —
+    // roots and recorded pins unchanged — exactly as it would without the
+    // activation. Replacement analyses that support the same path are valid
+    // witnesses, never collateral of the qualification repair.
+    const third = await expand(fx.accountId);
+    expect(third.expanded).toBe(true);
+    expect(third.counts.frontierDeduped).toBe(4);
+    expect(third.counts.frontierReconciled).toBe(0);
+    const kept = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(kept?.state).toBe('admitted');
+    expect(kept?.root_ids).toEqual([fx.xEdge]);
+    expect(kept!.path.assertion_ids).toEqual([fx.edgeXA.assertionId, fx.survivorEdge.assertionId]);
+  });
+
+  /**
+   * The DISC-SCR-029 independent-witness fixture: TWO retained survivors
+   * with SEPARATE private authority. Capture X's subject resolves only
+   * through the verified provider-id link (the shared explicit fallback
+   * edge, creator1's candidates); capture Z's subject is durably bound (Z's
+   * own derived node edge, creator2's candidates). A stronger Y then wins
+   * creator1's candidates, so a refresh retains BOTH survivors' roots — and
+   * an X/A→B replacement with an unrelated reference must reconcile X's
+   * survivor while PRESERVING Z's still-valid independent witness in the
+   * same pass.
+   */
+  async function independentWitnessPhotoFixture() {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const subjectX = await verifiedLinkSubject('IW X subject');
+    const capX = await photoCapture(ctx, accountId, { referenceId: subjectX.referenceId, certainty: 0.72, anchor: true });
+    const creator1 = await plainNode({ kind: 'creator', sense: 'painter' });
+    const edgeXA = await justifiedEdge({ subject: subjectX.nodeId, predicate: 'CREATED_BY', object: creator1.node.id });
+    const candidatesX: Array<{ nodeId: string; edge: Awaited<ReturnType<typeof justifiedEdge>> }> = [];
+    for (let i = 0; i < 4; i += 1) {
+      const candidate = await corpusNode({ kind: 'work' });
+      const edge = await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator1.node.id });
+      await candidateItem(accountId, candidate.referenceId);
+      candidatesX.push({ nodeId: candidate.node.id, edge });
+    }
+    const subjectZ = await corpusNode({ kind: 'work', name: 'IW Z subject' });
+    const capZ = await photoCapture(ctx, accountId, { referenceId: subjectZ.referenceId!, certainty: 0.72, anchor: true });
+    const creator2 = await plainNode({ kind: 'creator', sense: 'sculptor' });
+    const edgeZA = await justifiedEdge({ subject: subjectZ.node.id, predicate: 'CREATED_BY', object: creator2.node.id });
+    const candidatesZ: Array<{ nodeId: string; edge: Awaited<ReturnType<typeof justifiedEdge>> }> = [];
+    for (let i = 0; i < 4; i += 1) {
+      const candidate = await corpusNode({ kind: 'work' });
+      const edge = await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator2.node.id });
+      await candidateItem(accountId, candidate.referenceId);
+      candidatesZ.push({ nodeId: candidate.node.id, edge });
+    }
+    await project(accountId);
+    const first = await expand(accountId);
+    if (!first.expanded) throw new Error(`fixture pass one did not publish: ${first.reason}`);
+    const survivorOf = (list: typeof candidatesX) => {
+      const byNode = [...list].sort((a, b) => (a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0));
+      return { nodeId: byNode[3]!.nodeId, edge: byNode[3]!.edge };
+    };
+    const survivorX = survivorOf(candidatesX);
+    const survivorZ = survivorOf(candidatesZ);
+    const { rows: refRowsXA } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [capX.analysisId, subjectX.referenceId],
+    );
+    const { rows: refRowsZA } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [capZ.analysisId, subjectZ.referenceId],
+    );
+    const xEdge = await captureReferenceEdge(accountId, refRowsXA[0]!.id);
+    const zEdge = await captureReferenceEdge(accountId, refRowsZA[0]!.id);
+    expect(xEdge).not.toBeNull();
+    expect(zEdge).not.toBeNull();
+    expect(xEdge).not.toBe(zEdge);
+    const rowX = await retainedPhotoRow(accountId, survivorX.nodeId);
+    const rowZ = await retainedPhotoRow(accountId, survivorZ.nodeId);
+    expect(rowX?.state).toBe('admitted');
+    expect(rowZ?.state).toBe('admitted');
+    expect(rowX?.root_ids).toEqual([xEdge]);
+    expect(rowZ?.root_ids).toEqual([zEdge]);
+
+    // Stage two: the stronger Y (creator1) wins X's candidates.
+    const subjectB = await corpusNode({ kind: 'work', name: 'IW Y subject' });
+    const capY = await photoCapture(ctx, accountId, {
+      referenceId: subjectB.referenceId!,
+      certainty: 0.9,
+      anchor: true,
+      resolution: 'user_confirmed',
+    });
+    const edgeYB = await justifiedEdge({ subject: subjectB.node.id, predicate: 'CREATED_BY', object: creator1.node.id });
+    await project(accountId);
+    const { rows: refRowsB } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [capY.analysisId, subjectB.referenceId],
+    );
+    return {
+      accountId,
+      captureX: capX.captureId,
+      captureReferenceB: refRowsB[0]!,
+      survivorX,
+      survivorZ,
+      edgeXA,
+      edgeZA,
+      edgeYB,
+      xEdge: xEdge!,
+      zEdge: zEdge!,
+    };
+  }
+
+  it('an unrelated replacement on one retained root reconciles that row while an independent still-valid retained witness is preserved (DISC-SCR-029)', async () => {
+    const fx = await independentWitnessPhotoFixture();
+
+    // Unchanged refresh: BOTH retained survivors keep their own roots.
+    const second = await expand(fx.accountId);
+    expect(second.expanded).toBe(true);
+    expect(second.counts.frontierDeduped).toBe(8);
+    expect(second.counts.frontierReconciled).toBe(0);
+    const keptX = await retainedPhotoRow(fx.accountId, fx.survivorX.nodeId);
+    const keptZ = await retainedPhotoRow(fx.accountId, fx.survivorZ.nodeId);
+    expect(keptX?.root_ids).toEqual([fx.xEdge]);
+    expect(keptZ?.root_ids).toEqual([fx.zEdge]);
+
+    // X's replacement analysis carries an unrelated unresolvable reference;
+    // the projector catches up. Only X's shared fallback edge changes hands.
+    const analysisB = await analysisBWithReference(fx.captureX);
+    expect(await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: analysisB }))).toBe(true);
+    await project(fx.accountId);
+
+    const third = await expand(fx.accountId);
+    expect(third.expanded).toBe(true);
+    // X's survivor reconciles path AND roots to the still-live Y observation...
+    expect(third.counts.frontierReconciled).toBe(1);
+    const reconciledX = await retainedPhotoRow(fx.accountId, fx.survivorX.nodeId);
+    expect(reconciledX?.state).toBe('admitted');
+    const yEdge = await captureReferenceEdge(fx.accountId, fx.captureReferenceB.id);
+    expect(yEdge).not.toBeNull();
+    expect(reconciledX?.root_ids).toEqual([yEdge]);
+    expect(reconciledX!.path.assertion_ids).toEqual([fx.edgeYB.assertionId, fx.survivorX.edge.assertionId]);
+    // ...while Z's INDEPENDENT retained witness survives the same refresh
+    // untouched: still rooted in Z's own live edge, still recording Z's path.
+    const preservedZ = await retainedPhotoRow(fx.accountId, fx.survivorZ.nodeId);
+    expect(preservedZ?.state).toBe('admitted');
+    expect(preservedZ?.root_ids).toEqual([fx.zEdge]);
+    expect(preservedZ!.path.assertion_ids).toEqual([fx.edgeZA.assertionId, fx.survivorZ.edge.assertionId]);
+  });
+
+  it('the fence decides retained photo witnesses directly: a relation-ineligible tuple rejects and an eligible same-path tuple publishes (DISC-SCR-029)', async () => {
+    const fx = await changedWinnerPhotoFixture();
+    // A committed changed-winner refresh (the DISC-SCR-028 control): the
+    // stored row still pins NA's path and retains X's derived node edge.
+    const second = await expand(fx.accountId);
+    expect(second.expanded).toBe(true);
+    const stored = await retainedPhotoRow(fx.accountId, fx.survivorNodeId);
+    expect(stored?.root_ids).toEqual([fx.xEdge]);
+    const pins = frontierPathPins(stored!.path);
+    const fenceStart = async () => {
+      const { rows: state } = await db.query<{ projection_revision: number; deletion_generation: number }>(
+        'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1',
+        [fx.accountId],
+      );
+      return {
+        projectionRevision: state[0]!.projection_revision,
+        generation: state[0]!.deletion_generation,
+        tasteRevision: (
+          await db.query<{ revision: number }>('SELECT revision FROM taste_profiles WHERE owner_account_id = $1', [fx.accountId])
+        ).rows[0]!.revision,
+      };
+    };
+    const liveTupleOnEdge = async () => {
+      const { rows } = await db.query<{
+        capture_id: string;
+        analysis_id: string;
+        capture_reference_id: string;
+        analysis_version: number;
+      }>(
+        `SELECT s.capture_id, s.analysis_id, s.capture_reference_id, a.version AS analysis_version
+           FROM personal_interest_support s
+           JOIN analyses a ON a.id = s.analysis_id
+          WHERE s.owner_account_id = $1 AND s.edge_id = $2 AND s.active AND s.origin_kind = 'capture_reference'`,
+        [fx.accountId, fx.xEdge],
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0]!;
+    };
+    const retainedEntryFor = (tuple: Awaited<ReturnType<typeof liveTupleOnEdge>>) => ({
+      assertions: pins.assertions.map((a) => ({ id: a.id })),
+      evidence: pins.evidence.map((e) => ({ id: e.id })),
+      roots: [
+        {
+          edgeId: fx.xEdge,
+          capture: {
+            captureId: tuple.capture_id,
+            analysisId: tuple.analysis_id,
+            analysisVersion: tuple.analysis_version,
+            captureReferenceId: tuple.capture_reference_id,
+          },
+        },
+      ],
+    });
+
+    // The replacement analysis carries the recorded root's OWN reference but
+    // declares `resembles` — identity grounds the path, the relation does
+    // not qualify as a photo root. The real projector catches up, and the
+    // fence must reject the entry the pre-repair engine accepted.
+    const resemblesAnalysis = await analysisWithControlledReference(fx.captureX, {
+      referenceId: fx.subjectAReferenceId!,
+      relation: 'resembles',
+    });
+    expect(
+      await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: resemblesAnalysis })),
+    ).toBe(true);
+    await project(fx.accountId);
+    const resemblesVerdict = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), {
+        accountId: fx.accountId,
+        start: await fenceStart(),
+        ranked: [],
+        admittedUnranked: [],
+        retainedFrontier: [retainedEntryFor(await liveTupleOnEdge())],
+      }),
+    );
+    expect(resemblesVerdict).toBe('support_withdrawn');
+
+    // The ELIGIBLE shape — a second replacement analysis with the same
+    // reference and an eligible `depicted` relation — still publishes: the
+    // fence's qualification rejects false authority, never a genuine
+    // same-path witness.
+    const depictedAnalysis = await analysisWithControlledReference(fx.captureX, {
+      referenceId: fx.subjectAReferenceId!,
+      relation: 'depicted',
+      version: 3,
+    });
+    expect(
+      await db.transaction((tx) => activateAnalysis(tx, { captureId: fx.captureX, analysisId: depictedAnalysis })),
+    ).toBe(true);
+    await project(fx.accountId);
+    const depictedVerdict = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), {
+        accountId: fx.accountId,
+        start: await fenceStart(),
+        ranked: [],
+        admittedUnranked: [],
+        retainedFrontier: [retainedEntryFor(await liveTupleOnEdge())],
+      }),
+    );
+    expect(depictedVerdict).toBeNull();
   });
 });
 

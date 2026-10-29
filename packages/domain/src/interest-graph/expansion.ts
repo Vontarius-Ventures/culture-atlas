@@ -6,7 +6,7 @@ import { isDeadlineCanceledStatement } from './budgets';
 import { GRAPH_FRONTIER_MAX_LIFETIME_DAYS, INTEREST_GRAPH_POLICY_VERSION } from './schema';
 import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
-import { loadExplicitSupport, type ExplicitSupportSnapshot } from './explicit-support';
+import { loadExplicitSupport, type ExplicitCaptureReference, type ExplicitSupportSnapshot } from './explicit-support';
 import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from './refresh';
 import { currentAssertionJustification, frontierPathPins, revalidateFrontierPathVersions, revalidatePinnedDependencies } from './validity';
 import { bilaterallyVerifiedReferenceNodes } from './identity-links';
@@ -49,7 +49,16 @@ import {
  * VISUALLY_RESEMBLES links are counted as denied and never become roots,
  * candidates or reasons, and a reference whose relation is `resembles` is a
  * visual claim that never yields a photo root. Enabling the graph flags does
- * not qualify vision.
+ * not qualify vision. The same photo-root standard governs RETAINED
+ * witnesses (DISC-SCR-029): a dedupe refresh keeps a live frontier row's
+ * recorded path only while at least one of its stored roots still carries a
+ * QUALIFIED live capture-reference witness — currently active, photo-root
+ * relation-eligible, and resolved to the identity that grounds the recorded
+ * walk. A tuple that merely shares the stored root edge (the projector's
+ * reference-after-corpus fallback can place unrelated references on one
+ * saved-capture edge) is never authority for the kept cultural path; when no
+ * witness qualifies, the refresh atomically reconciles the row's path and
+ * roots to a validating current observation.
  *
  * Bounds (VAL-DISC-004): at most two approved relation hops (the grammar
  * admits exactly two-edge compositions), at most 200 distinct assertions
@@ -576,6 +585,40 @@ function recordedFrontierIntent(pathVersions: unknown): 'personal' | 'photo' {
 }
 
 /**
+ * The root-side node of a recorded frontier path: the endpoint of the FIRST
+ * pinned assertion that is NOT shared with the second — the cultural identity
+ * the recorded walk started FROM (DISC-SCR-029). Every engine-admitted path
+ * is the two-assertion root→mid→candidate walk, so the single shared
+ * endpoint is the midpoint and the OTHER first-assertion endpoint is the
+ * root. Any other recorded shape (or a degenerate walk whose first two
+ * assertions do not share exactly one node) fails closed: nothing grounds a
+ * path the engine's own walk never produced, and the row reconciles to a
+ * validating current observation instead.
+ */
+async function recordedPathRootNodeId(
+  tx: Queryable,
+  assertions: ReadonlyArray<{ id: string }>,
+): Promise<string | null> {
+  if (assertions.length !== 2) return null;
+  const firstId = assertions[0]!.id;
+  const secondId = assertions[1]!.id;
+  if (firstId === secondId) return null;
+  const { rows } = await tx.query<{ id: string; subject_node_id: string; object_node_id: string }>(
+    'SELECT id, subject_node_id, object_node_id FROM graph_assertions WHERE id = ANY($1::uuid[])',
+    [[firstId, secondId]],
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const first = byId.get(firstId);
+  const second = byId.get(secondId);
+  if (!first || !second) return null;
+  const shared = [first.subject_node_id, first.object_node_id].filter(
+    (nodeId) => nodeId === second.subject_node_id || nodeId === second.object_node_id,
+  );
+  if (shared.length !== 1) return null;
+  return first.subject_node_id === shared[0] ? first.object_node_id : first.subject_node_id;
+}
+
+/**
  * Resolves a retained frontier row's ACTUAL owner-bound support roots from
  * the live stored row — never the selected observation's roots (DISC-SCR-028:
  * a changed winning photo root leaves the stored row rooted in the OLD
@@ -583,26 +626,35 @@ function recordedFrontierIntent(pathVersions: unknown): 'personal' | 'photo' {
  * capture-analysis authority still hold.
  *
  * A root edge is live iff it still exists in a live state (confirmed or
- * tentative — suppression and the projector's withdrawal sweep both end it),
- * and, for a PHOTO row, iff it still carries an ACTIVE capture_reference
- * support row whose exact (capture, analysis/version, capture_references)
- * dependency the CURRENT authoritative snapshot still authorizes: the capture
- * is still explicitly saved, its CURRENT active analysis is exactly the
- * support's analysis, and the exact capture_references row is still one of
- * that analysis's authorized references. An analysis activation A→B that
- * committed before the pass therefore reads as withdrawn HERE (the snapshot
- * is the same live state the pass walked from), while one landing later is
- * the publication fence's to catch under its capture lock.
+ * tentative — suppression and the projector's withdrawal sweep both end it).
+ * For a PERSONAL row, a live edge is its own authority: its presence and
+ * live state are what the admission walked on. For a PHOTO row (DISC-SCR-029)
+ * a live capture-reference tuple is a witness for the RECORDED path only
+ * when it would still be admitted as a photo root for that very path:
+ * the live snapshot still authorizes the exact (capture, active
+ * analysis/version, capture_references) dependency, the authorized reference
+ * is photo-root relation-eligible (`depicted` or `user_selected` — `resembles`
+ * is a visual claim resolveRoots denies), and the reference's resolved ACTIVE
+ * identity (the same durable-binding-or-verified-link semantics resolveRoots
+ * applies) is the root-side node of the RECORDED walk. Merely sharing the
+ * root edge is not authority: the projector's reference-after-corpus
+ * fallback can place UNRELATED references on one saved-capture item edge, so
+ * a live current tuple on that edge can belong to a subject the recorded
+ * path was never grounded in (or to a visual claim no photo root may use).
+ * An analysis activation A→B that committed before the pass reads as
+ * withdrawn HERE (the snapshot is the same live state the pass walked from),
+ * while one landing later is the publication fence's to catch under its
+ * capture lock.
  *
  * Returns the root authority entries the publication fence re-checks through
  * the commit — one bare entry per live personal root, one capture-bearing
- * entry per live capture-reference support tuple of a live photo root — or
+ * entry per QUALIFYING capture-reference witness of a live photo root — or
  * null when no recorded root's authority still holds: the caller coherently
  * reconciles the row (pins AND roots together) to the just-validated
  * observation instead of committing a refresh with no live private
- * grounding. A row's roots survive on ANY live root (they are the union of
- * everything that reached it), the same disjunctive support standard the
- * read path applies.
+ * grounding. A row's roots survive on ANY qualifying witness (they are the
+ * union of everything that reached it), the same disjunctive support standard
+ * the read path applies.
  */
 async function liveRetainedRootAuthority(
   tx: Queryable,
@@ -611,6 +663,8 @@ async function liveRetainedRootAuthority(
     snapshot: ExplicitSupportSnapshot;
     intent: 'personal' | 'photo';
     rootEdgeIds: readonly string[];
+    /** The retained row's RECORDED path pins — the walk its roots must still ground. */
+    assertions: ReadonlyArray<{ id: string }>;
   },
 ): Promise<GraphFenceRetainedRoot[] | null> {
   if (input.rootEdgeIds.length === 0) return null;
@@ -653,22 +707,57 @@ async function liveRetainedRootAuthority(
   }
   const liveCaptureById = new Map(input.snapshot.captures.map((c) => [c.captureId, c]));
   const entries: GraphFenceRetainedRoot[] = [];
+  if (input.intent !== 'photo') {
+    // PERSONAL roots: the live presence and live state of the explicit edge
+    // are the authority the recorded path was admitted on.
+    for (const edgeId of input.rootEdgeIds) {
+      if (liveEdgeById.get(edgeId) !== true) continue; // withdrawn or deleted by the projector
+      entries.push({ edgeId });
+    }
+    return entries.length > 0 ? entries : null;
+  }
+  // PHOTO roots: collect each live edge's CURRENT authorized tuples, then
+  // qualify them against the recorded path's root identity (DISC-SCR-029).
+  const candidates: Array<{
+    edgeId: string;
+    tuple: { captureId: string; analysisId: string; analysisVersion: number; captureReferenceId: string };
+    reference: ExplicitCaptureReference;
+  }> = [];
   for (const edgeId of input.rootEdgeIds) {
     if (liveEdgeById.get(edgeId) !== true) continue; // withdrawn or deleted by the projector
-    if (input.intent !== 'photo') {
-      entries.push({ edgeId });
-      continue;
-    }
     for (const tuple of tuplesByEdge.get(edgeId) ?? []) {
       const capture = liveCaptureById.get(tuple.captureId);
       if (!capture) continue; // unsaved or deleted: withdrawn support
       if (capture.analysisId !== tuple.analysisId || capture.analysisVersion !== tuple.analysisVersion) continue;
-      if (!capture.references.some((r) => r.captureReferenceId === tuple.captureReferenceId)) continue;
-      entries.push({ edgeId, capture: tuple });
+      const reference = capture.references.find((r) => r.captureReferenceId === tuple.captureReferenceId);
+      if (!reference) continue; // no longer authorized: withdrawn support
+      candidates.push({ edgeId, tuple, reference });
     }
-    // A photo root edge whose every capture-reference tuple lost its live
-    // capture-analysis authority is a withdrawn root: no bare entry.
   }
+  // Every live tuple lost its current capture-analysis authorization: the
+  // recorded photo path has no live witness at all.
+  if (candidates.length === 0) return null;
+  const recordedRootNodeId = await recordedPathRootNodeId(tx, input.assertions);
+  // A recorded path whose shape is not the engine's own walk grounds nothing:
+  // fail closed and let the caller reconcile.
+  if (recordedRootNodeId == null) return null;
+  const nodeByReference = await nodesByReference(tx, {
+    referenceIds: [...new Set(candidates.map((c) => c.reference.referenceId))],
+    // Witness qualification, not root resolution: the pass's reported
+    // counts keep describing the roots it walked from.
+    counts: emptyCounts(),
+  });
+  for (const candidate of candidates) {
+    if (candidate.reference.relation === 'resembles') continue; // a visual claim never yields a photo root
+    if (nodeByReference.get(candidate.reference.referenceId) !== recordedRootNodeId) {
+      continue; // grounds a different path than the one recorded
+    }
+    entries.push({ edgeId: candidate.edgeId, capture: candidate.tuple });
+  }
+  // A photo root edge whose every capture-reference tuple lost its live
+  // capture-analysis authority — or whose surviving tuples are unrelated to
+  // or ineligible for the recorded path — is a withdrawn root: no entry, and
+  // the caller reconciles pins and roots together.
   return entries.length > 0 ? entries : null;
 }
 
@@ -1064,25 +1153,30 @@ async function runExpansion(
           pathVersions: upserted.row.path_versions,
           at: publishAt,
         });
-        // DISC-SCR-028: the retained pins revalidated, but the stored row's
+        // DISC-SCR-028/029: the retained pins revalidated, but the stored row's
         // private support roots are its OWN — a changed winning root does NOT
         // re-pin them (a valid dedupe hit keeps the recorded roots; only a
         // failed retained path reconciles). Resolve the ACTUAL owner-bound
         // roots from the live stored row and check their support, reference
-        // and live capture-analysis authority: a retained photo root whose
-        // capture no longer activates its analysis — or no longer authorizes
-        // its capture_references row — is withdrawn authority, and the
-        // refresh must reconcile the row coherently (path AND roots together,
-        // exactly like the failed-pins path) instead of committing a live
-        // admitted row rooted in authority the capture abandoned. Roots that
-        // still hold join the publication fence below as the row's OWN
-        // relevance-bearing population — never the selected winner's.
+        // and live capture-analysis authority — and for a PHOTO row, that
+        // each live capture-reference witness is still photo-root
+        // relation-eligible and its resolved identity grounds the RECORDED
+        // path's root: a capture that abandoned the recorded subject (or a
+        // replacement reference unrelated to it, or a visual claim no photo
+        // root may use) is withdrawn authority, and the refresh must
+        // reconcile the row coherently (path AND roots together, exactly like
+        // the failed-pins path) instead of committing a live admitted row
+        // rooted in authority the capture abandoned. Roots that still hold
+        // join the publication fence below as the row's OWN relevance-bearing
+        // population — never the selected winner's.
+        const pins = frontierPathPins(upserted.row.path_versions);
         const retainedRoots = retained.valid
           ? await liveRetainedRootAuthority(tx, {
               accountId,
               snapshot,
               intent: recordedFrontierIntent(upserted.row.path_versions),
               rootEdgeIds: upserted.row.support_root_ids,
+              assertions: pins.assertions.map((a) => ({ id: a.id })),
             })
           : null;
         if (!retained.valid || retainedRoots == null) {
@@ -1110,7 +1204,6 @@ async function runExpansion(
           // pins it keeps are a committing dependency population — carried
           // into the publication fence even though no newly selected
           // observation names them.
-          const pins = frontierPathPins(upserted.row.path_versions);
           retainedCommitting.push({
             assertions: pins.assertions.map((a) => ({ id: a.id })),
             evidence: pins.evidence.map((e) => ({ id: e.id })),
@@ -1346,7 +1439,13 @@ async function runExpansion(
  * the publication fence re-checks it (DISC-SCR-028). A valid dedupe refresh
  * KEEPS the stored row's roots — they can differ from every newly selected
  * observation's (a changed winning photo root) — so the fence must see the
- * row's OWN root authority, never the selected winner's.
+ * row's OWN root authority, never the selected winner's. A photo root entry
+ * is already QUALIFIED evidence (DISC-SCR-029): the engine's resolver only
+ * emits capture-bearing entries whose live tuple is photo-root
+ * relation-eligible and whose resolved identity grounds the recorded path's
+ * root node — the fence re-decides that qualification at the fresh
+ * publication clock, because a live tuple on the retained edge is not by
+ * itself a witness for the recorded cultural path.
  */
 export interface GraphFenceRetainedRoot {
   /** The retained row's stored support-root edge (owner-bound). */
@@ -1359,8 +1458,10 @@ export interface GraphFenceRetainedRoot {
    * saves, still activates exactly this analysis/version and still
    * authorizes exactly this capture_references row — under the same capture
    * row lock the selected photo observations take, so real
-   * activation/deletion writers are ordered with the publication commit.
-   * Absent for personal roots (an explicit edge): its live presence is its
+   * activation/deletion writers are ordered with the publication commit —
+   * AND that the live reference still passes the photo-root relation and
+   * identity-grounding qualification for the entry's recorded path. Absent
+   * for personal roots (an explicit edge): its live presence is its
    * authority.
    */
   capture?: {
@@ -1431,6 +1532,12 @@ export interface GraphPublicationFenceInput {
    * ordered with the publication commit for the RETAINED population too, and
    * a changed-winning-photo-root refresh can no longer commit a live
    * admitted row rooted in authority its capture abandoned after the fence.
+   * The photo-root entries are QUALIFIED witnesses (DISC-SCR-029): the
+   * engine emits only tuples that are photo-root relation-eligible and whose
+   * resolved identity grounds the recorded path's root node, and the fence
+   * re-decides that qualification at the fresh publication clock — a live
+   * tuple on the retained edge that is unrelated to or ineligible for the
+   * recorded path is withdrawn authority, not support.
    * A row whose every root lost its authority reconciles at the refresh
    * itself and carries no entry here.
    */
@@ -1541,7 +1648,11 @@ export async function checkGraphPublicationFence(
   // fenced Y while the committed row still carried X/A-rooted private
   // support. The actual retained roots join every check below; a retained
   // row whose every root lost its authority reconciles at the refresh itself
-  // and never reaches the fence.
+  // and never reaches the fence. DISC-SCR-029: a retained row that KEEPS its
+  // roots also keeps its RECORDED cultural path, so its photo roots must be
+  // QUALIFIED witnesses — still photo-root relation-eligible, and their
+  // resolved identity still the recorded walk's root node — never merely a
+  // live tuple on the stored edge.
   const retainedRooted = (input.retainedFrontier ?? []).filter((row) => (row.roots?.length ?? 0) > 0);
   const retainedPhotoRoots = retainedRooted.flatMap((row) => row.roots!).filter((root) => root.capture != null);
   if (committingRooted.length > 0 || retainedRooted.length > 0) {
@@ -1664,6 +1775,7 @@ export async function checkGraphPublicationFence(
         );
         const liveEdgeIds = new Set(rootEdges.map((row) => row.id));
         let activePairs = new Set<string>();
+        const liveReferenceByCaptureRefId = new Map<string, ExplicitCaptureReference>();
         if (retainedPhotoRoots.length > 0) {
           const { rows: supportRows } = await tx.query<{ edge_id: string; capture_reference_id: string }>(
             `SELECT edge_id, capture_reference_id FROM personal_interest_support
@@ -1672,20 +1784,60 @@ export async function checkGraphPublicationFence(
             [accountId, [...new Set(retainedPhotoRoots.map((root) => root.edgeId))]],
           );
           activePairs = new Set(supportRows.map((row) => `${row.edge_id}:${row.capture_reference_id}`));
+          // DISC-SCR-029: the LIVE authorized reference each retained photo
+          // root's tuple names — the fence's fresh reread of what the entry
+          // claims, before deciding whether that claim still grounds the
+          // recorded path.
+          for (const root of retainedPhotoRoots) {
+            const capture = liveByCapture.get(root.capture!.captureId);
+            const reference = capture?.references.find((r) => r.captureReferenceId === root.capture!.captureReferenceId);
+            if (reference) liveReferenceByCaptureRefId.set(root.capture!.captureReferenceId, reference);
+          }
         }
+        const nodeByLiveReference =
+          liveReferenceByCaptureRefId.size > 0
+            ? await nodesByReference(tx, {
+                referenceIds: [...new Set([...liveReferenceByCaptureRefId.values()].map((r) => r.referenceId))],
+                // The fence validates, it never reports root resolution.
+                counts: emptyCounts(),
+              })
+            : new Map<string, string>();
         for (const retained of retainedRooted) {
-          const grounded = retained.roots!.some((root) => {
-            if (!liveEdgeIds.has(root.edgeId)) return false;
+          let recordedRootNodeId: string | null | undefined;
+          let grounded = false;
+          for (const root of retained.roots!) {
+            if (!liveEdgeIds.has(root.edgeId)) continue;
             const authority = root.capture;
-            if (!authority) return true; // a personal root: live presence is its authority
-            if (!activePairs.has(`${root.edgeId}:${authority.captureReferenceId}`)) return false;
-            const capture = liveByCapture.get(authority.captureId);
-            if (!capture) return false;
-            if (capture.analysisId !== authority.analysisId || capture.analysisVersion !== authority.analysisVersion) {
-              return false;
+            if (!authority) {
+              grounded = true; // a personal root: live presence is its authority
+              break;
             }
-            return capture.references.some((ref) => ref.captureReferenceId === authority.captureReferenceId);
-          });
+            if (!activePairs.has(`${root.edgeId}:${authority.captureReferenceId}`)) continue;
+            const capture = liveByCapture.get(authority.captureId);
+            if (!capture) continue;
+            if (capture.analysisId !== authority.analysisId || capture.analysisVersion !== authority.analysisVersion) {
+              continue;
+            }
+            // DISC-SCR-029: the tuple's live reference must still be photo-root
+            // relation-eligible (`resembles` never qualifies), and its
+            // resolved ACTIVE identity — the same durable-binding-or-
+            // verified-link resolution resolveRoots applies — must still be
+            // the root-side node of the RECORDED walk. This is the fence's
+            // last word on whether the kept path is still grounded in the
+            // identity the pass's resolver qualified: a tuple that is merely
+            // live on the retained edge (unrelated to the recorded path, or a
+            // visual claim) rejects the pass instead of committing stale
+            // path authority through the commit.
+            const reference = liveReferenceByCaptureRefId.get(authority.captureReferenceId);
+            if (!reference || reference.relation === 'resembles') continue;
+            if (recordedRootNodeId === undefined) {
+              recordedRootNodeId = await recordedPathRootNodeId(tx, retained.assertions);
+            }
+            if (recordedRootNodeId == null) continue;
+            if (nodeByLiveReference.get(reference.referenceId) !== recordedRootNodeId) continue;
+            grounded = true;
+            break;
+          }
           if (!grounded) return 'support_withdrawn';
         }
       }
