@@ -32,16 +32,37 @@ import { revalidatePinnedDependencies } from './validity';
  * owning account, its `discover_related` job runs THIS pass instead of the
  * provider path:
  *
- *   - Roots are ONLY the origin item's own current qualified identities —
- *     its cultural reference, its resolved anchors, and (for a capture
- *     origin) the ACTIVE analysis's `depicted`/`user_selected` resolved or
- *     user-confirmed references. Visual-resemblance references never root a
- *     scoped walk (enabling the graph does not qualify vision). Account-wide
- *     support, other collections' items and global taste never participate,
- *     and the legacy account-feed fallback never fills this branch's results.
+ *   - Roots are ONLY the origin's own CURRENT qualified identities — its own
+ *     cultural reference (the verified subject identity the item was
+ *     materialized from), and, for a capture origin, the ACTIVE analysis's
+ *     `depicted`/`user_selected` resolved or user-confirmed references.
+ *     `resolved_anchor_ids` NEVER roots a walk (DISC-SCR-032): those arrays
+ *     are historical contributor unions the real compiler writes onto
+ *     RECOMMENDED items from a source photo's contributing references and
+ *     merges across analyses, so a film recommended from a Rodin photo is not
+ *     Rodin, and an ungranted capture/collection's contributor can never
+ *     leak into another context's walk. Visual-resemblance references and
+ *     text-only mentions never root a scoped walk, the owner's latest
+ *     correction withdraws its rejected references (and its confirmation
+ *     restores one — the user is the evidence), exactly like the
+ *     account-owned photo-root standard. Account-wide support, other
+ *     collections' items and global taste never participate, and the legacy
+ *     account-feed fallback never fills this branch's results.
  *   - Admission is the one shared rule: the approved path grammar
  *     (`validateGraphPath`) over reviewed, currently-justified shared
  *     evidence. No live model, no paid research, no provider call at all.
+ *   - The photo lineage behind those roots is LOCKED through the commit
+ *     (DISC-SCR-037): the pass pins the capture's row FIRST — before the
+ *     grant fence's collection lock — reading the live active analysis and
+ *     the owner's current correction intent under the lock, and rechecking
+ *     the pinned lineage at its final publication boundary. The real
+ *     capture writers (`activateAnalysis`'s pointer move, `submitCorrection`
+ *     and `deleteCapture`, which all take the capture row lock before
+ *     touching anything else) therefore serialize with publication in both
+ *     orders: a writer that committed first is the lineage the pass walks
+ *     (or rejects honestly), and one arriving mid-pass queues behind the
+ *     held lock until the publication commits — never between the locked
+ *     read and the commit.
  *   - Publication pins the exact walked assertion/evidence revisions under
  *     FOR SHARE locks at a fresh publication clock (DISC-SCR-009), then
  *     attaches the surviving results to the SCOPED DISCOVERY PARENT ONLY:
@@ -54,12 +75,15 @@ import { revalidatePinnedDependencies } from './validity';
  * The pass deliberately does NOT consult the account discovery pause: that
  * marker stops background expansion/research, while this is the explicit
  * per-origin operation the grant authorizes. The grant publication fence
- * (`lockScopedPublicationAuthority`, called FIRST inside the publication
+ * (`lockScopedPublicationAuthority`, called inside the publication
  * transaction — DISC-SCR-040) holds the initiating connection and origin
  * collection locks through the commit, BEFORE the scoped parent's own row
  * lock, so real collection deletion never deadlocks the publication in
  * either order; the job-liveness fence (`ensureActive`) and the scoped
- * parent's deletion fence stay in place.
+ * parent's deletion fence stay in place. The capture lineage lock precedes
+ * all of them, matching the capture writers' own lock order (capture row
+ * first, then collections, then the deletion cascades that reach the
+ * parent).
  *
  * Bounded work (DISC-SCR-035): the immutable authority row's
  * `work_deadline_at` (migration 400) anchors this discovery's ONE work
@@ -174,6 +198,132 @@ interface QualifiedRootReference {
   external_ids: Record<string, unknown>;
 }
 
+/**
+ * The origin's live photo lineage, pinned under the capture row lock at the
+ * START of the pass's publication transaction (DISC-SCR-037): the capture the
+ * origin item belongs to (an immutable column, read without a lock only to
+ * know WHICH row to lock), its CURRENT active analysis, and the owner's
+ * CURRENT correction intent (the latest correction of the capture — its
+ * rejected references are withdrawn authorization, its confirmation
+ * restores one; the user is the evidence). The FOR NO KEY UPDATE row lock is
+ * held to the pass's commit, so every real capture writer —
+ * `activateAnalysis`'s pointer move, `submitCorrection` and `deleteCapture`,
+ * which all take this row first — serializes with the publication: a writer
+ * that committed before the lock is the lineage walked here, and one arriving
+ * mid-pass queues behind the publication instead of slipping between this
+ * read and the commit. `null` when the origin is not a capture item, its
+ * capture is deleted or it has no active analysis: no photo roots then.
+ */
+interface PhotoOriginLineage {
+  captureId: string;
+  /** The pinned active analysis: exactly this analysis's references may root the walk. */
+  analysisId: string;
+  /** References the owner's latest correction rejected (withdrawn authorization). */
+  rejectedReferenceIds: string[];
+  /** The reference the owner's latest correction confirmed (restores a rejected one). */
+  confirmedReferenceId: string | null;
+}
+
+/**
+ * Locks and pins the origin's photo lineage. The lock order is deliberate:
+ * the capture row is locked BEFORE the grant fence's collection lock,
+ * because the real deletion writer (deleteCapture) takes the capture row
+ * first and then updates affected collection revisions — locking the
+ * collection first would be the inverted order and a 40P01 deadlock cycle.
+ * The lock wait itself is bounded by the work window's CURRENT remainder
+ * (`bound`, DISC-SCR-035), and only a live capture's row is locked: a
+ * deleted capture pins nothing and simply contributes no photo roots.
+ */
+async function lockPhotoOriginLineage(
+  tx: Queryable,
+  input: { originItemId: string; bound?: () => Promise<void> },
+): Promise<PhotoOriginLineage | null> {
+  const originItem = await tx.query<{ capture_id: string | null }>(
+    'SELECT capture_id FROM discovery_items WHERE id = $1',
+    [input.originItemId],
+  );
+  const captureId = originItem.rows[0]?.capture_id;
+  if (!captureId) return null;
+  await input.bound?.();
+  const capture = await tx.query<{ active_analysis_id: string | null; owner_account_id: string | null }>(
+    `SELECT active_analysis_id, owner_account_id
+       FROM captures
+      WHERE id = $1 AND deleted_at IS NULL
+       FOR NO KEY UPDATE`,
+    [captureId],
+  );
+  const row = capture.rows[0];
+  if (!row || !row.active_analysis_id) return null;
+  let rejectedReferenceIds: string[] = [];
+  let confirmedReferenceId: string | null = null;
+  if (row.owner_account_id != null) {
+    const correction = await tx.query<{
+      payload: { reject_reference_ids?: unknown; confirm_reference_id?: unknown };
+    }>(
+      `SELECT DISTINCT ON (e.target_id) e.payload
+         FROM preference_events e
+        WHERE e.owner_account_id = $1 AND e.action = 'correct' AND e.target_type = 'capture' AND e.target_id = $2
+        ORDER BY e.target_id, e.created_at DESC, e.id DESC`,
+      [row.owner_account_id, captureId],
+    );
+    const payload = correction.rows[0]?.payload;
+    rejectedReferenceIds = Array.isArray(payload?.reject_reference_ids)
+      ? payload.reject_reference_ids.filter((id): id is string => typeof id === 'string')
+      : [];
+    confirmedReferenceId = typeof payload?.confirm_reference_id === 'string' ? payload.confirm_reference_id : null;
+  }
+  return { captureId, analysisId: row.active_analysis_id, rejectedReferenceIds, confirmedReferenceId };
+}
+
+/**
+ * The origin's CURRENT qualified root references: its OWN cultural reference
+ * (the verified subject identity the item was materialized from), and — for
+ * a capture origin whose lineage `lockPhotoOriginLineage` pinned — the
+ * PINNED active analysis's authorized qualified references
+ * (`depicted`/`user_selected`, resolved or user-confirmed, not text-only,
+ * not rejected by the owner's latest correction, with that correction's
+ * confirmation restoring one). `resembles` never qualifies (a
+ * visual-resemblance claim is disabled until an independently qualified
+ * compatible adapter and evidence exist), and the historical
+ * `resolved_anchor_ids` contributor union is NEVER a root (DISC-SCR-032):
+ * the real compiler writes a source photo's contributing references onto a
+ * different RECOMMENDED item and merges them across analyses, so they are
+ * not the origin's own identity and can carry ungranted contexts.
+ */
+async function qualifiedOriginRootReferences(
+  tx: Queryable,
+  input: { originItemId: string; photo: PhotoOriginLineage | null },
+): Promise<QualifiedRootReference[]> {
+  const branches = [
+    `SELECT di.reference_id AS rid
+       FROM discovery_items di
+      WHERE di.id = $1 AND di.reference_id IS NOT NULL`,
+  ];
+  const params: unknown[] = [input.originItemId];
+  if (input.photo) {
+    params.push(input.photo.analysisId, input.photo.rejectedReferenceIds, input.photo.confirmedReferenceId);
+    branches.push(
+      `SELECT cr.reference_id AS rid
+         FROM capture_references cr
+        WHERE cr.analysis_id = $2
+          AND cr.relation IN ('depicted', 'user_selected')
+          AND NOT (cr.reference_id = ANY($3::uuid[]))
+          AND (
+            cr.reference_id = $4::uuid
+            OR (cr.resolution_status IN ('resolved', 'user_confirmed') AND NOT cr.text_only)
+          )`,
+    );
+  }
+  const { rows } = await tx.query<QualifiedRootReference>(
+    `SELECT r.id, r.canonical_key, r.canonical_name, r.type, r.external_ids
+       FROM (${branches.join(' UNION ')}) x
+       JOIN cultural_references r ON r.id = x.rid
+      ORDER BY r.id`,
+    params,
+  );
+  return rows;
+}
+
 interface ScopedObservation {
   nodeId: string;
   rootNodeId: string;
@@ -196,41 +346,6 @@ interface CandidateReference {
   externalIds: Record<string, unknown>;
   /** True when the reference resolved through the read-time verified link. */
   byLink: boolean;
-}
-
-/**
- * The origin item's CURRENT qualified root references: its own cultural
- * reference, its resolved anchors, and — for a capture origin — the ACTIVE
- * analysis's `depicted`/`user_selected` resolved or user-confirmed
- * references. `resembles` never qualifies (a visual-resemblance claim is
- * disabled until an independently qualified compatible adapter and evidence
- * exist), and rejected/unmatched references never qualify.
- */
-async function qualifiedOriginRootReferences(tx: Queryable, originItemId: string): Promise<QualifiedRootReference[]> {
-  const { rows } = await tx.query<QualifiedRootReference>(
-    `SELECT r.id, r.canonical_key, r.canonical_name, r.type, r.external_ids
-       FROM (
-         SELECT di.reference_id AS rid
-           FROM discovery_items di
-          WHERE di.id = $1 AND di.reference_id IS NOT NULL
-         UNION
-         SELECT a.rid
-           FROM discovery_items di, unnest(di.resolved_anchor_ids) AS a(rid)
-          WHERE di.id = $1
-         UNION
-         SELECT cr.reference_id
-           FROM discovery_items di
-           JOIN captures c ON c.id = di.capture_id AND c.deleted_at IS NULL
-           JOIN capture_references cr ON cr.analysis_id = c.active_analysis_id
-          WHERE di.id = $1
-            AND cr.relation IN ('depicted', 'user_selected')
-            AND cr.resolution_status IN ('resolved', 'user_confirmed')
-       ) x
-       JOIN cultural_references r ON r.id = x.rid
-      ORDER BY r.id`,
-    [originItemId],
-  );
-  return rows;
 }
 
 /**
@@ -456,6 +571,28 @@ export async function runScopedGraphDiscovery(
       };
       await enforceDeadline();
 
+      // --- The origin's photo lineage lock (DISC-SCR-037) --------------------------
+      // Taken BEFORE the grant fence's collection lock and the scoped parent's
+      // row lock, because the real capture writers take the capture row
+      // FIRST (activateAnalysis's pointer move is a bare captures UPDATE,
+      // and deleteCapture locks the capture FOR UPDATE before it updates
+      // affected collection revisions and cascades the origin's deletion to
+      // the parent): any other order would be a 40P01 deadlock cycle in one
+      // of the two commit orders. The pinned lineage — the live active
+      // analysis and the owner's current correction intent, read under the
+      // lock — is the ONLY photo authority the walk may root from, and the
+      // lock holds it through this commit: an activation, correction or
+      // deletion either committed before this read (it IS the lineage walked
+      // here, or the capture is honestly gone) or queues behind the
+      // publication and lands after (publisher-first: the pass published
+      // under exactly the lineage it walked, and a redelivery converges on
+      // the new state). A non-capture origin pins nothing here.
+      const photoLineage = await lockPhotoOriginLineage(tx, {
+        originItemId: authority.origin_item_id,
+        bound: enforceDeadline,
+      });
+      await enforceDeadline();
+
       // The grant publication fence (VAL-DISC-007): lock the initiating
       // connection's row and the origin collection's row FOR SHARE and
       // recheck the pinned epoch against CURRENT live state — liveness,
@@ -512,7 +649,13 @@ export async function runScopedGraphDiscovery(
       await tx.query(`UPDATE discovery_jobs SET status = 'running' WHERE id = $1`, [authority.discovery_job_id]);
 
       // --- Qualified roots: ONLY this origin's own current identities ----------------
-      const rootReferences = await qualifiedOriginRootReferences(tx, originItemId);
+      // The item's own cultural reference, plus the pinned live photo
+      // lineage's authorized qualified references — never the historical
+      // `resolved_anchor_ids` contributor union (DISC-SCR-032).
+      const rootReferences = await qualifiedOriginRootReferences(tx, {
+        originItemId,
+        photo: photoLineage,
+      });
       counts.rootReferences = rootReferences.length;
       const resolution = await resolveReferenceNodes(tx, rootReferences.map((r) => r.id));
       await enforceDeadline();
@@ -841,6 +984,20 @@ export async function runScopedGraphDiscovery(
       if (deadlineAt.getTime() <= finalNow.getTime()) throw new GraphWorkDeadlineExpiredError();
       if (fence.connectionExpiresAt && fence.connectionExpiresAt.getTime() <= finalNow.getTime()) {
         throw new AppError('token_expired');
+      }
+      // The pinned photo lineage gets the same last word (DISC-SCR-037): the
+      // capture must still be live and still activate exactly the analysis
+      // the walk rooted from. The FOR NO KEY UPDATE lock held since the
+      // pass's start means no real writer could have changed it in between —
+      // this recheck is the boundary's own proof of the selected private
+      // root lineage, and any state that slipped past it rolls the whole
+      // publication back instead of committing an obsolete rooted path.
+      if (photoLineage) {
+        const lineage = await tx.query('SELECT 1 FROM captures WHERE id = $1 AND deleted_at IS NULL AND active_analysis_id = $2', [
+          photoLineage.captureId,
+          photoLineage.analysisId,
+        ]);
+        if (!lineage.rowCount) throw new JobCancelledError('origin deleted');
       }
 
       return {
