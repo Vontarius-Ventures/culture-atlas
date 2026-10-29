@@ -3,8 +3,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { upsertReference } from '../compiler/store';
 import type { PoolDb } from '../db/pool';
 import { createIsolatedDatabase } from '../testing';
-import { mapGraphExternalId, upsertGraphIdentity } from './evidence';
-import { linkGraphReferenceIdentities, verifiedReferenceNodeMatches } from './identity-links';
+import { bindGraphIdentityReference, mapGraphExternalId, upsertGraphIdentity } from './evidence';
+import {
+  bilaterallyVerifiedReferenceNodes,
+  linkGraphReferenceIdentities,
+  verifiedReferenceNodeMatches,
+} from './identity-links';
 
 /**
  * Verified application-reference/corpus identity linkage (DISC-SCR-004):
@@ -350,5 +354,134 @@ describe('verified reference linkage', () => {
     const matches = await verifiedReferenceNodeMatches(db, { referenceIds: [referenceId, unmatched] });
     expect(matches.get(referenceId)).toEqual([node.id]);
     expect(matches.has(unmatched)).toBe(false);
+  });
+});
+
+// --- Bilateral read-time resolution (DISC-SCR-017) ----------------------------------
+
+describe('bilateral read-time resolution', () => {
+  /**
+   * `bilaterallyVerifiedReferenceNodes` is the read-time gate both expansion
+   * fallbacks use: a verified (reference → identity) pair resolves ONLY when
+   * the DURABLE linker would bind the same pair — global one-to-one
+   * cardinality in both directions, an active identity, and compatible
+   * existing bindings on both sides. Ambiguity (the inverse direction is
+   * global: another reference may claim the identity from outside any local
+   * scope) and competing bindings fail closed without changing stored links.
+   */
+
+  it('accepts the clean verified pair the durable linker would bind', async () => {
+    const { node } = await identity();
+    const providerId = `ent-${randomUUID()}`;
+    await mapGraphExternalId(db, { nodeId: node.id, provider: 'qloo', externalId: providerId, matchStatus: 'confirmed' });
+    const referenceId = await qlooReference(providerId);
+
+    const verdict = await bilaterallyVerifiedReferenceNodes(db, { referenceIds: [referenceId] });
+    expect([...verdict.acceptedByReference]).toEqual([[referenceId, node.id]]);
+    expect(verdict.ambiguousReferenceIds).toHaveLength(0);
+    expect(verdict.conflictingReferenceIds).toHaveLength(0);
+  });
+
+  it('rejects inverse ambiguity: an identity claimed by another reference anywhere stays unresolved', async () => {
+    const { node } = await identity();
+    const providerId = `ent-${randomUUID()}`;
+    await mapGraphExternalId(db, { nodeId: node.id, provider: 'qloo', externalId: providerId, matchStatus: 'confirmed' });
+    const first = await qlooReference(providerId);
+    const second = await upsertReference(db, {
+      canonicalKey: `work:second-${randomUUID()}`,
+      name: `Duplicate provider id ${randomUUID().slice(0, 6)}`,
+      type: 'work',
+      externalIds: { qloo: providerId },
+    });
+
+    // Scoped to the SECOND reference only: the claiming first reference sits
+    // OUTSIDE the requested scope, exactly the production read shape.
+    const scoped = await bilaterallyVerifiedReferenceNodes(db, { referenceIds: [second] });
+    expect(scoped.acceptedByReference.size).toBe(0);
+    expect(scoped.ambiguousReferenceIds).toEqual([second]);
+    expect(scoped.conflictingReferenceIds).toHaveLength(0);
+    // Both claiming references fail together when both are in scope...
+    const both = await bilaterallyVerifiedReferenceNodes(db, { referenceIds: [first, second] });
+    expect(both.acceptedByReference.size).toBe(0);
+    expect([...both.ambiguousReferenceIds].sort()).toEqual([first, second].sort());
+    // ...and nothing changed durably either way.
+    expect(await nodeReferenceId(node.id)).toBeNull();
+  });
+
+  it('rejects a competing node binding: an identity already linked to a different reference', async () => {
+    // The durable-pass competing fixture shape: the identity is directly
+    // bound to a reviewed reference, while a different reference carries its
+    // confirmed provider id.
+    const { node, referenceId: held } = await identity({ withReference: true });
+    const providerId = `ent-${randomUUID()}`;
+    await mapGraphExternalId(db, { nodeId: node.id, provider: 'qloo', externalId: providerId, matchStatus: 'confirmed' });
+    const competing = await upsertReference(db, {
+      canonicalKey: `work:competing-${randomUUID()}`,
+      name: `Competing reference ${randomUUID().slice(0, 6)}`,
+      type: 'work',
+      externalIds: { qloo: providerId },
+    });
+
+    const verdict = await bilaterallyVerifiedReferenceNodes(db, { referenceIds: [competing] });
+    expect(verdict.acceptedByReference.size).toBe(0);
+    expect(verdict.conflictingReferenceIds).toEqual([competing]);
+    expect(verdict.ambiguousReferenceIds).toHaveLength(0);
+    // Fail closed: the held binding survives and the competing reference stays unheld.
+    expect(await nodeReferenceId(node.id)).toBe(held);
+    const { rows: holder } = await db.query<{ id: string }>(
+      'SELECT id FROM graph_nodes WHERE cultural_reference_id = $1',
+      [competing],
+    );
+    expect(holder).toHaveLength(0);
+  });
+
+  it('rejects a reference already held by a different identity', async () => {
+    const holder = await identity();
+    const providerId = `ent-${randomUUID()}`;
+    const referenceId = await qlooReference(providerId);
+    // The holder binds the reference by review (no provider-id mapping of
+    // its own), while a different active identity holds the confirmed
+    // provider mapping: the durable linker would reject that pair as a
+    // competing reference binding.
+    await bindGraphIdentityReference(db, { nodeId: holder.node.id, culturalReferenceId: referenceId });
+    const { node: claimed } = await identity();
+    await mapGraphExternalId(db, { nodeId: claimed.id, provider: 'qloo', externalId: providerId, matchStatus: 'confirmed' });
+
+    const verdict = await bilaterallyVerifiedReferenceNodes(db, { referenceIds: [referenceId] });
+    expect(verdict.acceptedByReference.size).toBe(0);
+    expect(verdict.conflictingReferenceIds).toEqual([referenceId]);
+    expect(verdict.ambiguousReferenceIds).toHaveLength(0);
+    // Fail closed: the holder keeps the reference and the claiming identity stays unbound.
+    expect(await nodeReferenceId(holder.node.id)).toBe(referenceId);
+    expect(await nodeReferenceId(claimed.id)).toBeNull();
+  });
+
+  it('resolves the already-durably-bound pair idempotently, and never resolves a non-active identity', async () => {
+    // The same durable pair reads back as accepted (idempotent, like the
+    // linker's already_bound outcome).
+    const { node } = await identity();
+    const providerId = `ent-${randomUUID()}`;
+    await mapGraphExternalId(db, { nodeId: node.id, provider: 'qloo', externalId: providerId, matchStatus: 'confirmed' });
+    const referenceId = await qlooReference(providerId);
+    await bindGraphIdentityReference(db, { nodeId: node.id, culturalReferenceId: referenceId });
+
+    const bound = await bilaterallyVerifiedReferenceNodes(db, { referenceIds: [referenceId] });
+    expect([...bound.acceptedByReference]).toEqual([[referenceId, node.id]]);
+    expect(bound.ambiguousReferenceIds).toHaveLength(0);
+    expect(bound.conflictingReferenceIds).toHaveLength(0);
+
+    // A merged/retired identity never resolves at read time, exactly as the
+    // durable linker never binds one: the verified match stays unresolved
+    // without being reported as ambiguous or conflicting.
+    const { node: inactive } = await identity();
+    const inactiveId = `ent-${randomUUID()}`;
+    await mapGraphExternalId(db, { nodeId: inactive.id, provider: 'qloo', externalId: inactiveId, matchStatus: 'confirmed' });
+    const inactiveReference = await qlooReference(inactiveId);
+    await db.query(`UPDATE graph_nodes SET status = 'merged' WHERE id = $1`, [inactive.id]);
+
+    const merged = await bilaterallyVerifiedReferenceNodes(db, { referenceIds: [inactiveReference] });
+    expect(merged.acceptedByReference.size).toBe(0);
+    expect(merged.ambiguousReferenceIds).toHaveLength(0);
+    expect(merged.conflictingReferenceIds).toHaveLength(0);
   });
 });

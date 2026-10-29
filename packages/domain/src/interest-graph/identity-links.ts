@@ -28,6 +28,15 @@ import { bindGraphIdentityReference } from './evidence';
  *    expansions use to resolve references that appeared after the last
  *    linkage pass — the production shape, since the reviewed corpus lands
  *    once and real references accumulate over time.
+ *  - `bilaterallyVerifiedReferenceNodes` applies the DURABLE linker's full
+ *    bilateral rules to read-time resolution (DISC-SCR-017): a verified
+ *    (reference → identity) pair resolves at read time ONLY when the durable
+ *    linker would bind the same pair — exact confirmed provider-id equality,
+ *    GLOBAL one-to-one cardinality in BOTH directions, an active identity
+ *    and compatible existing bindings on both sides. An identity claimed by
+ *    another reference anywhere (inverse ambiguity outside any local scope)
+ *    or a competing durable binding on either side fails closed, changing
+ *    no stored link and publishing no wrong-identity result.
  */
 
 /** The SQL predicate shared by every verified-match query: exact provider-id equality, both arms. */
@@ -70,6 +79,144 @@ export async function verifiedReferenceNodeMatches(
     byReference.set(row.reference_id, nodes);
   }
   return new Map([...byReference].map(([referenceId, nodes]) => [referenceId, [...nodes].sort()]));
+}
+
+/**
+ * Verified (active identity → reference) matches by exact confirmed
+ * provider-id equality — the INVERSE direction of
+ * `verifiedReferenceNodeMatches`. Returns each scoped ACTIVE identity's
+ * DISTINCT matched reference ids (empty/missing when nothing verified);
+ * more than one reference is an ambiguous match the caller must treat as
+ * unresolved, exactly as the durable linkage pass does.
+ */
+export async function verifiedNodeReferenceMatches(
+  db: Queryable,
+  scope: { nodeIds?: readonly string[] } = {},
+): Promise<Map<string, string[]>> {
+  const params: unknown[] = [];
+  const scoped =
+    scope.nodeIds && scope.nodeIds.length > 0
+      ? (() => {
+          params.push([...new Set(scope.nodeIds)]);
+          return ' AND x.node_id = ANY($1::uuid[])';
+        })()
+      : '';
+  const { rows } = await db.query<{ node_id: string; reference_id: string }>(
+    `SELECT DISTINCT x.node_id, cr.id AS reference_id
+       FROM graph_external_ids x
+       JOIN graph_nodes n ON n.id = x.node_id AND n.status = 'active'
+       ${VERIFIED_MATCH_JOIN}
+      WHERE ${VERIFIED_MATCH_WHERE}${scoped}`,
+    params,
+  );
+  const byNode = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const refs = byNode.get(row.node_id) ?? new Set<string>();
+    refs.add(row.reference_id);
+    byNode.set(row.node_id, refs);
+  }
+  return new Map([...byNode].map(([nodeId, refs]) => [nodeId, [...refs].sort()]));
+}
+
+export interface BilateralReferenceNodeVerdict {
+  /**
+   * The scoped references whose verified match satisfies EVERY bilateral
+   * rule, mapped to their single active identity. This is exactly the set
+   * the durable linker would bind (or has already bound — an existing
+   * durable pair reads back as accepted).
+   */
+  acceptedByReference: Map<string, string>;
+  /** References whose match violates GLOBAL one-to-one cardinality (fail closed). */
+  ambiguousReferenceIds: string[];
+  /** References whose match contradicts an existing durable binding on either side (fail closed). */
+  conflictingReferenceIds: string[];
+}
+
+/**
+ * The durable linker's bilateral uniqueness/existing-binding rules, applied
+ * at READ time (DISC-SCR-017). A scoped reference resolves to an identity
+ * only when the durable linker would bind the same pair:
+ *
+ *  - exact confirmed provider-id equality with GLOBAL one-to-one
+ *    cardinality in BOTH directions: the reference is matched by exactly one
+ *    ACTIVE identity, and that identity is matched by exactly this one
+ *    reference anywhere (inverse ambiguity outside the local scope fails
+ *    closed too);
+ *  - compatible existing bindings on both sides: the identity must not be
+ *    durably linked to a DIFFERENT reference (the same one is the
+ *    idempotent durable binding, which reads resolve), and the reference
+ *    must not be durably held by a DIFFERENT identity.
+ *
+ * Nothing is written: ambiguous and conflicting references stay unresolved
+ * and no stored link changes. Unmatched references (no verified match at
+ * all) are simply absent from every verdict list, mirroring the scoped
+ * reader's shape.
+ */
+export async function bilaterallyVerifiedReferenceNodes(
+  db: Queryable,
+  scope: { referenceIds: readonly string[] },
+): Promise<BilateralReferenceNodeVerdict> {
+  const referenceIds = [...new Set(scope.referenceIds)];
+  const verdict: BilateralReferenceNodeVerdict = {
+    acceptedByReference: new Map(),
+    ambiguousReferenceIds: [],
+    conflictingReferenceIds: [],
+  };
+  if (referenceIds.length === 0) return verdict;
+
+  const nodesPerReference = await verifiedReferenceNodeMatches(db, { referenceIds });
+  const nodeIds = [...new Set([...nodesPerReference.values()].flat())];
+  const refsPerNode =
+    nodeIds.length > 0 ? await verifiedNodeReferenceMatches(db, { nodeIds }) : new Map<string, string[]>();
+  // Existing durable bindings on both sides (the linker's competing checks).
+  const { rows: boundNodes } = await db.query<{ id: string; cultural_reference_id: string | null }>(
+    'SELECT id, cultural_reference_id FROM graph_nodes WHERE id = ANY($1::uuid[])',
+    [nodeIds],
+  );
+  const bindingByNode = new Map(boundNodes.map((r) => [r.id, r.cultural_reference_id]));
+  const { rows: holderRows } = await db.query<{ cultural_reference_id: string; id: string }>(
+    'SELECT cultural_reference_id, id FROM graph_nodes WHERE cultural_reference_id = ANY($1::uuid[])',
+    [referenceIds],
+  );
+  const holdersByReference = new Map<string, Set<string>>();
+  for (const row of holderRows) {
+    const holders = holdersByReference.get(row.cultural_reference_id) ?? new Set<string>();
+    holders.add(row.id);
+    holdersByReference.set(row.cultural_reference_id, holders);
+  }
+
+  for (const referenceId of referenceIds) {
+    const nodes = nodesPerReference.get(referenceId) ?? [];
+    if (nodes.length === 0) continue; // no verified match: unresolved, never counted
+    if (nodes.length > 1) {
+      verdict.ambiguousReferenceIds.push(referenceId);
+      continue;
+    }
+    const nodeId = nodes[0]!;
+    const refs = refsPerNode.get(nodeId) ?? [];
+    // Global one-to-one cardinality in BOTH directions: the identity must
+    // be matched by exactly this reference (and no other reference anywhere).
+    if (refs.length !== 1 || refs[0] !== referenceId) {
+      verdict.ambiguousReferenceIds.push(referenceId);
+      continue;
+    }
+    // Compatible existing bindings, node side: a DIFFERENT durable reference
+    // competes (the same one is the idempotent binding reads may resolve).
+    const binding = bindingByNode.get(nodeId) ?? null;
+    if (binding != null && binding !== referenceId) {
+      verdict.conflictingReferenceIds.push(referenceId);
+      continue;
+    }
+    // Compatible existing bindings, reference side: a durable holder that is
+    // a DIFFERENT identity competes.
+    const holders = holdersByReference.get(referenceId);
+    if (holders && [...holders].some((id) => id !== nodeId)) {
+      verdict.conflictingReferenceIds.push(referenceId);
+      continue;
+    }
+    verdict.acceptedByReference.set(referenceId, nodeId);
+  }
+  return verdict;
 }
 
 export interface GraphReferenceLinkCounts {

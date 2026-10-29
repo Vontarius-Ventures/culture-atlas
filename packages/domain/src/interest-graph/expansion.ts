@@ -9,7 +9,7 @@ import { validateGraphPath, type ValidatedGraphPath } from './paths';
 import { loadExplicitSupport } from './explicit-support';
 import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from './refresh';
 import { currentAssertionJustification, revalidatePinnedDependencies } from './validity';
-import { verifiedReferenceNodeMatches } from './identity-links';
+import { bilaterallyVerifiedReferenceNodes } from './identity-links';
 import {
   createGraphRun,
   insertGraphRecommendation,
@@ -229,6 +229,13 @@ export interface ExpansionCounts {
   referencesLinked: number;
   /** Root references whose verified matches are ambiguous (stay unresolved). */
   referenceLinksAmbiguous: number;
+  /**
+   * Root references whose verified match contradicts an existing durable
+   * binding (the identity is already linked to a different reference, or the
+   * reference is already held by a different identity): fail closed, nothing
+   * resolves and no stored link changes (DISC-SCR-017).
+   */
+  referenceLinksConflicting: number;
   /**
    * Ranked candidates whose publication item was found through the same
    * verified provider-id link (the account's item on the matching reference).
@@ -508,6 +515,7 @@ function emptyCounts(): ExpansionCounts {
     unmappedPersonalRoots: 0,
     referencesLinked: 0,
     referenceLinksAmbiguous: 0,
+    referenceLinksConflicting: 0,
     candidatesResolvedByLink: 0,
     capturesWithoutAnalysis: 0,
     photoReferencesDenied: 0,
@@ -877,18 +885,25 @@ async function runExpansion(
   // Candidates whose corpus identity has NO durable reference binding
   // materialize through the SAME verified provider-id link that resolves
   // roots: the identity's CONFIRMED provider id must equal an account item's
-  // reference id (exact equality, never a name match). Ambiguous links fail
-  // closed in BOTH directions — one identity matching two references, or one
-  // reference matched by two identities, materializes nothing — and the
-  // honest candidatesWithoutItems count reports it.
+  // reference id (exact equality, never a name match) — and the pair must
+  // satisfy the DURABLE linker's full bilateral rules (DISC-SCR-017): GLOBAL
+  // one-to-one cardinality in BOTH directions, an ACTIVE identity and
+  // compatible existing bindings on both sides. One identity matching two
+  // references, one reference matched by two identities anywhere, an
+  // identity durably linked elsewhere or a reference durably held by a
+  // DIFFERENT identity materializes nothing — the honest
+  // candidatesWithoutItems count reports it.
   const unboundNodeIds = [
     ...new Set(candidateNodes.rows.filter((r) => r.cultural_reference_id == null).map((r) => r.id)),
   ];
   const itemByLinkedNode = new Map<string, { id: string; title: string }>();
   if (unboundNodeIds.length > 0) {
+    // Only ACTIVE identities resolve a card through the link — the same
+    // active requirement the root reader enforces.
     const linkedRefs = await tx.query<{ node_id: string; reference_id: string }>(
       `SELECT DISTINCT x.node_id, cr.id AS reference_id
          FROM graph_external_ids x
+         JOIN graph_nodes n ON n.id = x.node_id AND n.status = 'active'
          JOIN cultural_references cr
            ON (cr.external_ids ->> x.provider) = x.external_id
               OR cr.canonical_key = (x.provider || ':' || x.external_id)
@@ -902,34 +917,36 @@ async function runExpansion(
       refs.add(row.reference_id);
       refsByNode.set(row.node_id, refs);
     }
-    // Ambiguity is GLOBAL, not scoped to the candidate set: a reference
-    // matched by two identities anywhere (verifiedReferenceNodeMatches is
-    // the same reader the root path uses) is ambiguous in both directions,
-    // so neither identity materializes it (fail closed).
-    const matchedReferences = [...new Set(linkedRefs.rows.map((r) => r.reference_id))];
-    const nodesPerReference = await verifiedReferenceNodeMatches(tx, { referenceIds: matchedReferences });
-    const unambiguousReferences = [...nodesPerReference.entries()]
-      .filter(([, nodeIds]) => nodeIds.length === 1)
-      .map(([referenceId]) => referenceId);
-    const unambiguousReferenceSet = new Set(unambiguousReferences);
-    const itemsByReference = new Map<string, { id: string; title: string }>();
-    if (unambiguousReferences.length > 0) {
-      const items = await tx.query<{ id: string; title: string; reference_id: string }>(
-        `SELECT id, title, reference_id FROM discovery_items
-          WHERE owner_account_id = $1 AND reference_id = ANY($2::uuid[])
-          ORDER BY id`,
-        [accountId, unambiguousReferences],
-      );
-      for (const item of items.rows) {
-        if (!itemsByReference.has(item.reference_id)) itemsByReference.set(item.reference_id, { id: item.id, title: item.title });
+    // One identity matching two references materializes neither; the
+    // surviving (identity → sole reference) pairs then pass the same
+    // bilateral gate the root fallback uses, so a reference durably held by
+    // a different identity fails closed here exactly as the durable linker
+    // would refuse the bind.
+    const soleReferencePairs = [...refsByNode]
+      .filter(([, refs]) => refs.size === 1)
+      .map(([nodeId, refs]) => ({ nodeId, referenceId: [...refs][0]! }));
+    if (soleReferencePairs.length > 0) {
+      const verdict = await bilaterallyVerifiedReferenceNodes(tx, {
+        referenceIds: soleReferencePairs.map((pair) => pair.referenceId),
+      });
+      const acceptedReferenceIds = [...verdict.acceptedByReference.keys()];
+      const itemsByReference = new Map<string, { id: string; title: string }>();
+      if (acceptedReferenceIds.length > 0) {
+        const items = await tx.query<{ id: string; title: string; reference_id: string }>(
+          `SELECT id, title, reference_id FROM discovery_items
+            WHERE owner_account_id = $1 AND reference_id = ANY($2::uuid[])
+            ORDER BY id`,
+          [accountId, acceptedReferenceIds],
+        );
+        for (const item of items.rows) {
+          if (!itemsByReference.has(item.reference_id)) itemsByReference.set(item.reference_id, { id: item.id, title: item.title });
+        }
       }
-    }
-    for (const [nodeId, refs] of refsByNode) {
-      if (refs.size !== 1) continue;
-      const referenceId = [...refs][0]!;
-      if (!unambiguousReferenceSet.has(referenceId)) continue;
-      const item = itemsByReference.get(referenceId);
-      if (item) itemByLinkedNode.set(nodeId, item);
+      for (const { nodeId, referenceId } of soleReferencePairs) {
+        if (verdict.acceptedByReference.get(referenceId) !== nodeId) continue;
+        const item = itemsByReference.get(referenceId);
+        if (item) itemByLinkedNode.set(nodeId, item);
+      }
     }
   }
 
@@ -1424,9 +1441,15 @@ async function resolveRoots(
 /**
  * Resolves cultural references to ACTIVE shared identities. A durable
  * binding is authoritative; only references with no binding at all fall back
- * to the verified provider-id link (a name never links), and ambiguous
- * verified matches stay unresolved. Reports the link resolutions and
- * ambiguities honestly on the run's counts.
+ * to the verified provider-id link (a name never links) — and that fallback
+ * accepts a pair ONLY when the DURABLE linker would bind the same pair
+ * (DISC-SCR-017): exact confirmed provider-id equality, GLOBAL one-to-one
+ * cardinality in BOTH directions, an active identity and compatible existing
+ * bindings on both sides. Inverse ambiguity outside this root set (the
+ * identity matched by another reference anywhere) and competing durable
+ * bindings on either side fail closed without changing any stored link.
+ * Ambiguous verified matches stay unresolved, and the run's counts report
+ * resolutions, ambiguities and conflicts honestly.
  */
 async function nodesByReference(
   tx: Queryable,
@@ -1449,14 +1472,17 @@ async function nodesByReference(
   const boundReferenceIds = new Set(anyBinding.map((r) => r.cultural_reference_id));
   const unbound = unique.filter((id) => !boundReferenceIds.has(id));
   if (unbound.length === 0) return byReference;
-  const linked = await verifiedReferenceNodeMatches(tx, { referenceIds: unbound });
-  for (const [referenceId, nodeIds] of linked) {
-    if (nodeIds.length === 1) {
-      byReference.set(referenceId, nodeIds[0]!);
-      input.counts.referencesLinked++;
-    } else if (nodeIds.length > 1) {
-      input.counts.referenceLinksAmbiguous++;
-    }
+  // The read-time fallback binds NOTHING durably: it resolves roots only
+  // through the durable linker's own bilateral rules, so an identity already
+  // claimed elsewhere (by another reference's provider id, or by a competing
+  // durable binding) never becomes a root and never publishes from the
+  // wrong identity.
+  const verdict = await bilaterallyVerifiedReferenceNodes(tx, { referenceIds: unbound });
+  input.counts.referenceLinksAmbiguous += verdict.ambiguousReferenceIds.length;
+  input.counts.referenceLinksConflicting += verdict.conflictingReferenceIds.length;
+  for (const [referenceId, nodeId] of verdict.acceptedByReference) {
+    byReference.set(referenceId, nodeId);
+    input.counts.referencesLinked++;
   }
   return byReference;
 }

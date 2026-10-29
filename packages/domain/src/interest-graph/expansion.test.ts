@@ -10,6 +10,7 @@ import { submitCorrection } from '../services/analyses';
 import { recordPreference } from '../services/preferences';
 import {
   attachAssertionSupport,
+  bindGraphIdentityReference,
   insertEvidence,
   mapGraphExternalId,
   recordSourceRevision,
@@ -1529,6 +1530,175 @@ describe('corpus admission reaches real application references', () => {
       [competitor.id],
     );
     expect(competitorRows[0]!.cultural_reference_id).toBeNull();
+  });
+
+  it('an identity claimed by two references anywhere never becomes a root, personal or photo (inverse ambiguity, DISC-SCR-017)', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    await admitGraphCorpus(isoDb, manifest);
+    // TWO differently keyed real references carry the SAME confirmed provider
+    // id: the durable linker rejects the identity as ambiguous (one identity
+    // matched by two references), so nothing ever binds durably.
+    const refA = await realReference(ids.a);
+    const refADuplicate = await upsertReference(isoDb, {
+      canonicalKey: `work:duplicate-${randomUUID()}`,
+      name: `Duplicate provider id ${randomUUID().slice(0, 6)}`,
+      type: 'work',
+      externalIds: { qloo: ids.a },
+    });
+    const refB = await realReference(ids.b);
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    // The account saves the DUPLICATE-keyed reference's item and authorizes
+    // the same reference as a photo subject: both root kinds reach the same
+    // read-time fallback.
+    const itemADuplicate = await itemOn(accountId, refADuplicate);
+    const itemB = await itemOn(accountId, refB);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemADuplicate });
+    await photoCaptureIso(ctx, accountId, { referenceId: refADuplicate, resolution: 'user_confirmed', certainty: 0.9 });
+    await projectIso(accountId);
+
+    const result = await expandIso(accountId);
+    expect(result.expanded).toBe(true);
+    // The identity is claimed by a second reference OUTSIDE this root set, so
+    // the inverse ambiguity fails closed for BOTH root kinds: no root, no
+    // walk, no wrong-identity publication. (The second unmapped personal root
+    // is the saved capture's own item edge, which has no cultural reference
+    // of its own — the pre-existing honest count for capture saves.)
+    expect(result.counts.personalRoots).toBe(0);
+    expect(result.counts.photoRoots).toBe(0);
+    expect(result.counts.unmappedPersonalRoots).toBe(2);
+    expect(result.counts.photoReferencesUnmapped).toBe(1);
+    expect(result.counts.referencesLinked).toBe(0);
+    expect(result.counts.referenceLinksAmbiguous).toBe(1);
+    expect(result.counts.recommendationsPublished).toBe(0);
+    expect(result.candidates).toHaveLength(0);
+    // Fail closed without changing stored links: the disputed identity stays
+    // unbound and neither claiming reference is ever held.
+    const bindings = await bindingsByManifestKey(manifest);
+    expect(bindings.get(manifest.identities[0]!.key)).toBeNull();
+    for (const disputed of [refA, refADuplicate]) {
+      const { rows: holders } = await isoDb.query<{ id: string }>(
+        'SELECT id FROM graph_nodes WHERE cultural_reference_id = $1',
+        [disputed],
+      );
+      expect(holders).toHaveLength(0);
+    }
+    // And no wrong-identity card ever claimed the account's items.
+    const { rows: claimed } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM recommendations WHERE discovery_item_id = ANY($1::uuid[])',
+      [[itemADuplicate, itemB]],
+    );
+    expect(claimed).toHaveLength(0);
+  });
+
+  it('an unbound root matching an identity durably bound to a different reference fails closed (competing node binding, DISC-SCR-017)', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    await admitGraphCorpus(isoDb, manifest);
+    // A reviewed direct binding holds the root-side identity to its own
+    // reference (no provider ids on it), while a LATER compiler-shaped
+    // reference carries the identity's confirmed provider id: the durable
+    // linker rejects that pair as a competing binding, and so must reads.
+    const held = await upsertReference(isoDb, {
+      canonicalKey: `work:reviewed-${randomUUID()}`,
+      name: `Reviewed reference ${randomUUID().slice(0, 6)}`,
+      type: 'work',
+      externalIds: {},
+    });
+    const { rows: rootRows } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM graph_nodes WHERE canonical_key = $1',
+      [manifest.identities[0]!.key],
+    );
+    await bindGraphIdentityReference(isoDb, { nodeId: rootRows[0]!.id, culturalReferenceId: held });
+    const refACompeting = await realReference(ids.a);
+    const refB = await realReference(ids.b);
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    // The account saves the COMPETING reference's item (not the held one).
+    const itemACompeting = await itemOn(accountId, refACompeting);
+    const itemB = await itemOn(accountId, refB);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemACompeting });
+    await projectIso(accountId);
+
+    const result = await expandIso(accountId);
+    expect(result.expanded).toBe(true);
+    // The verified match contradicts the existing durable binding: the root
+    // stays unresolved and nothing publishes from the wrong identity.
+    expect(result.counts.personalRoots).toBe(0);
+    expect(result.counts.unmappedPersonalRoots).toBe(1);
+    expect(result.counts.referencesLinked).toBe(0);
+    expect(result.counts.referenceLinksConflicting).toBe(1);
+    expect(result.counts.referenceLinksAmbiguous).toBe(0);
+    expect(result.counts.recommendationsPublished).toBe(0);
+    expect(result.candidates).toHaveLength(0);
+    // The durable binding survives untouched and the competing reference is never held.
+    const bindings = await bindingsByManifestKey(manifest);
+    expect(bindings.get(manifest.identities[0]!.key)).toBe(held);
+    const { rows: holders } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM graph_nodes WHERE cultural_reference_id = $1',
+      [refACompeting],
+    );
+    expect(holders).toHaveLength(0);
+    const { rows: claimed } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM recommendations WHERE discovery_item_id = ANY($1::uuid[])',
+      [[itemACompeting, itemB]],
+    );
+    expect(claimed).toHaveLength(0);
+  });
+
+  it('an unbound candidate never materializes a reference durably held by a different identity (competing reference binding, DISC-SCR-017)', async () => {
+    const { manifest, ids } = reviewedManifestWithProviderIds();
+    await admitGraphCorpus(isoDb, manifest);
+    const refA = await realReference(ids.a);
+    // The candidate reference carries the candidate identity's confirmed
+    // provider id, but a DIFFERENT reviewed identity already holds it
+    // durably (by review, with no provider-id mapping of its own): the
+    // durable linker would reject the candidate pair as competing.
+    const refB = await realReference(ids.b);
+    const holder = await upsertGraphIdentity(isoDb, {
+      canonicalKey: `atlas:work:${randomUUID()}`,
+      canonicalName: `Holding identity ${randomUUID().slice(0, 6)}`,
+      nodeKind: 'work',
+      domain: 'art',
+      senseKey: 'painting',
+      culturalReferenceId: refB,
+    });
+
+    const { principal, ctx } = await isoAccountCtx();
+    const accountId = principal.accountId;
+    const itemA = await itemOn(accountId, refA);
+    const itemB = await itemOn(accountId, refB);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: itemA });
+    await projectIso(accountId);
+
+    const result = await expandIso(accountId);
+    expect(result.expanded).toBe(true);
+    // The authorized personal root still resolves through the verified link
+    // (the positive path is untouched)...
+    expect(result.counts.personalRoots).toBe(1);
+    expect(result.counts.referencesLinked).toBe(1);
+    // ...but the walked candidate never claims the account's item on the
+    // held reference: no wrong-identity recommendation is published.
+    expect(result.counts.candidatesResolvedByLink).toBe(0);
+    expect(result.counts.recommendationsPublished).toBe(0);
+    expect(result.counts.candidatesWithoutItems).toBe(1);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0]!.discoveryItemId).toBeNull();
+    const { rows: claimed } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM recommendations WHERE discovery_item_id = $1',
+      [itemB],
+    );
+    expect(claimed).toHaveLength(0);
+    // And no stored link changed: the holder keeps the reference, the corpus
+    // candidate stays unbound.
+    const { rows: holderRows } = await isoDb.query<{ id: string }>(
+      'SELECT id FROM graph_nodes WHERE cultural_reference_id = $1',
+      [refB],
+    );
+    expect(holderRows.map((r) => r.id)).toEqual([holder.id]);
+    const bindings = await bindingsByManifestKey(manifest);
+    expect(bindings.get(manifest.identities[1]!.key)).toBeNull();
   });
 
   it('a real authorized photo reference reaches the corpus through normal admission', async () => {
