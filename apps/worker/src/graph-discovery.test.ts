@@ -1,20 +1,37 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FakeQloo } from '@culture-atlas/providers/testing';
 import {
   JOB_HANDLERS,
+  admitGraphCorpus,
   agentConnections,
+  cancelJob,
+  claimJobs,
   collections,
   discovery,
   dispatchGraphOutbox,
   enqueueJob,
   ensureGraphWorkBudget,
+  getCorpusManifestFile,
+  heartbeatJob,
   items,
+  linkGraphReferenceIdentities,
   loadGraphWorkBudget,
   preferences,
   upsertGraphIdentity,
+  type Db,
+  type JobHandlerMap,
+  type PoolDb,
 } from '@culture-atlas/domain';
-import { closeTestDb, getTestDb, insertAgentConnection, testConfig, testContext } from '@culture-atlas/domain/testing';
+import {
+  closeTestDb,
+  createIsolatedDatabase,
+  getTestDb,
+  insertAccount,
+  insertAgentConnection,
+  testConfig,
+  testContext,
+} from '@culture-atlas/domain/testing';
 import { accountCtx, runJobs, world } from './test-world';
 import { Worker } from './worker';
 
@@ -472,4 +489,383 @@ describe('scoped Discover more grant fencing through the real worker (VAL-DISC-0
     // a paid provider fallback and no partial scoped results.
     expect(qloo.calls).toHaveLength(0);
   });
+});
+
+// --- DISC-SCR-039: the queue attempt publication fence through the REAL worker --
+
+describe('scoped Discover more queue attempt fencing through the real worker (DISC-SCR-039)', () => {
+  /**
+   * The real Worker's liveness callback (`stillOwnsJob` on the pool) is an
+   * UNLOCKED read: the real queue writers (cancel, reclaim, heartbeat, reap)
+   * are single-row jobs UPDATEs that can commit between that read and the
+   * scoped pass's commit while a tail write waits. The pass therefore locks
+   * its own queue attempt row in the publication transaction and revalidates
+   * running state, ownership, the pinned attempt, cancellation and the live
+   * lease through the commit. These cases drive the REAL Worker (real claim,
+   * heartbeat timer, stage records, completion and cancelled-cleanup paths)
+   * with its ctx.db parked at exactly one statement, so each ordering is
+   * deterministic:
+   *
+   *  - cancellation / lease transfer committing between the liveness read
+   *    and the guard rejects the pass (job cancelled / new attempt intact)
+   *    with zero published rows and no provider call;
+   *  - a writer arriving while the pass holds the row queues behind the
+   *    publication and lands after the commit (publisher-first: no
+   *    retroactive failure of a committed publication, and the bounded row
+   *    lock is never a heartbeat deadlock);
+   *  - the transferred attempt converges through another real worker.
+   */
+
+  /** Verified live Qloo entity ids (see the corpus manifest provenance). */
+  const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+  const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+
+  /** The pass's locked queue revalidation (DISC-SCR-039's guard). */
+  const GUARD_PATTERN = /SELECT lease_expiry FROM jobs/;
+  /** The pass's first tail write (where round 8's blocked tail motivated the fence). */
+  const TAIL_DELETE_PATTERN = /DELETE FROM recommendations WHERE discovery_job_id/;
+
+  let isoDb: PoolDb;
+  let dropIso: () => Promise<void>;
+
+  beforeAll(async () => {
+    const created = await createIsolatedDatabase('scrdqw');
+    isoDb = created.db;
+    dropIso = created.drop;
+    await admitGraphCorpus(isoDb, getCorpusManifestFile());
+  });
+  afterAll(async () => {
+    await dropIso();
+  });
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /**
+   * A Db view whose FIRST query matching `pattern` parks until `release()`.
+   * The statement is intercepted before it reaches the server, so the row
+   * stays unlocked and real queue writers can still commit while the pass
+   * sits between its unlocked liveness read and the committing writes.
+   */
+  function parkedDb(base: Db, pattern: RegExp): { db: Db; arrived: Promise<void>; release: () => void } {
+    let parked = false;
+    let markArrived!: () => void;
+    const arrived = new Promise<void>((resolve) => {
+      markArrived = resolve;
+    });
+    let openGate!: () => void;
+    const opened = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const wrap = (inner: Db): Db => {
+      const self: Db = {
+        inTransaction: inner.inTransaction,
+        // The park is transparent: identical statements, one held back. The
+        // generic query signature flows through the implementation cast.
+        query: (async (text: string, params?: readonly unknown[]) => {
+          if (!parked && pattern.test(text)) {
+            parked = true;
+            markArrived();
+            await opened;
+          }
+          return inner.query(text, params);
+        }) as Db['query'],
+        transaction: (fn) => inner.transaction((tx) => fn(wrap(tx))),
+      };
+      return self;
+    };
+    return { db: wrap(base), arrived, release: () => openGate() };
+  }
+
+  /** The real handler map with the pass's Db view parked at one statement. */
+  function parkedHandlers(park: { db: Db }): JobHandlerMap {
+    return {
+      ...JOB_HANDLERS,
+      discover_related: (ctx) => JOB_HANDLERS.discover_related({ ...ctx, db: park.db }),
+    };
+  }
+
+  interface ScopedQueueLibrary {
+    accountId: string;
+    origin: string;
+    collection: { id: string };
+    agentCtx: Awaited<ReturnType<typeof accountCtx>>;
+  }
+
+  /** A fresh scoped library on the isolated corpus database: owner + granted agent + anchored origin. */
+  async function scopedQueueLibrary(providers: Awaited<ReturnType<typeof world>>['providers']): Promise<ScopedQueueLibrary> {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, providers, config });
+    const ref = (canonicalKey: string, name: string, qlooId: string) =>
+      isoDb
+        .query<{ id: string }>(
+          `INSERT INTO cultural_references (canonical_name, canonical_key, type, external_ids)
+           VALUES ($1, $2, 'creator', $3::jsonb)
+           ON CONFLICT (canonical_key) DO UPDATE
+             SET external_ids = cultural_references.external_ids || EXCLUDED.external_ids, updated_at = now()
+           RETURNING id`,
+          [name, canonicalKey, JSON.stringify({ qloo: qlooId, qloo_types: ['urn:entity:person'] })],
+        )
+        .then((r) => r.rows[0]!.id);
+    const rodinRef = await ref(`qloo:${RODIN_QLOO_ID}`, 'Auguste Rodin', RODIN_QLOO_ID);
+    await ref(`qloo:${SEURAT_QLOO_ID}`, 'Georges Seurat', SEURAT_QLOO_ID);
+    const origin = (
+      await isoDb.query<{ id: string }>(
+        `INSERT INTO discovery_items (owner_account_id, owner_session_id, is_sample, kind, category, canonical_key, title,
+                                      display_metadata, external_ids, reference_id, resolved_anchor_ids)
+         VALUES ($1, NULL, false, 'artist', 'play', $2, $3, '{}'::jsonb, $4::jsonb, $5, '{}'::uuid[]) RETURNING id`,
+        [owner.accountId, `qloo:${RODIN_QLOO_ID}`, 'Auguste Rodin', JSON.stringify({ qloo: RODIN_QLOO_ID }), rodinRef],
+      )
+    ).rows[0]!.id;
+    const collection = await collections.createCollection(ownerCtx, { name: `scoped-queue-${randomUUID().slice(0, 8)}` });
+    await collections.addCollectionItem(ownerCtx, { id: collection.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [collection.id] },
+      isoDb,
+    );
+    await linkGraphReferenceIdentities(isoDb);
+    return {
+      accountId: owner.accountId,
+      origin,
+      collection,
+      agentCtx: testContext(agent.principal, { db: isoDb, providers, config }),
+    };
+  }
+
+  /** Enqueue the real agent-initiated scoped Discover more job. */
+  async function enqueueScoped(lib: ScopedQueueLibrary): Promise<{ jobId: string; discoveryJobId: string }> {
+    const started = await items.startRelatedDiscovery(lib.agentCtx, {
+      id: lib.origin,
+      body: { collection_id: lib.collection.id, category: 'play' },
+    });
+    return { jobId: started.job_id, discoveryJobId: started.discovery_job_id };
+  }
+
+  async function scopedRowsOf(discoveryJobId: string): Promise<{ recs: number; proofs: number }> {
+    const { rows: recs } = await isoDb.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+      [discoveryJobId],
+    );
+    const { rows: proofs } = await isoDb.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM scoped_discovery_result_proofs WHERE discovery_job_id = $1',
+      [discoveryJobId],
+    );
+    return { recs: Number(recs[0]!.n), proofs: Number(proofs[0]!.n) };
+  }
+
+  async function jobRowOf(
+    jobId: string,
+  ): Promise<{ state: string; lease_owner: string | null; attempt: number; cancel_requested_at: Date | null }> {
+    const { rows } = await isoDb.query<{
+      state: string;
+      lease_owner: string | null;
+      attempt: number;
+      cancel_requested_at: Date | null;
+    }>('SELECT state, lease_owner, attempt, cancel_requested_at FROM jobs WHERE id = $1', [jobId]);
+    return rows[0]!;
+  }
+
+  /** Fails honestly on timeout: the observed wait MUST be a real lock waiter. */
+  async function waitForLockWaiters(pattern: string, atLeast: number, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const { rows } = await isoDb.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE $1 AND datname = current_database()`,
+        [pattern],
+      );
+      if (Number(rows[0]!.n) >= atLeast) return;
+      if (Date.now() >= deadline)
+        throw new Error(`expected at least ${atLeast} lock waiter(s) matching ${pattern} within ${timeoutMs}ms`);
+      await sleep(25);
+    }
+  }
+
+  it('a cancellation committing between the worker liveness read and the tail rejects the real pass: cancelled, nothing published', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const qloo = providers.qloo as FakeQloo;
+    const lib = await scopedQueueLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+
+    const park = parkedDb(isoDb, GUARD_PATTERN);
+    const worker = new Worker({
+      db: isoDb,
+      providers,
+      config,
+      handlers: parkedHandlers(park),
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real',
+      heartbeatMs: 60_000,
+      leaseMs: 30_000,
+    });
+    const drained = worker.drain();
+    try {
+      // The real pass sits inside its publication transaction between its
+      // UNLOCKED liveness read (which already returned true) and the guard.
+      await park.arrived;
+
+      // The REAL cancellation writer commits in exactly that window.
+      expect(await cancelJob(isoDb, jobId)).toBe('running');
+
+      park.release();
+      await drained;
+    } finally {
+      park.release();
+      await worker.stop().catch(() => undefined);
+      await drained.catch(() => undefined);
+    }
+    const job = await jobRowOf(jobId);
+    expect(job.state).toBe('cancelled');
+    expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 0, proofs: 0 });
+    expect(qloo.calls).toHaveLength(0);
+  }, 20_000);
+
+  it('publisher-first: the real cancel and heartbeat queue on the held attempt row and land after the publication commits', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const lib = await scopedQueueLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+
+    const park = parkedDb(isoDb, TAIL_DELETE_PATTERN);
+    const worker = new Worker({
+      db: isoDb,
+      providers,
+      config,
+      handlers: parkedHandlers(park),
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real',
+      heartbeatMs: 60_000,
+      leaseMs: 30_000,
+    });
+    const drained = worker.drain();
+    try {
+      // The pass is parked AFTER its guard: the live attempt authority was
+      // validated under the lock, and the row lock is held through the commit.
+      await park.arrived;
+
+      // The real queue writers arrive mid-tail: both must QUEUE on the held
+      // row — the pass publishes under exactly the authority it validated.
+      const cancelled = cancelJob(isoDb, jobId);
+      void cancelled.catch(() => undefined);
+      await waitForLockWaiters('%UPDATE jobs SET cancel_requested_at%', 1);
+      const heartbeat = heartbeatJob(isoDb, jobId, 'w-real', 30_000);
+      void heartbeat.catch(() => undefined);
+      await waitForLockWaiters('%UPDATE jobs SET lease_expiry%', 1);
+
+      park.release();
+      await drained;
+
+      // The publication committed; the queued writers land after it. The
+      // later cancellation never retroactively fails the committed results,
+      // and the heartbeat settles as soon as the row lock releases (the tail
+      // is bounded by the work window — never a queue heartbeat deadlock).
+      expect(await cancelled).toBe('running');
+      await heartbeat;
+    } finally {
+      park.release();
+      await worker.stop().catch(() => undefined);
+      await drained.catch(() => undefined);
+    }
+    const job = await jobRowOf(jobId);
+    expect(job.state).toBe('complete');
+    expect(job.cancel_requested_at).not.toBeNull();
+    expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 1, proofs: 1 });
+  }, 20_000);
+
+  it('a real lease transfer supersedes the parked pass; the transferred attempt converges through another real worker', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const lib = await scopedQueueLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+
+    const park = parkedDb(isoDb, GUARD_PATTERN);
+    const worker = new Worker({
+      db: isoDb,
+      providers,
+      config,
+      handlers: parkedHandlers(park),
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real',
+      heartbeatMs: 60_000,
+      leaseMs: 30_000,
+    });
+    const drained = worker.drain();
+    try {
+      await park.arrived;
+
+      // The lease lapses and the REAL reclaim writer transfers it: the
+      // unlocked liveness read could not see this.
+      await isoDb.query(`UPDATE jobs SET lease_expiry = now() - interval '1 second' WHERE id = $1`, [jobId]);
+      const [reclaimed] = await claimJobs(isoDb, { workerId: 'w2', limit: 1, leaseMs: 30_000, ids: [jobId] });
+      expect(reclaimed?.attempt).toBe(2);
+
+      park.release();
+      await drained;
+    } finally {
+      park.release();
+      await worker.stop().catch(() => undefined);
+      await drained.catch(() => undefined);
+    }
+    // The superseded pass rejected and its cancelled-cleanup no-ops (the
+    // row belongs to the new attempt now): zero published rows, the new
+    // attempt's authority exactly as the real writer left it.
+    const job = await jobRowOf(jobId);
+    expect(job).toMatchObject({ state: 'running', lease_owner: 'w2', attempt: 2 });
+    expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 0, proofs: 0 });
+
+    // The transferred authority converges: the new attempt's lease lapses
+    // and another REAL worker reclaims (attempt 3) and publishes through
+    // the guard — with its production heartbeat cadence flowing.
+    await isoDb.query(`UPDATE jobs SET lease_expiry = now() - interval '1 second' WHERE id = $1`, [jobId]);
+    const worker2 = new Worker({
+      db: isoDb,
+      providers,
+      config,
+      handlers: JOB_HANDLERS,
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real-2',
+      heartbeatMs: 1_000,
+      leaseMs: 30_000,
+    });
+    const drained2 = worker2.drain();
+    try {
+      await drained2;
+    } finally {
+      await worker2.stop().catch(() => undefined);
+      await drained2.catch(() => undefined);
+    }
+    const jobAfter = await jobRowOf(jobId);
+    expect(jobAfter).toMatchObject({ state: 'complete', lease_owner: null, attempt: 3 });
+    expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 1, proofs: 1 });
+  }, 20_000);
+
+  it('the control: the real worker publishes scoped results through the guarded tail with live heartbeats', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const lib = await scopedQueueLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+
+    const worker = new Worker({
+      db: isoDb,
+      providers,
+      config,
+      handlers: JOB_HANDLERS,
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real',
+      heartbeatMs: 1_000,
+      leaseMs: 30_000,
+    });
+    const drained = worker.drain();
+    try {
+      await drained;
+    } finally {
+      await worker.stop().catch(() => undefined);
+      await drained.catch(() => undefined);
+    }
+    const job = await jobRowOf(jobId);
+    expect(job).toMatchObject({ state: 'complete', lease_owner: null, attempt: 1 });
+    expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 1, proofs: 1 });
+  }, 20_000);
 });

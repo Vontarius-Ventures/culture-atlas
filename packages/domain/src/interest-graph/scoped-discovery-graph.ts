@@ -79,11 +79,16 @@ import { revalidatePinnedDependencies } from './validity';
  * transaction — DISC-SCR-040) holds the initiating connection and origin
  * collection locks through the commit, BEFORE the scoped parent's own row
  * lock, so real collection deletion never deadlocks the publication in
- * either order; the job-liveness fence (`ensureActive`) and the scoped
- * parent's deletion fence stay in place. The capture lineage lock precedes
- * all of them, matching the capture writers' own lock order (capture row
- * first, then collections, then the deletion cascades that reach the
- * parent).
+ * either order; the scoped parent's deletion fence stays in place. The
+ * pass's UNLOCKED liveness callback (`ensureActive`) only stops it early:
+ * the queue attempt fence (DISC-SCR-039) locks the execution's own queue
+ * row at the tail and revalidates running state, ownership, the pinned
+ * attempt, cancellation and the live lease through the commit, so real
+ * cancellation, lease transfer, same-worker re-claims and tail-wait lease
+ * expiry can never let a stale pass commit private results. The capture
+ * lineage lock precedes all of them, matching the capture writers' own lock
+ * order (capture row first, then collections, then the deletion cascades
+ * that reach the parent).
  *
  * Bounded work (DISC-SCR-035): the immutable authority row's
  * `work_deadline_at` (migration 400) anchors this discovery's ONE work
@@ -525,8 +530,42 @@ export async function runScopedGraphDiscovery(
     authority: ScopedDiscoveryGrantAuthority;
     /** The operation's requested category filter, if any. */
     category: Category | null;
-    /** Job-liveness fence, invoked immediately before any publication write. */
+    /**
+     * Job-liveness fence, invoked immediately before any publication write.
+     * An UNLOCKED cooperative check (the real Worker's `stillOwnsJob` read
+     * on the pool plus its abort signal): it stops the pass early, but it
+     * is not authority through the committing writes — when `queue` is
+     * present, the tail's locked queue revalidation below is what actually
+     * fences the publication (DISC-SCR-039).
+     */
     ensureActive: () => Promise<void>;
+    /**
+     * The real queue attempt authority of THIS execution (DISC-SCR-039):
+     * the worker that claimed the queue job and the attempt it claimed
+     * (`authority.job_id` pins the queue job). The production
+     * discover_related handler always passes both from its JobContext.
+     * When present, the tail publication stage LOCKS the pass's own queue
+     * row — FOR NO KEY UPDATE, the compatible strength: it conflicts with
+     * every queue writer's row lock (heartbeat, cancel, reclaim, reap and
+     * completion all touch the row) while FK-dependent job_stages readers
+     * (FOR KEY SHARE) keep flowing — and revalidates under the lock the
+     * full attempt authority: still `running`, still this worker, still
+     * this attempt (a same-worker re-claim advanced it), not cancelled,
+     * and a lease still live at the database's own clock. The lock holds
+     * through the commit, so a queue writer that committed before it is
+     * the state revalidated (cancellation/lease-transfer-first: the pass
+     * rejects and the whole transaction rolls back) and one arriving
+     * during the tail writes queues behind the publication and lands
+     * after it (publisher-first: no retroactive failure of a committed
+     * publication). The pinned lease expiry is rechecked at the final
+     * publication boundary: only time can move it while the row is locked.
+     * The lock is taken only at the tail — the walk stays
+     * heartbeat-friendly — and its waits stay bounded by the work window's
+     * current remainder, never a queue heartbeat deadlock. Harnesses
+     * running the pass without a real claimed lease omit it and keep the
+     * `ensureActive` fence as before.
+     */
+    queue?: { workerId: string; attempt: number };
     at?: Date;
     /**
      * The clock the deadline stage checks read (default: real time). The
@@ -911,6 +950,44 @@ export async function runScopedGraphDiscovery(
       // wait outlives the window.
       await enforceDeadline();
       await input.ensureActive();
+      // --- The queue attempt fence (DISC-SCR-039) --------------------------------------
+      // The pass's unlocked liveness callback above is NOT authority through
+      // the committing writes: the real queue writers — cancelJob, the
+      // reclaiming claimJobs, reapJobs, the heartbeat and job completion —
+      // are single-row jobs UPDATEs that can commit between that read and
+      // this commit while a tail write waits on someone else's lock. So the
+      // tail first LOCKS this execution's own queue row (FOR NO KEY UPDATE:
+      // it conflicts with every queue writer's row lock while
+      // FK-dependent job_stages readers keep flowing) and revalidates, under
+      // the lock, the FULL attempt authority this execution claimed: the row
+      // is still `running`, still owned by this worker, still this attempt
+      // (a same-worker re-claim advanced it — a stale pass never publishes
+      // over a newer attempt), not cancelled, and its lease is still live
+      // at the database's own clock. The lock holds through this commit:
+      // a writer that committed before it is the state revalidated here
+      // (cancellation/lease-transfer-first: reject and roll the whole
+      // transaction back — no stale rows), and one arriving during the tail
+      // writes queues behind the publication and lands after it
+      // (publisher-first: the pass publishes under exactly the authority
+      // it validated, and the later cancellation/reclaim never
+      // retroactively fails a committed publication). The guard's lock
+      // wait is bounded by the window's CURRENT remainder, so a queue
+      // writer can never be starved by a pass that already lost its window.
+      let queueLeaseExpiresAt: Date | null = null;
+      if (input.queue) {
+        const guard = await tx.query<{ lease_expiry: Date }>(
+          `SELECT lease_expiry FROM jobs
+            WHERE id = $1 AND type = 'discover_related'
+              AND state = 'running' AND lease_owner = $2 AND attempt = $3
+              AND cancel_requested_at IS NULL
+              AND lease_expiry > clock_timestamp()
+            FOR NO KEY UPDATE`,
+          [authority.job_id, input.queue.workerId, input.queue.attempt],
+        );
+        if (!guard.rows[0]) throw new JobCancelledError('lease lost');
+        queueLeaseExpiresAt = guard.rows[0].lease_expiry;
+      }
+      await enforceDeadline();
       await tx.query('DELETE FROM recommendations WHERE discovery_job_id = $1', [authority.discovery_job_id]);
       const contributingReferenceIds = rootReferences.map((r) => r.id);
       const parent: RecommendationParent = { kind: 'discovery_job', discoveryJobId: authority.discovery_job_id };
@@ -984,6 +1061,16 @@ export async function runScopedGraphDiscovery(
       if (deadlineAt.getTime() <= finalNow.getTime()) throw new GraphWorkDeadlineExpiredError();
       if (fence.connectionExpiresAt && fence.connectionExpiresAt.getTime() <= finalNow.getTime()) {
         throw new AppError('token_expired');
+      }
+      // The queue attempt fence gets the same last word (DISC-SCR-039): the
+      // pinned lease expiry is the only attempt authority that can still
+      // move while the row is locked — only time can move it — so a lease
+      // that expired during a tail wait rejects the publication before the
+      // commit, exactly like the window and the grant's own expiry above.
+      // The three outcomes stay distinct: the work window's logical
+      // deadline, the grant's token expiry, and the lost queue lease.
+      if (queueLeaseExpiresAt && queueLeaseExpiresAt.getTime() <= finalNow.getTime()) {
+        throw new JobCancelledError('lease lost');
       }
       // The pinned photo lineage gets the same last word (DISC-SCR-037): the
       // capture must still be live and still activate exactly the analysis

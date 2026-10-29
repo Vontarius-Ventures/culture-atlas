@@ -210,6 +210,16 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           category: ctx.payload.category ?? null,
           ensureActive: ctx.ensureActive,
           signal: ctx.signal,
+          // The real queue attempt authority of THIS execution (DISC-SCR-
+          // 039): the claiming worker and its claimed attempt. The pass's
+          // tail locks the queue row these pin and revalidates running
+          // state, ownership, the attempt, cancellation and the live lease
+          // through its commit, so real cancellation, lease transfer,
+          // same-worker re-claims and tail-wait lease expiry can never let
+          // a superseded pass commit scoped results. A completed-stage
+          // replay never re-runs the pass at all (runStageOnce), so
+          // redelivery replays unchanged.
+          queue: { workerId: ctx.workerId, attempt: ctx.attempt },
         }),
       );
       // Bounded-work telemetry: ids, versions, counters and rejection codes
