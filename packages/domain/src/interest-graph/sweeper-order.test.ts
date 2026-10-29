@@ -6,7 +6,7 @@ import { PROJECTION_SUPPORT_VERSION } from './schema';
 import { dispatchGraphExpansion } from './sweeper';
 import { interestGraphExpansionDedupeKey } from '../jobs/dedupe';
 import { claimJobs } from '../jobs/queue';
-import { loadGraphRefreshRow } from './refresh';
+import { consumeExpansionDue, loadGraphRefreshRow } from './refresh';
 
 /**
  * Ordered expansion dispatch (DISC-SCR-012, VAL-DISC-003).
@@ -197,7 +197,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     // does not occupy the active window) and then stalls with its enqueue
     // unsent — the exact between-snapshot-and-enqueue gap.
     const park = stalledDb((text) => text.includes('INSERT INTO jobs'));
-    const dispatchA = dispatchGraphExpansion(park.db, { config, ownerAccountId: accountId, now: at(0) });
+    const dispatchA = dispatchGraphExpansion(park.db, { config, ownerAccountId: accountId, now: () => at(0) });
     await park.reached;
 
     // While A is stalled the world moves on: the stamp the newer dispatches
@@ -237,7 +237,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     // Sweep A stalls INSIDE its per-account operation with the enqueue unsent;
     // whatever it holds is held through its commit.
     const park = stalledDb((text) => text.includes('INSERT INTO jobs'));
-    const dispatchA = dispatchGraphExpansion(park.db, { config, ownerAccountId: accountId, now: at(0) });
+    const dispatchA = dispatchGraphExpansion(park.db, { config, ownerAccountId: accountId, now: () => at(0) });
     await park.reached;
 
     // Sweep B is a real dispatch on the pool, far enough past A's window that
@@ -245,7 +245,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     const dispatchB = dispatchGraphExpansion(db, {
       config,
       ownerAccountId: accountId,
-      now: at(16 * 60_000 + 1_000),
+      now: () => at(16 * 60_000 + 1_000),
     });
 
     let sweptA: Awaited<typeof dispatchA> | undefined;
@@ -281,7 +281,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     const dispatch = dispatchGraphExpansion(failingDb((text) => text.includes('INSERT INTO graph_refresh_state')), {
       config,
       ownerAccountId: accountId,
-      now: at(0),
+      now: () => at(0),
     });
     await expect(dispatch).rejects.toThrow('simulated dispatch failure');
     expect(await expansionJobs(accountId)).toHaveLength(0);
@@ -290,7 +290,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     expect(refresh!.expansion_due_since!.toISOString()).toBe(at(-60_000).toISOString());
 
     // The pending due work survives for the next sweep.
-    const recovered = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: at(1_000) });
+    const recovered = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: () => at(1_000) });
     expect(recovered.accounts).toHaveLength(1);
     expect((await loadGraphRefreshRow(db, accountId))!.last_expansion_at!.toISOString()).toBe(at(1_000).toISOString());
   });
@@ -300,7 +300,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     await projectAccount(accountId);
     await setRefresh(accountId, { dueSince: at(-60_000) });
 
-    const first = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: at(0) });
+    const first = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: () => at(0) });
     expect(first.accounts).toHaveLength(1);
     const jobId = first.accounts[0]!.jobId;
 
@@ -313,7 +313,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
 
     // The sweep sees an ACTIVE expansion — running counts, expired lease or
     // not — and hands nothing new to the queue; due-ness stays untouched.
-    const during = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: at(30_000) });
+    const during = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: () => at(30_000) });
     expect(during.accounts).toEqual([]);
     expect(await expansionJobs(accountId)).toHaveLength(1);
 
@@ -334,7 +334,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     await projectAccount(accountId);
     await setRefresh(accountId, { dueSince: at(-60_000) });
 
-    const first = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: at(0) });
+    const first = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: () => at(0) });
     expect(first.accounts).toHaveLength(1);
     const firstKey = (await expansionJobs(accountId))[0]!.dedupe_key;
 
@@ -348,7 +348,7 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     );
     await setRefresh(accountId, { dueSince: at(30_000), lastExpansion: at(0) });
 
-    const second = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: at(45_000) });
+    const second = await dispatchGraphExpansion(db, { config, ownerAccountId: accountId, now: () => at(45_000) });
     expect(second.accounts).toHaveLength(1);
     expect(second.accounts[0]!.trigger).toBe('due');
     expect(second.accounts[0]!.reused).toBe(false);
@@ -359,5 +359,100 @@ describe('ordered expansion dispatch (DISC-SCR-012)', () => {
     const active = await activeExpandJobs(accountId);
     expect(active).toHaveLength(1);
     expect(active[0]!.id).toBe(second.accounts[0]!.jobId);
+  });
+});
+
+describe('monotone refresh stamp (DISC-SCR-023)', () => {
+  it('a sweep stalled before account ordering stamps the current time, never a regressed pre-scan instant', async () => {
+    const accountId = await newAccount();
+    await projectAccount(accountId);
+
+    // OLD sweep A: it captures its pre-scan clock (T0) and then stalls with
+    // its candidate scan unsent — before any account ordering — holding no
+    // locks. Its clock keeps running while it is stalled (the production clock
+    // is the wall clock), so the instant it eventually stamps must be the
+    // CURRENT one, not the pre-scan T0.
+    const park = stalledDb((text) => text.includes('ORDER BY COALESCE(rs.expansion_due_since'));
+    let clockNow = at(0);
+    const dispatchA = dispatchGraphExpansion(park.db, { config, ownerAccountId: accountId, now: () => clockNow });
+    await park.reached;
+
+    // While A is stalled, a NEWER sweep dispatches the account's window at a
+    // later clock and that window's job completes: its work is consumed and
+    // its stamp (T0+16m) is the current dispatch stamp.
+    const dispatchB = await dispatchGraphExpansion(db, {
+      config,
+      ownerAccountId: accountId,
+      now: () => at(16 * 60_000),
+    });
+    expect(dispatchB.accounts).toHaveLength(1);
+    expect(dispatchB.accounts[0]!.trigger).toBe('periodic');
+    await db.query(`UPDATE jobs SET state = 'complete', finished_at = now() WHERE id = $1`, [
+      dispatchB.accounts[0]!.jobId,
+    ]);
+
+    // GENUINE mutation-triggered due work lands after B's window.
+    await setRefresh(accountId, { dueSince: at(17 * 60_000), lastExpansion: at(16 * 60_000) });
+
+    // A resumes at a clock 18 minutes past its pre-scan instant. The genuine
+    // due work must still be dispatched (a due marker refreshes even inside a
+    // closed periodic window) — but stamped at the resumed sweep's CURRENT
+    // time, never at the stale pre-scan T0 over B's newer window.
+    clockNow = at(18 * 60_000);
+    park.release();
+    const sweptA = await dispatchA;
+
+    expect(sweptA.accounts).toHaveLength(1);
+    expect(sweptA.accounts[0]!.trigger).toBe('due');
+    expect(sweptA.accounts[0]!.reused).toBe(false);
+    expect(sweptA.accounts[0]!.jobId).not.toBe(dispatchB.accounts[0]!.jobId);
+    const refreshA = await loadGraphRefreshRow(db, accountId);
+    expect(refreshA!.last_expansion_at!.toISOString()).toBe(at(18 * 60_000).toISOString());
+
+    // The dedupe key is the LOCKED row's pre-dispatch stamp (B's window) —
+    // not A's stale pre-scan time and not the new stamp.
+    const jobs = await expansionJobs(accountId);
+    expect(jobs).toHaveLength(2);
+    expect(jobs[1]!.dedupe_key).toBe(
+      interestGraphExpansionDedupeKey({ accountId, lastExpansionAt: at(16 * 60_000) }),
+    );
+
+    // A's window completes and consumes the due work it covered.
+    await db.query(`UPDATE jobs SET state = 'complete', finished_at = now() WHERE id = $1`, [
+      sweptA.accounts[0]!.jobId,
+    ]);
+    await consumeExpansionDue(db, { accountId, dueUntil: at(18 * 60_000) });
+
+    // No extra periodic job: the 15-minute bound runs from the FRESH stamp
+    // (T0+18m). Before the repair A regressed the stamp to its pre-scan T0,
+    // and the next sweep fired an immediate second periodic job once the due
+    // work was consumed.
+    const beforeReopen1 = await dispatchGraphExpansion(db, {
+      config,
+      ownerAccountId: accountId,
+      now: () => at(25 * 60_000),
+    });
+    expect(beforeReopen1.accounts).toEqual([]);
+    const beforeReopen2 = await dispatchGraphExpansion(db, {
+      config,
+      ownerAccountId: accountId,
+      now: () => at(32 * 60_000),
+    });
+    expect(beforeReopen2.accounts).toEqual([]);
+
+    // The periodic window reopens exactly 15 minutes after the FRESH stamp.
+    const reopened = await dispatchGraphExpansion(db, {
+      config,
+      ownerAccountId: accountId,
+      now: () => at(33 * 60_000),
+    });
+    expect(reopened.accounts).toHaveLength(1);
+    expect(reopened.accounts[0]!.trigger).toBe('periodic');
+
+    // One active expansion at a time throughout: the reopened window is the
+    // only active job the account has.
+    const active = await activeExpandJobs(accountId);
+    expect(active).toHaveLength(1);
+    expect(active[0]!.id).toBe(reopened.accounts[0]!.jobId);
   });
 });

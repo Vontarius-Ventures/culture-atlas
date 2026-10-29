@@ -33,6 +33,13 @@ import { PROJECTION_SUPPORT_VERSION } from './schema';
  *    makes a second active expansion row unrepresentable at the storage level.
  *    A dispatched job that never runs still sits in the queue: a restarted
  *    worker claims it; nothing is consumed by dispatch alone.
+ *  - The ordered operation runs on a FRESH clock taken after the account lock
+ *    (DISC-SCR-023): a sweep stalled before an account's ordering resumes at
+ *    the current time, so its eligibility comparison and dispatch stamp use
+ *    the resumed instant, and the dedupe key is selected from the locked row's
+ *    current pre-dispatch stamp — the stamp can never regress over a newer
+ *    expansion window and re-open the 15-minute periodic bound for an extra
+ *    immediate job once due work is consumed.
  *  - Paused, flag-off or killed accounts are skipped with their due markers
  *    retained: nothing about an ineligible sweep consumes due-ness.
  *
@@ -51,8 +58,15 @@ export interface DispatchGraphExpansionInput {
   ownerAccountId?: string;
   /** Max accounts handled in one sweep pass. */
   limit?: number;
-  /** Controlled clock for the periodic window and the dispatch stamp. */
-  now?: Date;
+  /**
+   * The ordered-operation clock, consulted once per sweep pass for the
+   * candidate pre-scan and AGAIN inside each per-account ordered operation,
+   * after the account lock (DISC-SCR-023): a sweep stalled mid-pass re-decides
+   * eligibility and stamps its dispatch window at the CURRENT time, so a
+   * stale pre-scan instant can never regress `last_expansion_at` over a newer
+   * expansion window. Default: the wall clock.
+   */
+  now?: () => Date;
 }
 
 export interface DispatchedGraphExpansion {
@@ -76,8 +90,13 @@ export async function dispatchGraphExpansion(
   // projection opt-in) nothing can be eligible at all, and due markers stay
   // exactly where they are for a later, enabled sweep.
   if (!discoveryEnabledInConfig(input.config)) return { accounts: [] };
-  const now = input.now ?? new Date();
+  const clock = input.now ?? (() => new Date());
   const limit = Math.max(1, input.limit ?? 50);
+  // The pre-scan clock: one instant for the candidate pre-filter, captured
+  // before the pass examines anyone. The per-account ordered operation below
+  // re-reads the clock AFTER the account lock (DISC-SCR-023), so this instant
+  // only shapes which accounts the pass looks at — never a stamped window.
+  const scanNow = clock();
 
   // Eligibility is decided BEFORE the limit. The kill prefilter is the
   // database half of `discoveryEnabledForAccount` for the two graph flags and
@@ -114,7 +133,7 @@ export async function dispatchGraphExpansion(
         AND ($4::uuid IS NULL OR s.owner_account_id = $4::uuid)
       ORDER BY COALESCE(rs.expansion_due_since, rs.last_expansion_at) NULLS FIRST, s.owner_account_id
       LIMIT $1`,
-    [limit, PROJECTION_SUPPORT_VERSION, now, input.ownerAccountId ?? null, GRAPH_EXPANSION_PERIODIC_MS / 1000],
+    [limit, PROJECTION_SUPPORT_VERSION, scanNow, input.ownerAccountId ?? null, GRAPH_EXPANSION_PERIODIC_MS / 1000],
   );
 
   const accounts: DispatchedGraphExpansion[] = [];
@@ -122,7 +141,7 @@ export async function dispatchGraphExpansion(
     const accountId = candidate.owner_account_id;
     let dispatched: DispatchedGraphExpansion | null;
     try {
-      dispatched = await dispatchAccountWindow(db, { accountId, config: input.config, now });
+      dispatched = await dispatchAccountWindow(db, { accountId, config: input.config, now: clock });
     } catch (err) {
       // The storage fence (migration 340) fired: another window's job became
       // active inside the lock-to-insert gap. The transaction rolled back —
@@ -168,10 +187,20 @@ function isOneActiveExpansionViolation(err: unknown): boolean {
  * residual gap between the in-lock recheck and the insert is closed by the
  * storage fence above: the insert itself is impossible while any other window
  * for the account is active.
+ *
+ * The ordered operation also runs on a clock taken AFTER the account lock
+ * (DISC-SCR-023), not on the sweep's pre-scan instant. A sweep stalled before
+ * this account's ordering resumes long after it captured its pre-scan clock;
+ * the periodic-window comparison and the stamp write use the resumed
+ * operation's CURRENT instant, and the dedupe key is selected from the locked
+ * row's current pre-dispatch stamp, so the stamp can never move backwards
+ * over a newer expansion window — which would otherwise re-open the
+ * 15-minute periodic bound and dispatch an extra immediate periodic job once
+ * the due work is consumed.
  */
 async function dispatchAccountWindow(
   db: Db,
-  input: { accountId: string; config: DiscoveryGateConfig; now: Date },
+  input: { accountId: string; config: DiscoveryGateConfig; now: () => Date },
 ): Promise<DispatchedGraphExpansion | null> {
   return db.transaction(async (tx) => {
     // The ordered account lock, held through this transaction's commit.
@@ -180,6 +209,11 @@ async function dispatchAccountWindow(
     // pause/resume, publishers and deletion order against it.
     const present = await lockAccountPublicationAuthority(tx, input.accountId);
     if (!present) return null; // deletion won the ordering; nothing consumed
+
+    // The fresh ordered-operation clock, taken AFTER the lock: eligibility,
+    // the dedupe key and the stamp below all decide at this instant, never at
+    // the sweep's pre-scan time (DISC-SCR-023).
+    const opNow = input.now();
 
     // Fresh eligibility under the lock: every snapshot condition re-read.
     // Ineligible now (behind projection, unsatisfied intents, an active
@@ -208,7 +242,7 @@ async function dispatchAccountWindow(
              OR rs.last_expansion_at IS NULL
              OR rs.last_expansion_at <= $3::timestamptz - make_interval(secs => $4::int)
               )`,
-      [input.accountId, PROJECTION_SUPPORT_VERSION, input.now, GRAPH_EXPANSION_PERIODIC_MS / 1000],
+      [input.accountId, PROJECTION_SUPPORT_VERSION, opNow, GRAPH_EXPANSION_PERIODIC_MS / 1000],
     );
     const row = fresh.rows[0];
     if (!row) return null;
@@ -240,7 +274,7 @@ async function dispatchAccountWindow(
        VALUES ($1, $2)
        ON CONFLICT (owner_account_id)
          DO UPDATE SET last_expansion_at = $2, updated_at = now()`,
-      [input.accountId, input.now],
+      [input.accountId, opNow],
     );
     return {
       accountId: input.accountId,

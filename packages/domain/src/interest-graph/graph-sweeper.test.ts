@@ -63,7 +63,7 @@ function sweep(accountId: string, offsetMs: number, overrides: { config?: typeof
   return dispatchGraphExpansion(db, {
     config: overrides.config ?? config,
     ownerAccountId: accountId,
-    now: at(offsetMs),
+    now: () => at(offsetMs),
   });
 }
 
@@ -127,7 +127,7 @@ describe('the closed-app expansion sweeper (VAL-DISC-003)', () => {
     await noteExpansionDue(db, accountId);
 
     // The unscoped global sweep (what the worker tick runs).
-    const swept = await dispatchGraphExpansion(db, { config, now: at(0) });
+    const swept = await dispatchGraphExpansion(db, { config, now: () => at(0) });
     const mine = swept.accounts.find((entry) => entry.accountId === accountId);
     expect(mine).toBeDefined();
     expect(mine!.trigger).toBe('due');

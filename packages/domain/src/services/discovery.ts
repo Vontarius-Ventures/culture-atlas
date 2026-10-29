@@ -466,7 +466,11 @@ export async function getDiscoveries(ctx: ServiceContext, query: DiscoveriesQuer
         await dispatchGraphExpansion(ctx.db, {
           config: ctx.config,
           ownerAccountId: owner.accountId,
-          now: ctx.now(),
+          // The ordered-operation clock (DISC-SCR-023): the dispatch re-reads
+          // the clock after the account lock, so a request stalled before its
+          // per-account operation stamps the current instant, never this
+          // request's start time.
+          now: () => ctx.now(),
         });
       } catch {
         // The cards already on screen stay; the sweeper retries the handoff.

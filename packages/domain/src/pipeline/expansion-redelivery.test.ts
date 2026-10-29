@@ -142,7 +142,7 @@ async function publishingAccount(): Promise<{ accountId: string; jobId: string; 
 
   // The real ordered dispatch hands the due window to the queue (this also
   // exercises the per-account dispatch operation end to end).
-  const swept = await dispatchGraphExpansion(db, { config: graphOn, ownerAccountId: accountId, now: new Date() });
+  const swept = await dispatchGraphExpansion(db, { config: graphOn, ownerAccountId: accountId, now: () => new Date() });
   expect(swept.accounts).toHaveLength(1);
   const jobId = swept.accounts[0]!.jobId;
   const job = await getJobById(db, jobId);
@@ -299,7 +299,7 @@ describe('at-least-once redelivery of a committed expansion pass', () => {
     const reswept = await dispatchGraphExpansion(db, {
       config: graphOn,
       ownerAccountId: accountId,
-      now: new Date(Date.now() + 1_000),
+      now: () => new Date(Date.now() + 1_000),
     });
     expect(reswept.accounts).toHaveLength(1);
     expect(reswept.accounts[0]!.trigger).toBe('due');
