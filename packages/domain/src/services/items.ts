@@ -6,6 +6,7 @@ import { LIMITS, type Category, type ItemKind, type RecommendationOrigin, type R
 import { AppError } from '../errors';
 import { SAMPLE_ITEMS, sampleKey } from '../feed/samples';
 import { enqueueJob, relatedDiscoveryDedupeKey } from '../jobs';
+import { lockAgentGrantEpoch, recordDiscoveryGrantAuthority } from '../interest-graph/scoped-discovery';
 import { loadItemAnchors } from '../library/anchors';
 import {
   grantedIds,
@@ -37,6 +38,10 @@ import { getTasteRevision } from './taste';
  * generation; only POST .../discoveries starts one bounded discover_related
  * job (dedupe: relatedDiscoveryDedupeKey). Agents: the item must be within a
  * granted collection (pass collection_id) and results stay tied to that origin.
+ * A selected-collection enqueue also pins its durable grant authority — owner,
+ * initiating connection, enqueue-time authorization version, granted collection
+ * and origin item — in one immutable row for the approved scoped graph branch
+ * (interest-graph/scoped-discovery.ts); legacy whole-library enqueues write none.
  */
 
 interface ItemRow {
@@ -381,6 +386,20 @@ export async function startRelatedDiscovery(
       return { job_id: existing.rows[0].id, discovery_job_id: existing.rows[0].payload.discovery_job_id, reused: true };
     }
     await consumeDailyQuota(db, { principal: p, metric: 'analyses', config: ctx.config, now: ctx.now() });
+    // Approved grant-scoped extension: a selected-collection enqueue pins the
+    // live grant epoch (the connection's authorization version plus the
+    // collection grant's granted_at) under the connection's row lock,
+    // serialized with owner grant mutations. Revoke, expiry or a grant that
+    // vanished since the request's checks fail the enqueue closed here.
+    const grantEpoch =
+      originCollectionId && p.kind === 'agent'
+        ? await lockAgentGrantEpoch(db, {
+            accountId: p.accountId,
+            connectionId: p.connectionId,
+            collectionId: originCollectionId,
+            now: ctx.now(),
+          })
+        : null;
     const cols = ownerColumns(owner);
     const dj = await db.query<{ id: string }>(
       `INSERT INTO discovery_jobs (owner_account_id, owner_session_id, origin_item_id, agent_connection_id,
@@ -420,6 +439,25 @@ export async function startRelatedDiscovery(
       await db.query('DELETE FROM discovery_jobs WHERE id = $1', [discoveryJobId]);
       const payload = job.payload as { discovery_job_id: string };
       return { job_id: job.id, discovery_job_id: payload.discovery_job_id, reused: true };
+    }
+    // Durable producer authority for the approved scoped graph branch: the
+    // selected-collection operation pins owner, initiating connection,
+    // enqueue-time authorization version, granted collection and origin item in
+    // one immutable row (migration 360), written after the dedupe arbiter
+    // decided this transaction owns the job, so retry, redelivery and dedupe
+    // cannot adopt a later grant epoch, owner or resource. Legacy
+    // whole-library enqueues (no collection) write none.
+    if (originCollectionId && owner.kind === 'account') {
+      await recordDiscoveryGrantAuthority(db, {
+        ownerAccountId: owner.accountId,
+        discoveryJobId,
+        jobId: job.id,
+        agentConnectionId: p.kind === 'agent' ? p.connectionId : null,
+        authorizationVersion: grantEpoch?.authorizationVersion ?? null,
+        collectionGrantedAt: grantEpoch?.collectionGrantedAt ?? null,
+        originCollectionId,
+        originItemId: item.id,
+      });
     }
     await db.query('UPDATE discovery_jobs SET job_id = $2 WHERE id = $1', [discoveryJobId, job.id]);
     return { job_id: job.id, discovery_job_id: discoveryJobId, reused: false };
