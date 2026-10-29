@@ -403,8 +403,9 @@ export async function startRelatedDiscovery(
     const cols = ownerColumns(owner);
     const dj = await db.query<{ id: string }>(
       `INSERT INTO discovery_jobs (owner_account_id, owner_session_id, origin_item_id, agent_connection_id,
-                                   origin_collection_id, category, anchor_reference_ids, taste_revision)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8) RETURNING id`,
+                                   origin_collection_id, category, anchor_reference_ids, taste_revision,
+                                   scoped_authority_required)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::uuid[], $8, $9) RETURNING id`,
       [
         cols.owner_account_id,
         cols.owner_session_id,
@@ -414,6 +415,7 @@ export async function startRelatedDiscovery(
         input.body.category ?? null,
         anchors.map((a) => a.reference_id),
         tasteRevision,
+        originCollectionId != null,
       ],
     );
     const discoveryJobId = dj.rows[0]!.id;

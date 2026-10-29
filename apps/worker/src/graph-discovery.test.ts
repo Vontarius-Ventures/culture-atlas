@@ -3,15 +3,18 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { FakeQloo } from '@culture-atlas/providers/testing';
 import {
   JOB_HANDLERS,
+  agentConnections,
+  collections,
   discovery,
   dispatchGraphOutbox,
   enqueueJob,
   ensureGraphWorkBudget,
+  items,
   loadGraphWorkBudget,
   preferences,
   upsertGraphIdentity,
 } from '@culture-atlas/domain';
-import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
+import { closeTestDb, getTestDb, insertAgentConnection, testConfig, testContext } from '@culture-atlas/domain/testing';
 import { accountCtx, runJobs, world } from './test-world';
 import { Worker } from './worker';
 
@@ -326,6 +329,111 @@ describe('graph discovery through the real worker', () => {
       [accountId],
     );
     expect(Number(runs[0]!.n)).toBe(0);
+    expect(qloo.calls).toHaveLength(0);
+  });
+});
+
+describe('scoped Discover more grant fencing through the real worker (VAL-DISC-007)', () => {
+  interface ScopedLibrary {
+    ownerCtx: Awaited<ReturnType<typeof accountCtx>>;
+    accountId: string;
+    origin: string;
+    collection: { id: string };
+    agentCtx: Awaited<ReturnType<typeof accountCtx>>;
+    connectionId: string;
+  }
+
+  /** A fresh scoped library on the shared test database: owner, granted agent, anchored origin. */
+  async function scopedLibrary(providers: Awaited<ReturnType<typeof world>>['providers']): Promise<ScopedLibrary> {
+    const ownerCtx = await accountCtx(providers, config);
+    if (ownerCtx.principal.kind !== 'account') throw new Error('test requires an account principal');
+    const accountId = ownerCtx.principal.accountId;
+    const name = `scoped-${randomUUID().slice(0, 8)}`;
+    const referenceId = (
+      await db.query<{ id: string }>(
+        `INSERT INTO cultural_references (canonical_name, canonical_key, type, external_ids, research_status)
+         VALUES ($1, $2, 'style', '{}'::jsonb, 'complete') RETURNING id`,
+        [name, `test:${randomUUID()}`],
+      )
+    ).rows[0]!.id;
+    const origin = (
+      await db.query<{ id: string }>(
+        `INSERT INTO discovery_items (owner_account_id, kind, category, canonical_key, title, reference_id)
+         VALUES ($1, 'artist', 'play', $2, $3, $4) RETURNING id`,
+        [accountId, `test:${randomUUID()}`, name, referenceId],
+      )
+    ).rows[0]!.id;
+    const collection = await collections.createCollection(ownerCtx, { name });
+    await collections.addCollectionItem(ownerCtx, { id: collection.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(ownerCtx.principal, {
+      scopes: ['collections:read'],
+      libraryAccess: 'selected_collections',
+      collectionIds: [collection.id],
+    });
+    return {
+      ownerCtx,
+      accountId,
+      origin,
+      collection,
+      agentCtx: testContext(agent.principal, { db: getTestDb(), providers, config }),
+      connectionId: agent.principal.connectionId,
+    };
+  }
+
+  /** Enqueue the real agent-initiated scoped Discover more job. */
+  async function enqueueScoped(lib: ScopedLibrary): Promise<{ jobId: string; discoveryJobId: string }> {
+    const started = await items.startRelatedDiscovery(lib.agentCtx, {
+      id: lib.origin,
+      body: { collection_id: lib.collection.id, category: 'play' },
+    });
+    return { jobId: started.job_id, discoveryJobId: started.discovery_job_id };
+  }
+
+  async function scopedOutcome(jobId: string): Promise<{ state: string; error_code: string | null; error_retryable: boolean | null }> {
+    const { rows } = await db.query<{ state: string; error_code: string | null; error_retryable: boolean | null }>(
+      'SELECT state, error_code, error_retryable FROM jobs WHERE id = $1',
+      [jobId],
+    );
+    return rows[0]!;
+  }
+
+  it('a revoked connection fails the delayed scoped job closed: token_revoked, non-retryable, nothing published', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const qloo = providers.qloo as FakeQloo;
+    const lib = await scopedLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+    // The owner revokes before the worker ever claims the redelivered job.
+    await agentConnections.revokeAgentConnection(lib.ownerCtx, { id: lib.connectionId });
+    await runJobs(lib.ownerCtx, [jobId]);
+    const outcome = await scopedOutcome(jobId);
+    expect(outcome.state).toBe('failed');
+    expect(outcome.error_code).toBe('token_revoked');
+    expect(outcome.error_retryable).toBe(false);
+    const { rows: recs } = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+      [discoveryJobId],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
+    // The fence rejects before any provider call.
+    expect(qloo.calls).toHaveLength(0);
+  });
+
+  it('a removed origin membership fails the delayed scoped job closed: not_found, non-retryable', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const qloo = providers.qloo as FakeQloo;
+    const lib = await scopedLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+    await collections.removeCollectionItem(lib.ownerCtx, { id: lib.collection.id, item_id: lib.origin });
+    await runJobs(lib.ownerCtx, [jobId]);
+    const outcome = await scopedOutcome(jobId);
+    expect(outcome.state).toBe('failed');
+    expect(outcome.error_code).toBe('not_found');
+    expect(outcome.error_retryable).toBe(false);
+    const { rows: recs } = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+      [discoveryJobId],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
     expect(qloo.calls).toHaveLength(0);
   });
 });

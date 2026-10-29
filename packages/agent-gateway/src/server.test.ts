@@ -384,3 +384,156 @@ describe('scoped Discover more graph branch over MCP (VAL-DISC-008)', () => {
   });
 });
 
+describe('scoped Discover more revocation and narrowing over MCP (VAL-DISC-007, VAL-DISC-009)', () => {
+  /** One fresh scoped library: isolated corpus database, owner, granted agent, anchored origin. */
+  async function scopedMcpLibrary() {
+    const iso = await createIsolatedDatabase('scrdmcp');
+    await admitGraphCorpus(iso.db, getCorpusManifestFile());
+    const graphOn = testConfig({
+      INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
+      INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
+    });
+    const owner = await insertAccount(iso.db);
+    const ownerCtx = testContext(owner, { db: iso.db, config: graphOn });
+    const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+    const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+    const rodinRef = await upsertReference(iso.db, {
+      canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+      name: 'Auguste Rodin',
+      type: 'creator',
+      externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    const seuratRef = await upsertReference(iso.db, {
+      canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+      name: 'Georges Seurat',
+      type: 'creator',
+      externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      iso.db,
+    );
+    const col = await collections.createCollection(ownerCtx, { name: 'Museum visits' });
+    await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: origin, body: {} });
+    await linkGraphReferenceIdentities(iso.db);
+    const { credential, principal } = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [col.id] },
+      iso.db,
+    );
+    const providers = testProviders({ qloo: new FakeQloo({}, { live: true }) });
+    return { iso, graphOn, ownerCtx, origin, col, credential, connectionId: principal.connectionId, providers, seuratRef };
+  }
+
+  it('revocation before the run fails the MCP-enqueued scoped job closed; the credential stops authenticating', async () => {
+    const s = await scopedMcpLibrary();
+    try {
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      let jobId = '';
+      let discoveryJobId = '';
+      try {
+        const started = await client.callTool<{ job_id: string; discovery_job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.col.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        jobId = started.ok ? started.data.job_id : '';
+        discoveryJobId = started.ok ? started.data.discovery_job_id : '';
+        expect(jobId).not.toBe('');
+      } finally {
+        await client.close();
+      }
+      // The owner revokes through the real REST service before any redelivery.
+      await agentConnections.revokeAgentConnection(s.ownerCtx, { id: s.connectionId });
+      // The delayed work rejects at the publication fence: nothing publishes.
+      await expect(runJob(jobId, { db: s.iso.db, config: s.graphOn, providers: s.providers })).rejects.toMatchObject({
+        code: 'token_revoked',
+      });
+      const { rows: recs } = await s.iso.db.query<{ n: number }>(
+        'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+        [discoveryJobId],
+      );
+      expect(Number(recs[0]!.n)).toBe(0);
+      // And the MCP endpoint itself refuses the revoked credential at the
+      // HTTP layer with the REST code.
+      const refused = await mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn })(MCP_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', authorization: `Bearer ${s.credential}` },
+        body: JSON.stringify(INIT),
+      });
+      expect(refused.status).toBe(401);
+      expect(await refused.json()).toMatchObject({ code: 'token_revoked', retryable: false });
+    } finally {
+      await s.iso.drop();
+    }
+  });
+
+  it('after publication, a narrowed grant denies the previously published reads through the same transport; the owner keeps them', async () => {
+    const s = await scopedMcpLibrary();
+    try {
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        const started = await client.callTool<{ job_id: string; discovery_job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.col.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const { job_id, discovery_job_id } = started.ok ? started.data : { job_id: '', discovery_job_id: '' };
+        expect(job_id).not.toBe('');
+        await runJob(job_id, { db: s.iso.db, config: s.graphOn, providers: s.providers });
+
+        // Control: the same transport reads the published result.
+        const job = await client.callTool<{ state: string }>('get_job', { job_id });
+        expect(job.ok && job.data.state).toBe('complete');
+        const item = await client.callTool<{ related: { id: string; title: string }[]; related_state: string }>('get_item', {
+          item_id: s.origin,
+          collection_id: s.col.id,
+        });
+        expect(item.ok && item.data.related_state).toBe('cached');
+        expect(item.ok && item.data.related.map((r) => r.title)).toEqual(['Georges Seurat']);
+        const candidateId = item.ok ? item.data.related[0]!.id : '';
+        const { rows: candidate } = await s.iso.db.query<{ reference_id: string | null }>(
+          'SELECT reference_id FROM discovery_items WHERE id = $1',
+          [candidateId],
+        );
+        expect(candidate[0]!.reference_id).toBe(s.seuratRef);
+
+        // The owner v1-narrows the grant (the credential stays valid): the
+        // previously published reads now deny through the same transport.
+        await agentConnections.updateAgentConnection(s.ownerCtx, { id: s.connectionId, body: { collection_ids: [] } });
+        const jobAfter = await client.callTool('get_job', { job_id });
+        expect(jobAfter.ok).toBe(false);
+        expect(!jobAfter.ok && jobAfter.error.code).toBe('not_found');
+        const itemAfter = await client.callTool('get_item', {
+          item_id: s.origin,
+          collection_id: s.col.id,
+        });
+        expect(itemAfter.ok).toBe(false);
+        expect(!itemAfter.ok && itemAfter.error.code).toBe('not_found');
+
+        // The validly published results survive for the owner.
+        const { rows: recs } = await s.iso.db.query<{ n: number }>(
+          'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+          [discovery_job_id],
+        );
+        expect(Number(recs[0]!.n)).toBe(1);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await s.iso.drop();
+    }
+  });
+});
+

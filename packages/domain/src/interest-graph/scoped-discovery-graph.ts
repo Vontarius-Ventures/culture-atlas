@@ -18,7 +18,7 @@ import {
   type WalkEdge,
 } from './expansion';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
-import type { ScopedDiscoveryGrantAuthority } from './scoped-discovery';
+import { lockScopedPublicationAuthority, type ScopedDiscoveryGrantAuthority } from './scoped-discovery';
 import { revalidatePinnedDependencies } from './validity';
 
 /**
@@ -51,11 +51,11 @@ import { revalidatePinnedDependencies } from './validity';
  *
  * The pass deliberately does NOT consult the account discovery pause: that
  * marker stops background expansion/research, while this is the explicit
- * per-origin operation the grant authorizes. Grant/lease revocation fencing
- * through the commit and post-revocation read denial live with the
- * publication fence (scoped-discover-revocation-publication); this pass keeps
- * the job-liveness fence (`ensureActive`) and the scoped parent's own
- * deletion fence.
+ * per-origin operation the grant authorizes. The grant publication fence
+ * (lockScopedPublicationAuthority, called first inside the publication
+ * transaction) holds the initiating connection and origin collection locks
+ * through the commit and rejects stale authority; the job-liveness fence
+ * (`ensureActive`) and the scoped parent's own deletion fence stay in place.
  */
 
 /** Operational bounds of one scoped graph pass: the shared expansion bounds. */
@@ -423,6 +423,18 @@ export async function runScopedGraphDiscovery(
       [authority.origin_item_id, authority.owner_account_id],
     );
     if (!origin.rows[0]) throw new JobCancelledError('origin deleted');
+    // The grant publication fence (VAL-DISC-007): lock the initiating
+    // connection's row and the origin collection's row FOR SHARE and recheck
+    // the pinned epoch against CURRENT live state — liveness, authorization
+    // version, per-collection grant epoch, collection ownership and the
+    // origin's membership — holding both locks through this commit. A real
+    // owner revocation, narrowing, grant replace, membership removal or
+    // collection deletion either committed before this read (the work
+    // rejects; nothing publishes, and retry/dedupe/regrant cannot adopt the
+    // newer epoch) or waits behind it (publisher-first: the results publish
+    // under the authority held here, and read-time denial applies after the
+    // mutation lands). No work runs under a dead authority.
+    await lockScopedPublicationAuthority(tx, { authority });
     const originItemId = origin.rows[0]!.id;
     const originCanonicalKey = origin.rows[0]!.canonical_key;
     await tx.query(`UPDATE discovery_jobs SET status = 'running' WHERE id = $1`, [authority.discovery_job_id]);

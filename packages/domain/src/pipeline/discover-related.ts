@@ -21,7 +21,7 @@ import type { Queryable } from '../db/pool';
 import { JobCancelledError, type JobHandler } from '../jobs/handler';
 import { discoveryEnabledForAccount } from '../interest-graph/expansion';
 import { runScopedGraphDiscovery } from '../interest-graph/scoped-discovery-graph';
-import { discoveryGrantAuthorityForJob } from '../interest-graph/scoped-discovery';
+import { requireDiscoveryGrantAuthorityForJob } from '../interest-graph/scoped-discovery';
 import { loadItemAnchors } from '../library/anchors';
 import { hiddenKeys } from '../library/access';
 import type { Owner } from '../principal';
@@ -160,8 +160,9 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
     category: Category | null;
     source: 'item' | 'music_mode';
     source_label: string | null;
+    scoped_authority_required: boolean;
   }>(
-    'SELECT owner_account_id, owner_session_id, category, source, source_label FROM discovery_jobs WHERE id = $1',
+    'SELECT owner_account_id, owner_session_id, category, source, source_label, scoped_authority_required FROM discovery_jobs WHERE id = $1',
     [discovery_job_id],
   );
   const item = await ctx.db.query<{
@@ -180,25 +181,28 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
     ? { kind: 'account', accountId: job.owner_account_id }
     : { kind: 'session', sessionId: job.owner_session_id! };
 
-  // Approved grant-scoped graph branch (scoped-discover-graph-results): when
-  // this discovery was enqueued by the selected-collection operation (its
-  // immutable migration-360 authority row pins the grant, owner, collection,
-  // origin and job identities) and graph discovery is enabled for the owning
-  // account, the job runs the bounded graph-backed pass INSTEAD of the
-  // provider path — zero Qloo/model calls, only the origin's own qualified
-  // identities and reviewed shared evidence participate, and results attach
-  // to the scoped discovery parent. Legacy jobs (no authority row:
-  // whole-library or anonymous enqueues) and graph-off accounts keep the
-  // unchanged provider behavior below, so graph-off responses stay identical.
-  if (owner.kind === 'account') {
-    const authority = await discoveryGrantAuthorityForJob(ctx.db, {
-      ownerAccountId: owner.accountId,
-      discoveryJobId: discovery_job_id,
-    });
-    if (
-      authority?.job_type === 'discover_related' &&
-      (await discoveryEnabledForAccount(ctx.db, { accountId: owner.accountId, config: ctx.config }))
-    ) {
+  // Approved grant-scoped graph branch (scoped-discover-graph-results +
+  // scoped-discover-revocation-publication): when this discovery was enqueued
+  // by the selected-collection operation (its immutable migration-360
+  // authority row pins the grant, owner, collection, origin and job
+  // identities) and graph discovery is enabled for the owning account, the
+  // job runs the bounded graph-backed pass INSTEAD of the provider path —
+  // zero Qloo/model calls, only the origin's own qualified identities and
+  // reviewed shared evidence participate, and results attach to the scoped
+  // discovery parent. The durable scoped marker (migration 380) survives the
+  // collection deletion that cascades the authority row away, so a scoped job
+  // whose authority was lost FAILS CLOSED here (non-disclosing not_found) —
+  // it can never silently fall back to the legacy provider path and publish
+  // stale results after the revoking resource change. Legacy jobs (no
+  // marker: whole-library or anonymous enqueues) and graph-off accounts keep
+  // the unchanged provider behavior below, so graph-off responses stay
+  // byte-identical.
+  if (owner.kind === 'account' && job.scoped_authority_required) {
+    if (await discoveryEnabledForAccount(ctx.db, { accountId: owner.accountId, config: ctx.config })) {
+      const authority = await requireDiscoveryGrantAuthorityForJob(ctx.db, {
+        ownerAccountId: owner.accountId,
+        discoveryJobId: discovery_job_id,
+      });
       await ctx.setStage('graph');
       const outcome = await ctx.runStage('graph', () =>
         runScopedGraphDiscovery(ctx.db, {
