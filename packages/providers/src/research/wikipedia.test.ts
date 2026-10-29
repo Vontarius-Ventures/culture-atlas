@@ -72,6 +72,25 @@ describe('Wikipedia research: sources', () => {
     });
     await expect(limited.findSources({ name: 'x', type: 'style' })).rejects.toMatchObject({ kind: 'rate_limited' });
   });
+
+  it('honors the deadline options a bounded caller supplies: an aborted signal refuses before any request', async () => {
+    // DISC-SCR-019: graph research passes its anchored combined signal and
+    // the remaining window into source discovery; the adapter must refuse on
+    // an already-aborted signal without a single fetch, and never start a
+    // second attempt after the deadline.
+    let fetched = 0;
+    const impl = (async () => {
+      fetched++;
+      return new Response(JSON.stringify(search([])), { status: 200 });
+    }) as unknown as typeof fetch;
+    const research = createWikipediaResearch(config, new UnavailableTextModel(), { fetch: impl });
+    const controller = new AbortController();
+    controller.abort(new Error('logical deadline'));
+    await expect(
+      research.findSources({ name: 'x', type: 'style' }, { signal: controller.signal, timeoutMs: 500 }),
+    ).rejects.toMatchObject({ kind: 'aborted' });
+    expect(fetched).toBe(0);
+  });
 });
 
 describe('Wikipedia research: claim extraction', () => {

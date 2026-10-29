@@ -1,5 +1,6 @@
 import { AppError } from '../errors';
 import type { Db, Queryable } from '../db/pool';
+import { GraphWorkDeadlineExpiredError } from './budgets';
 import { checkAssertionEndpoints, GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import {
   attachAssertionSupport,
@@ -226,12 +227,19 @@ export async function proposeResearchAssertions(
     /** Publication fence, run inside the storage transaction before any write. */
     fence?: (tx: Queryable) => Promise<void>;
     /**
-     * The logical window's remaining time (VAL-DISC-006): every statement and
-     * lock wait of the storage pass is bounded by it, so a delayed write or a
-     * lock parked on another transaction cannot push publication past the
-     * work item's original deadline. Unset keeps default statement limits.
+     * The logical window's ABSOLUTE deadline (VAL-DISC-006, DISC-SCR-018):
+     * every statement and lock wait of the storage pass is bounded by the
+     * CURRENT remainder — the bound is refreshed at each stage below, so two
+     * waits that each fit an earlier bound cannot cumulatively pass the
+     * deadline — and the durable window is re-checked after all writes,
+     * before the transaction completes, so a cumulative overrun can never
+     * commit proposals. Unset keeps default statement limits.
      */
-    sqlTimeoutMs?: number;
+    deadline?: {
+      at: Date;
+      /** Durable window-ended check, read with the transaction's own clock. */
+      ended?: (tx: Queryable) => Promise<boolean>;
+    };
   },
 ): Promise<ResearchProposalResult> {
   if (input.sources.length > RESEARCH_MAX_SOURCE_DOCUMENTS) {
@@ -274,20 +282,31 @@ export async function proposeResearchAssertions(
   }
 
   return db.transaction(async (tx) => {
-    // The remaining logical window bounds this storage pass's SQL and lock
-    // waits (VAL-DISC-006); `SET LOCAL` is scoped to this transaction, so a
-    // pooled client never leaks the limit.
-    if (input.sqlTimeoutMs !== undefined) {
-      const ms = Math.max(1, Math.ceil(input.sqlTimeoutMs));
+    // The logical window bounds this storage pass's SQL and lock waits
+    // (VAL-DISC-006); `SET LOCAL` is scoped to this transaction, so a pooled
+    // client never leaks the limit. The bound is re-issued at every stage
+    // below from the CURRENT remainder (DISC-SCR-018): a one-time entry
+    // bound would let a LATER lock wait run a full window past the anchor,
+    // and two individually short waits could cumulatively outlive the
+    // deadline and still commit. Each refresh only tightens the bound.
+    const boundSqlToWindow = async () => {
+      if (!input.deadline) return;
+      const remainingMs = input.deadline.at.getTime() - Date.now();
+      const ms = Math.max(1, Math.ceil(remainingMs));
       await tx.query(`SET LOCAL statement_timeout = ${ms}`);
       await tx.query(`SET LOCAL lock_timeout = ${ms}`);
-    }
+    };
+    await boundSqlToWindow();
     // Transactional publication recheck: authority that changed after the paid
     // call rejects the storage here — delayed work publishes nothing.
     await input.fence?.(tx);
     const sources: ResearchProposalResult['sources'] = [];
     const revisions = new Map<string, { sourceRevisionId: string; familyKey: string }>();
     for (const source of input.sources) {
+      // Later waits honor the CURRENT remainder (DISC-SCR-018): the bound is
+      // refreshed before each stage, so a wait parked on another transaction
+      // cannot outlive the anchored window a full entry-bound past it.
+      await boundSqlToWindow();
       // Evidence content participates in the document hash: a changed
       // extraction versions the source instead of silently reusing one.
       const documentHash = contentHash({
@@ -344,6 +363,7 @@ export async function proposeResearchAssertions(
     const proposed: ResearchProposalOutcome[] = [];
     const rejected: ResearchProposalRejection[] = [];
     for (const proposal of input.proposals) {
+      await boundSqlToWindow();
       let upserted;
       try {
         upserted = await upsertGraphAssertion(tx, {
@@ -370,6 +390,7 @@ export async function proposeResearchAssertions(
       }
       const evidenceIds: string[] = [];
       for (const entry of proposal.evidence) {
+        await boundSqlToWindow();
         const revision = revisions.get(entry.sourceKey)!;
         const inserted = await insertEvidence(tx, {
           sourceRevisionId: revision.sourceRevisionId,
@@ -403,6 +424,15 @@ export async function proposeResearchAssertions(
         ])).rows[0]!.revision,
         evidenceIds,
       });
+    }
+    // The fresh deadline decision AFTER all writes, before this transaction
+    // completes (DISC-SCR-018): the durable window — read with the database's
+    // own clock — has the last word, so waits that each fit their refreshed
+    // bounds but cumulatively ran past the deadline cannot commit proposals.
+    // The whole storage pass rolls back; the elapsed work reports as the
+    // typed window-expired outcome upstream.
+    if (input.deadline?.ended && (await input.deadline.ended(tx))) {
+      throw new GraphWorkDeadlineExpiredError();
     }
     return { sources, proposed, rejected };
   });

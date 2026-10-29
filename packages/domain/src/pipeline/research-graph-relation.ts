@@ -56,6 +56,18 @@ import { createGraphRun, graphRunForJob, recordGraphProviderQuery, setGraphRunSt
  * call — or since a crashed attempt whose extraction is being replayed —
  * rejects publication), the lease and the durable logical deadline. Rejected
  * work is discarded; the spend stays accounted; nothing is published.
+ *
+ * The anchored logical window spans the WHOLE attempt (VAL-DISC-006,
+ * DISC-SCR-018/019), not merely individual statement timeouts or the first
+ * lookup: every source lookup is gated on the original remaining window and
+ * receives the anchored combined signal (so an in-flight search aborts at the
+ * deadline and a second request never starts after it), and an empty result
+ * completing past the window reports as the typed logical-deadline outcome
+ * instead of a completed lookup. In the storage pass every statement and lock
+ * wait is bounded by the CURRENT remainder — refreshed between stages, so two
+ * individually short waits cannot cumulatively outrun the anchor — and the
+ * durable window is decided again after all writes, before the transaction
+ * completes.
  */
 
 /** Maps an approved research URL to its durable-rights provider policy key. */
@@ -135,6 +147,15 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     return live;
   };
 
+  // The anchored combined signal spans EVERY bounded provider stage of this
+  // attempt (DISC-SCR-019): both source lookups and the paid extraction
+  // receive it, so an in-flight call is aborted at the ORIGINAL deadline
+  // (never a fresh per-attempt one), and the worker's own grant (lease loss,
+  // cancellation) aborts it too — whichever comes first.
+  const window = graphWorkDeadlineSignal(budget.deadlineAt, ctx.signal);
+  // The remaining window a provider stage may still use as its own bound.
+  const remainingTimeoutMs = (live: GraphWorkBudgetState) => Math.max(1, live.deadlineAt.getTime() - Date.now());
+
   // Public-only request: canonical names/ids of the shared identity layer.
   const request = await buildRelationResearchRequest(ctx.db, {
     subjectNodeId: ctx.payload.subject_node_id,
@@ -212,23 +233,39 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
       });
       return true;
     };
-    await windowLive();
-    const subjectDocs = await ctx.providers.research.findSources({
-      name: request.subject.canonicalName,
-      type: request.subject.nodeKind,
-      limit: RESEARCH_MAX_SOURCE_DOCUMENTS,
-    });
+    const subjectWindow = await windowLive();
+    const subjectDocs = await ctx.providers.research.findSources(
+      {
+        name: request.subject.canonicalName,
+        type: request.subject.nodeKind,
+        limit: RESEARCH_MAX_SOURCE_DOCUMENTS,
+      },
+      { signal: window.signal, timeoutMs: remainingTimeoutMs(subjectWindow) },
+    );
     for (const doc of subjectDocs) take(doc);
     if (request.object && kept.length < RESEARCH_MAX_SOURCE_DOCUMENTS) {
-      const objectDocs = await ctx.providers.research.findSources({
-        name: request.object.canonicalName,
-        type: request.object.nodeKind,
-        limit: RESEARCH_MAX_SOURCE_DOCUMENTS - kept.length,
-      });
+      // The SECOND lookup checks the window first (DISC-SCR-019): a first
+      // search that outlived the anchor never starts another request, and
+      // the budget stops honestly at this boundary.
+      const objectWindow = await windowLive();
+      const objectDocs = await ctx.providers.research.findSources(
+        {
+          name: request.object.canonicalName,
+          type: request.object.nodeKind,
+          limit: RESEARCH_MAX_SOURCE_DOCUMENTS - kept.length,
+        },
+        { signal: window.signal, timeoutMs: remainingTimeoutMs(objectWindow) },
+      );
       for (const doc of objectDocs) take(doc);
     }
     if (kept.length === 0) {
-      // No approved source: research records nothing and invents nothing.
+      // No approved source: research records nothing and invents nothing —
+      // but only while the window is still live (DISC-SCR-019): an empty
+      // result that completed past the anchored deadline is NOT a completed
+      // lookup. The elapsed work reports as the typed logical-deadline
+      // outcome instead, the window stops honestly, and nothing is recorded
+      // as a completed empty search.
+      await windowLive();
       await recordGraphProviderQuery(ctx.db, {
         ownerAccountId: accountId,
         runId: run.id,
@@ -245,27 +282,22 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
 
     // --- The paid extraction, stage-wrapped: a retry reuses the completed
     // output instead of re-buying it. The window must still be live BEFORE the
-    // paid call, and the call itself cannot outlive the window: the combined
-    // signal aborts at the original anchored deadline (a redelivery's fresh
-    // per-attempt deadline never extends it).
+    // paid call, and the call itself cannot outlive the window: the anchored
+    // combined signal (created above, spanning every bounded stage) aborts at
+    // the original deadline — a redelivery's fresh per-attempt deadline never
+    // extends it.
     const liveBeforeExtraction = await windowLive();
-    const window = graphWorkDeadlineSignal(liveBeforeExtraction.deadlineAt, ctx.signal);
-    let extraction: Awaited<ReturnType<typeof ctx.providers.research.extractClaims>>;
-    try {
-      extraction = await ctx.runStage('research:extract', () =>
-        ctx.providers.research.extractClaims(
-          {
-            name: request.subject.canonicalName,
-            type: request.subject.nodeKind,
-            sources: kept,
-            maxClaims: RESEARCH_MAX_PROPOSED_ASSERTIONS,
-          },
-          { signal: window.signal },
-        ),
-      );
-    } finally {
-      window.dispose();
-    }
+    const extraction = await ctx.runStage('research:extract', () =>
+      ctx.providers.research.extractClaims(
+        {
+          name: request.subject.canonicalName,
+          type: request.subject.nodeKind,
+          sources: kept,
+          maxClaims: RESEARCH_MAX_PROPOSED_ASSERTIONS,
+        },
+        { signal: window.signal },
+      ),
+    );
     await ctx.ensureActive();
     await recordGraphProviderQuery(ctx.db, {
       ownerAccountId: accountId,
@@ -325,14 +357,21 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     // --- Fenced storage: publication rechecks current authority inside the
     // transaction, so delayed work after deletion, pause, lease loss — or
     // after its own LOGICAL DEADLINE (VAL-DISC-006) — publishes nothing (the
-    // paid call stays accounted, the work is discarded). The remaining window
-    // also bounds every statement and lock wait of the storage pass.
+    // paid call stays accounted, the work is discarded). The storage pass
+    // honors the ABSOLUTE window through its stages (DISC-SCR-018): each
+    // statement and lock wait is bounded by the CURRENT remainder (refreshed
+    // between stages, so successive waits cannot cumulatively outrun the
+    // anchor), and the durable window is re-checked after all writes, before
+    // the transaction completes.
     let stored: Awaited<ReturnType<typeof proposeResearchAssertions>>;
     try {
       stored = await proposeResearchAssertions(ctx.db, {
         sources: sourcesIn,
         proposals,
-        sqlTimeoutMs: Math.max(1, liveBeforeExtraction.deadlineAt.getTime() - Date.now()),
+        deadline: {
+          at: liveBeforeExtraction.deadlineAt,
+          ended: (tx) => graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey }),
+        },
         fence: async (tx) => {
           // The per-account publication-authority lock (DISC-SCR-008), acquired
           // FIRST and held through this transaction's commit: the same row lock
@@ -371,13 +410,14 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
       });
     } catch (err) {
       // The storage pass's SQL and lock waits are bounded by the window's
-      // REMAINING time, and that bound IS the deadline: PostgreSQL cancels a
-      // statement past it with code 57014 (VAL-DISC-006) — possibly BEFORE the
-      // fence's typed window check above could run. Such a cancel is the same
-      // deadline fact and must surface as the typed terminal outcome, never a
-      // raw database error — but only when the durable window really ended: a
-      // still-live window means the cancel was not this deadline, and the raw
-      // error stays exactly what it is.
+      // CURRENT remaining time (refreshed at each stage), and that bound IS
+      // the deadline: PostgreSQL cancels a statement past it with code 57014
+      // (VAL-DISC-006) — possibly BEFORE the fence's typed window check above
+      // could run. Such a cancel is the same deadline fact and must surface
+      // as the typed terminal outcome, never a raw database error — but only
+      // when the durable window really ended: a still-live window means the
+      // cancel was not this deadline, and the raw error stays exactly what it
+      // is.
       if (isDeadlineCanceledStatement(err) && (await graphWorkWindowEnded(ctx.db, { ownerAccountId: accountId, workKey }))) {
         throw new GraphWorkDeadlineExpiredError();
       }
@@ -406,5 +446,7 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'failed' }).catch(() => undefined);
     await stopGraphWorkBudgetIfExpired(ctx.db, { ownerAccountId: accountId, workKey }).catch(() => undefined);
     throw err;
+  } finally {
+    window.dispose();
   }
 };

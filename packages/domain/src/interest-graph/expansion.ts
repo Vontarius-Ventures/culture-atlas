@@ -482,9 +482,11 @@ export async function expandAccountInterestGraph(db: Db, input: ExpandAccountInt
 
 /**
  * Bounds every statement and lock wait of the pass to the logical window's
- * REMAINING time: `SET LOCAL` is scoped to this transaction, so pooled
- * clients never leak the limit. The inter-stage deadline checks below bound
- * the pass as a whole; this bounds each individual wait.
+ * CURRENT remaining time: `SET LOCAL` is scoped to this transaction, so
+ * pooled clients never leak the limit. Re-issuing it at each stage check
+ * (enforceDeadline) tightens the bound as the window drains, so a LATE lock
+ * wait ends at the anchored deadline — never a full entry-bound window past
+ * it (DISC-SCR-018).
  */
 async function boundPassSqlToDeadline(tx: Queryable, deadline: ExpansionDeadlineInput): Promise<void> {
   const deadlineNow = deadline.now ?? (() => new Date());
@@ -565,14 +567,20 @@ async function runExpansion(
   // stage checks below end a pass whose anchored deadline passed or whose
   // worker grant died, and the publication fence has the last word. Throwing
   // GraphFenceError rolls the whole transaction back — nothing survives.
+  // Each check ALSO re-tightens the SQL bound to the CURRENT remainder
+  // (DISC-SCR-018): the entry bound alone would let a LATE lock wait run a
+  // full window past the anchor before a later check rolled it back — the
+  // refreshes make every later statement and lock wait end at the anchored
+  // deadline instead.
   const deadline = input.deadline;
   const deadlineNow = deadline?.now ?? (() => new Date());
-  const checkDeadline = () => {
+  const enforceDeadline = async () => {
     if (!deadline) return;
     if (deadline.signal?.aborted) throw new GraphFenceError('deadline_expired');
     if (deadlineNow().getTime() >= deadline.at.getTime()) throw new GraphFenceError('deadline_expired');
+    await boundPassSqlToDeadline(tx, deadline);
   };
-  checkDeadline();
+  await enforceDeadline();
 
   // Early authority checks (cheap, fail fast): the account must exist, and a
   // paused account publishes nothing (pause stops expansion dispatch AND
@@ -585,7 +593,7 @@ async function runExpansion(
   // Current authoritative explicit state: the relevance half of every
   // admission decision reads THIS, never projection-event totals.
   const snapshot = await loadExplicitSupport(tx, accountId);
-  checkDeadline();
+  await enforceDeadline();
 
   const run = await createGraphRun(tx, {
     ownerAccountId: accountId,
@@ -605,7 +613,7 @@ async function runExpansion(
 
   const roots = await resolveRoots(tx, { accountId, snapshot, counts });
   const truncated = { assertions: false, candidates: false };
-  checkDeadline();
+  await enforceDeadline();
 
   // --- Bounded walk ---------------------------------------------------------------
   const rootNodeIds = [...new Set(roots.map((r) => r.nodeId))];
@@ -622,7 +630,7 @@ async function runExpansion(
       seen.add(row.id);
       addOrientation(hop1, row, rootNodeSet);
     }
-    checkDeadline();
+    await enforceDeadline();
     const midIds = [...new Set([...hop1.values()].flat().map((e) => e.far))];
     const remaining = EXPANSION_BOUNDS.maxAssertionsTraversed - seen.size;
     if (midIds.length > 0 && remaining > 0) {
@@ -635,7 +643,7 @@ async function runExpansion(
         addOrientation(hop2, row, midSet);
       }
     }
-    checkDeadline();
+    await enforceDeadline();
   }
 
   // --- Candidate pairs (deterministic order) --------------------------------------
@@ -688,7 +696,7 @@ async function runExpansion(
       truncated.candidates = true;
       break;
     }
-    checkDeadline();
+    await enforceDeadline();
     counts.candidatesEvaluated++;
     let obs: AdmittedObservation | null = null;
     for (const [e1, e2] of pair.paths) {
@@ -765,7 +773,7 @@ async function runExpansion(
   // or waits for this commit, and its dependent scan then invalidates
   // whatever this pass published. Nothing can slip between the validation
   // and the commit.
-  checkDeadline();
+  await enforceDeadline();
   // The FRESH publication clock for every committing pin decision in this
   // pass: the pre-write pin validation below, and the retained-pin
   // revalidation of the dedupe refreshes in the frontier loop (DISC-SCR-022),
@@ -786,7 +794,7 @@ async function runExpansion(
         pinEvidenceIds,
       ]);
     }
-    checkDeadline();
+    await enforceDeadline();
     const dropped = new Set<string>();
     for (const obs of best.values()) {
       const verdict = await revalidatePinnedDependencies(tx, {
@@ -1002,7 +1010,7 @@ async function runExpansion(
   }
 
   for (const obs of ranked) {
-    checkDeadline();
+    await enforceDeadline();
     const meta = nodeMeta.get(obs.nodeId);
     obs.candidateName = meta?.canonical_name ?? '';
     const directItem = meta?.cultural_reference_id ? itemByReference.get(meta.cultural_reference_id) : undefined;
@@ -1050,8 +1058,10 @@ async function runExpansion(
   // a concurrent commit that landed after the pass began is visible to these
   // statements (READ COMMITTED), so stale work is rejected and rolled back
   // rather than publishing. Pre-dispatch checks alone are insufficient — this
-  // is the last word before the run is marked complete.
-  checkDeadline();
+  // is the last word before the run is marked complete. This final stage
+  // check also re-tightens the SQL bound to the CURRENT remainder, so the
+  // fence's own lock waits end at the anchored deadline (DISC-SCR-018).
+  await enforceDeadline();
   const violation = await checkGraphPublicationFence(tx, {
     accountId,
     start: {

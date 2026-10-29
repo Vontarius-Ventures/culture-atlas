@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
+import type { QueryResultRow } from 'pg';
+import type { Db, PoolDb, TransactionOptions } from '../db/pool';
 import { insertAccount } from '../testing';
 import { closeTestDb, getTestDb } from '../testing';
 import type { GraphNodeDomain, GraphNodeKind } from './schema';
@@ -419,5 +421,130 @@ describe('proposed extraction still needs predicate-specific validation', () => 
       aboutAssertionId,
     ]);
     expect(aboutRows[0]!.status).toBe('proposed');
+  });
+});
+
+// --- The storage pass honors the absolute window through its stages -------------------
+
+describe('the storage pass bounds its waits to the CURRENT remainder and decides after the writes (DISC-SCR-018)', () => {
+  /**
+   * A Db view over the shared pool that records every `SET LOCAL
+   * statement_timeout` bound the storage pass issues, so a test can prove
+   * the bound is refreshed to the CURRENT remainder at each stage instead of
+   * being a one-time entry value (production code untouched).
+   */
+  function recordingSqlBoundDb(): { db: PoolDb; bounds: number[] } {
+    const bounds: number[] = [];
+    const wrap = (handle: Db): Db => {
+      const self: Db = {
+        inTransaction: handle.inTransaction,
+        query<R extends QueryResultRow = QueryResultRow>(text: string, params?: readonly unknown[]) {
+          const bound = /^SET LOCAL statement_timeout = (\d+)$/.exec(text);
+          if (bound) bounds.push(Number(bound[1]));
+          return handle.query<R>(text, params);
+        },
+        transaction<T>(fn: (tx: Db) => Promise<T>, options?: TransactionOptions): Promise<T> {
+          return handle.transaction<T>((tx) => fn(wrap(tx)), options);
+        },
+      };
+      return self;
+    };
+    const view = wrap(db);
+    return { db: Object.assign(view, { pool: db.pool }) as unknown as PoolDb, bounds };
+  }
+
+  it('refreshes the SQL bound for later waits: every issued bound is the current remainder, never the stale entry one', async () => {
+    const work = await identity({ kind: 'work', domain: 'art', sense: 'painting' });
+    const creator = await identity({ kind: 'creator', domain: 'art', sense: 'painter' });
+    const first = sourceInput();
+    const second = sourceInput();
+    const { db: boundDb, bounds } = recordingSqlBoundDb();
+
+    await proposeResearchAssertions(boundDb, {
+      sources: [first, second],
+      proposals: [
+        {
+          subjectNodeId: work.id,
+          predicate: 'CREATED_BY',
+          objectNodeId: creator.id,
+          evidence: [{ sourceKey: first.key, excerpt: 'the work was created by the creator', evidenceKind: 'fact' }],
+        },
+      ],
+      deadline: { at: new Date(Date.now() + 5_000) },
+    });
+
+    // The pass issued a bound at EVERY stage — entry, each source revision,
+    // the proposal and its evidence — and each later bound is the CURRENT
+    // remainder: the sequence never increases, and the final bound is
+    // strictly below the entry bound (the window drained between stages).
+    expect(bounds.length).toBeGreaterThanOrEqual(5);
+    for (let i = 1; i < bounds.length; i++) expect(bounds[i]).toBeLessThanOrEqual(bounds[i - 1]!);
+    expect(bounds[bounds.length - 1]!).toBeLessThan(bounds[0]!);
+  });
+
+  it('re-checks the durable window after the writes: an ended window rolls the whole storage transaction back', async () => {
+    const work = await identity({ kind: 'work', domain: 'art', sense: 'painting' });
+    const creator = await identity({ kind: 'creator', domain: 'art', sense: 'painter' });
+    const source = sourceInput();
+    let sourceCountSeenByTheCheck = -1;
+
+    await expect(
+      proposeResearchAssertions(db, {
+        sources: [source],
+        proposals: [
+          {
+            subjectNodeId: work.id,
+            predicate: 'CREATED_BY',
+            objectNodeId: creator.id,
+            evidence: [{ sourceKey: source.key, excerpt: 'the work was created by the creator', evidenceKind: 'fact' }],
+          },
+        ],
+        deadline: {
+          at: new Date(Date.now() + 5_000),
+          ended: async (tx) => {
+            // The check runs AFTER the writes: the upserted source revision
+            // is already visible inside this transaction.
+            const { rows } = await tx.query<{ n: number }>('SELECT count(*)::int AS n FROM sources WHERE url = $1', [
+              source.url,
+            ]);
+            sourceCountSeenByTheCheck = Number(rows[0]!.n);
+            return true;
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ details: { rule: 'logical_deadline_expired' } });
+    expect(sourceCountSeenByTheCheck).toBe(1);
+    // The fresh decision rolled the whole pass back: no source row, no
+    // proposal, no evidence survived the ended window.
+    const { rows: sources } = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM sources WHERE url = $1', [
+      source.url,
+    ]);
+    expect(Number(sources[0]!.n)).toBe(0);
+    const { rows: assertions } = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM graph_assertions WHERE subject_node_id = $1 AND object_node_id = $2',
+      [work.id, creator.id],
+    );
+    expect(Number(assertions[0]!.n)).toBe(0);
+  });
+
+  it('a live window after the writes commits normally: the fresh decision changes nothing else', async () => {
+    const work = await identity({ kind: 'work', domain: 'art', sense: 'painting' });
+    const creator = await identity({ kind: 'creator', domain: 'art', sense: 'painter' });
+    const source = sourceInput();
+
+    const result = await proposeResearchAssertions(db, {
+      sources: [source],
+      proposals: [
+        {
+          subjectNodeId: work.id,
+          predicate: 'CREATED_BY',
+          objectNodeId: creator.id,
+          evidence: [{ sourceKey: source.key, excerpt: 'the work was created by the creator', evidenceKind: 'fact' }],
+        },
+      ],
+      deadline: { at: new Date(Date.now() + 5_000), ended: async () => false },
+    });
+    expect(result.proposed).toHaveLength(1);
+    expect(result.proposed[0]!.status).toBe('proposed');
   });
 });

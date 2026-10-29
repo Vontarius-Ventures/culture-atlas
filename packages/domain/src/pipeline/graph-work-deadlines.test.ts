@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
-import type { PoolDb } from '../db/pool';
+import type { QueryResultRow } from 'pg';
+import type { Db, PoolDb, TransactionOptions } from '../db/pool';
 import { enqueueJob } from '../jobs/queue';
 import { runJob } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAccount, testConfig } from '../testing';
@@ -75,6 +76,57 @@ async function waitForAccountLockWait(pool: PoolDb, timeoutMs = 5_000): Promise<
       throw new Error(`the expansion pass never blocked on the account lock within ${timeoutMs}ms`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
+}
+
+/**
+ * Resolves once at least one backend is observed WAITING on a lock whose
+ * in-flight query matches `pattern` — the park itself is never assumed.
+ */
+async function waitForLockWaiters(pattern: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock' AND query ILIKE $1 AND datname = current_database()`,
+      [pattern],
+    );
+    if (Number(rows[0]!.n) > 0) return;
+    if (Date.now() >= deadline)
+      throw new Error(`expected at least one lock waiter matching ${pattern} within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/**
+ * A Db view over the shared pool that sleeps ONCE at the expansion pass's
+ * in-transaction account check, so the pass demonstrably reaches its LATE
+ * publication stage near the window's end (the handler's identical
+ * pool-level statement passes straight through; production handlers are
+ * untouched).
+ */
+function delayedAccountCheckDb(delayMs: number): PoolDb {
+  let slept = false;
+  const wrap = (handle: Db): Db => {
+    const self: Db = {
+      inTransaction: handle.inTransaction,
+      query<R extends QueryResultRow = QueryResultRow>(text: string, params?: readonly unknown[]) {
+        if (!slept && handle.inTransaction && text === 'SELECT id FROM accounts WHERE id = $1') {
+          slept = true;
+          return (async () => {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            return handle.query<R>(text, params);
+          })();
+        }
+        return handle.query<R>(text, params);
+      },
+      transaction<T>(fn: (tx: Db) => Promise<T>, options?: TransactionOptions): Promise<T> {
+        return handle.transaction<T>((tx) => fn(wrap(tx)), options);
+      },
+    };
+    return self;
+  };
+  const view = wrap(db);
+  return Object.assign(view, { pool: db.pool }) as unknown as PoolDb;
 }
 
 describe('the anchored logical deadline governs the expansion handler', () => {
@@ -162,6 +214,57 @@ describe('the anchored logical deadline governs the expansion handler', () => {
     expect(await graphRunCount(accountId)).toBe(0);
     const job = await jobRow(jobId);
     expect(job.state).toBe('failed');
+    expect(job.error_retryable).toBe(false);
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('stopped');
+    expect(budget?.qloo_attempts_used).toBe(0);
+  });
+
+  it('a LATE expansion lock wait honors the current remainder: the bounded wait ends at the anchored deadline, never a full window later', async () => {
+    // DISC-SCR-018's expansion half: the pass sets one statement/lock bound at
+    // entry, so a lock wait reached LATE in the pass could sit a full window
+    // past the anchored deadline before a later check rolled it back —
+    // overlong work. The later wait must be bounded by the CURRENT remainder:
+    // PostgreSQL cancels it AT the deadline, the pass rolls back immediately,
+    // and the honest outcome is the typed window-expired result.
+    const { accountId, jobId, workKey } = await queuedExpansion();
+    // The pass enters legally; a delayed early stage parks it near the
+    // window's end so its publication-fence authority lock is a LATE wait.
+    const windowMs = 3_000;
+    const anchored = await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'expansion',
+      workKey,
+      deadlineMs: windowMs,
+    });
+    const deadlineAt = anchored.deadlineAt;
+
+    const holder = await db.pool.connect();
+    let run: Promise<{ state: string }> | undefined;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
+      run = runJob(jobId, { config: graphOn, db: delayedAccountCheckDb(1_200) });
+      void run.catch(() => undefined);
+      // The pass parks at its publication fence's account-authority lock
+      // (FOR NO KEY UPDATE never blocks the earlier foreign-key key-share
+      // work, so this is demonstrably the LATE publication stage).
+      await waitForLockWaiters('%FOR NO KEY UPDATE%');
+
+      await expect(run).rejects.toMatchObject({ details: { rule: 'logical_deadline_expired' } });
+      // The late wait ended AT the anchored deadline — the CURRENT remainder
+      // bounded it — never a full entry-bound window past it.
+      expect(Date.now() - deadlineAt.getTime()).toBeLessThanOrEqual(700);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+
+    // The whole pass rolled back: no run row, no publication, no reservation.
+    expect(await graphRunCount(accountId)).toBe(0);
+    const job = await jobRow(jobId);
+    expect(job.state).toBe('failed');
+    expect(job.error_code).toBe('service_unavailable');
     expect(job.error_retryable).toBe(false);
     const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
     expect(budget?.state).toBe('stopped');
