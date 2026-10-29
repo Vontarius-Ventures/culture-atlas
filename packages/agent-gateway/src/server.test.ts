@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import type { QlooEntity } from '@culture-atlas/providers';
 import { FakeQloo } from '@culture-atlas/providers/testing';
 import {
   SCOPES,
@@ -25,7 +26,7 @@ import {
 import { upsertReference } from '../../domain/src/compiler/store';
 import { GraphWorkDeadlineExpiredError } from '../../domain/src/interest-graph/budgets';
 import { ensureSampleItems, sampleKey } from '../../domain/src/feed/samples';
-import { insertItem, runJob } from '../../domain/src/test-support/library';
+import { insertItem, runClaimedAttempt, runJob } from '../../domain/src/test-support/library';
 import { connectMcp, ConnectionRefusedError } from '../../../apps/demo-agent/src/client';
 import { SPEC_TOOL_NAMES } from './tools';
 import { errorDetailText } from './server';
@@ -1240,6 +1241,266 @@ describe('scoped proof validity on retained candidate reads over MCP (DISC-SCR-0
       }
     } finally {
       await iso.drop();
+    }
+  });
+});
+
+describe('scoped Discover more mixed attempt history over MCP (DISC-SCR-049)', () => {
+  const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+  const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const noCallQloo = () => new FakeQloo({}, { live: true });
+
+  /** Legacy provider results (the graph-off Discover more path). */
+  function legacyResultsQloo(prefix: string): FakeQloo {
+    const entity = (id: string, name: string): QlooEntity => ({ entity_id: id, name, types: [], properties: {}, tags: [] });
+    return new FakeQloo(
+      {
+        insights: (req) => ({
+          entities: [entity(`${prefix}-${req.filterType.split(':').pop()}`, `Provider pick ${prefix}`)],
+          tags: [],
+        }),
+      },
+      { live: true },
+    );
+  }
+
+  /** One fresh scoped corpus library for the mixed-attempt history matrix. */
+  async function mixedMcpLibrary() {
+    const iso = await createIsolatedDatabase('scrdmixmcp');
+    await admitGraphCorpus(iso.db, getCorpusManifestFile());
+    const graphOn = testConfig({
+      INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
+      INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
+    });
+    const graphOff = testConfig();
+    const owner = await insertAccount(iso.db);
+    const ownerCtx = testContext(owner, { db: iso.db, config: graphOn });
+    const rodinRef = await upsertReference(iso.db, {
+      canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+      name: 'Auguste Rodin',
+      type: 'creator',
+      externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    await upsertReference(iso.db, {
+      canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+      name: 'Georges Seurat',
+      type: 'creator',
+      externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      iso.db,
+    );
+    const colA = await collections.createCollection(ownerCtx, { name: 'Museum A' });
+    await collections.addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+    await linkGraphReferenceIdentities(iso.db);
+    const { credential } = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id] },
+      iso.db,
+    );
+    const providers = testProviders({ qloo: new FakeQloo({}, { live: true }) });
+    return { iso, graphOn, graphOff, owner, ownerCtx, origin, colA, credential, providers };
+  }
+
+  /**
+   * The real mixed-attempt history of DISC-SCR-049 on one scoped job: the
+   * graph-on claim runs the scoped graph branch, persists its durable
+   * 'graph' stage evidence and is interrupted exactly at its publication
+   * barrier (the crashed-worker shape — no terminal write, nothing
+   * published, zero provider calls); the lease then lapses and the real
+   * graph-off reclaim runs the LEGACY provider branch, publishing provider
+   * results on the SAME discovery parent. Returns the provider card ids.
+   */
+  async function mixedAttemptHistory(
+    db: Awaited<ReturnType<typeof createIsolatedDatabase>>['db'],
+    graphOn: ReturnType<typeof testConfig>,
+    graphOff: ReturnType<typeof testConfig>,
+    jobId: string,
+  ): Promise<string[]> {
+    const graphQloo = noCallQloo();
+    const first = await runClaimedAttempt(jobId, {
+      db,
+      config: graphOn,
+      providers: testProviders({ qloo: graphQloo }),
+      interruptPublication: true,
+      leaseMs: 300,
+    });
+    expect(first).toMatchObject({ state: 'running', attempt: 1, interrupted: true });
+    expect(graphQloo.calls).toEqual([]);
+    await sleep(450);
+    const providerQloo = legacyResultsQloo('mcpmix');
+    const second = await runClaimedAttempt(jobId, {
+      db,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+    });
+    expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+    const { rows: dj } = await db.query<{ id: string }>('SELECT id FROM discovery_jobs WHERE job_id = $1', [jobId]);
+    const discoveryJobId = dj[0]!.id;
+    const { rows } = await db.query<{ discovery_item_id: string }>(
+      'SELECT discovery_item_id FROM recommendations WHERE discovery_job_id = $1 ORDER BY rank',
+      [discoveryJobId],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    return rows.map((r) => r.discovery_item_id);
+  }
+
+  it('get_item never serves the mixed history provider card under a fresh graph-on scoped request; the graph-off client keeps the legacy pairing', async () => {
+    const s = await mixedMcpLibrary();
+    try {
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        // The scoped operation is enqueued through the real MCP tool.
+        const started = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.colA.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+
+        const providerIds = await mixedAttemptHistory(s.iso.db, s.graphOn, s.graphOff, jobId);
+
+        // Graph re-enabled + a genuinely fresh scoped request: the agent's
+        // pending read stays honest through the real transport — the mixed
+        // history provider card never fills the rail.
+        const fresh = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: s.origin,
+          collection_id: s.colA.id,
+          category: 'watch',
+        });
+        expect(fresh.ok).toBe(true);
+        const freshJobId = fresh.ok ? fresh.data.job_id : '';
+        const pending = await client.callTool<{
+          related: unknown[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: s.origin, collection_id: s.colA.id });
+        expect(pending.ok && pending.data.related).toEqual([]);
+        expect(pending.ok && pending.data.related_state).toBe('pending');
+        expect(pending.ok && pending.data.related_job_id).toBe(freshJobId);
+
+        // Graph-off control over the same transport: the legacy pairing keeps
+        // the older provider card as the pending rail's cached results.
+        const offClient = await connectMcp({
+          url: MCP_URL,
+          token: s.credential,
+          fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOff }),
+        });
+        try {
+          const offPending = await offClient.callTool<{
+            related: { id: string }[];
+            related_state: string;
+            related_job_id: string | null;
+          }>('get_item', { item_id: s.origin, collection_id: s.colA.id });
+          expect(offPending.ok && offPending.data.related_state).toBe('pending');
+          expect(offPending.ok && offPending.data.related_job_id).toBe(freshJobId);
+          expect(offPending.ok && offPending.data.related.map((r) => r.id)).toEqual(providerIds);
+        } finally {
+          await offClient.close();
+        }
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await s.iso.drop();
+    }
+  });
+
+  it('a saved sample read over MCP keeps its carousel when the scoped job is mixed history; fresh graph work still takes the rail', async () => {
+    const s = await mixedMcpLibrary();
+    try {
+      // The shipped example cards the carousel serves, plus a public shared
+      // sample origin with a provider-resolvable identity (the mixed
+      // history's graph-off redelivery must actually publish through the
+      // fake provider, so the origin needs a resolvable qloo id).
+      await ensureSampleItems(s.iso.db);
+      const sample = await insertItem(
+        null,
+        {
+          kind: 'artist',
+          category: 'play',
+          title: 'Sample sculptor',
+          key: `sample:sculptor-mcp-mixed-${randomUUID().slice(0, 6)}`,
+          qloo: `artist-${randomUUID()}`,
+        },
+        s.iso.db,
+      );
+      await collections.addCollectionItem(s.ownerCtx, { id: s.colA.id, item_id: sample, body: {} });
+
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: s.credential,
+        fetch: mcpFetch(s.providers, { db: s.iso.db, config: s.graphOn }),
+      });
+      try {
+        // Control: before any discovery the ordinary example carousel serves.
+        const before = await client.callTool<{ related: { is_example: boolean }[]; related_state: string }>('get_item', {
+          item_id: sample,
+        });
+        expect(before.ok && before.data.related_state).toBe('cached');
+        expect(before.ok && before.data.related.length).toBeGreaterThan(0);
+        expect(before.ok && before.data.related.every((r) => r.is_example)).toBe(true);
+
+        // The scoped sample operation's graph-on attempt persists its stage
+        // then crashes at the publication barrier; the graph-off reclaim
+        // publishes one provider card on the same discovery parent.
+        const started = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: sample,
+          collection_id: s.colA.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+        await mixedAttemptHistory(s.iso.db, s.graphOn, s.graphOff, jobId);
+
+        // The graph-on sample read keeps the ordinary example carousel: the
+        // mixed history job is never mistaken for explicit graph work.
+        const carousel = await client.callTool<{ related: { is_example: boolean }[]; related_state: string }>('get_item', {
+          item_id: sample,
+        });
+        expect(carousel.ok && carousel.data.related_state).toBe('cached');
+        expect(carousel.ok && carousel.data.related.length).toBeGreaterThan(0);
+        expect(carousel.ok && carousel.data.related.every((r) => r.is_example)).toBe(true);
+
+        // A fresh explicit graph-on scoped operation still takes the sample
+        // rail honestly: pending, then its own completed empty outcome.
+        const fresh = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: sample,
+          collection_id: s.colA.id,
+          category: 'watch',
+        });
+        expect(fresh.ok).toBe(true);
+        const freshJobId = fresh.ok ? fresh.data.job_id : '';
+        const pending = await client.callTool<{
+          related: unknown[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: sample });
+        expect(pending.ok && pending.data.related).toEqual([]);
+        expect(pending.ok && pending.data.related_state).toBe('pending');
+        expect(pending.ok && pending.data.related_job_id).toBe(freshJobId);
+        await runJob(freshJobId, { db: s.iso.db, config: s.graphOn, providers: s.providers });
+        const empty = await client.callTool<{
+          related: unknown[];
+          related_state: string;
+          related_job_id: string | null;
+        }>('get_item', { item_id: sample });
+        expect(empty.ok && empty.data.related).toEqual([]);
+        expect(empty.ok && empty.data.related_state).toBe('none');
+        expect(empty.ok && empty.data.related_job_id).toBe(freshJobId);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await s.iso.drop();
     }
   });
 });

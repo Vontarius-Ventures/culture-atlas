@@ -12,7 +12,7 @@ import { cancelJob } from '../jobs/queue';
 import { resolvePrincipal } from '../services/auth';
 import { addCollectionItem, createCollection } from '../services/collections';
 import { getItem, startRelatedDiscovery } from '../services/items';
-import { insertItem, runJob } from '../test-support/library';
+import { insertItem, runClaimedAttempt, runJob } from '../test-support/library';
 import {
   createIsolatedDatabase,
   insertAccount,
@@ -62,6 +62,20 @@ import { linkGraphReferenceIdentities } from './identity-links';
  *    unrelated account taste cards or the other granted collection's saved
  *    card. Graph-off reads keep the legacy interest-pool fallback on their
  *    own compatible path.
+ *  - DISC-SCR-049 (round 11): job_stages is CUMULATIVE across attempts, so
+ *    historical graph-stage existence proves only that a graph attempt
+ *    OCCURRED, never that it produced the current results. A real
+ *    graph-on attempt that persists its stage then crashes before
+ *    publication can be redelivered after lease expiry with graph disabled:
+ *    the graph-off reclaim runs the LEGACY provider branch and publishes
+ *    provider results on the SAME discovery parent. Graph-on scoped reads
+ *    never borrow those proofless results (fresh selected-collection
+ *    pending rails, owner/agent reads and saved-sample carousels alike):
+ *    mixed graph/legacy history classifies as graph ONLY when the current
+ *    results themselves are proven graph-produced (their pinned scoped
+ *    proofs — which any legacy republication deletes with the rows it
+ *    replaces). Graph-only pending/failed no-padding, the valid graph-only
+ *    cache and graph-off legacy behavior all stay preserved.
  *
  * Everything runs the REAL enqueue + handler path on isolated databases with
  * the committed reviewed corpus and zero live provider calls.
@@ -753,5 +767,301 @@ describe('execution class and failed-context isolation on item reads (DISC-SCR-0
     expect(empty.related).toEqual([]);
     expect(empty.related_state).toBe('none');
     expect(empty.related_job_id).toBe(second.job_id);
+  });
+});
+
+describe('mixed graph/legacy attempt history never lends provider results to graph-on reads (DISC-SCR-049)', () => {
+  let isoDb: PoolDb;
+  let dropIso: () => Promise<void>;
+
+  beforeAll(async () => {
+    const created = await createIsolatedDatabase('scrdmix');
+    isoDb = created.db;
+    dropIso = created.drop;
+    await admitGraphCorpus(isoDb, getCorpusManifestFile());
+  });
+  afterAll(async () => {
+    await dropIso();
+  });
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const stageRows = (jobId: string) =>
+    isoDb
+      .query<{ stage: string; status: string; attempt: number }>(
+        'SELECT stage, status, attempt FROM job_stages WHERE job_id = $1 ORDER BY stage',
+        [jobId],
+      )
+      .then(({ rows }) => rows);
+  const proofCount = (discoveryJobId: string) =>
+    isoDb
+      .query<{ n: number }>('SELECT count(*)::int AS n FROM scoped_discovery_result_proofs WHERE discovery_job_id = $1', [
+        discoveryJobId,
+      ])
+      .then(({ rows }) => Number(rows[0]!.n));
+
+  it('a graph-on attempt that persisted its stage then crashed, redelivered graph-off with provider results, is never borrowed by a fresh graph-on read', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    const rodinRef = await qlooPersonReference(isoDb, RODIN_QLOO_ID, 'Auguste Rodin');
+    await qlooPersonReference(isoDb, SEURAT_QLOO_ID, 'Georges Seurat');
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      isoDb,
+    );
+    const colA = await createCollection(ownerCtx, { name: `Museum A ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id] },
+      isoDb,
+    );
+    await linkGraphReferenceIdentities(isoDb);
+
+    // Attempt 1 (graph ON): the real claim runs the scoped graph branch; the
+    // pass persists its durable 'graph' stage evidence and is interrupted
+    // exactly at its publication barrier — the crashed-worker shape (no
+    // terminal queue write, nothing published, zero provider calls).
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colA.id, category: 'play' } });
+    const graphQloo = noCallQloo();
+    const first = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOn,
+      providers: testProviders({ qloo: graphQloo }),
+      interruptPublication: true,
+      leaseMs: 300,
+    });
+    expect(first).toMatchObject({ state: 'running', attempt: 1, interrupted: true });
+    expect(graphQloo.calls).toEqual([]);
+    expect(await stageRows(scoped.job_id)).toEqual([{ stage: 'graph', status: 'failed', attempt: 1 }]);
+    expect(await publishedItemIds(isoDb, scoped.discovery_job_id)).toEqual([]);
+
+    // The lease really lapses by the clock, then the job is REDELIVERED with
+    // graph disabled: the real reclaim (attempt 2) picks the LEGACY provider
+    // branch from today's flags and publishes provider results on the SAME
+    // discovery parent — the exact mixed graph/legacy attempt history.
+    await sleep(450);
+    const providerQloo = legacyResultsQloo('mix');
+    const second = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+    });
+    expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+    expect(providerQloo.calls.length).toBeGreaterThan(0);
+    const providerIds = await publishedItemIds(isoDb, scoped.discovery_job_id);
+    expect(providerIds.length).toBeGreaterThan(0);
+    expect(await stageRows(scoped.job_id)).toEqual([
+      { stage: 'graph', status: 'failed', attempt: 1 },
+      { stage: 'insights:play', status: 'complete', attempt: 2 },
+      { stage: 'resolve', status: 'complete', attempt: 2 },
+    ]);
+    // The published rows are proofless provider results (no scoped proofs).
+    expect(await proofCount(scoped.discovery_job_id)).toBe(0);
+
+    // Graph-off reads keep the legacy rail on their own compatible path.
+    const offCached = await getItem(ownerOffCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(offCached.related_state).toBe('cached');
+    expect(offCached.related.map((r) => r.id)).toEqual(providerIds);
+
+    // Graph re-enabled + a genuinely fresh scoped request: its pending rail
+    // is honest — the mixed history's provider card NEVER fills it (a
+    // historical 'graph' stage row alone does not classify the job).
+    const fresh = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colA.id, category: 'watch' } });
+    const pending = await getItem(ownerCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(pending.related).toEqual([]);
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(fresh.job_id);
+    const pendingNoCollection = await getItem(ownerCtx, { id: origin, query: {} });
+    expect(pendingNoCollection.related).toEqual([]);
+    expect(pendingNoCollection.related_state).toBe('pending');
+    expect(pendingNoCollection.related_job_id).toBe(fresh.job_id);
+
+    // The A-granted agent's graph-on read agrees: the provider card never
+    // reaches the pending scoped rail under the grant either.
+    const actx = await freshAgentCtx(isoDb, agent.credential);
+    const agentPending = await getItem(actx, { id: origin, query: { collection_id: colA.id } });
+    expect(agentPending.related).toEqual([]);
+    expect(agentPending.related_state).toBe('pending');
+    expect(agentPending.related_job_id).toBe(fresh.job_id);
+
+    // Graph-off control after re-enable: pending fresh work still carries
+    // the older provider card as its cached rail (legacy pairing preserved).
+    const offPending = await getItem(ownerOffCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(offPending.related_state).toBe('pending');
+    expect(offPending.related_job_id).toBe(fresh.job_id);
+    expect(offPending.related.map((r) => r.id)).toEqual(providerIds);
+
+    // The fresh pass completes honestly empty (watch filter, zero provider
+    // calls) and the completed graph-on rail still never borrows the card.
+    const freshQloo = noCallQloo();
+    const freshOut = await runJob(fresh.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo: freshQloo }) });
+    expect(freshOut.state).toBe('partial');
+    expect(freshQloo.calls).toEqual([]);
+    const ownerEmpty = await getItem(ownerCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(ownerEmpty.related).toEqual([]);
+    expect(ownerEmpty.related_state).toBe('none');
+    expect(ownerEmpty.related_job_id).toBe(fresh.job_id);
+    const agentEmpty = await getItem(actx, { id: origin, query: { collection_id: colA.id } });
+    expect(agentEmpty.related).toEqual([]);
+    expect(agentEmpty.related_state).toBe('none');
+    expect(agentEmpty.related_job_id).toBe(fresh.job_id);
+  });
+
+  it('a saved sample keeps its carousel when its scoped job is mixed history: the provider card never takes the sample rail, real graph work still does', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    await ensureSampleItems(isoDb);
+    // A public shared sample with a provider-resolvable identity.
+    const sample = await insertItem(
+      null,
+      {
+        kind: 'artist',
+        category: 'play',
+        title: 'Sample sculptor',
+        key: `sample:sculptor-mixed-${randomUUID().slice(0, 6)}`,
+        qloo: `artist-${randomUUID()}`,
+      },
+      isoDb,
+    );
+    const col = await createCollection(ownerCtx, { name: `Sample shelf ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: col.id, item_id: sample, body: {} });
+
+    // Control: before any discovery the ordinary example carousel serves.
+    const before = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(before.related_state).toBe('cached');
+    expect(before.related.length).toBeGreaterThan(0);
+    expect(before.related.every((r) => r.is_example)).toBe(true);
+
+    // The scoped job's graph-on attempt persists its stage then crashes at
+    // the publication barrier; the graph-off reclaim publishes one provider
+    // card on the same sample's discovery parent.
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: sample, body: { collection_id: col.id, category: 'play' } });
+    const graphQloo = noCallQloo();
+    await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOn,
+      providers: testProviders({ qloo: graphQloo }),
+      interruptPublication: true,
+      leaseMs: 300,
+    });
+    expect(graphQloo.calls).toEqual([]);
+    await sleep(450);
+    const providerQloo = legacyResultsQloo('smx');
+    await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+    });
+    const providerIds = await publishedItemIds(isoDb, scoped.discovery_job_id);
+    expect(providerIds.length).toBeGreaterThan(0);
+    expect(await proofCount(scoped.discovery_job_id)).toBe(0);
+
+    // The graph-on sample read keeps the ordinary example carousel: the
+    // mixed history job is not explicit graph work and never takes the
+    // sample rail. (Graph-off reads keep the carousel unchanged too.)
+    const carousel = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(carousel.related_state).toBe('cached');
+    expect(carousel.related.length).toBeGreaterThan(0);
+    expect(carousel.related.every((r) => r.is_example)).toBe(true);
+    const offCarousel = await getItem(ownerOffCtx, { id: sample, query: {} });
+    expect(offCarousel.related_state).toBe('cached');
+    expect(offCarousel.related.length).toBeGreaterThan(0);
+    expect(offCarousel.related.every((r) => r.is_example)).toBe(true);
+
+    // A fresh explicit graph-on scoped operation still takes the sample rail
+    // honestly (pending, then its own completed empty outcome) — excluding
+    // the ambiguous mixed job never excludes genuine graph work.
+    const fresh = await startRelatedDiscovery(ownerCtx, { id: sample, body: { collection_id: col.id, category: 'watch' } });
+    const pending = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(pending.related).toEqual([]);
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(fresh.job_id);
+    const freshQloo = noCallQloo();
+    await runJob(fresh.job_id, { db: isoDb, config: graphOn, providers: testProviders({ qloo: freshQloo }) });
+    expect(freshQloo.calls).toEqual([]);
+    const empty = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(empty.related).toEqual([]);
+    expect(empty.related_state).toBe('none');
+    expect(empty.related_job_id).toBe(fresh.job_id);
+  });
+
+  it('mixed history whose current results are proven graph-produced (their pinned proofs survived) still serves as the graph rail: the legacy attempt never published', async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const rodinRef = await qlooPersonReference(isoDb, RODIN_QLOO_ID, 'Auguste Rodin');
+    await qlooPersonReference(isoDb, SEURAT_QLOO_ID, 'Georges Seurat');
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      isoDb,
+    );
+    const colA = await createCollection(ownerCtx, { name: `Museum A ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id] },
+      isoDb,
+    );
+    await linkGraphReferenceIdentities(isoDb);
+
+    // Attempt 1 (graph OFF): the legacy provider branch completes its stages
+    // (the fake provider answers) but is interrupted at its publication
+    // barrier — the crashed-worker shape again, no provider rows published.
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colA.id, category: 'play' } });
+    const providerQloo = legacyResultsQloo('prv');
+    const first = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+      interruptPublication: true,
+      leaseMs: 300,
+    });
+    expect(first).toMatchObject({ state: 'running', attempt: 1, interrupted: true });
+    expect(providerQloo.calls.length).toBeGreaterThan(0);
+    expect(await publishedItemIds(isoDb, scoped.discovery_job_id)).toEqual([]);
+
+    // Attempt 2 (graph ON, real reclaim): the scoped graph pass publishes
+    // the reviewed Rodin→museum→Seurat path with its pinned proofs. The
+    // current results ARE graph-produced, so the mixed history's class is
+    // PROVEN graph — not excluded.
+    await sleep(450);
+    const graphQloo = noCallQloo();
+    const second = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOn,
+      providers: testProviders({ qloo: graphQloo }),
+    });
+    expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+    expect(graphQloo.calls).toEqual([]);
+    const candidate = (await publishedItemIds(isoDb, scoped.discovery_job_id))[0]!;
+    expect(candidate).toBeTruthy();
+    expect(await proofCount(scoped.discovery_job_id)).toBeGreaterThan(0);
+    expect(await stageRows(scoped.job_id)).toEqual([
+      { stage: 'graph', status: 'complete', attempt: 2 },
+      { stage: 'insights:play', status: 'complete', attempt: 1 },
+      { stage: 'resolve', status: 'complete', attempt: 1 },
+    ]);
+
+    // The owner's and the A-granted agent's graph-on reads serve the proven
+    // graph result as the context's cached rail — valid graph results are
+    // never lost to the conservative mixed-history rule.
+    const ownerCached = await getItem(ownerCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(ownerCached.related_state).toBe('cached');
+    expect(ownerCached.related.map((r) => r.id)).toEqual([candidate]);
+    const actx = await freshAgentCtx(isoDb, agent.credential);
+    const agentCached = await getItem(actx, { id: origin, query: { collection_id: colA.id } });
+    expect(agentCached.related_state).toBe('cached');
+    expect(agentCached.related.map((r) => r.id)).toEqual([candidate]);
+
+    // A newer same-context graph request keeps the proven result as its
+    // cached rail while it runs (compatible cache control preserved).
+    const fresh = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colA.id, category: 'watch' } });
+    const pending = await getItem(ownerCtx, { id: origin, query: { collection_id: colA.id } });
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(fresh.job_id);
+    expect(pending.related.map((r) => r.id)).toEqual([candidate]);
   });
 });

@@ -284,15 +284,30 @@ interface DiscoveryJobRow {
  *  - the execution class is the durable record of which producer branch ran
  *    (DISC-SCR-047), NOT the scoped_authority_required marker — graph-off
  *    selected-collection enqueues carry that marker too and then run the
- *    legacy provider path. A `job_stages` row with stage 'graph' proves the
- *    scoped GRAPH pass actually executed (whatever its outcome: completed,
- *    honestly empty, or failed at its immutable deadline); any other stage
- *    rows prove the LEGACY provider path executed; work with NO stage rows
- *    has not started and claims no historical provenance — it is classified
- *    by TODAY's authorized graph-on eligibility (`graphEligible`, the branch
- *    a pickup would run now). So a fresh graph-on request never pairs with
- *    an older same-collection provider completion, and a graph-off request
- *    keeps its own compatible legacy pairing;
+ *    legacy provider path. But `job_stages` is CUMULATIVE across attempts
+ *    (DISC-SCR-049): a 'graph' row proves only that a graph ATTEMPT
+ *    executed, and a first graph attempt that persisted its stage can crash
+ *    before publication and be redelivered after lease expiry with graph
+ *    disabled, letting the LEGACY provider branch publish its own results
+ *    on the same parent — so historical graph-stage existence alone never
+ *    classifies those results. Only the legacy branch's ESTABLISHED stage
+ *    keys ('resolve', 'insights:*', 'eat:places', 'eat') count as provider
+ *    provenance; a job that ran both branches (mixed graph/legacy history)
+ *    is graph class ONLY when its CURRENT results are proven
+ *    graph-produced — the scoped pass alone writes pinned
+ *    scoped_discovery_result_proofs, and any later legacy republication
+ *    deletes them with the rows it replaces, so live proofs on the parent's
+ *    current recommendations prove the producing class. Ambiguous mixed
+ *    history is conservatively excluded: its proofless provider rows never
+ *    fill a graph-on rail or a saved sample's scoped rail. Pure graph
+ *    history (no legacy stage ever ran) keeps its class through every
+ *    outcome — completed, honestly empty, or failed at its immutable
+ *    deadline; work with NO stage rows has not started and claims no
+ *    historical provenance — it is classified by TODAY's authorized
+ *    graph-on eligibility (`graphEligible`, the branch a pickup would run
+ *    now). So a fresh graph-on request never pairs with an older
+ *    same-collection provider completion, and a graph-off request keeps
+ *    its own compatible legacy pairing;
  *  - the class dimension applies to GRAPH-ON reads: with `collectionId` (the
  *    request's explicit collection, already checked for accessibility) the
  *    context is that exact collection in its newest execution class —
@@ -335,11 +350,25 @@ async function latestDiscoveryJobs(
   const classifies = Boolean(opts.graphEligible) || Boolean(opts.scopedOnly);
   if (classifies) params.push(Boolean(opts.graphEligible));
   const eligibleParam = classifies ? `$${params.length}` : '';
-  // The job's actual execution class: durable 'graph' stage evidence, else
-  // legacy provider stage evidence, else (no stages yet) today's authorized
-  // graph-on eligibility for scoped work — never the shared marker alone.
-  const graphClass = (alias: string) => `(EXISTS (SELECT 1 FROM job_stages gs
+  // The job's actual execution class (DISC-SCR-047/049): the established
+  // legacy stage keys below are the ONLY provider provenance; a graph stage
+  // with no legacy stage ever written is pure graph history (graph class
+  // through every outcome); a mixed graph+legacy history is graph class only
+  // when the parent's CURRENT recommendations carry the scoped pass's pinned
+  // proofs (the pass alone writes them, and a later legacy republication
+  // deletes them with the rows it replaces — live proofs prove the producing
+  // class, everything else stays conservatively excluded); unstarted work
+  // follows today's authorized graph-on eligibility — never the marker.
+  const legacyStages = (alias: string) =>
+    `(SELECT 1 FROM job_stages ls
+       WHERE ls.job_id = ${alias}.job_id
+         AND (ls.stage = 'resolve' OR ls.stage LIKE 'insights:%' OR ls.stage = 'eat:places' OR ls.stage = 'eat'))`;
+  const graphClass = (alias: string) => `((EXISTS (SELECT 1 FROM job_stages gs
                                                     WHERE gs.job_id = ${alias}.job_id AND gs.stage = 'graph')
+       AND NOT EXISTS ${legacyStages(alias)})
+    OR EXISTS (SELECT 1 FROM scoped_discovery_result_proofs sp
+                 JOIN recommendations r ON r.id = sp.recommendation_id
+                WHERE r.discovery_job_id = ${alias}.id AND r.discovery_job_id = sp.discovery_job_id)
     OR (NOT EXISTS (SELECT 1 FROM job_stages ns WHERE ns.job_id = ${alias}.job_id)
         AND ${alias}.scoped_authority_required AND ${classifies ? `${eligibleParam}::boolean` : 'FALSE'}))`;
   const scopedOnly = (alias: string) =>

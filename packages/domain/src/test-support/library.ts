@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import type { QueryResultRow } from 'pg';
 import type { ProviderRegistry } from '@culture-atlas/providers';
 import type { DomainConfig } from '../config';
 import type { ServiceContext } from '../context';
-import type { PoolDb, Queryable } from '../db/pool';
+import type { Db, PoolDb, Queryable } from '../db/pool';
 import type { Category, ItemKind, JobType, ReferenceType } from '../enums';
 import { claimJobs, completeJob, failJob, getJobById, markJobCancelled, setJobStage, stillOwnsJob } from '../jobs/queue';
 import { JobCancelledError, type JobContext } from '../jobs/handler';
@@ -218,4 +219,138 @@ export async function runJob(
   }
   const done = await getJobById(db, job.id);
   return { state: done!.state };
+}
+
+/** The interruption marker of `runClaimedAttempt`'s publication barrier. */
+class PublicationBarrierError extends Error {
+  constructor() {
+    super('publication barrier');
+    this.name = 'PublicationBarrierError';
+  }
+}
+
+/**
+ * A Db wrapper whose FIRST `transaction()` call rejects — the execution's
+ * publication barrier. Plain queries pass through untouched, so the claimed
+ * attempt first persists exactly the durable stage evidence its producer
+ * branch records (`runStageOnce` writes the scoped pass's 'graph' running
+ * then failed marker; the legacy provider path completes its
+ * 'resolve'/'insights:*' stages), and the barrier then aborts it precisely
+ * where the branch would publish — before any publication statement runs.
+ */
+function publicationBarrierDb(base: Db): Db {
+  let tripped = false;
+  return {
+    inTransaction: base.inTransaction,
+    query<R extends QueryResultRow = QueryResultRow>(text: string, params?: readonly unknown[]) {
+      return base.query<R>(text, params);
+    },
+    transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
+      if (!tripped) {
+        tripped = true;
+        return Promise.reject(new PublicationBarrierError());
+      }
+      return base.transaction(fn);
+    },
+  };
+}
+
+export interface ClaimedAttemptResult {
+  /** The queue row's state after this execution (read back like `runJob`). */
+  state: string;
+  /** The real attempt this execution claimed. */
+  attempt: number;
+  /** True when the publication barrier interrupted this execution. */
+  interrupted: boolean;
+}
+
+/**
+ * Claim `jobId` at its NEXT real attempt and run its REAL handler once —
+ * the redelivery counterpart of `runJob`, for reproducing mixed
+ * graph/legacy attempt histories on ONE job (DISC-SCR-049):
+ *
+ *  - the claim is the real `claimJobs` lease — a fresh claim, or the
+ *    expired-lease reclaim of an abandoned 'running' row (the crashed-worker
+ *    redelivery path), never a synthetic stage fixture;
+ *  - `interruptPublication` aborts the execution exactly at its publication
+ *    barrier (the handler's first `transaction`: the scoped graph pass's
+ *    publication, or the legacy provider path's step-4 publication) WITHOUT
+ *    any terminal queue write: the claimed row keeps its 'running' state and
+ *    the lease the claim granted, exactly like a worker that crashed after
+ *    persisting its stage evidence, so a later attempt can redeliver the
+ *    same job once the lease lapses (pass a short `leaseMs` and wait, or
+ *    claim the abandoned row directly);
+ *  - an uninterrupted execution completes through the real `completeJob`
+ *    with the handler's own outcome (and reads its state back like `runJob`).
+ */
+export async function runClaimedAttempt(
+  jobId: string,
+  options: {
+    db?: PoolDb;
+    config?: DomainConfig;
+    providers?: ProviderRegistry;
+    interruptPublication?: boolean;
+    leaseMs?: number;
+  } = {},
+): Promise<ClaimedAttemptResult> {
+  const db = options.db ?? getTestDb();
+  const config = options.config ?? testConfig();
+  const providers = options.providers ?? testProviders();
+  const workerId = `test-${randomUUID()}`;
+  const [job] = await claimJobs(db, { workerId, limit: 1, leaseMs: options.leaseMs ?? 60_000, ids: [jobId] });
+  if (!job) throw new Error(`job ${jobId} not claimable`);
+  const controller = new AbortController();
+  const handlerDb = options.interruptPublication ? publicationBarrierDb(db) : db;
+  const ctx: JobContext = {
+    job,
+    payload: job.payload,
+    attempt: job.attempt,
+    workerId,
+    db: handlerDb,
+    providers,
+    config,
+    signal: controller.signal,
+    budget: {
+      qlooRequests: job.budget.qloo_requests ?? config.JOB_MAX_QLOO_REQUESTS,
+      researchRefs: config.JOB_MAX_RESEARCH_REFS,
+      providerRetries: job.budget.provider_retries ?? config.JOB_MAX_PROVIDER_RETRIES,
+      deadlineMs: config.ANALYSIS_DEADLINE_MS,
+    },
+    setStage: async (stage) => {
+      await setJobStage(db, job.id, workerId, job.attempt, stage);
+    },
+    runStage: (stage, fn) => runStageOnce(handlerDb, { jobId: job.id, stage, attempt: job.attempt }, fn),
+    ensureActive: async () => {
+      if (!(await stillOwnsJob(db, job.id, workerId, job.attempt))) throw new JobCancelledError('cancelled');
+    },
+    trace: async () => undefined,
+    log: () => undefined,
+  };
+  const handler = JOB_HANDLERS[job.type as JobType] as (c: JobContext) => Promise<{
+    state: 'complete' | 'partial';
+    resultType?: string;
+    resultId?: string;
+  }>;
+  try {
+    const outcome = await handler(ctx);
+    await completeJob(db, job.id, workerId, job.attempt, outcome);
+  } catch (err) {
+    if (err instanceof PublicationBarrierError) {
+      // The crashed worker: no terminal write. The claimed row keeps its
+      // 'running' state and lease; the durable stage evidence stands.
+      return { state: 'running', attempt: job.attempt, interrupted: true };
+    }
+    if (err instanceof JobCancelledError) {
+      await markJobCancelled(db, job.id, workerId, job.attempt);
+    } else {
+      await failJob(db, job.id, workerId, job.attempt, {
+        code: isAppError(err) ? err.code : 'internal',
+        message: (err as Error).message,
+        retryable: false,
+      });
+      throw err;
+    }
+  }
+  const done = await getJobById(db, job.id);
+  return { state: done!.state, attempt: job.attempt, interrupted: false };
 }

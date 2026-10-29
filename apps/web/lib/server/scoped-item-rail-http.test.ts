@@ -25,7 +25,7 @@ import { setProvidersForTesting, type QlooEntity } from '@culture-atlas/provider
 import { FakeQloo } from '@culture-atlas/providers/testing';
 import { upsertReference } from '../../../../packages/domain/src/compiler/store';
 import { ensureSampleItems, sampleKey } from '../../../../packages/domain/src/feed/samples';
-import { insertItem, runJob } from '../../../../packages/domain/src/test-support/library';
+import { insertItem, runClaimedAttempt, runJob } from '../../../../packages/domain/src/test-support/library';
 
 vi.mock('server-only', () => ({}));
 
@@ -703,5 +703,158 @@ describe('GET /v1/items/{id} separates execution class and keeps failed scoped c
     } finally {
       setDomainConfigForTesting(graphOn);
     }
+  });
+});
+
+describe('GET /v1/items/{id} never borrows mixed graph/legacy attempt history (DISC-SCR-049)', () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const noCallQloo = () => new FakeQloo({}, { live: true });
+
+  /**
+   * The real mixed-attempt history of DISC-SCR-049 on one scoped job: the
+   * graph-on claim runs the scoped graph branch, persists its durable
+   * 'graph' stage evidence and is interrupted exactly at its publication
+   * barrier (the crashed-worker shape — no terminal write, nothing
+   * published, zero provider calls); the lease then lapses and the real
+   * graph-off reclaim runs the LEGACY provider branch, publishing provider
+   * results on the SAME discovery parent. Returns the provider card ids.
+   */
+  async function mixedAttemptHistory(
+    ownerCtx: ReturnType<typeof testContext>,
+    origin: string,
+    colId: string,
+  ): Promise<string[]> {
+    const scoped = await items.startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colId, category: 'play' } });
+    const graphQloo = noCallQloo();
+    const first = await runClaimedAttempt(scoped.job_id, {
+      db: iso.db,
+      config: graphOn,
+      providers: testProviders({ qloo: graphQloo }),
+      interruptPublication: true,
+      leaseMs: 300,
+    });
+    expect(first).toMatchObject({ state: 'running', attempt: 1, interrupted: true });
+    expect(graphQloo.calls).toEqual([]);
+    await sleep(450);
+    const providerQloo = legacyResultsQloo('webmix');
+    const second = await runClaimedAttempt(scoped.job_id, {
+      db: iso.db,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+    });
+    expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+    const { rows } = await iso.db.query<{ discovery_item_id: string }>(
+      'SELECT discovery_item_id FROM recommendations WHERE discovery_job_id = $1 ORDER BY rank',
+      [scoped.discovery_job_id],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    return rows.map((r) => r.discovery_item_id);
+  }
+
+  it('a graph-on pending rail through the real route never serves the mixed history provider card; graph-off keeps the legacy pairing', async () => {
+    const owner = await browserOwner();
+    const ownerCtx = testContext(owner.principal, { db: iso.db, config: graphOn });
+    const origin = await insertItem(
+      { accountId: owner.principal.accountId },
+      { kind: 'film', category: 'watch', title: 'Mixed rollout film', qloo: `film-${randomUUID()}` },
+      iso.db,
+    );
+    const col = await collections.createCollection(ownerCtx, { name: `Movie nights ${randomUUID().slice(0, 6)}` });
+    await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(
+      owner.principal,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [col.id] },
+      iso.db,
+    );
+
+    const providerIds = await mixedAttemptHistory(ownerCtx, origin, col.id);
+
+    // Graph re-enabled + a genuinely fresh scoped request: the real route
+    // serves its pending context honestly — the mixed history's provider
+    // card (a historical 'graph' stage row alone does not classify it)
+    // never fills the rail, for the owner or the granted agent.
+    const fresh = await items.startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'watch' } });
+    const pending = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { cookie: owner.token })).body as unknown as Rail;
+    expect(pending.related).toEqual([]);
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(fresh.job_id);
+    const agentPending = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { bearer: `Bearer ${agent.credential}` }))
+      .body as unknown as Rail;
+    expect(agentPending.related).toEqual([]);
+    expect(agentPending.related_state).toBe('pending');
+    expect(agentPending.related_job_id).toBe(fresh.job_id);
+
+    // Graph-off control through the same route: the legacy pairing survives —
+    // pending fresh work with the older provider card as the cached rail.
+    try {
+      setDomainConfigForTesting(graphOff);
+      const offPending = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { cookie: owner.token }))
+        .body as unknown as Rail;
+      expect(offPending.related_state).toBe('pending');
+      expect(offPending.related_job_id).toBe(fresh.job_id);
+      expect(offPending.related.map((r) => r.id)).toEqual(providerIds);
+    } finally {
+      setDomainConfigForTesting(graphOn);
+    }
+
+    // The fresh pass completes honestly empty and the completed graph-on
+    // rail still never borrows the provider card.
+    const freshQloo = noCallQloo();
+    const freshOut = await runJob(fresh.job_id, { db: iso.db, config: graphOn, providers: testProviders({ qloo: freshQloo }) });
+    expect(freshOut.state).toBe('partial');
+    expect(freshQloo.calls).toEqual([]);
+    const empty = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { cookie: owner.token })).body as unknown as Rail;
+    expect(empty.related).toEqual([]);
+    expect(empty.related_state).toBe('none');
+    expect(empty.related_job_id).toBe(fresh.job_id);
+  });
+
+  it('a saved sample keeps its carousel through the real route when its scoped job is mixed history', async () => {
+    const owner = await browserOwner();
+    const ownerCtx = testContext(owner.principal, { db: iso.db, config: graphOn });
+    await ensureSampleItems(iso.db);
+    const sample = await insertItem(
+      null,
+      {
+        kind: 'artist',
+        category: 'play',
+        title: 'Sample sculptor',
+        key: `sample:sculptor-web-mixed-${randomUUID().slice(0, 6)}`,
+        qloo: `artist-${randomUUID()}`,
+      },
+      iso.db,
+    );
+    const col = await collections.createCollection(ownerCtx, { name: `Sample shelf ${randomUUID().slice(0, 6)}` });
+    await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: sample, body: {} });
+
+    // Control: before any discovery the ordinary example carousel serves.
+    const before = (await get(`/v1/items/${sample}`, { cookie: owner.token })).body as unknown as Rail;
+    expect(before.related_state).toBe('cached');
+    expect(before.related.length).toBeGreaterThan(0);
+    expect(before.related.every((r) => r.is_example)).toBe(true);
+
+    await mixedAttemptHistory(ownerCtx, sample, col.id);
+
+    // The graph-on sample read keeps the ordinary example carousel: the
+    // mixed history job is never mistaken for explicit graph work. A fresh
+    // explicit graph-on scoped operation still takes the sample rail
+    // honestly (pending, then its own completed empty outcome).
+    const carousel = (await get(`/v1/items/${sample}`, { cookie: owner.token })).body as unknown as Rail;
+    expect(carousel.related_state).toBe('cached');
+    expect(carousel.related.length).toBeGreaterThan(0);
+    expect(carousel.related.every((r) => r.is_example)).toBe(true);
+
+    const fresh = await items.startRelatedDiscovery(ownerCtx, { id: sample, body: { collection_id: col.id, category: 'watch' } });
+    const pending = (await get(`/v1/items/${sample}`, { cookie: owner.token })).body as unknown as Rail;
+    expect(pending.related).toEqual([]);
+    expect(pending.related_state).toBe('pending');
+    expect(pending.related_job_id).toBe(fresh.job_id);
+    const freshQloo = noCallQloo();
+    await runJob(fresh.job_id, { db: iso.db, config: graphOn, providers: testProviders({ qloo: freshQloo }) });
+    expect(freshQloo.calls).toEqual([]);
+    const empty = (await get(`/v1/items/${sample}`, { cookie: owner.token })).body as unknown as Rail;
+    expect(empty.related).toEqual([]);
+    expect(empty.related_state).toBe('none');
+    expect(empty.related_job_id).toBe(fresh.job_id);
   });
 });
