@@ -8,6 +8,7 @@ import {
   getCorpusManifestFile,
   items,
   linkGraphReferenceIdentities,
+  retractGraphEvidence,
   setDbForTesting,
   setDomainConfigForTesting,
 } from '@culture-atlas/domain';
@@ -311,5 +312,167 @@ describe("GET /v1/items/{id} serves a saved public sample's scoped outcome (DISC
     expect(read.related.map((r) => r.title)).toEqual(['Georges Seurat']);
     expect(read.related.every((r) => !r.is_example)).toBe(true);
     expect(read.related_job_id).toBe(scoped.job_id);
+  });
+});
+
+/**
+ * Route-level retained-candidate visibility (round-9 repair DISC-SCR-045):
+ * the REAL /v1/items/{id} handler serves a grant-derived scoped candidate
+ * only while its pinned proof currently serves. After the sole evidence
+ * retracts, the retained candidate ID answers 404 for the granted agent —
+ * the durable recommendation row alone is no witness — while public items,
+ * an EXPLICIT save in the granted collection and the first-party owner keep
+ * reading. This describe runs on its OWN isolated database (retraction is
+ * permanent for its evidence rows, and the file's shared corpus serves the
+ * other describes) by swapping the route handler's testing DB for its tests.
+ */
+describe('GET /v1/items/{id} candidate visibility survives only while the scoped proof serves (DISC-SCR-045)', () => {
+  let vis: Awaited<ReturnType<typeof createIsolatedDatabase>>;
+
+  beforeAll(async () => {
+    vis = await createIsolatedDatabase('scrdvisweb');
+    await admitGraphCorpus(vis.db, getCorpusManifestFile());
+    setDbForTesting(vis.db);
+  });
+  afterAll(async () => {
+    // Restore the file's shared database before the module-level afterAll
+    // clears the testing handles.
+    setDbForTesting(iso.db);
+    await vis.drop();
+  });
+
+  /** One account whose browser session cookie is a known token, on this describe's DB. */
+  async function visOwner() {
+    const principal = await insertAccount(vis.db);
+    const token = randomUUID();
+    await vis.db.query(`UPDATE sessions SET token_hash=$2 WHERE id=$1`, [principal.sessionId, auth.hashToken(token)]);
+    return { principal, token };
+  }
+
+  it('denies the retained candidate ID after sole-source retraction, keeping public items, granted saves and the owner', async () => {
+    const owner = await visOwner();
+    const ownerCtx = testContext(owner.principal, { db: vis.db, config: graphOn });
+    const rodinRef = await upsertReference(vis.db, {
+      canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+      name: 'Auguste Rodin',
+      type: 'creator',
+      externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    const seuratRef = await upsertReference(vis.db, {
+      canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+      name: 'Georges Seurat',
+      type: 'creator',
+      externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    const origin = await insertItem(
+      { accountId: owner.principal.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      vis.db,
+    );
+    const col = await collections.createCollection(ownerCtx, { name: `Museum visits ${randomUUID().slice(0, 6)}` });
+    await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: origin, body: {} });
+    await linkGraphReferenceIdentities(vis.db);
+    const agent = await insertAgentConnection(
+      owner.principal,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [col.id] },
+      vis.db,
+    );
+    const bearer = `Bearer ${agent.credential}`;
+
+    // The scoped operation publishes one admitted candidate with a pinned proof.
+    const scoped = await items.startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'play' } });
+    await runJob(scoped.job_id, { db: vis.db, config: graphOn, providers });
+    const rail = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { bearer })).body as unknown as Rail;
+    expect(rail.related_state).toBe('cached');
+    expect(rail.related.map((r) => r.title)).toEqual(['Georges Seurat']);
+    const candidateId = rail.related[0]!.id;
+
+    // Control: the real route serves the published candidate to the agent.
+    const control = await get(`/v1/items/${candidateId}?collection_id=${col.id}`, { bearer });
+    expect(control.status).toBe(200);
+    const { rows: candidateRows } = await vis.db.query<{ reference_id: string | null }>(
+      'SELECT reference_id FROM discovery_items WHERE id = $1',
+      [candidateId],
+    );
+    expect(candidateRows[0]!.reference_id).toBe(seuratRef);
+
+    // Withdraw the walked path's sole evidence (the real retraction path).
+    const rodinAssociation = await vis.db.query<{ id: string }>(
+      `SELECT a.id FROM graph_assertions a
+         JOIN graph_nodes s ON s.id = a.subject_node_id AND s.canonical_key = 'atlas:creator:auguste-rodin'
+         JOIN graph_nodes o ON o.id = a.object_node_id AND o.canonical_key = 'atlas:place:art-institute-of-chicago'
+        WHERE a.predicate = 'DOCUMENTED_ASSOCIATION'`,
+    );
+    const soleEvidence = await vis.db.query<{ evidence_id: string }>(
+      `SELECT s.evidence_id
+         FROM graph_assertion_support s
+         JOIN graph_evidence e ON e.id = s.evidence_id
+        WHERE s.assertion_id = $1 AND s.role = 'supports' AND e.validity_state = 'valid'`,
+      [rodinAssociation.rows[0]!.id],
+    );
+    const retraction = await retractGraphEvidence(vis.db, {
+      evidenceId: soleEvidence.rows[0]!.evidence_id,
+      reason: 'withdrawn after publication',
+    });
+    expect(retraction.scopedProofsInvalidated).toBe(1);
+
+    // DISC-SCR-045: the retained candidate ID answers 404 through the real
+    // route — the only grant-visible context was the withdrawn scoped proof,
+    // and the candidate has no independent granted context.
+    const denied = await get(`/v1/items/${candidateId}?collection_id=${col.id}`, { bearer });
+    expect(denied.status).toBe(404);
+    expect(denied.body).toMatchObject({ code: 'not_found' });
+
+    // The origin rail is honest while the origin stays readable.
+    const originAfter = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { bearer })).body as unknown as Rail;
+    expect(originAfter.related).toEqual([]);
+    expect(originAfter.related_state).toBe('none');
+
+    // Public item control: a shipped public sample stays readable under the grant.
+    await ensureSampleItems(vis.db);
+    const { rows: sampleRows } = await vis.db.query<{ id: string }>('SELECT id FROM discovery_items WHERE is_sample LIMIT 1');
+    expect(sampleRows.length).toBeGreaterThan(0);
+    expect((await get(`/v1/items/${sampleRows[0]!.id}?collection_id=${col.id}`, { bearer })).status).toBe(200);
+
+    // Granted-save control: an EXPLICIT save in the granted collection
+    // restores the candidate read — an authorization independent of the
+    // withdrawn proof. Its scoped reason stays withdrawn (the taste row below
+    // pins the same candidate so the owner keeps a reason; agents never see
+    // taste-seed authority under the grant).
+    await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: candidateId, body: {} });
+    const restored = (await get(`/v1/items/${candidateId}?collection_id=${col.id}`, { bearer })).body as {
+      reason: string | null;
+    };
+    expect(restored.reason).toBeNull();
+
+    // Owner control: first-party ownership keeps the card through the real
+    // route, with the withdrawn scoped reason gone and the independent taste
+    // reason serving (DISC-SCR-046's survival case through the route).
+    const tasteRun = await vis.db.query<{ id: string }>(
+      `INSERT INTO taste_seed_runs (owner_account_id, taste_revision, state, signal_count)
+       VALUES ($1, 0, 'complete', 1) RETURNING id`,
+      [owner.principal.accountId],
+    );
+    await vis.db.query(
+      `INSERT INTO recommendations (taste_seed_run_id, discovery_item_id, category, rank, title,
+                                    external_ids, display_reason, origin, provider_query_ids, created_at)
+       VALUES ($1, $2, 'play', 1, 'Georges Seurat', '{}'::jsonb, 'From your interests.', 'catalog',
+               ARRAY[]::uuid[], now() - interval '2 hours')`,
+      [tasteRun.rows[0]!.id, candidateId],
+    );
+    const ownerRead = (await get(`/v1/items/${candidateId}`, { cookie: owner.token })).body as {
+      reason: string | null;
+      item: { id: string };
+    };
+    expect(ownerRead.item.id).toBe(candidateId);
+    expect(ownerRead.reason).toBe('From your interests.');
+
+    // Provenance control: the durable scoped row survives — only its serving
+    // was withdrawn.
+    const { rows: recs } = await vis.db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+      [scoped.discovery_job_id],
+    );
+    expect(Number(recs[0]!.n)).toBe(1);
   });
 });

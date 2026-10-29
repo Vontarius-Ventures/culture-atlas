@@ -289,6 +289,53 @@ export async function revalidateGraphProof(
 }
 
 /**
+ * Read-time SERVING verdicts for the approved scoped branch's pinned result
+ * proofs, keyed by recommendation id (round-9 repairs DISC-SCR-045/046).
+ *
+ * A published scoped result serves only while its pinned proof currently
+ * holds — the same fresh revalidation scoped-reads.ts applies to rails and
+ * reasons. This batched form lets the grant-derived CANDIDATE VISIBILITY and
+ * the item REASON lookups (library/access.ts, services/items.ts) revalidate
+ * whole pages of recommendations without a proof query per row. It lives
+ * here, beside revalidatePinnedDependencies, so library/access can import it
+ * without a module cycle through the interest-graph read modules.
+ *
+ * Only proof-bearing recommendations appear in the map, and only with a
+ * false verdict when their proof no longer holds: a MISSING key is a
+ * proofless (non-scoped) recommendation that always serves — the same
+ * convention as scopedResultServingVerdicts/scopedRecommendationServes. A
+ * recommendation id has at most one proof (migration 370: UNIQUE
+ * (recommendation_id, discovery_job_id) over one-parent recommendations).
+ */
+export async function scopedRecommendationServingVerdicts(
+  db: Queryable,
+  input: { recommendationIds: readonly string[]; at?: Date },
+): Promise<Map<string, boolean>> {
+  if (input.recommendationIds.length === 0) return new Map();
+  const { rows } = await db.query<{
+    recommendation_id: string;
+    assertion_ids: string[];
+    assertion_revisions: number[];
+    evidence_ids: string[];
+    evidence_revisions: number[];
+  }>(
+    `SELECT recommendation_id, assertion_ids, assertion_revisions, evidence_ids, evidence_revisions
+       FROM scoped_discovery_result_proofs WHERE recommendation_id = ANY($1::uuid[])`,
+    [[...input.recommendationIds]],
+  );
+  const verdicts = new Map<string, boolean>();
+  for (const proof of rows) {
+    const verdict = await revalidatePinnedDependencies(db, {
+      assertions: proof.assertion_ids.map((id, i) => ({ id, revision: proof.assertion_revisions[i]! })),
+      evidence: proof.evidence_ids.map((id, i) => ({ id, revision: proof.evidence_revisions[i]! })),
+      at: input.at,
+    });
+    verdicts.set(proof.recommendation_id, verdict.valid);
+  }
+  return verdicts;
+}
+
+/**
  * The recorded pin arrays of a frontier candidate's approved path
  * (path_versions jsonb): parallel id/revision arrays. Rows stored before
  * revisions were recorded (or with short parallel arrays) read as null

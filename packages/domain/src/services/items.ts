@@ -8,11 +8,8 @@ import { SAMPLE_ITEMS, sampleKey } from '../feed/samples';
 import { enqueueJob, relatedDiscoveryDedupeKey } from '../jobs';
 import { GRAPH_EXPANSION_DEADLINE_MS } from '../interest-graph/budgets';
 import { lockAgentGrantEpoch, recordDiscoveryGrantAuthority, resolveScopedOriginSave } from '../interest-graph/scoped-discovery';
-import {
-  scopedGraphReadEnabled,
-  scopedRecommendationServes,
-  scopedResultServingVerdicts,
-} from '../interest-graph/scoped-reads';
+import { scopedGraphReadEnabled, scopedResultServingVerdicts } from '../interest-graph/scoped-reads';
+import { scopedRecommendationServingVerdicts } from '../interest-graph/validity';
 import { loadItemAnchors } from '../library/anchors';
 import {
   grantedIds,
@@ -85,6 +82,8 @@ async function loadItem(db: Queryable, id: string): Promise<ItemRow> {
   return rows[0];
 }
 
+/** One page of candidate reasons examined before paging further (DISC-SCR-046). */
+const REASON_HISTORY_PAGE = 64;
 /**
  * A recommendation for the item in one of the owner's own contexts (capture,
  * plan, related job). Grant-limited agents only see recommendations whose
@@ -96,14 +95,20 @@ async function loadItem(db: Queryable, id: string): Promise<ItemRow> {
  * A taste-seed recommendation (amendment 2.2) derives from the whole taste
  * (onboarding picks), so only full-library principals of the account see it.
  *
- * Two round-8 read-authority rules (DISC-SCR-034/036):
+ * Two round-8 read-authority rules (DISC-SCR-034/036) and their round-9
+ * pagination repair (DISC-SCR-046):
  *  - the job grant correlates to the discovery's EXACT origin collection: the
  *    origin must still be a member of dj.origin_collection_id itself — a
  *    second granted membership elsewhere keeps the origin visible but never
  *    keeps the lost context's recommendation readable (matching getJob);
  *  - a scoped-branch result serves only while its pinned proof currently
  *    holds. A withdrawn scoped reason steps aside for the next independent
- *    context (an older valid scoped result, a taste seed, ...) or none.
+ *    context (an older valid scoped result, a taste seed, ...) or none;
+ *  - stepping aside PAGES through the item's recommendation history until a
+ *    valid authorized reason serves or the history is actually exhausted:
+ *    no fixed search budget may stand in for exhaustion, so any number of
+ *    withdrawn newer scoped contexts cannot hide an independently valid older
+ *    taste/scoped reason.
  */
 async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: string, recommendationId?: string): Promise<RecRow | null> {
   const own = (alias: string) => ownerPredicate(owner, alias, 3).sql;
@@ -134,7 +139,12 @@ async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: st
     planGrant = `AND pl.selected_item_ids <@ ARRAY${members}`;
   }
   // Scoped results whose pinned proof no longer holds step aside (DISC-SCR-
-  // 034): each excluded row re-runs the same query, next context first.
+  // 034/046): the newest candidate reasons are paged newest-first, and every
+  // invalid scoped context is excluded until a valid authorized reason serves
+  // or the item's recommendation history is actually exhausted (an empty
+  // page). The loop provably terminates — each page excludes its own rows —
+  // and no fixed attempt budget can mistake history-search depth for absence
+  // of a valid reason.
   let excluded: string[] = [];
   params.push(excluded);
   const excludedParam = `$${params.length}`;
@@ -152,17 +162,22 @@ async function ownedRecommendation(ctx: ServiceContext, owner: Owner, itemId: st
           OR (dj.id IS NOT NULL AND ${own('dj')} ${jobGrant})
           OR (pl.id IS NOT NULL AND ${planOwner} ${planGrant})
           OR (ts.id IS NOT NULL AND ${seedOwner}))
-      ORDER BY r.created_at DESC LIMIT 1`;
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+      ORDER BY r.created_at DESC LIMIT ${REASON_HISTORY_PAGE}`;
+  for (;;) {
     params[params.length - 1] = excluded;
     const { rows } = await ctx.db.query<RecRow>(sql, params);
-    const row = rows[0];
-    if (!row) return null;
-    if (!row.job_scoped) return row;
-    if (await scopedRecommendationServes(ctx.db, { recommendationId: row.id, at: ctx.now() })) return row;
-    excluded = [...excluded, row.id];
+    if (rows.length === 0) return null; // actual exhaustion: no authorized reason remains
+    const verdicts = await scopedRecommendationServingVerdicts(ctx.db, {
+      recommendationIds: rows.filter((r) => r.job_scoped).map((r) => r.id),
+      at: ctx.now(),
+    });
+    for (const row of rows) {
+      // A non-scoped context serves directly; a scoped one only while its
+      // pinned proof currently holds (a proofless scoped row serves too).
+      if (!row.job_scoped || verdicts.get(row.id) !== false) return row;
+    }
+    excluded = [...excluded, ...rows.map((r) => r.id)];
   }
-  return null;
 }
 
 async function loadSources(db: Queryable, ids: readonly string[]): Promise<SourceDto[]> {

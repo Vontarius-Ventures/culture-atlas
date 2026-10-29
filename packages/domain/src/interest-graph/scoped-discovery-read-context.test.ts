@@ -7,6 +7,7 @@ import type { PoolDb } from '../db/pool';
 import type { Category, ItemKind } from '../enums';
 import { resolvePrincipal } from '../services/auth';
 import { addCollectionItem, createCollection, removeCollectionItem } from '../services/collections';
+import { ensureSampleItems } from '../feed/samples';
 import { getJob } from '../services/jobs';
 import { getItem, startRelatedDiscovery } from '../services/items';
 import type { AccountPrincipal } from '../principal';
@@ -27,7 +28,8 @@ import { retractGraphEvidence } from './validity';
 
 /**
  * Scoped Discover more READ context and proof validity (round-8 repairs
- * DISC-SCR-033/034/036; VAL-DISC-007/008/009).
+ * DISC-SCR-033/034/036 and their round-9 remnants DISC-SCR-045/046;
+ * VAL-DISC-007/008/009).
  *
  * The approved grant-scoped graph producer is honest at PUBLICATION time: it
  * publishes only admitted results of the authorized exact discovery context
@@ -50,6 +52,17 @@ import { retractGraphEvidence } from './validity';
  *    controlled read clocks) and pinned revision drift all suppress the stale
  *    output, while independent valid reasons and the explicitly saved item
  *    survive.
+ *  - DISC-SCR-045: the SAME proof revalidation gates grant-derived candidate
+ *    VISIBILITY. A durable scoped recommendation is no longer a standing
+ *    witness: after its only proof retracts or expires, an agent holding the
+ *    retained candidate ID gets 404, while public items, explicit saves in
+ *    granted collections, independently authorized contexts and first-party
+ *    ownership keep serving.
+ *  - DISC-SCR-046: invalid recommendation history is paged until a valid
+ *    authorized reason serves or the history is actually exhausted — eight
+ *    withdrawn newer scoped contexts cannot hide a ninth independently valid
+ *    older taste reason, and the durable rows survive as provenance (no
+ *    destructive cleanup).
  *
  * Everything runs the REAL enqueue + handler path on isolated databases with
  * the committed reviewed corpus and zero provider calls.
@@ -97,6 +110,17 @@ async function freshAgentCtx(db: PoolDb, credential: string): Promise<ServiceCon
 /** A read context whose clock runs ahead, so a near-future expiry/rights window has lapsed at read time. */
 function aheadCtx(db: PoolDb, principal: AccountPrincipal, aheadMs: number): ServiceContext {
   return testContext(principal, { db, config: graphOn, now: () => new Date(Date.now() + aheadMs) });
+}
+
+/**
+ * A fresh per-request AGENT read context whose clock runs ahead: the same
+ * principal the REST/MCP layers resolve on every call, reading through a
+ * lapsed expiry/rights window (DISC-SCR-045's expiry leg).
+ */
+async function aheadAgentCtx(db: PoolDb, credential: string, aheadMs: number): Promise<ServiceContext> {
+  const principal = await resolvePrincipal(db, { authorization: `Bearer ${credential}` });
+  expect(principal?.kind).toBe('agent');
+  return testContext(principal!, { db, config: graphOn, now: () => new Date(Date.now() + aheadMs) });
 }
 
 interface ScopedReadLibrary {
@@ -576,11 +600,30 @@ describe('scoped proof validity on result and reason reads (DISC-SCR-034; VAL-DI
     expect(candidateAfter.item.saved).toBe(true);
 
     // A grant-limited agent loses the withdrawn scoped reason too (taste
-    // seeds carry no authority under the grant) while the item itself stays
-    // readable through the surviving origin membership.
+    // seeds carry no authority under the grant) — and, DISC-SCR-045, the
+    // retained candidate ID stops being READABLE: the only grant-visible
+    // context for the newly materialized candidate was the withdrawn scoped
+    // proof, and its explicit save sits in an ungranted collection, which is
+    // never an independent authorization. The ORIGIN itself stays readable
+    // through its surviving granted membership.
     const actx = await freshAgentCtx(isoDb, lib.credential);
-    const agentCandidate = await getItem(actx, { id: candidate, query: {} });
-    expect(agentCandidate.reason).toBeNull();
+    await expect(getItem(actx, { id: candidate, query: {} })).rejects.toMatchObject({ code: 'not_found' });
+    const agentOrigin = await getItem(actx, { id: lib.origin, query: {} });
+    expect(agentOrigin.item.id).toBe(lib.origin);
+    expect(agentOrigin.related).toEqual([]);
+
+    // Controls: a PUBLIC item and an EXPLICIT save in the GRANTED collection
+    // stay readable under the grant independent of the withdrawn proof. The
+    // granted save restores the candidate card while its scoped reason stays
+    // withdrawn (and taste still carries no authority under the grant).
+    await ensureSampleItems(isoDb);
+    const { rows: sampleRows } = await isoDb.query<{ id: string }>('SELECT id FROM discovery_items WHERE is_sample LIMIT 1');
+    expect(sampleRows.length).toBeGreaterThan(0);
+    expect((await getItem(actx, { id: sampleRows[0]!.id, query: {} })).item.id).toBe(sampleRows[0]!.id);
+    await addCollectionItem(lib.ownerCtx, { id: lib.col.id, item_id: candidate, body: {} });
+    const grantedSave = await getItem(actx, { id: candidate, query: {} });
+    expect(grantedSave.item.id).toBe(candidate);
+    expect(grantedSave.reason).toBeNull();
 
     // The stored recommendation row is the durable record: nothing was
     // deleted, only its serving was withdrawn.
@@ -673,5 +716,110 @@ describe('scoped proof validity on result and reason reads (DISC-SCR-034; VAL-DI
     expect(railAfter.related).toEqual([]);
     expect(railAfter.related_state).toBe('none');
     expect((await getItem(lib.ownerCtx, { id: candidate, query: {} })).reason).toBeNull();
+  });
+
+  it('natural evidence expiry also denies the retained candidate ID for a grant-limited agent; the owner and the open window keep serving (DISC-SCR-045)', async () => {
+    const lib = await scopedReadLibrary(isoDb);
+    const rodinAssociation = await corpusAssertion(isoDb, RODIN_KEY, 'DOCUMENTED_ASSOCIATION');
+    const seuratAssociation = await corpusAssertion(isoDb, SEURAT_KEY, 'DOCUMENTED_ASSOCIATION');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    await regroundAssertion(isoDb, rodinAssociation, await freshEvidence(isoDb, { expiresAt }));
+    await regroundAssertion(isoDb, seuratAssociation, await freshEvidence(isoDb, { expiresAt }));
+
+    const { started, out } = await publishScoped(lib.ownerCtx, isoDb, lib.origin, lib.col.id, 'play');
+    expect(out.state).toBe('complete');
+    const candidate = (await publishedItemIds(isoDb, started.discovery_job_id))[0]!;
+
+    // Control: while the window is open, the grant-limited agent reads the
+    // published candidate through its valid scoped proof.
+    const actx = await freshAgentCtx(isoDb, lib.credential);
+    expect((await getItem(actx, { id: candidate, query: {} })).item.id).toBe(candidate);
+
+    // The window lapses only at READ time: no stored state flips, yet the
+    // read-time revalidation withdraws both the reason and the retained-ID
+    // visibility of the newly materialized, unsaved candidate.
+    const { rows: proofs } = await isoDb.query<{ validity_state: string }>(
+      'SELECT validity_state FROM scoped_discovery_result_proofs WHERE discovery_job_id = $1',
+      [started.discovery_job_id],
+    );
+    expect(proofs[0]!.validity_state).toBe('valid');
+    const expiredAgent = await aheadAgentCtx(isoDb, lib.credential, 2 * 60 * 60 * 1000);
+    await expect(getItem(expiredAgent, { id: candidate, query: {} })).rejects.toMatchObject({ code: 'not_found' });
+
+    // First-party ownership is untouched: the owner keeps the card (with the
+    // scoped reason withdrawn) and the origin's honest rail.
+    const expiredOwner = aheadCtx(isoDb, lib.owner, 2 * 60 * 60 * 1000);
+    const ownerCandidate = await getItem(expiredOwner, { id: candidate, query: {} });
+    expect(ownerCandidate.item.id).toBe(candidate);
+    expect(ownerCandidate.reason).toBeNull();
+    const expiredRail = await getItem(expiredOwner, { id: lib.origin, query: {} });
+    expect(expiredRail.related).toEqual([]);
+    expect(expiredRail.related_state).toBe('none');
+
+    // An EXPLICIT granted save restores the agent's read under the expired
+    // proof (the save is an independent authorization); the reason stays null.
+    await addCollectionItem(lib.ownerCtx, { id: lib.col.id, item_id: candidate, body: {} });
+    const grantedSave = await getItem(expiredAgent, { id: candidate, query: {} });
+    expect(grantedSave.item.id).toBe(candidate);
+    expect(grantedSave.reason).toBeNull();
+  });
+
+  it('eight withdrawn newer scoped contexts cannot hide a ninth independently valid older reason (DISC-SCR-046)', async () => {
+    const lib = await scopedReadLibrary(isoDb);
+    // The candidate already carries an INDEPENDENT taste recommendation
+    // created an hour EARLIER than every scoped context below (the owner's
+    // own prior interest — a plain taste row, no destructive setup).
+    const candidate = await insertItem(
+      { accountId: lib.accountId },
+      { kind: 'artist', category: 'play', title: 'Georges Seurat', qloo: SEURAT_QLOO_ID, referenceId: lib.seuratRef },
+      isoDb,
+    );
+    const tasteRun = await isoDb.query<{ id: string }>(
+      `INSERT INTO taste_seed_runs (owner_account_id, taste_revision, state, signal_count)
+       VALUES ($1, 0, 'complete', 1) RETURNING id`,
+      [lib.accountId],
+    );
+    await isoDb.query(
+      `INSERT INTO recommendations (taste_seed_run_id, discovery_item_id, category, rank, title,
+                                    external_ids, display_reason, origin, provider_query_ids, created_at)
+       VALUES ($1, $2, 'play', 1, 'Georges Seurat', '{}'::jsonb, 'From your interests.', 'catalog',
+               ARRAY[]::uuid[], now() - interval '1 hour')`,
+      [tasteRun.rows[0]!.id, candidate],
+    );
+
+    // Eight NEWER scoped contexts publish the same canonical candidate, one
+    // per granted-origin collection (ordinary supported discoveries).
+    for (let i = 0; i < 8; i += 1) {
+      const col = await createCollection(lib.ownerCtx, { name: `Museum ${i} ${randomUUID().slice(0, 6)}` });
+      await addCollectionItem(lib.ownerCtx, { id: col.id, item_id: lib.origin, body: {} });
+      const { started, out } = await publishScoped(lib.ownerCtx, isoDb, lib.origin, col.id, 'play');
+      expect(out.state).toBe('complete');
+      expect(await publishedItemIds(isoDb, started.discovery_job_id)).toEqual([candidate]);
+    }
+
+    // Their shared walked evidence is withdrawn together: all eight pinned
+    // proofs stop serving at once.
+    const rodinAssociation = await corpusAssertion(isoDb, RODIN_KEY, 'DOCUMENTED_ASSOCIATION');
+    const retraction = await retractGraphEvidence(isoDb, {
+      evidenceId: await soleEvidenceOf(isoDb, rodinAssociation),
+      reason: 'withdrawn after publication',
+    });
+    expect(retraction.scopedProofsInvalidated).toBe(8);
+
+    // The ninth, independently valid OLDER taste reason still serves: the
+    // item read pages past every invalid context instead of treating a fixed
+    // history-search budget as proof that no valid reason exists.
+    const after = await getItem(lib.ownerCtx, { id: candidate, query: {} });
+    expect(after.reason).toBe('From your interests.');
+    expect(after.why_this?.text).toBe('From your interests.');
+    expect(after.item.saved).toBe(false);
+
+    // Provenance is preserved without destructive cleanup: all eight durable
+    // scoped rows and the taste row remain — only serving was withdrawn.
+    const { rows: history } = await isoDb.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_item_id = $1',
+      [candidate],
+    );
+    expect(Number(history[0]!.n)).toBe(9);
   });
 });

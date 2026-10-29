@@ -2,6 +2,7 @@ import type { ServiceContext } from '../context';
 import type { Queryable } from '../db/pool';
 import { grantedCollectionFilter, requireCollectionGrant } from '../authz';
 import { AppError } from '../errors';
+import { scopedRecommendationServingVerdicts } from '../interest-graph/validity';
 import { ownerOf, ownerPredicate, type Owner, type Principal } from '../principal';
 
 /**
@@ -16,7 +17,12 @@ import { ownerOf, ownerPredicate, type Owner, type Principal } from '../principa
  *  - related discoveries whose discovery job originated from a granted
  *    collection the origin item is STILL a member of (the exact origin
  *    collection — DISC-SCR-036: a second granted membership elsewhere never
- *    keeps a lost context's results readable);
+ *    keeps a lost context's results readable). A scoped-branch discovery is
+ *    such a witness only while its result's pinned proof currently SERVES
+ *    (DISC-SCR-045): after the sole proof retracts or expires, a retained
+ *    candidate ID no longer reads under the grant — public items, granted
+ *    saves, capture/analysis contexts and plans stay visible independent of
+ *    any proof;
  *  - items of plans derived entirely from currently granted items;
  *  - public sample items.
  * Not-owned or not-granted records are 404, never 403.
@@ -81,6 +87,15 @@ const MEMBER_ITEMS = memberItemsSql('$1', '$2');
 /**
  * Discovery item ids (subset of `ids`) visible to the principal: owned or
  * sample for full-library principals; the grant rules above for limited agents.
+ *
+ * A discovery-job recommendation is a grant-visible witness only while it
+ * currently SERVES (DISC-SCR-045): the round-8 form accepted any durable
+ * recommendation row, so an agent holding a retained candidate ID could fetch
+ * it after the candidate's only scoped proof retracted or expired. The
+ * serving revalidation happens per witness row below — never inside the bulk
+ * EXISTS, which cannot express the pinned-proof recheck — so independent
+ * witnesses (public items, granted saves, captures/analysis, plans) stay
+ * visible without any proof lookup.
  */
 export async function visibleItemIds(ctx: ServiceContext, ids: readonly string[], db: Queryable = ctx.db): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
@@ -94,6 +109,8 @@ export async function visibleItemIds(ctx: ServiceContext, ids: readonly string[]
     return new Set(rows.map((r) => r.id));
   }
   const agent = p.kind === 'agent' ? p : null;
+  const accountId = agent?.accountId ?? null;
+  const granted = grantedIds(p);
   const { rows } = await db.query<{ id: string }>(
     `WITH member_items AS (${MEMBER_ITEMS})
      SELECT di.id FROM discovery_items di
@@ -110,19 +127,41 @@ export async function visibleItemIds(ctx: ServiceContext, ids: readonly string[]
                  JOIN discovery_items cdi ON cdi.capture_id = a.capture_id AND cdi.owner_account_id = $1
                 WHERE r.discovery_item_id = di.id AND cdi.id IN (SELECT id FROM member_items))
           OR EXISTS (
-               SELECT 1 FROM recommendations r JOIN discovery_jobs dj ON dj.id = r.discovery_job_id
-                 JOIN collection_items ci ON ci.collection_id = dj.origin_collection_id
-                 JOIN saved_items si ON si.id = ci.saved_item_id AND si.discovery_item_id = dj.origin_item_id
-                WHERE r.discovery_item_id = di.id AND dj.owner_account_id = $1
-                  AND dj.origin_collection_id = ANY($2::uuid[]))
-          OR EXISTS (
                SELECT 1 FROM recommendations r JOIN plans pl ON pl.id = r.plan_id
                 WHERE r.discovery_item_id = di.id AND pl.owner_account_id = $1
                   AND pl.selected_item_ids <@ ARRAY(SELECT id FROM member_items))
         )))`,
-    [agent?.accountId ?? null, grantedIds(p), ids, agent?.connectionId ?? null],
+    [accountId, granted, ids, agent?.connectionId ?? null],
   );
-  return new Set(rows.map((r) => r.id));
+  const visible = new Set(rows.map((r) => r.id));
+  // Items visible ONLY through a discovery job's recommendation (DISC-SCR-045):
+  // each witness recommendation must still serve — its scoped proof must
+  // currently hold. A proofless (legacy non-scoped) recommendation always
+  // serves; a retracted/expired/drifted scoped proof withdraws the witness, so
+  // the retained candidate ID denies unless another granted context survives.
+  const remaining = ids.filter((id) => !visible.has(id));
+  if (remaining.length === 0) return visible;
+  const { rows: witnesses } = await db.query<{ item_id: string; recommendation_id: string }>(
+    `SELECT DISTINCT r.discovery_item_id AS item_id, r.id AS recommendation_id
+       FROM recommendations r
+       JOIN discovery_items wdi ON wdi.id = r.discovery_item_id AND wdi.owner_account_id = $2
+       JOIN discovery_jobs dj ON dj.id = r.discovery_job_id
+       JOIN collection_items ci ON ci.collection_id = dj.origin_collection_id
+       JOIN saved_items si ON si.id = ci.saved_item_id AND si.discovery_item_id = dj.origin_item_id
+      WHERE r.discovery_item_id = ANY($1::uuid[]) AND dj.owner_account_id = $2
+        AND dj.origin_collection_id = ANY($3::uuid[])`,
+    [remaining, accountId, granted],
+  );
+  if (witnesses.length > 0) {
+    const verdicts = await scopedRecommendationServingVerdicts(db, {
+      recommendationIds: witnesses.map((w) => w.recommendation_id),
+      at: ctx.now(),
+    });
+    for (const w of witnesses) {
+      if (!visible.has(w.item_id) && verdicts.get(w.recommendation_id) !== false) visible.add(w.item_id);
+    }
+  }
+  return visible;
 }
 
 /** Throw 404 unless the item is visible to the principal. */

@@ -8,7 +8,9 @@ import {
   agentPlatform,
   collections,
   getCorpusManifestFile,
+  items,
   linkGraphReferenceIdentities,
+  retractGraphEvidence,
 } from '@culture-atlas/domain';
 import {
   closeTestDb,
@@ -929,6 +931,154 @@ describe('scoped Discover more rail context selection over MCP (DISC-SCR-043/044
       }
     } finally {
       await s.iso.drop();
+    }
+  });
+});
+
+describe('scoped proof validity on retained candidate reads over MCP (DISC-SCR-045; VAL-DISC-007/008)', () => {
+  const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+  const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+
+  it('sole-source retraction denies the retained candidate ID; public items, granted saves and the owner survive', async () => {
+    const iso = await createIsolatedDatabase('scrdvismcp');
+    try {
+      await admitGraphCorpus(iso.db, getCorpusManifestFile());
+      const graphOn = testConfig({
+        INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
+        INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
+      });
+      const owner = await insertAccount(iso.db);
+      const ownerCtx = testContext(owner, { db: iso.db, config: graphOn });
+      const rodinRef = await upsertReference(iso.db, {
+        canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+        name: 'Auguste Rodin',
+        type: 'creator',
+        externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+      });
+      await upsertReference(iso.db, {
+        canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+        name: 'Georges Seurat',
+        type: 'creator',
+        externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+      });
+      const origin = await insertItem(
+        { accountId: owner.accountId },
+        { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+        iso.db,
+      );
+      const col = await collections.createCollection(ownerCtx, { name: 'Museum visits' });
+      await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: origin, body: {} });
+      await linkGraphReferenceIdentities(iso.db);
+      const { credential } = await insertAgentConnection(
+        owner,
+        { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [col.id] },
+        iso.db,
+      );
+      const providers = testProviders({ qloo: new FakeQloo({}, { live: true }) });
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: credential,
+        fetch: mcpFetch(providers, { db: iso.db, config: graphOn }),
+      });
+      try {
+        // The scoped operation publishes one admitted result with a pinned proof.
+        const started = await client.callTool<{ job_id: string; discovery_job_id: string }>('discover_related', {
+          item_id: origin,
+          collection_id: col.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+        const discoveryJobId = started.ok ? started.data.discovery_job_id : '';
+        await runJob(jobId, { db: iso.db, config: graphOn, providers });
+
+        // Control: the same transport reads the published candidate.
+        const control = await client.callTool<{ related: { id: string; title: string }[]; related_state: string }>(
+          'get_item',
+          { item_id: origin, collection_id: col.id },
+        );
+        expect(control.ok && control.data.related_state).toBe('cached');
+        expect(control.ok && control.data.related.map((r) => r.title)).toEqual(['Georges Seurat']);
+        const candidateId = control.ok ? control.data.related[0]!.id : '';
+        const candidateRead = await client.callTool('get_item', { item_id: candidateId, collection_id: col.id });
+        expect(candidateRead.ok).toBe(true);
+
+        // Withdraw the walked path's sole evidence (the real retraction path):
+        // the pinned proof stops serving.
+        const rodinAssociation = await iso.db.query<{ id: string }>(
+          `SELECT a.id FROM graph_assertions a
+             JOIN graph_nodes s ON s.id = a.subject_node_id AND s.canonical_key = 'atlas:creator:auguste-rodin'
+             JOIN graph_nodes o ON o.id = a.object_node_id AND o.canonical_key = 'atlas:place:art-institute-of-chicago'
+            WHERE a.predicate = 'DOCUMENTED_ASSOCIATION'`,
+        );
+        const soleEvidence = await iso.db.query<{ evidence_id: string }>(
+          `SELECT s.evidence_id
+             FROM graph_assertion_support s
+             JOIN graph_evidence e ON e.id = s.evidence_id
+            WHERE s.assertion_id = $1 AND s.role = 'supports' AND e.validity_state = 'valid'`,
+          [rodinAssociation.rows[0]!.id],
+        );
+        const retraction = await retractGraphEvidence(iso.db, {
+          evidenceId: soleEvidence.rows[0]!.evidence_id,
+          reason: 'withdrawn after publication',
+        });
+        expect(retraction.scopedProofsInvalidated).toBe(1);
+
+        // DISC-SCR-045: the retained candidate ID DENIES through the real MCP
+        // transport — the durable recommendation alone is no witness once its
+        // only scoped proof is withdrawn, and no independent granted context
+        // exists for the newly materialized candidate.
+        const denied = await client.callTool('get_item', { item_id: candidateId, collection_id: col.id });
+        expect(denied.ok).toBe(false);
+        expect(!denied.ok && denied.error.code).toBe('not_found');
+
+        // The origin rail is honest ('none'), while the origin itself stays
+        // readable through its granted membership.
+        const originAfter = await client.callTool<{ related: unknown[]; related_state: string }>('get_item', {
+          item_id: origin,
+          collection_id: col.id,
+        });
+        expect(originAfter.ok && originAfter.data.related).toEqual([]);
+        expect(originAfter.ok && originAfter.data.related_state).toBe('none');
+
+        // Public item control: a shipped public sample stays readable.
+        await ensureSampleItems(iso.db);
+        const { rows: sampleRows } = await iso.db.query<{ id: string }>(
+          'SELECT id FROM discovery_items WHERE is_sample LIMIT 1',
+        );
+        expect(sampleRows.length).toBeGreaterThan(0);
+        const sampleRead = await client.callTool('get_item', { item_id: sampleRows[0]!.id, collection_id: col.id });
+        expect(sampleRead.ok).toBe(true);
+
+        // Granted-save control: an EXPLICIT save in the granted collection is
+        // an independent authorization — the candidate reads again, with the
+        // withdrawn scoped reason staying withdrawn.
+        await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: candidateId, body: {} });
+        const restored = await client.callTool<{ reason: string | null }>('get_item', {
+          item_id: candidateId,
+          collection_id: col.id,
+        });
+        expect(restored.ok).toBe(true);
+        expect(restored.ok && restored.data.reason).toBeNull();
+
+        // Owner control: first-party ownership keeps the card (reason
+        // withdrawn) — the owner is never grant-limited.
+        const ownerRead = await items.getItem(ownerCtx, { id: candidateId, query: {} });
+        expect(ownerRead.item.id).toBe(candidateId);
+        expect(ownerRead.reason).toBeNull();
+
+        // Provenance control: the durable recommendation row survives the
+        // withdrawal — only its serving was denied.
+        const { rows: recs } = await iso.db.query<{ n: number }>(
+          'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+          [discoveryJobId],
+        );
+        expect(Number(recs[0]!.n)).toBe(1);
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await iso.drop();
     }
   });
 });
