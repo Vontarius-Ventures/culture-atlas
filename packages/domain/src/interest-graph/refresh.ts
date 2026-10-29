@@ -1,4 +1,4 @@
-import type { Queryable } from '../db/pool';
+import type { Db, Queryable } from '../db/pool';
 
 /**
  * Discovery refresh state (VAL-DISC-003, VAL-DISC-007): the durable pause and
@@ -19,29 +19,64 @@ import type { Queryable } from '../db/pool';
  * it; a paused, killed or flag-off account keeps it untouched until eligible.
  */
 
+/**
+ * The consistent per-account publication-authority lock (DISC-SCR-008).
+ *
+ * Pause, resume and BOTH publishers — the expansion publication fence and
+ * relation research's storage fence — acquire this row lock before their
+ * authority read/write and hold it through their transaction's commit. That
+ * makes ordering deterministic where plain READ COMMITTED checks could not:
+ * a pause either commits before a publisher's fence read (and is seen, so the
+ * publication is rejected) or waits for the publisher's commit (the
+ * publication wins the ordering) — it can no longer commit between the
+ * publisher's pause check and its publication commit.
+ *
+ * FOR NO KEY UPDATE is deliberate: it conflicts with pause/resume and with
+ * account UPDATE/DELETE (so deletion also orders against publication), while
+ * staying compatible with the FOR KEY SHARE locks foreign-key inserts take
+ * on this row — projection passes, support removal and deletion cleanup are
+ * never blocked by the ordering.
+ *
+ * Returns false when the account row is gone (the caller reports deletion).
+ */
+export async function lockAccountPublicationAuthority(db: Queryable, accountId: string): Promise<boolean> {
+  const { rows } = await db.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
+  return rows.length > 0;
+}
+
 /** Pauses discovery refresh for the account (idempotent; keeps the first pause timestamp). */
-export async function pauseGraphDiscovery(db: Queryable, accountId: string): Promise<{ paused: boolean }> {
-  await db.query(
-    `INSERT INTO graph_refresh_state (owner_account_id, discovery_paused_at)
-     VALUES ($1, now())
-     ON CONFLICT (owner_account_id)
-       DO UPDATE SET discovery_paused_at = COALESCE(graph_refresh_state.discovery_paused_at, now()), updated_at = now()
-      WHERE graph_refresh_state.discovery_paused_at IS NULL`,
-    [accountId],
-  );
-  const pausedAt = await graphDiscoveryPausedAt(db, accountId);
-  return { paused: pausedAt != null };
+export async function pauseGraphDiscovery(db: Db, accountId: string): Promise<{ paused: boolean }> {
+  // The lock and the write are ONE transaction, so the ordering lock is held
+  // through the commit that makes the pause visible (DISC-SCR-008): a
+  // publisher contending on the same row cannot commit between them.
+  return db.transaction(async (tx) => {
+    await lockAccountPublicationAuthority(tx, accountId);
+    await tx.query(
+      `INSERT INTO graph_refresh_state (owner_account_id, discovery_paused_at)
+       VALUES ($1, now())
+       ON CONFLICT (owner_account_id)
+         DO UPDATE SET discovery_paused_at = COALESCE(graph_refresh_state.discovery_paused_at, now()), updated_at = now()
+          WHERE graph_refresh_state.discovery_paused_at IS NULL`,
+      [accountId],
+    );
+    const pausedAt = await graphDiscoveryPausedAt(tx, accountId);
+    return { paused: pausedAt != null };
+  });
 }
 
 /** Resumes discovery refresh for the account (idempotent). */
-export async function resumeGraphDiscovery(db: Queryable, accountId: string): Promise<void> {
-  await db.query(
-    `INSERT INTO graph_refresh_state (owner_account_id)
-     VALUES ($1)
-     ON CONFLICT (owner_account_id)
-       DO UPDATE SET discovery_paused_at = NULL, updated_at = now()`,
-    [accountId],
-  );
+export async function resumeGraphDiscovery(db: Db, accountId: string): Promise<void> {
+  // Same ordered protocol as pause: the lock is held through the commit.
+  await db.transaction(async (tx) => {
+    await lockAccountPublicationAuthority(tx, accountId);
+    await tx.query(
+      `INSERT INTO graph_refresh_state (owner_account_id)
+       VALUES ($1)
+       ON CONFLICT (owner_account_id)
+         DO UPDATE SET discovery_paused_at = NULL, updated_at = now()`,
+      [accountId],
+    );
+  });
 }
 
 /** The account's pause timestamp, or null while refreshing is allowed. */

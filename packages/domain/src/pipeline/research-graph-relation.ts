@@ -12,8 +12,9 @@ import {
   stopGraphWorkBudgetIfExpired,
   type GraphWorkBudgetState,
 } from '../interest-graph/budgets';
-import { INTEREST_GRAPH_POLICY_VERSION, type GraphPredicate } from '../interest-graph/schema';
-import { graphDiscoveryPausedAt } from '../interest-graph/refresh';
+import { INTEREST_GRAPH_POLICY_VERSION, type GraphPredicate, type GraphRunRow } from '../interest-graph/schema';
+import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from '../interest-graph/refresh';
+import { currentAccountAuthorityVersions } from '../interest-graph/expansion';
 import {
   buildRelationResearchRequest,
   proposeResearchAssertions,
@@ -24,7 +25,7 @@ import {
   type ResearchSourceInput,
 } from '../interest-graph/research';
 import { researchDispatchGate } from '../interest-graph/research-gate';
-import { createGraphRun, recordGraphProviderQuery, setGraphRunState } from '../interest-graph/store';
+import { createGraphRun, graphRunForJob, recordGraphProviderQuery, setGraphRunState } from '../interest-graph/store';
 
 /**
  * Queue handler for `research_graph_relation` (PR 8, VAL-DISC-005/007).
@@ -43,9 +44,17 @@ import { createGraphRun, recordGraphProviderQuery, setGraphRunState } from '../i
  * settles it. The paid extraction runs inside ctx.runStage, so a retry after
  * a lost lease reuses the completed output instead of re-buying it.
  *
- * The storage transaction is fenced: account deletion, a discovery pause or a
- * lost lease that lands after the paid call rejects publication — the work is
- * discarded, the spend stays accounted, nothing is published.
+ * The storage transaction is fenced and ORDERED (VAL-DISC-007,
+ * DISC-SCR-008/011): its first statement takes the consistent per-account
+ * publication-authority lock (the same row lock pause/resume take) and holds it
+ * through the commit, so a pause cannot land between the fence's checks and
+ * the publication. Inside that lock the fence rechecks account existence, the
+ * discovery pause, the CURRENT taste/projection/deletion-generation versions
+ * against the ORIGINAL input versions the run captured at first-attempt start
+ * (a save/removal, projection pass or deletion generation during the held paid
+ * call — or since a crashed attempt whose extraction is being replayed —
+ * rejects publication), the lease and the durable logical deadline. Rejected
+ * work is discarded; the spend stays accounted; nothing is published.
  */
 
 /** Maps an approved research URL to its durable-rights provider policy key. */
@@ -132,20 +141,46 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     predicate: ctx.payload.predicate as GraphPredicate,
   });
 
-  const run = await createGraphRun(ctx.db, {
-    ownerAccountId: accountId,
-    runKind: 'research',
-    jobId: ctx.job.id,
-    policyVersion: INTEREST_GRAPH_POLICY_VERSION,
-    budget: {
-      source: 'relation_research',
-      predicate: ctx.payload.predicate,
-      bounds: {
-        max_source_documents: RESEARCH_MAX_SOURCE_DOCUMENTS,
-        max_proposed_assertions: RESEARCH_MAX_PROPOSED_ASSERTIONS,
+  // DISC-SCR-011: the run row is ONE per job (job_id is unique), and with it
+  // the ORIGINAL input authority versions of the logical research item: they
+  // are captured at the FIRST attempt's run start — before the paid extraction
+  // — persisted on the run, and reused verbatim by every later redelivery
+  // (which replays the stored extraction), never re-read fresh at a
+  // redelivery's callback entry. The storage fence below compares CURRENT
+  // versions against that original capture before any write.
+  const priorRun = await graphRunForJob(ctx.db, { ownerAccountId: accountId, jobId: ctx.job.id });
+  let run: GraphRunRow;
+  if (priorRun) {
+    // A redelivery of an attempt that already created the job's run: reuse
+    // the run row and its ORIGINAL input versions; a second run row for the
+    // job is impossible by the unique key.
+    run = priorRun;
+  } else {
+    const captured = await currentAccountAuthorityVersions(ctx.db, accountId);
+    run = await createGraphRun(ctx.db, {
+      ownerAccountId: accountId,
+      runKind: 'research',
+      jobId: ctx.job.id,
+      inputTasteRevision: captured.tasteRevision,
+      inputProjectionRevision: captured.projectionRevision,
+      inputGeneration: captured.generation,
+      policyVersion: INTEREST_GRAPH_POLICY_VERSION,
+      budget: {
+        source: 'relation_research',
+        predicate: ctx.payload.predicate,
+        bounds: {
+          max_source_documents: RESEARCH_MAX_SOURCE_DOCUMENTS,
+          max_proposed_assertions: RESEARCH_MAX_PROPOSED_ASSERTIONS,
+        },
       },
-    },
-  });
+    });
+  }
+  // The ORIGINAL input versions of the logical item (the run row's).
+  const inputAuthority = {
+    tasteRevision: run.input_taste_revision,
+    projectionRevision: run.input_projection_revision,
+    generation: run.input_generation,
+  };
   await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'running' });
 
   try {
@@ -296,10 +331,32 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
       proposals,
       sqlTimeoutMs: Math.max(1, liveBeforeExtraction.deadlineAt.getTime() - Date.now()),
       fence: async (tx) => {
-        const { rows } = await tx.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
-        if (rows.length === 0) throw new JobCancelledError('account deleted');
+        // The per-account publication-authority lock (DISC-SCR-008), acquired
+        // FIRST and held through this transaction's commit: the same row lock
+        // pause/resume take, so a pause either commits before this read
+        // (rejected just below) or waits for the publication commit — it can
+        // no longer slip between the check and the commit. The lock never
+        // blocks projection or support removal (foreign-key key-share work).
+        if (!(await lockAccountPublicationAuthority(tx, accountId))) throw new JobCancelledError('account deleted');
         if ((await graphDiscoveryPausedAt(tx, accountId)) != null) {
           throw new AppError('conflict', { message: 'Discovery is paused; research cannot publish.', retryable: false });
+        }
+        // The extraction ran under the ORIGINAL input versions (DISC-SCR-011):
+        // a taste change (a save/removal), a projection pass or an advanced
+        // deletion generation since means this delayed work is stale against
+        // current authority and publishes nothing. This holds across the held
+        // paid call AND across redelivery replays of a stored extraction.
+        const current = await currentAccountAuthorityVersions(tx, accountId);
+        if (
+          current.tasteRevision !== inputAuthority.tasteRevision ||
+          current.projectionRevision !== inputAuthority.projectionRevision ||
+          current.generation !== inputAuthority.generation
+        ) {
+          throw new AppError('conflict', {
+            message: 'This relation research landed behind a newer change; retrying from current state.',
+            retryable: false,
+            details: { rule: 'stale_authority' },
+          });
         }
         if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new JobCancelledError('lease lost');
         // The durable deadline, re-read with the transaction's own clock: a

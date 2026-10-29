@@ -30,6 +30,7 @@ import {
   RANKING_POLICY_VERSION,
   checkGraphPublicationFence,
   expandAccountInterestGraph,
+  type ExpansionResult,
 } from './expansion';
 
 /**
@@ -1688,3 +1689,155 @@ describe('the anchored logical deadline governs the whole expansion pass', () =>
     expect(await activeFrontierCount(accountId)).toBe(0);
   });
 });
+
+// --- Live photo-analysis authority at publication (DISC-SCR-007) ------------------------
+
+describe('live photo-analysis authority at the publication fence (DISC-SCR-007)', () => {
+  /**
+   * Resolves once at least `atLeast` backends are observed WAITING on a lock
+   * whose in-flight query matches `pattern`. Fails honestly on timeout, so a
+   * barrier cannot pass by racing past the park.
+   */
+  async function waitForLockWaiters(pattern: string, atLeast: number, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const { rows } = await db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND query ILIKE $1 AND datname = current_database()`,
+        [pattern],
+      );
+      if (Number(rows[0]!.n) >= atLeast) return;
+      if (Date.now() >= deadline)
+        throw new Error(`expected at least ${atLeast} lock waiter(s) matching ${pattern} within ${timeoutMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  /**
+   * A publishable photo-rooted fixture: one explicitly saved capture whose
+   * active analysis A authorizes a depicted corpus reference, projected, with
+   * a justified creator path to a materializable candidate.
+   */
+  async function photoFixture() {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const photo = await corpusNode({ kind: 'work', name: 'Photo subject A' });
+    const cap = await photoCapture(ctx, accountId, { referenceId: photo.referenceId!, certainty: 0.72, anchor: true });
+    const creator = await plainNode({ kind: 'creator', sense: 'painter' });
+    const candidate = await corpusNode({ kind: 'work' });
+    await justifiedEdge({ subject: photo.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    await candidateItem(accountId, candidate.referenceId);
+    await project(accountId);
+    const { rows: refRows } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [cap.analysisId, photo.referenceId],
+    );
+    const captureReferenceA = refRows[0]!;
+    // A's projected support is live before the pass.
+    expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+    return { accountId, captureId: cap.captureId, analysisA: cap.analysisId, captureReferenceA };
+  }
+
+  it('activation A→B before projection catches up rejects the stale A-rooted pass', async () => {
+    const { accountId, captureId, analysisA, captureReferenceA } = await photoFixture();
+
+    // Another connection holds the account row FOR UPDATE: the pass parks on
+    // its graph_runs insert right AFTER reading its authoritative snapshot
+    // (analysis A), which is exactly the mid-pass hold the scrutiny gap needs.
+    const holder = await db.pool.connect();
+    let holderOpen = true;
+    let pass: Promise<ExpansionResult> | undefined;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM accounts WHERE id = $1 FOR UPDATE', [accountId]);
+
+      pass = expandAccountInterestGraph(db, { accountId, config: graphOn, at: new Date() });
+      void pass.catch(() => undefined);
+      await waitForLockWaiters('%graph_runs%', 1);
+
+      // While the pass is parked (its snapshot walked analysis A), the
+      // capture's active analysis switches to a fresh analysis B. Activation
+      // deliberately does NOT bump the taste revision, and projection has
+      // NOT caught up — the lagging projected support for A is still active.
+      const analysisB = (
+        await db.query<{ id: string }>(
+          `INSERT INTO analyses (capture_id, version, compiler_version, title, interpretation, section_statuses)
+           VALUES ($1, 2, 'test', 'A cloudy harbor pier', 'Different references stood out.', '{"observations":"complete"}')
+           RETURNING id`,
+          [captureId],
+        )
+      ).rows[0]!;
+      expect(analysisB.id).not.toBe(analysisA);
+      const otherReference = await insertReference({ name: `Subject B ${randomUUID().slice(0, 6)}` }, db);
+      await db.query(
+        `INSERT INTO capture_references (analysis_id, reference_id, relation, certainty, resolution_status, is_anchor, text_only, read_text)
+         VALUES ($1, $2, 'depicted', 0.9, 'resolved', true, false, NULL)`,
+        [analysisB.id, otherReference],
+      );
+      await db.query('UPDATE captures SET active_analysis_id = $2 WHERE id = $1', [captureId, analysisB.id]);
+      // Lagging projection: A's projected support rows are STILL active — a
+      // fence that trusts them would publish the stale A-rooted pass.
+      expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+
+      await holder.query('COMMIT');
+      holderOpen = false;
+    } finally {
+      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+
+    const result = await pass!;
+    expect(result.expanded).toBe(false);
+    expect(result.reason).toBe('support_withdrawn');
+    // Nothing survived: no run, no recommendation, no proof, no frontier.
+    expect(await activeFrontierCount(accountId)).toBe(0);
+    expect(await proofRows(accountId)).toHaveLength(0);
+    const { rows: recs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM recommendations WHERE owner_account_id = $1 AND graph_run_id IS NOT NULL`,
+      [accountId],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
+    const { rows: runs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion'`,
+      [accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(0);
+    // And the rejection came from LIVE authority, not from projection having
+    // caught up: the projected support for A is still there.
+    expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+  });
+
+  it('unchanged live photo authority publishes through the same held-lock barrier', async () => {
+    const { accountId } = await photoFixture();
+
+    const holder = await db.pool.connect();
+    let holderOpen = true;
+    let pass: Promise<ExpansionResult> | undefined;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM accounts WHERE id = $1 FOR UPDATE', [accountId]);
+      pass = expandAccountInterestGraph(db, { accountId, config: graphOn, at: new Date() });
+      void pass.catch(() => undefined);
+      await waitForLockWaiters('%graph_runs%', 1);
+      // No activation: the live capture/active-analysis/reference authority
+      // the pass walked is still current when the fence re-reads it.
+      await holder.query('COMMIT');
+      holderOpen = false;
+    } finally {
+      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+
+    const result = await pass!;
+    expect(result.expanded).toBe(true);
+    expect(result.counts.photoRoots).toBe(1);
+    expect(result.counts.recommendationsPublished).toBe(1);
+    const { rows: runs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion'`,
+      [accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(1);
+  });
+});
+

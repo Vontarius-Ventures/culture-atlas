@@ -6,7 +6,7 @@ import { GRAPH_FRONTIER_MAX_LIFETIME_DAYS, INTEREST_GRAPH_POLICY_VERSION } from 
 import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
 import { loadExplicitSupport } from './explicit-support';
-import { graphDiscoveryPausedAt } from './refresh';
+import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from './refresh';
 import { currentAssertionJustification } from './validity';
 import { verifiedReferenceNodeMatches } from './identity-links';
 import {
@@ -1002,8 +1002,15 @@ export async function checkGraphPublicationFence(
 
   // Account deletion is about the account row itself (the state row also
   // cascades away, but a never-projected account has no state row either).
-  const { rows: account } = await tx.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
-  if (account.length === 0) return 'account_missing';
+  // The LOCKED read doubles as the consistent per-account publication-
+  // authority lock (DISC-SCR-008): pause/resume take the same row lock before
+  // writing the refresh state, so a pause either commits before this read
+  // (and is seen below) or waits for this transaction's commit — it can no
+  // longer land between the pause check and the publication commit. FOR NO
+  // KEY UPDATE keeps the ordering off foreign-key key-share work (projection
+  // passes, support removal, cleanup), which are never blocked by it.
+  const present = await lockAccountPublicationAuthority(tx, accountId);
+  if (!present) return 'account_missing';
   const { rows: state } = await tx.query<{ projection_revision: number; deletion_generation: number }>(
     'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1',
     [accountId],
@@ -1073,6 +1080,31 @@ export async function checkGraphPublicationFence(
       );
       if (active.length !== new Set(photoReferenceIds).size) return 'support_withdrawn';
     }
+
+    // DISC-SCR-007: projected support lags by design — analysis activation
+    // deliberately does not bump the taste revision — so the decisive photo
+    // check re-reads the AUTHORITATIVE live state: the capture must still be
+    // explicitly saved, its CURRENT active analysis must be the exact
+    // analysis/version the root walked, and the exact capture_references row
+    // must still be one of that analysis's currently authorized references. A
+    // mid-pass activation A→B (before any projection catches up) fences the
+    // stale A-rooted pass here instead of publishing it.
+    const photoRanked = input.ranked.filter((o) => o.relevance.kind === 'photo');
+    if (photoRanked.length > 0) {
+      const live = await loadExplicitSupport(tx, accountId);
+      const liveByCapture = new Map(live.captures.map((c) => [c.captureId, c]));
+      for (const obs of photoRanked) {
+        const relevance = obs.relevance as PhotoExpansionRelevance;
+        const capture = liveByCapture.get(relevance.captureId);
+        if (!capture) return 'support_withdrawn';
+        if (capture.analysisId !== relevance.analysisId || capture.analysisVersion !== relevance.analysisVersion) {
+          return 'support_withdrawn';
+        }
+        if (!capture.references.some((r) => r.captureReferenceId === relevance.captureReferenceId)) {
+          return 'support_withdrawn';
+        }
+      }
+    }
   }
   return null;
 }
@@ -1085,6 +1117,21 @@ async function graphStateFence(tx: Queryable, accountId: string): Promise<{ inpu
     [accountId],
   );
   return { inputProjectionRevision: rows[0]?.projection_revision ?? 0, inputGeneration: rows[0]?.deletion_generation ?? 0 };
+}
+
+/**
+ * The account's CURRENT authority versions: taste revision, projection
+ * revision and deletion generation. The research handler captures these at
+ * run start (persisted on its run) and its storage fence compares the
+ * current values against that ORIGINAL capture before any write (DISC-SCR-011).
+ */
+export async function currentAccountAuthorityVersions(
+  db: Queryable,
+  accountId: string,
+): Promise<{ tasteRevision: number; projectionRevision: number; generation: number }> {
+  const tasteRevision = await getTasteRevision(db, { kind: 'account', accountId });
+  const { inputProjectionRevision, inputGeneration } = await graphStateFence(db, accountId);
+  return { tasteRevision, projectionRevision: inputProjectionRevision, generation: inputGeneration };
 }
 
 /**

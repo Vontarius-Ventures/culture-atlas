@@ -76,6 +76,26 @@ export async function graphRunForOwner(
 }
 
 /**
+ * The job's run row, if an earlier attempt already created one. `job_id` is
+ * UNIQUE, so one job owns at most one run: a redelivered attempt reuses this
+ * row — and with it the ORIGINAL input authority versions the first attempt
+ * captured — instead of inserting a second run (DISC-SCR-011).
+ */
+export async function graphRunForJob(
+  db: Queryable,
+  input: { ownerAccountId: string; jobId: string },
+): Promise<GraphRunRow | null> {
+  const { rows } = await db.query<GraphRunRow>(
+    `SELECT id, owner_account_id, job_id, run_kind, input_taste_revision, input_projection_revision,
+            input_generation, policy_version, budget, state, published, started_at, finished_at,
+            created_at, updated_at
+       FROM graph_runs WHERE job_id = $1 AND owner_account_id = $2`,
+    [input.jobId, input.ownerAccountId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
  * Owner-scoped run lookup that fails closed with a non-disclosing not_found.
  * Storage method is not provenance: callers never use run existence to leak
  * another account's private state.
