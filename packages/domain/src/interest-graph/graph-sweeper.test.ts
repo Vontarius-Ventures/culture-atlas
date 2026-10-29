@@ -1,5 +1,11 @@
-import { afterAll, describe, expect, it } from 'vitest';
-import { closeTestDb, getTestDb, insertAccount, testConfig } from '../testing';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { PoolDb } from '../db/pool';
+import {
+  createIsolatedDatabase,
+  insertAccount,
+  testConfig,
+  type IsolatedDatabase,
+} from '../testing';
 import { PROJECTION_SUPPORT_VERSION } from './schema';
 import { GRAPH_EXPANSION_PERIODIC_MS, dispatchGraphExpansion } from './sweeper';
 import {
@@ -18,19 +24,35 @@ import {
  * keeps its due marker untouched, and windows coalesce through the queue
  * dedupe so concurrent sweeps never double-dispatch one account.
  *
- * The test database is shared across the run, so most dispatches are scoped to
- * the account under test (the per-account semantics the sweeper implements);
- * one global pass proves the unscoped sweep shape.
+ * The file runs on one private isolated database. The unscoped global pass
+ * defaults to a 50-account batch ordered `COALESCE(marker, stamp) NULLS
+ * FIRST`, so in the run's shared database it competes with every caught-up
+ * account earlier files left behind — and a never-dispatched leftover (no
+ * refresh row) always sorts BEFORE this file's freshly-created account. With
+ * ≥50 such leftovers the account under test misses the batch and the
+ * containment assertion failed intermittently as `expected undefined to be
+ * defined` (recorded in the mission library, raw exits retained; a passing
+ * rerun was never proof of stability). A population this file owns makes the
+ * global pass's ordering and its counts deterministic, so the flake cannot
+ * fire and the test keeps asserting the real sweep shape.
  */
-
-const db = getTestDb();
-afterAll(closeTestDb);
 
 const config = testConfig({
   INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
   INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
 });
 const configOff = testConfig({ INTEREST_GRAPH_PROJECTION_ENABLED: 'true' });
+
+let iso: IsolatedDatabase;
+let db: PoolDb;
+
+beforeAll(async () => {
+  iso = await createIsolatedDatabase('gswp');
+  db = iso.db;
+});
+afterAll(async () => {
+  await iso.drop();
+});
 
 /** T0: a fixed clock far from the real now so periodic windows are unambiguous. */
 const T0 = new Date('2026-10-28T12:00:00Z');

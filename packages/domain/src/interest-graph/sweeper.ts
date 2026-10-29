@@ -7,7 +7,7 @@ import {
   ensureGraphWorkBudget,
 } from './budgets';
 import { discoveryEnabledForAccount, discoveryEnabledInConfig, type DiscoveryGateConfig } from './expansion';
-import { loadGraphRefreshRow } from './refresh';
+import { loadGraphRefreshRow, lockAccountPublicationAuthority } from './refresh';
 import { PROJECTION_SUPPORT_VERSION } from './schema';
 
 /**
@@ -23,10 +23,16 @@ import { PROJECTION_SUPPORT_VERSION } from './schema';
  *    row is caught up (applied revision, current support semantics) with no
  *    unsatisfied projection intents and no active projection job — expansion
  *    always walks freshly projected roots.
- *  - One active expansion per account (the queue dedupe key includes the
- *    dispatch stamp), so concurrent reads, mutation bursts and sweeper sweeps
- *    coalesce. A dispatched job that never runs still sits in the queue: a
- *    restarted worker claims it; nothing is consumed by dispatch alone.
+ *  - One active expansion per account, enforced THREE ways: the dispatch is
+ *    ONE ordered per-account operation (eligibility, active-job check,
+ *    dedupe-key selection, enqueue and dispatch stamp in one transaction
+ *    under the shared account authority lock, so concurrent sweeps cannot
+ *    interleave and a stalled sweep re-decides against current state), the
+ *    queue dedupe key is deterministic in the current pre-dispatch stamp
+ *    (concurrent sweeps coalesce), and migration 340's partial unique index
+ *    makes a second active expansion row unrepresentable at the storage level.
+ *    A dispatched job that never runs still sits in the queue: a restarted
+ *    worker claims it; nothing is consumed by dispatch alone.
  *  - Paused, flag-off or killed accounts are skipped with their due markers
  *    retained: nothing about an ineligible sweep consumes due-ness.
  *
@@ -75,15 +81,12 @@ export async function dispatchGraphExpansion(
 
   // Eligibility is decided BEFORE the limit. The kill prefilter is the
   // database half of `discoveryEnabledForAccount` for the two graph flags and
-  // must stay in sync with `activeKills`; the per-account check in the loop
-  // remains the authoritative final gate (the env kill list is invisible to
-  // SQL, and a kill can land between this snapshot and the enqueue).
-  const { rows } = await db.query<{
-    owner_account_id: string;
-    expansion_due_since: Date | null;
-    last_expansion_at: Date | null;
-  }>(
-    `SELECT s.owner_account_id, rs.expansion_due_since, rs.last_expansion_at
+  // must stay in sync with `activeKills`; the in-transaction gate inside the
+  // ordered operation below remains the authoritative final check (the env
+  // kill list is invisible to SQL, and a kill can land between this snapshot
+  // and the enqueue).
+  const { rows } = await db.query<{ owner_account_id: string }>(
+    `SELECT s.owner_account_id
        FROM personal_graph_state s
        LEFT JOIN graph_refresh_state rs ON rs.owner_account_id = s.owner_account_id
       WHERE s.applied_taste_revision = s.target_taste_revision
@@ -115,21 +118,116 @@ export async function dispatchGraphExpansion(
   );
 
   const accounts: DispatchedGraphExpansion[] = [];
-  for (const row of rows) {
-    const accountId = row.owner_account_id;
-    // Final concurrent gate check: a kill or env kill-list entry that landed
-    // after the candidate snapshot skips the account; its due marker and
-    // dispatch stamp stay exactly where they are.
-    if (!(await discoveryEnabledForAccount(db, { accountId, config: input.config }))) continue;
+  for (const candidate of rows) {
+    const accountId = candidate.owner_account_id;
+    let dispatched: DispatchedGraphExpansion | null;
+    try {
+      dispatched = await dispatchAccountWindow(db, { accountId, config: input.config, now });
+    } catch (err) {
+      // The storage fence (migration 340) fired: another window's job became
+      // active inside the lock-to-insert gap. The transaction rolled back —
+      // no job, no stamp, no consumed due-ness — and the account keeps its
+      // ONE active expansion. Any other error propagates (the worker logs
+      // the sweep; a feed read swallows it; due-ness is untouched either way).
+      if (isOneActiveExpansionViolation(err)) continue;
+      throw err;
+    }
+    if (dispatched) accounts.push(dispatched);
+  }
+  return { accounts };
+}
 
-    // The dedupe key is deterministic in the account's PRE-dispatch stamp, so
-    // concurrent sweeps compute the same key (one job) while the stamp this
-    // pass writes makes the next window's key fresh.
-    const { job, reused } = await enqueueJob(db, {
+/**
+ * The storage-level one-active-expansion fence (migration 340): a second
+ * queued/running `expand_interest_graph` job for one account cannot exist.
+ */
+const ACTIVE_EXPANSION_CONSTRAINT = 'jobs_one_active_graph_expansion_idx';
+
+function isOneActiveExpansionViolation(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; constraint?: unknown };
+  return e.code === '23505' && e.constraint === ACTIVE_EXPANSION_CONSTRAINT;
+}
+
+/**
+ * ONE ordered dispatch operation for one account (DISC-SCR-012): eligibility,
+ * the active-job check, the dedupe-key selection, the enqueue and the dispatch
+ * stamp all happen inside a single transaction that first takes the shared
+ * per-account publication-authority lock (the same accounts row, FOR NO KEY
+ * UPDATE, that pause/resume and both publishers hold through their commits).
+ *
+ * The candidate snapshot above is only a pre-filter. Every fact this
+ * operation decides is re-read UNDER the lock, so a sweep that was stalled
+ * before its transaction (the scrutiny's stale snapshot) re-decides against
+ * current committed state: an active window's job, a newer stamp, a pause or a
+ * kill that landed meanwhile each skip the account with its due marker
+ * retained. Other dispatchers queue BEHIND the whole operation at the lock,
+ * so concurrent sweeps cannot interleave read-choose-enqueue-stamp; and a
+ * failure inside the transaction rolls the enqueue and the stamp back
+ * together — a dispatch either happened completely or not at all. The
+ * residual gap between the in-lock recheck and the insert is closed by the
+ * storage fence above: the insert itself is impossible while any other window
+ * for the account is active.
+ */
+async function dispatchAccountWindow(
+  db: Db,
+  input: { accountId: string; config: DiscoveryGateConfig; now: Date },
+): Promise<DispatchedGraphExpansion | null> {
+  return db.transaction(async (tx) => {
+    // The ordered account lock, held through this transaction's commit.
+    // FOR NO KEY UPDATE stays compatible with foreign-key key-share work
+    // (projection passes, support removal, cleanup), so only dispatchers,
+    // pause/resume, publishers and deletion order against it.
+    const present = await lockAccountPublicationAuthority(tx, input.accountId);
+    if (!present) return null; // deletion won the ordering; nothing consumed
+
+    // Fresh eligibility under the lock: every snapshot condition re-read.
+    // Ineligible now (behind projection, unsatisfied intents, an active
+    // projection or expansion job, paused, or simply not due at this clock)
+    // skips the account with its due marker and stamp exactly where they are.
+    const fresh = await tx.query<{ expansion_due_since: Date | null; last_expansion_at: Date | null }>(
+      `SELECT rs.expansion_due_since, rs.last_expansion_at
+         FROM personal_graph_state s
+         LEFT JOIN graph_refresh_state rs ON rs.owner_account_id = s.owner_account_id
+        WHERE s.owner_account_id = $1
+          AND s.applied_taste_revision = s.target_taste_revision
+          AND s.support_version >= $2
+          AND NOT EXISTS (SELECT 1 FROM graph_outbox o
+                            WHERE o.owner_account_id = s.owner_account_id
+                              AND o.dispatch_state IN ('pending','dispatched'))
+          AND NOT EXISTS (SELECT 1 FROM jobs j
+                            WHERE j.owner_account_id = s.owner_account_id
+                              AND j.type = 'project_interest_graph' AND j.state IN ('queued','running'))
+          AND NOT EXISTS (SELECT 1 FROM jobs j
+                            WHERE j.owner_account_id = s.owner_account_id
+                              AND j.type = 'expand_interest_graph' AND j.state IN ('queued','running'))
+          AND rs.discovery_paused_at IS NULL
+          AND (
+                (rs.expansion_due_since IS NOT NULL
+                   AND (rs.last_expansion_at IS NULL OR rs.expansion_due_since > rs.last_expansion_at))
+             OR rs.last_expansion_at IS NULL
+             OR rs.last_expansion_at <= $3::timestamptz - make_interval(secs => $4::int)
+              )`,
+      [input.accountId, PROJECTION_SUPPORT_VERSION, input.now, GRAPH_EXPANSION_PERIODIC_MS / 1000],
+    );
+    const row = fresh.rows[0];
+    if (!row) return null;
+
+    // The final eligibility gate, under the ordered lock: a kill that landed
+    // after the snapshot (database or env) skips the account the same way.
+    if (!(await discoveryEnabledForAccount(tx, { accountId: input.accountId, config: input.config }))) {
+      return null;
+    }
+
+    // The dedupe key is deterministic in the account's CURRENT pre-dispatch
+    // stamp, read under the lock: concurrent sweeps blocked behind this
+    // transaction see the stamp this one writes and stay ineligible, while
+    // the stamp written below makes the next window's key fresh.
+    const { job, reused } = await enqueueJob(tx, {
       type: 'expand_interest_graph',
-      owner: { kind: 'account', accountId },
-      payload: { account_id: accountId },
-      dedupeKey: interestGraphExpansionDedupeKey({ accountId, lastExpansionAt: row.last_expansion_at }),
+      owner: { kind: 'account', accountId: input.accountId },
+      payload: { account_id: input.accountId },
+      dedupeKey: interestGraphExpansionDedupeKey({ accountId: input.accountId, lastExpansionAt: row.last_expansion_at }),
       maxAttempts: 3,
       budget: {
         qloo_requests: GRAPH_EXPANSION_QLOO_ATTEMPTS,
@@ -137,23 +235,24 @@ export async function dispatchGraphExpansion(
       },
       resultType: 'graph_expansion',
     });
-    await db.query(
+    await tx.query(
       `INSERT INTO graph_refresh_state (owner_account_id, last_expansion_at)
        VALUES ($1, $2)
        ON CONFLICT (owner_account_id)
          DO UPDATE SET last_expansion_at = $2, updated_at = now()`,
-      [accountId, now],
+      [input.accountId, input.now],
     );
-    accounts.push({
-      accountId,
+    return {
+      accountId: input.accountId,
       jobId: job.id,
       reused,
-      trigger: row.expansion_due_since != null && (row.last_expansion_at == null || row.expansion_due_since > row.last_expansion_at)
-        ? 'due'
-        : 'periodic',
-    });
-  }
-  return { accounts };
+      trigger:
+        row.expansion_due_since != null &&
+        (row.last_expansion_at == null || row.expansion_due_since > row.last_expansion_at)
+          ? 'due'
+          : 'periodic',
+    };
+  });
 }
 
 /**

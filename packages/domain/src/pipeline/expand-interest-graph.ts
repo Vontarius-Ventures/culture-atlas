@@ -14,6 +14,8 @@ import {
   expandAccountInterestGraph,
   type ExpansionRejectionReason,
 } from '../interest-graph/expansion';
+import { graphRunForJob } from '../interest-graph/store';
+import type { GraphRunRow } from '../interest-graph/schema';
 
 /**
  * Queue handler for `expand_interest_graph` (PR 8 discovery, VAL-DISC-003/006/007).
@@ -36,8 +38,30 @@ import {
  *    publish;
  *  - a successful run consumes the due marker it covered; fence rejections
  *    keep it (a fresh projection stamps a fresh marker), and paused or deleted
- *    accounts complete honestly without publishing anything.
+ *    accounts complete honestly without publishing anything;
+ *  - a redelivery of a pass whose COMMIT survived but whose bookkeeping did
+ *    not reuses the committed run: `graph_runs.job_id` is UNIQUE, so the run
+ *    row IS the attempt's outcome, and re-walking could neither insert a
+ *    second run nor republish honestly.
  */
+
+/**
+ * The committed pass's due-marker coverage bound: the attempt-start clock the
+ * pass recorded on its run (`budget.due_until` — the same `at` a live attempt
+ * would have consumed). Markers stamped after that instant were never covered
+ * by the pass and stay due. A run from before the bound was recorded falls
+ * back to its own `started_at` (the pass's earliest in-transaction clock —
+ * still before the publication fence, so nothing mid-pass is consumed).
+ */
+function committedRunCoverageBound(run: GraphRunRow): Date {
+  const budget = run.budget as { due_until?: unknown } | null | undefined;
+  if (budget && typeof budget.due_until === 'string') {
+    const parsed = new Date(budget.due_until);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return run.started_at ?? run.created_at;
+}
+
 export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (ctx: JobContext<'expand_interest_graph'>): Promise<JobOutcome> => {
   const accountId = ctx.job.owner_account_id;
   if (!accountId || ctx.payload.account_id !== accountId) {
@@ -54,6 +78,23 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
   // identity, so the first attempt anchors the deadline and every redelivery
   // inherits the same row (attempts used, remaining allowance, deadline end).
   const workKey = ctx.job.dedupe_key ?? `expand:${ctx.job.id}`;
+
+  // At-least-once redelivery of a COMMITTED pass (DISC-SCR-012's crash
+  // boundary): the pass is one transaction and `graph_runs.job_id` is UNIQUE,
+  // so a run row for this job can only be the complete, published outcome of
+  // an earlier attempt whose worker died between the pass's commit and this
+  // bookkeeping (due consumption, budget close, job completion). Re-running
+  // the pass would die on the unique key forever — or, without it, republish
+  // a second set of cards — so the redelivery REUSES the committed run
+  // instead: no re-walk, no republish, no re-anchored spend.
+  const priorRun = await graphRunForJob(ctx.db, { ownerAccountId: accountId, jobId: ctx.job.id });
+  if (priorRun && priorRun.state === 'complete' && priorRun.published) {
+    await consumeExpansionDue(ctx.db, { accountId, dueUntil: committedRunCoverageBound(priorRun) });
+    await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'complete' });
+    await ctx.trace({ kind: 'note', name: 'graph_expansion_redelivery_reused', data: { runId: priorRun.id } });
+    return { state: 'complete', resultType: 'graph_expansion', resultId: priorRun.id };
+  }
+
   const budget = await ensureGraphWorkBudget(ctx.db, {
     ownerAccountId: accountId,
     workKind: 'expansion',
@@ -154,6 +195,12 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
         });
     }
   }
+
+  // The pass is COMMITTED and the worker's own bookkeeping follows: due-marker
+  // consumption, the budget close and the job completion. Telemetry marks the
+  // boundary — a worker that dies between the publication commit and this
+  // bookkeeping leaves exactly the state the redelivery path below reuses.
+  await ctx.trace({ kind: 'note', name: 'graph_expansion_published', data: { runId: result.runId } });
 
   // A completed expansion consumes the due markers its own read covered; a
   // projection that committed DURING the run stamped a newer marker (and

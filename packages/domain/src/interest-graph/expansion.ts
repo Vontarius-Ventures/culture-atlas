@@ -1017,6 +1017,11 @@ async function runExpansion(
       bounds: EXPANSION_BOUNDS,
       ranking_policy_version: RANKING_POLICY_VERSION,
       grammar_version: GRAPH_PATH_GRAMMAR_VERSION,
+      // The pass's due-marker coverage bound: the attempt-start clock whose
+      // markers this pass's authority read covered. A redelivery of a
+      // committed pass consumes exactly this bound — never more, so a marker
+      // stamped after the pass's read stays due for the next window.
+      due_until: at.toISOString(),
       counts,
       rejections,
       truncated,
