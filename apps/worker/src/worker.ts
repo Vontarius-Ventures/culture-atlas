@@ -24,6 +24,7 @@ import {
   type JobContext,
   type JobFailure,
   type JobHandlerMap,
+  type JobOutcome,
   type JobRecord,
   type JobType,
 } from '@culture-atlas/domain';
@@ -252,7 +253,7 @@ export class Worker {
         .catch(() => undefined);
     }, this.heartbeatMs);
 
-    const handler = this.opts.handlers[job.type] as (ctx: JobContext) => Promise<{ state: 'complete' | 'partial'; resultType?: string; resultId?: string }>;
+    const handler = this.opts.handlers[job.type] as (ctx: JobContext) => Promise<JobOutcome>;
     const ctx: JobContext = {
       job,
       payload: job.payload,
@@ -300,7 +301,20 @@ export class Worker {
     try {
       if (!handler) throw new AppError('internal', { message: `No handler for job type ${job.type}`, retryable: false });
       const outcome = await handler(ctx);
-      if (controller.signal.aborted && stopReason !== 'deadline') throw new JobCancelledError(stopReason ?? 'cancelled');
+      // DISC-SCR-042: when the handler reports a durably COMMITTED
+      // publication, the returned outcome is final — its results, proofs
+      // and the discovery parent's terminal status are already in the
+      // database. A cancellation (or the attempt deadline) observed only
+      // now — by a queued real heartbeat whose UPDATE landed after a later
+      // cancel — must not retroactively classify that committed result as
+      // cancelled: finalize the committed outcome instead. completeJob's own
+      // lease-owner + claimed-attempt guard still fences a superseded
+      // execution, so a lost lease cannot complete a successor's row.
+      // Handlers that report no committed publication keep the ordinary
+      // abort classification below.
+      if (!outcome.publicationCommitted && controller.signal.aborted && stopReason !== 'deadline') {
+        throw new JobCancelledError(stopReason ?? 'cancelled');
+      }
       const ok = await completeJob(db, job.id, this.workerId, job.attempt, outcome);
       if (!ok) this.log('completion rejected (lease lost)', { jobId: job.id });
     } catch (err) {

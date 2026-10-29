@@ -160,6 +160,20 @@ export interface JobOutcome {
   state: 'complete' | 'partial';
   resultType?: string;
   resultId?: string;
+  /**
+   * True only when this execution's DURABLE publication transaction already
+   * committed, making the returned outcome final (the scoped graph branch:
+   * its one publication transaction wrote the scoped results, their pinned
+   * proofs and the discovery parent's terminal status together). When true,
+   * the worker's finalization carries this outcome through to completion
+   * even if a queued real heartbeat observes a LATER cancellation, or the
+   * attempt deadline fires, while the remaining stage/trace/finalization
+   * writes land: a committed discovery must never be retroactively
+   * classified as cancelled (DISC-SCR-042). Handlers without such a
+   * committed publication omit it, so cancellation, lease loss and the
+   * deadline keep their ordinary meaning for them.
+   */
+  publicationCommitted?: true;
 }
 
 /** Errors thrown by handlers are converted with these fields. */

@@ -222,6 +222,18 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           queue: { workerId: ctx.workerId, attempt: ctx.attempt },
         }),
       );
+      // The scoped publication transaction has COMMITTED: this resolution is
+      // a fresh committed pass or the replay of one (runStageOnce), so the
+      // outcome below is durable — the scoped parent's terminal status, its
+      // results and their pinned proofs all committed together. Report that
+      // so the worker's finalization carries THIS committed outcome through
+      // the remaining stage/trace/completion writes: a LATER cancellation
+      // observed by a queued real heartbeat during those writes must not
+      // retroactively record the committed discovery as cancelled
+      // (DISC-SCR-042). Pre-commit failures threw above and never reach
+      // this, and every non-scoped path below returns without the flag, so
+      // cancellation, lease loss and the deadline keep their ordinary
+      // meaning there.
       // Bounded-work telemetry: ids, versions, counters and rejection codes
       // only — no private interest text (VAL-OPS-003).
       await ctx.trace({
@@ -240,7 +252,12 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           grammar_version: outcome.grammarVersion,
         },
       });
-      return { state: outcome.state, resultType: 'discovery_job', resultId: discovery_job_id };
+      return {
+        state: outcome.state,
+        resultType: 'discovery_job',
+        resultId: discovery_job_id,
+        publicationCommitted: true,
+      };
     }
   }
 

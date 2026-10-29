@@ -630,6 +630,49 @@ describe('scoped Discover more grant fencing through the real worker (VAL-DISC-0
 
 // --- DISC-SCR-039: the queue attempt publication fence through the REAL worker --
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A Db view whose `occurrence`-th query matching `pattern` (1-based; default
+ * the first) parks until `release()`. The statement is intercepted before it
+ * reaches the server, so the row stays unlocked and real queue writers can
+ * still commit while an execution sits between two of its own statements.
+ */
+function parkedDb(
+  base: Db,
+  pattern: RegExp,
+  occurrence = 1,
+): { db: Db; arrived: Promise<void>; release: () => void } {
+  let parked = false;
+  let seen = 0;
+  let markArrived!: () => void;
+  const arrived = new Promise<void>((resolve) => {
+    markArrived = resolve;
+  });
+  let openGate!: () => void;
+  const opened = new Promise<void>((resolve) => {
+    openGate = resolve;
+  });
+  const wrap = (inner: Db): Db => {
+    const self: Db = {
+      inTransaction: inner.inTransaction,
+      // The park is transparent: identical statements, one held back. The
+      // generic query signature flows through the implementation cast.
+      query: (async (text: string, params?: readonly unknown[]) => {
+        if (!parked && pattern.test(text) && ++seen === occurrence) {
+          parked = true;
+          markArrived();
+          await opened;
+        }
+        return inner.query(text, params);
+      }) as Db['query'],
+      transaction: (fn) => inner.transaction((tx) => fn(wrap(tx))),
+    };
+    return self;
+  };
+  return { db: wrap(base), arrived, release: () => openGate() };
+}
+
 describe('scoped Discover more queue attempt fencing through the real worker (DISC-SCR-039)', () => {
   /**
    * The real Worker's liveness callback (`stillOwnsJob` on the pool) is an
@@ -674,44 +717,6 @@ describe('scoped Discover more queue attempt fencing through the real worker (DI
   afterAll(async () => {
     await dropIso();
   });
-
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  /**
-   * A Db view whose FIRST query matching `pattern` parks until `release()`.
-   * The statement is intercepted before it reaches the server, so the row
-   * stays unlocked and real queue writers can still commit while the pass
-   * sits between its unlocked liveness read and the committing writes.
-   */
-  function parkedDb(base: Db, pattern: RegExp): { db: Db; arrived: Promise<void>; release: () => void } {
-    let parked = false;
-    let markArrived!: () => void;
-    const arrived = new Promise<void>((resolve) => {
-      markArrived = resolve;
-    });
-    let openGate!: () => void;
-    const opened = new Promise<void>((resolve) => {
-      openGate = resolve;
-    });
-    const wrap = (inner: Db): Db => {
-      const self: Db = {
-        inTransaction: inner.inTransaction,
-        // The park is transparent: identical statements, one held back. The
-        // generic query signature flows through the implementation cast.
-        query: (async (text: string, params?: readonly unknown[]) => {
-          if (!parked && pattern.test(text)) {
-            parked = true;
-            markArrived();
-            await opened;
-          }
-          return inner.query(text, params);
-        }) as Db['query'],
-        transaction: (fn) => inner.transaction((tx) => fn(wrap(tx))),
-      };
-      return self;
-    };
-    return { db: wrap(base), arrived, release: () => openGate() };
-  }
 
   /** The real handler map with the pass's Db view parked at one statement. */
   function parkedHandlers(park: { db: Db }): JobHandlerMap {
@@ -1076,5 +1081,383 @@ describe('scoped Discover more queue attempt fencing through the real worker (DI
       await worker.stop().catch(() => undefined);
       await drained.catch(() => undefined);
     }
+  }, 30_000);
+});
+
+// --- DISC-SCR-042: post-commit committed-outcome finalization through the REAL worker --
+
+describe('scoped Discover more post-commit committed-outcome finalization through the real worker (DISC-SCR-042)', () => {
+  /**
+   * The scoped pass's publication transaction COMMITS before the handler's
+   * finalization writes the completed `graph` stage marker, the telemetry
+   * trace and the queue job's terminal completion. In that post-commit
+   * window a real queued interval heartbeat can observe a LATER
+   * cancellation — its UPDATE lands after the cancel committed, reads the
+   * flag and returns false — firing the worker's boolean-to-abort callback.
+   * The worker then reclassified the already-committed discovery as
+   * cancelled at its post-handler check: a successful, durably committed
+   * result was falsely recorded as cancelled (DISC-SCR-042).
+   *
+   * The handler therefore reports the committed outcome on its return, and
+   * the worker's finalization carries it through to completion even when
+   * that post-commit abort fires. These cases drive the REAL worker (real
+   * claim, real short-interval heartbeat timer, real stage records, real
+   * completion) with the worker's own db parked at exactly one post-commit
+   * statement, so each ordering is deterministic:
+   *
+   *  - a later cancellation observed by a real queued heartbeat DURING the
+   *    post-commit stage/trace finalization cannot retroactively record the
+   *    committed discovery as cancelled: the job completes with the
+   *    committed outcome and the discovery parent keeps its committed
+   *    status, results and proofs;
+   *  - a redelivered execution whose stage already committed REPLAYS it
+   *    (the pass is not re-run) and carries the same durable outcome
+   *    through to completion, while the superseded first execution's late
+   *    completion write cannot clobber the successor.
+   */
+
+  /** Verified live Qloo entity ids (see the corpus manifest provenance). */
+  const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+  const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+
+  /**
+   * The post-commit completed-`graph`-stage marker write — the same SQL
+   * text is used for the pre-pass `running` marker one statement earlier,
+   * so the park targets its SECOND occurrence.
+   */
+  const STAGE_MARKER_PATTERN = /INSERT INTO job_stages/;
+  /** The handler's post-commit telemetry trace write. */
+  const TRACE_PATTERN = /INSERT INTO trace_events/;
+  /** The worker's terminal completion write. */
+  const COMPLETE_PATTERN = /UPDATE jobs SET state = \$4, result_type/;
+
+  let isoDb: PoolDb;
+  let dropIso: () => Promise<void>;
+
+  beforeAll(async () => {
+    const created = await createIsolatedDatabase('scr042');
+    isoDb = created.db;
+    dropIso = created.drop;
+    await admitGraphCorpus(isoDb, getCorpusManifestFile());
+  });
+  afterAll(async () => {
+    await dropIso();
+  });
+
+  interface ScopedOutcomeLibrary {
+    accountId: string;
+    origin: string;
+    collection: { id: string };
+    agentCtx: Awaited<ReturnType<typeof accountCtx>>;
+  }
+
+  /** A fresh scoped library on the isolated corpus database: owner + granted agent + anchored origin. */
+  async function scopedLibrary(
+    providers: Awaited<ReturnType<typeof world>>['providers'],
+    libraryConfig: DomainConfig = config,
+  ): Promise<ScopedOutcomeLibrary> {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, providers, config: libraryConfig });
+    const ref = (canonicalKey: string, name: string, qlooId: string) =>
+      isoDb
+        .query<{ id: string }>(
+          `INSERT INTO cultural_references (canonical_name, canonical_key, type, external_ids)
+           VALUES ($1, $2, 'creator', $3::jsonb)
+           ON CONFLICT (canonical_key) DO UPDATE
+             SET external_ids = cultural_references.external_ids || EXCLUDED.external_ids, updated_at = now()
+           RETURNING id`,
+          [name, canonicalKey, JSON.stringify({ qloo: qlooId, qloo_types: ['urn:entity:person'] })],
+        )
+        .then((r) => r.rows[0]!.id);
+    const rodinRef = await ref(`qloo:${RODIN_QLOO_ID}`, 'Auguste Rodin', RODIN_QLOO_ID);
+    await ref(`qloo:${SEURAT_QLOO_ID}`, 'Georges Seurat', SEURAT_QLOO_ID);
+    const origin = (
+      await isoDb.query<{ id: string }>(
+        `INSERT INTO discovery_items (owner_account_id, owner_session_id, is_sample, kind, category, canonical_key, title,
+                                      display_metadata, external_ids, reference_id, resolved_anchor_ids)
+         VALUES ($1, NULL, false, 'artist', 'play', $2, $3, '{}'::jsonb, $4::jsonb, $5, '{}'::uuid[]) RETURNING id`,
+        [owner.accountId, `qloo:${RODIN_QLOO_ID}`, 'Auguste Rodin', JSON.stringify({ qloo: RODIN_QLOO_ID }), rodinRef],
+      )
+    ).rows[0]!.id;
+    const collection = await collections.createCollection(ownerCtx, { name: `scr042-${randomUUID().slice(0, 8)}` });
+    await collections.addCollectionItem(ownerCtx, { id: collection.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [collection.id] },
+      isoDb,
+    );
+    await linkGraphReferenceIdentities(isoDb);
+    return {
+      accountId: owner.accountId,
+      origin,
+      collection,
+      agentCtx: testContext(agent.principal, { db: isoDb, providers, config: libraryConfig }),
+    };
+  }
+
+  /** Enqueue the real agent-initiated scoped Discover more job. */
+  async function enqueueScoped(lib: ScopedOutcomeLibrary): Promise<{ jobId: string; discoveryJobId: string }> {
+    const started = await items.startRelatedDiscovery(lib.agentCtx, {
+      id: lib.origin,
+      body: { collection_id: lib.collection.id, category: 'play' },
+    });
+    return { jobId: started.job_id, discoveryJobId: started.discovery_job_id };
+  }
+
+  async function scopedRowsOf(discoveryJobId: string): Promise<{ recs: number; proofs: number }> {
+    const { rows: recs } = await isoDb.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+      [discoveryJobId],
+    );
+    const { rows: proofs } = await isoDb.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM scoped_discovery_result_proofs WHERE discovery_job_id = $1',
+      [discoveryJobId],
+    );
+    return { recs: Number(recs[0]!.n), proofs: Number(proofs[0]!.n) };
+  }
+
+  interface ScopedOutcomeJobRow {
+    state: string;
+    lease_owner: string | null;
+    attempt: number;
+    cancel_requested_at: Date | null;
+    result_type: string | null;
+    result_id: string | null;
+  }
+
+  async function jobRowOf(jobId: string): Promise<ScopedOutcomeJobRow> {
+    const { rows } = await isoDb.query<ScopedOutcomeJobRow>(
+      'SELECT state, lease_owner, attempt, cancel_requested_at, result_type, result_id FROM jobs WHERE id = $1',
+      [jobId],
+    );
+    return rows[0]!;
+  }
+
+  /**
+   * Waits until a REAL interval heartbeat committed its beat AFTER the later
+   * cancellation: the beat's UPDATE still matched this execution (running,
+   * same owner, same claimed attempt) and read the cancel flag, so its
+   * boolean was false and the worker's boolean-to-abort callback fired —
+   * before the parked finalization resumes.
+   */
+  async function waitForHeartbeatSawCancel(
+    jobId: string,
+    workerId: string,
+    attempt: number,
+    timeoutMs = 5_000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const { rows } = await isoDb.query<{
+        state: string;
+        lease_owner: string | null;
+        attempt: number;
+        cancel_requested_at: Date | null;
+        heartbeat_at: Date;
+      }>(
+        'SELECT state, lease_owner, attempt, cancel_requested_at, heartbeat_at FROM jobs WHERE id = $1',
+        [jobId],
+      );
+      const job = rows[0]!;
+      if (
+        job.cancel_requested_at !== null &&
+        job.heartbeat_at > job.cancel_requested_at &&
+        job.state === 'running' &&
+        job.lease_owner === workerId &&
+        job.attempt === attempt
+      ) {
+        return;
+      }
+      if (Date.now() >= deadline)
+        throw new Error(`expected a real heartbeat to observe the later cancellation within ${timeoutMs}ms`);
+      await sleep(25);
+    }
+  }
+
+  it('a real queued heartbeat observing a later cancellation during the post-commit stage/trace finalization cannot record the committed discovery cancelled', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const qloo = providers.qloo as FakeQloo;
+    const lib = await scopedLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+
+    // The worker's own db parks at the SECOND job_stages write — the
+    // completed-`graph`-stage marker — which the handler only reaches AFTER
+    // the scoped publication transaction committed.
+    const park = parkedDb(isoDb, STAGE_MARKER_PATTERN, 2);
+    const worker = new Worker({
+      db: park.db,
+      providers,
+      config,
+      handlers: JOB_HANDLERS,
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real',
+      // The REAL short-interval heartbeat timer: beats land throughout, and
+      // one is always queued when the later cancellation commits.
+      heartbeatMs: 5,
+      leaseMs: 30_000,
+      concurrency: 1,
+    });
+    const drained = worker.drain();
+    try {
+      // The publication has committed: the scoped parent's status, results
+      // and proofs are durable, and the post-commit stage/trace finalization
+      // is parked at the stage marker write.
+      await park.arrived;
+      const { rows: committed } = await isoDb.query<{ status: string }>(
+        'SELECT status FROM discovery_jobs WHERE id = $1',
+        [discoveryJobId],
+      );
+      expect(committed[0]!.status).toBe('complete');
+
+      // Waiter 1 — the LATER cancellation lands after that commit (the job
+      // stays running; only the cancel flag is set).
+      expect(await cancelJob(isoDb, jobId)).toBe('running');
+
+      // Waiter 2 — a real queued interval heartbeat observes the later
+      // cancellation (its beat commits after the cancel, reads the flag and
+      // returns false, firing the boolean-to-abort callback) BEFORE the
+      // parked finalization resumes.
+      await waitForHeartbeatSawCancel(jobId, 'w-real', 1);
+
+      park.release();
+      await drained;
+    } finally {
+      park.release();
+      await worker.stop().catch(() => undefined);
+      await drained.catch(() => undefined);
+    }
+
+    // The abort fired mid-finalization, yet the terminal job truth matches
+    // the committed discovery: completed with its result ids, the late
+    // cancel honestly recorded on the row, and the scoped parent's status,
+    // results and proofs unchanged.
+    const job = await jobRowOf(jobId);
+    expect(job.state).toBe('complete');
+    expect(job.lease_owner).toBeNull();
+    expect(job.attempt).toBe(1);
+    expect(job.cancel_requested_at).not.toBeNull();
+    expect(job.result_type).toBe('discovery_job');
+    expect(job.result_id).toBe(discoveryJobId);
+    const { rows: discovery } = await isoDb.query<{ status: string }>(
+      'SELECT status FROM discovery_jobs WHERE id = $1',
+      [discoveryJobId],
+    );
+    expect(discovery[0]!.status).toBe('complete');
+    expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 1, proofs: 1 });
+    expect(qloo.calls).toHaveLength(0);
+  }, 20_000);
+
+  it('a redelivered committed pass replays and finalizes complete despite a later cancellation observed by a real heartbeat', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const qloo = providers.qloo as FakeQloo;
+    const lib = await scopedLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+
+    // Worker 1 claims attempt 1, runs the pass (the publication commits, the
+    // stage marker and the trace land) and is then stranded at its terminal
+    // completion write — a worker that died between the committed
+    // publication and the queue job's completion, so it stopped beating too.
+    const park1 = parkedDb(isoDb, COMPLETE_PATTERN);
+    const worker1 = new Worker({
+      db: park1.db,
+      providers,
+      config,
+      handlers: JOB_HANDLERS,
+      jobIds: [jobId],
+      log: () => undefined,
+      workerId: 'w-real',
+      heartbeatMs: 60_000,
+      leaseMs: 30_000,
+      concurrency: 1,
+    });
+    const drained1 = worker1.drain();
+    try {
+      await park1.arrived;
+      const { rows: committed } = await isoDb.query<{ status: string }>(
+        'SELECT status FROM discovery_jobs WHERE id = $1',
+        [discoveryJobId],
+      );
+      expect(committed[0]!.status).toBe('complete');
+
+      // The stranded execution's lease lapses (it stopped beating) and a
+      // second real worker reclaims the job at attempt 2.
+      await isoDb.query(`UPDATE jobs SET lease_expiry = now() - interval '1 second' WHERE id = $1`, [jobId]);
+
+      const park2 = parkedDb(isoDb, TRACE_PATTERN);
+      const worker2 = new Worker({
+        db: park2.db,
+        providers,
+        config,
+        handlers: JOB_HANDLERS,
+        jobIds: [jobId],
+        log: () => undefined,
+        workerId: 'w-real-2',
+        heartbeatMs: 5,
+        leaseMs: 30_000,
+        concurrency: 1,
+      });
+      const drained2 = worker2.drain();
+      try {
+        // The successor REPLAYS the completed `graph` stage (runStageOnce
+        // returns the stored committed output; the pass is not re-run) and
+        // parks at its post-replay trace finalization write.
+        await park2.arrived;
+        const { rows: stages } = await isoDb.query<{ status: string; attempt: number }>(
+          `SELECT status, attempt FROM job_stages WHERE job_id = $1 AND stage = 'graph'`,
+          [jobId],
+        );
+        expect(stages[0]!.status).toBe('complete');
+        expect(stages[0]!.attempt).toBe(1);
+
+        // Waiter 1 — the later cancellation lands while the replay's
+        // finalization is parked.
+        expect(await cancelJob(isoDb, jobId)).toBe('running');
+        // Waiter 2 — worker 2's real short-interval heartbeat observes it
+        // and fires the boolean-to-abort callback before the finalization
+        // resumes.
+        await waitForHeartbeatSawCancel(jobId, 'w-real-2', 2);
+
+        park2.release();
+        await drained2;
+      } finally {
+        park2.release();
+        await worker2.stop().catch(() => undefined);
+        await drained2.catch(() => undefined);
+      }
+
+      // The superseded execution's late completion write cannot clobber the
+      // successor: its attempt guard no longer matches the row.
+      park1.release();
+      await drained1;
+    } finally {
+      park1.release();
+      await worker1.stop().catch(() => undefined);
+      await drained1.catch(() => undefined);
+    }
+
+    const job = await jobRowOf(jobId);
+    expect(job.state).toBe('complete');
+    expect(job.lease_owner).toBeNull();
+    expect(job.attempt).toBe(2);
+    expect(job.cancel_requested_at).not.toBeNull();
+    expect(job.result_type).toBe('discovery_job');
+    expect(job.result_id).toBe(discoveryJobId);
+
+    // The stage was REPLAYED, never re-run at attempt 2, and the committed
+    // discovery keeps its status, results and proofs.
+    const { rows: stages } = await isoDb.query<{ status: string; attempt: number }>(
+      `SELECT status, attempt FROM job_stages WHERE job_id = $1 AND stage = 'graph'`,
+      [jobId],
+    );
+    expect(stages[0]!.status).toBe('complete');
+    expect(stages[0]!.attempt).toBe(1);
+    const { rows: discovery } = await isoDb.query<{ status: string }>(
+      'SELECT status FROM discovery_jobs WHERE id = $1',
+      [discoveryJobId],
+    );
+    expect(discovery[0]!.status).toBe('complete');
+    expect(await scopedRowsOf(discoveryJobId)).toEqual({ recs: 1, proofs: 1 });
+    expect(qloo.calls).toHaveLength(0);
   }, 30_000);
 });
