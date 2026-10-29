@@ -1141,7 +1141,11 @@ async function runExpansion(
     },
     ranked,
     // Admitted-unranked candidates commit frontier rows without a card: their
-    // pins get the same last-word dependency recheck (DISC-SCR-009).
+    // pins get the same last-word dependency recheck (DISC-SCR-009), and
+    // their FULL relevance/support authority — roots, support edges and,
+    // for photo observations, the capture locks and the live analysis
+    // reread — fences through the commit exactly like a ranked card's
+    // (DISC-SCR-027). The full observation objects carry all of it.
     admittedUnranked: [...best.values()].filter((o) => !ranked.includes(o)),
     // Retained-only pins a dedupe refresh KEEPS commit with this pass too
     // (DISC-SCR-024): the same last-word dependency recheck covers them.
@@ -1196,31 +1200,48 @@ async function runExpansion(
 
 // --- Publication fence (VAL-DISC-007) --------------------------------------------------
 
+/**
+ * One relevance-bearing COMMITTING observation as the publication fence
+ * re-checks it: the pinned shared dependencies (assertions/evidence) plus
+ * the private relevance/support authority its commit pins. Ranked cards and
+ * admitted-unranked frontier survivors carry the SAME shape (DISC-SCR-027):
+ * a frontier row without a card is still private support committed against
+ * live account, root and capture authority.
+ */
+export interface GraphFenceCommittingObservation {
+  intent: 'personal' | 'photo';
+  /** Walked assertion ids pinned at their exact revisions, in walk order. */
+  assertions: ReadonlyArray<{ id: string }>;
+  /** The observation's pinned evidence rows (the live-witness recheck). */
+  evidence: ReadonlyArray<{ id: string }>;
+  /** The private support edges the commit pins (the withdrawal recheck). */
+  supportEdgeIds: readonly string[];
+  /** The private relevance basis, distinct from the cultural connection. */
+  relevance: ExpansionRelevance | PhotoExpansionRelevance;
+}
+
 export interface GraphPublicationFenceInput {
   accountId: string;
   /** The authority versions the pass read at its start. */
   start: { projectionRevision: number; generation: number; tasteRevision: number };
-  /** The ranked observations about to be published (empty when nothing publishes). */
-  ranked: ReadonlyArray<{
-    intent: 'personal' | 'photo';
-    assertions: ReadonlyArray<{ id: string }>;
-    /** The observation's pinned evidence rows (the live-witness recheck). */
-    evidence: ReadonlyArray<{ id: string }>;
-    supportEdgeIds: readonly string[];
-    relevance: ExpansionRelevance | PhotoExpansionRelevance;
-  }>;
+  /** The ranked observations about to be published (empty when no card publishes). */
+  ranked: ReadonlyArray<GraphFenceCommittingObservation>;
   /**
    * The admitted-unranked observations about to commit frontier candidate
-   * rows without a card (diversified-out candidates). Their pinned
-   * assertions/evidence get the same last-word dependency recheck
-   * (DISC-SCR-009): a withdrawal or expiry discovered here — after the
-   * pre-write pin validation, in the drift window before the commit — rejects
-   * the whole pass.
+   * rows without a card (diversified-out candidates). They carry the SAME
+   * full relevance/support authority as ranked observations (DISC-SCR-027):
+   * their pinned assertions/evidence get the last-word dependency recheck
+   * (DISC-SCR-009), and their roots and photo captures join the exclusion,
+   * support-withdrawal and live capture-authority checks through the commit —
+   * a pass whose rails emptied mid-pass (every ranked candidate's pinned
+   * revision changed while an admitted-unranked survivor remained) fences
+   * its whole committing population, never just the cards. Before this, a
+   * ranked-empty pass with an admitted-unranked photo survivor took no
+   * capture lock and ran no live photo check, so a real analysis activation
+   * could land between the fence and the commit and the pass published
+   * obsolete analysis-A-rooted private frontier support.
    */
-  admittedUnranked?: ReadonlyArray<{
-    assertions: ReadonlyArray<{ id: string }>;
-    evidence: ReadonlyArray<{ id: string }>;
-  }>;
+  admittedUnranked?: ReadonlyArray<GraphFenceCommittingObservation>;
   /**
    * The RETAINED-ONLY frontier dependency populations this pass commits
    * (DISC-SCR-024): dedupe-refreshed live rows whose VALID retained pins are
@@ -1228,7 +1249,10 @@ export interface GraphPublicationFenceInput {
    * observation (a changed winning root), so they appear in no `ranked` or
    * `admittedUnranked` entry. They get the same last-word dependency
    * recheck: a late expiry or invalidation of a retained pin rejects the
-   * whole pass instead of committing an immediately invalid live row.
+   * whole pass instead of committing an immediately invalid live row. No
+   * relevance shape exists for a retained recorded path — its private
+   * support roots were re-pinned by the surviving observation's own
+   * authority, which `admittedUnranked`/`ranked` already checks.
    */
   retainedFrontier?: ReadonlyArray<{
     assertions: ReadonlyArray<{ id: string }>;
@@ -1237,12 +1261,12 @@ export interface GraphPublicationFenceInput {
   /**
    * Re-tightens the SQL bound to the window's CURRENT remainder before EACH
    * of the fence's own lock waits — the account publication-authority lock
-   * and the ranked photo's capture lock (DISC-SCR-025). The engine's stage
-   * check bounds the fence's FIRST wait; a bound computed before an earlier
-   * wait must never be reused by a later one, or the fence's successive
-   * waits could cumulatively run past the anchored deadline before any
-   * later check rolls the pass back. Absent keeps default statement limits
-   * (direct race-matrix callers).
+   * and the committing photo observations' capture lock (DISC-SCR-025). The
+   * engine's stage check bounds the fence's FIRST wait; a bound computed
+   * before an earlier wait must never be reused by a later one, or the
+   * fence's successive waits could cumulatively run past the anchored
+   * deadline before any later check rolls the pass back. Absent keeps default
+   * statement limits (direct race-matrix callers).
    */
   bound?: () => Promise<void>;
 }
@@ -1313,9 +1337,25 @@ export async function checkGraphPublicationFence(
   if (tasteRevision !== input.start.tasteRevision) return 'stale_authority';
   if ((await graphDiscoveryPausedAt(tx, accountId)) != null) return 'paused';
 
-  if (input.ranked.length > 0) {
+  // DISC-SCR-027: the relevance-bearing committing population is BOTH the
+  // ranked cards AND the admitted-unranked frontier survivors. A
+  // diversified-out candidate commits the same private relevance, support
+  // roots and (for photo observations) capture authority a ranked card does,
+  // so every check below runs over the whole committing population — never
+  // just `input.ranked`. Before this, a pass whose rails emptied mid-pass
+  // (e.g. every ranked candidate's pinned assertion revision changed while an
+  // admitted-unranked photo candidate survived) took no capture lock and ran
+  // no live photo check: real activateAnalysis(A→B) — which changes neither
+  // the taste nor the projection revision — could commit between the fence
+  // and the publication commit, and the pass published obsolete A-rooted
+  // private frontier support with no recommendation card ever emitted.
+  const committingRooted: ReadonlyArray<GraphFenceCommittingObservation> = [
+    ...input.ranked,
+    ...(input.admittedUnranked ?? []),
+  ];
+  if (committingRooted.length > 0) {
     // Exclusions: a hide landing on a personal root about to publish.
-    const personalKeys = input.ranked
+    const personalKeys = committingRooted
       .filter((o) => o.relevance.kind === 'personal')
       .map((o) => (o.relevance as ExpansionRelevance).canonicalKey);
     if (personalKeys.length > 0) {
@@ -1326,12 +1366,12 @@ export async function checkGraphPublicationFence(
       if (hidden.length > 0) return 'exclusion_landed';
     }
 
-    // Support withdrawal: the private support edges a proof pins must still be
-    // present and non-suppressed (explicit edges are confirmed; derived edges
-    // — e.g. a saved capture's projected reference support — are tentative
-    // while active), and a photo root's capture-reference support must still
-    // be active (capture deletion/correction withdrew it).
-    const edgeIds = [...new Set(input.ranked.flatMap((o) => o.supportEdgeIds))];
+    // Support withdrawal: the private support edges a commit pins must still
+    // be present and non-suppressed (explicit edges are confirmed; derived
+    // edges — e.g. a saved capture's projected reference support — are
+    // tentative while active), and a photo root's capture-reference support
+    // must still be active (capture deletion/correction withdrew it).
+    const edgeIds = [...new Set(committingRooted.flatMap((o) => o.supportEdgeIds))];
     if (edgeIds.length > 0) {
       const { rows: edges } = await tx.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM personal_interest_edges
@@ -1340,7 +1380,7 @@ export async function checkGraphPublicationFence(
       );
       if (Number(edges[0]!.n) !== edgeIds.length) return 'support_withdrawn';
     }
-    const photoReferenceIds = input.ranked
+    const photoReferenceIds = committingRooted
       .filter((o) => o.relevance.kind === 'photo')
       .map((o) => (o.relevance as PhotoExpansionRelevance).captureReferenceId);
     if (photoReferenceIds.length > 0) {
@@ -1378,17 +1418,20 @@ export async function checkGraphPublicationFence(
     // deadline-tightened lock_timeout. DISC-SCR-025: that bound is
     // re-tightened HERE, immediately before this SECOND independent wait of
     // the fence — the time the account-authority wait consumed above must not
-    // widen this wait's allowance past the anchored deadline.
-    const photoRanked = input.ranked.filter((o) => o.relevance.kind === 'photo');
-    if (photoRanked.length > 0) {
-      const captureIds = [...new Set(photoRanked.map((o) => (o.relevance as PhotoExpansionRelevance).captureId))];
+    // widen this wait's allowance past the anchored deadline. DISC-SCR-027:
+    // the locked/reread population is EVERY committing photo observation,
+    // ranked cards AND admitted-unranked frontier survivors — the fence is
+    // the last word for the whole private authority the pass commits.
+    const photoCommitting = committingRooted.filter((o) => o.relevance.kind === 'photo');
+    if (photoCommitting.length > 0) {
+      const captureIds = [...new Set(photoCommitting.map((o) => (o.relevance as PhotoExpansionRelevance).captureId))];
       await input.bound?.();
       await tx.query(`SELECT id FROM captures WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL FOR NO KEY UPDATE`, [
         captureIds,
       ]);
       const live = await loadExplicitSupport(tx, accountId);
       const liveByCapture = new Map(live.captures.map((c) => [c.captureId, c]));
-      for (const obs of photoRanked) {
+      for (const obs of photoCommitting) {
         const relevance = obs.relevance as PhotoExpansionRelevance;
         const capture = liveByCapture.get(relevance.captureId);
         if (!capture) return 'support_withdrawn';

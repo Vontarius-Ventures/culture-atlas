@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { PoolClient, QueryResultRow } from 'pg';
 import type { ServiceContext } from '../context';
-import type { Db, PoolDb } from '../db/pool';
+import type { Db, PoolDb, Queryable } from '../db/pool';
 import { upsertReference } from '../compiler/store';
 import type { GraphNodeDomain, GraphNodeKind, GraphPredicate } from './schema';
 import { accountCtx, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
@@ -1175,6 +1175,46 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
     expect(seen).toBe('source_invalidated');
   });
 
+  it('rejects an admitted-unranked personal survivor whose root was hidden mid-pass (DISC-SCR-027 population coherence)', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    const personal = ranked.find((o) => o.relevance.kind === 'personal');
+    if (!personal || personal.relevance.kind !== 'personal') throw new Error('fixture lost its personal root');
+    // A pass whose rails emptied mid-pass commits only the diversified-out
+    // survivor: its private relevance is the SAME population as a ranked
+    // card's, so a hide landing on its root mid-pass must reject the pass
+    // (pre-repair the unranked population was invisible to this check and
+    // the frontier row committed over the hide).
+    await db.query(
+      `INSERT INTO item_exclusions (owner_account_id, canonical_key) VALUES ($1, $2)
+       ON CONFLICT (owner_account_id, canonical_key) DO NOTHING`,
+      [accountId, personal.relevance.canonicalKey],
+    );
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, start, ranked: [], admittedUnranked: [personal] }),
+    );
+    expect(violation).toBe('exclusion_landed');
+  });
+
+  it('rejects an admitted-unranked personal survivor whose private support was withdrawn mid-pass (DISC-SCR-027 population coherence)', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    const personal = ranked.find((o) => o.relevance.kind === 'personal');
+    if (!personal || personal.relevance.kind !== 'personal') throw new Error('fixture lost its personal root');
+    // The save's projected support edge is withdrawn mid-pass (removal of the
+    // explicit interest withdraws its edge and cascades its support rows):
+    // the admitted-unranked survivor's frontier row would pin a withdrawn
+    // support root, so the whole pass is rejected.
+    await db.query(
+      `DELETE FROM personal_interest_edges WHERE owner_account_id = $1 AND id = ANY($2::uuid[])`,
+      [accountId, [...personal.supportEdgeIds]],
+    );
+    const violation = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, start, ranked: [], admittedUnranked: [personal] }),
+    );
+    expect(violation).toBe('support_withdrawn');
+  });
+
   it('a fence rejection rolls the whole pass back: zero rows survive', async () => {
     const { principal, ctx } = await accountCtx({ config: graphOn });
     const accountId = principal.accountId;
@@ -2070,6 +2110,28 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
     return self;
   }
 
+  /**
+   * A serializing Queryable over the caller's transaction handle. The
+   * publication fence ends in `loadExplicitSupport`, a shared reader that
+   * fires concurrent queries by design on pools; on ONE transaction client
+   * those must be queued through a promise chain (exactly what the engine
+   * passes the fence), or a failed query can strand the client's queue
+   * mid-test.
+   */
+  function serializedTx(tx: Queryable): Queryable {
+    const tail: { p: Promise<unknown> } = { p: Promise.resolve() };
+    return {
+      query<R extends QueryResultRow = QueryResultRow>(text: string, params?: readonly unknown[]) {
+        const p = tail.p.then(() => tx.query<R>(text, params));
+        tail.p = p.then(
+          () => undefined,
+          () => undefined,
+        );
+        return p;
+      },
+    };
+  }
+
   /** Resolves when `awaitable` does, or fails honestly after `timeoutMs`. */
   async function withDeadline(awaitable: Promise<void>, what: string, timeoutMs = 5_000): Promise<void> {
     let timeout!: ReturnType<typeof setTimeout>;
@@ -2295,6 +2357,278 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
       [accountId],
     );
     expect(Number(recs[0]!.n)).toBe(0);
+  });
+
+  // --- DISC-SCR-027: admitted-unranked photo observations fence too ----------
+
+  /**
+   * A photo-rooted fixture whose ONE root reaches FOUR same-creator candidates
+   * through one shared midpoint: rail diversification
+   * (EXPANSION_BOUNDS.maxCandidatesPerMidpoint) ranks three candidates and
+   * retains the fourth as ADMITTED-UNRANKED frontier. All four observations
+   * score identically (same template, same root), so the rails order by
+   * candidate node id ASC: the three smallest node ids are the ranked cards,
+   * and the largest is the diversified-out survivor. Returns the three RANKED
+   * candidates' second-edge assertions so a mid-pass corpus support addition
+   * can bump exactly their revisions — dropping them from the rails without
+   * promoting the survivor — plus the survivor's node id.
+   */
+  async function photoFixtureWithUnrankedSurvivor() {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const photo = await corpusNode({ kind: 'work', name: 'Photo subject A' });
+    const cap = await photoCapture(ctx, accountId, { referenceId: photo.referenceId!, certainty: 0.72, anchor: true });
+    const creator = await plainNode({ kind: 'creator', sense: 'painter' });
+    await justifiedEdge({ subject: photo.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+    const candidates: Array<{ nodeId: string; edge: Awaited<ReturnType<typeof justifiedEdge>> }> = [];
+    for (let i = 0; i < 4; i += 1) {
+      const candidate = await corpusNode({ kind: 'work' });
+      const edge = await justifiedEdge({ subject: candidate.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+      await candidateItem(accountId, candidate.referenceId);
+      candidates.push({ nodeId: candidate.node.id, edge });
+    }
+    await project(accountId);
+    const { rows: refRows } = await db.query<{ id: string }>(
+      'SELECT id FROM capture_references WHERE analysis_id = $1 AND reference_id = $2',
+      [cap.analysisId, photo.referenceId],
+    );
+    const captureReferenceA = refRows[0]!;
+    // A's projected support is live before the pass.
+    expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+    const byNode = [...candidates].sort((a, b) => (a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0));
+    return {
+      accountId,
+      captureId: cap.captureId,
+      analysisA: cap.analysisId,
+      captureReferenceA,
+      survivorNodeId: byNode[3]!.nodeId,
+      rankedEdges: byNode.slice(0, 3).map((c) => c.edge),
+    };
+  }
+
+  /**
+   * Starts a photo expansion pass and empties its RAILS mid-pass: a real
+   * corpus support addition (attachAssertionSupport, the same writer the
+   * retained-pin race used) bumps exactly the three ranked candidates'
+   * second-edge assertion revisions inside a second connection's OPEN
+   * transaction, so the pass parks on its FOR SHARE pin locks; committing
+   * that holder makes the pre-write pin validation drop all three ranked
+   * observations. The pass continues with ranked EMPTY while the fourth,
+   * diversified-out candidate still commits an ADMITTED-UNRANKED frontier
+   * row — the exact DISC-SCR-027 committing population. Resolves once the
+   * pin-drop holder has committed; `pass` is the still-in-flight expansion
+   * (wrapped in an object so awaiting this helper does NOT await the pass
+   * itself, which can legitimately stay parked inside its publication
+   * transaction).
+   */
+  async function startEmptyRankedPhotoPass(
+    accountId: string,
+    rankedEdges: ReadonlyArray<{ assertionId: string }>,
+    over: { fence?: (tx: Queryable) => Promise<void> } = {},
+  ): Promise<{ pass: Promise<ExpansionResult> }> {
+    const supports: Array<Awaited<ReturnType<typeof evidence>>> = [];
+    for (let i = 0; i < rankedEdges.length; i += 1) supports.push(await evidence());
+    const pinHolder = await db.pool.connect();
+    let holderOpen = true;
+    let pass: Promise<ExpansionResult> | undefined;
+    try {
+      await pinHolder.query('BEGIN');
+      const holderDb = openTransactionDb(pinHolder);
+      for (const [i, edge] of rankedEdges.entries()) {
+        await attachAssertionSupport(holderDb, {
+          assertionId: edge.assertionId,
+          evidenceId: supports[i]!.evidenceId,
+          derivation: 'primary',
+          sourceFamilyKey: supports[i]!.familyKey,
+        });
+      }
+      pass = expandAccountInterestGraph(db, { accountId, config: graphOn, at: new Date(), fence: over.fence });
+      void pass.catch(() => undefined);
+      await waitForLockWaiters('%graph_assertions%FOR SHARE%', 1);
+      await pinHolder.query('COMMIT');
+      holderOpen = false;
+    } finally {
+      if (holderOpen) await pinHolder.query('ROLLBACK').catch(() => undefined);
+      pinHolder.release();
+    }
+    return { pass: pass! };
+  }
+
+  it('empty-ranked survivor, activation-first: an activation committed before the fence rejects the stale A-rooted frontier pass despite lagging projection (DISC-SCR-027)', async () => {
+    const { accountId, captureId, captureReferenceA, rankedEdges } = await photoFixtureWithUnrankedSurvivor();
+    const analysisB = await analysisBWithReference(captureId);
+
+    // The REAL activation writer holds the capture authority open: the A→B
+    // pointer move is uncommitted while the pass reaches its publication
+    // fence with ranked EMPTY and one admitted-unranked photo survivor.
+    const captureHolder = await db.pool.connect();
+    let captureOpen = true;
+    let pass: Promise<ExpansionResult> | undefined;
+    try {
+      await captureHolder.query('BEGIN');
+      expect(await activateAnalysis(openTransactionDb(captureHolder), { captureId, analysisId: analysisB })).toBe(true);
+
+      ({ pass } = await startEmptyRankedPhotoPass(accountId, rankedEdges));
+
+      // The fence's live capture authority read must cover the
+      // admitted-unranked survivor too: it queues behind the writer's row
+      // lock (pre-repair, a ranked-empty pass took no capture lock at all
+      // and the stale frontier row committed).
+      await waitForLockWaiters('%FROM captures%FOR NO KEY UPDATE%', 1);
+
+      await captureHolder.query('COMMIT');
+      captureOpen = false;
+    } finally {
+      if (captureOpen) await captureHolder.query('ROLLBACK').catch(() => undefined);
+      captureHolder.release();
+    }
+
+    // Activation-first: the fence read the writer's COMMITTED pointer B, so
+    // the stale A-rooted pass is rejected — while projection still lags (A's
+    // support edge is live), proving the rejection came from live capture
+    // authority, not from projection having caught up.
+    const result = await pass!;
+    expect(result.expanded).toBe(false);
+    expect(result.reason).toBe('support_withdrawn');
+    // The admitted-unranked photo frontier row did NOT survive: no run, no
+    // frontier row, no card, no proof.
+    expect(await activeFrontierCount(accountId)).toBe(0);
+    expect(await proofRows(accountId)).toHaveLength(0);
+    const { rows: recs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM recommendations WHERE owner_account_id = $1 AND graph_run_id IS NOT NULL`,
+      [accountId],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
+    const { rows: runs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion'`,
+      [accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(0);
+    expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+    const after = await db.query<{ active_analysis_id: string | null }>(
+      'SELECT active_analysis_id FROM captures WHERE id = $1',
+      [captureId],
+    );
+    expect(after.rows[0]!.active_analysis_id).toBe(analysisB);
+  });
+
+  it('empty-ranked survivor, publisher-first: an activation arriving after the live check queues for the publication commit, then lands (DISC-SCR-027)', async () => {
+    const { accountId, captureId, analysisA, captureReferenceA, rankedEdges, survivorNodeId } =
+      await photoFixtureWithUnrankedSurvivor();
+    const analysisB = await analysisBWithReference(captureId);
+
+    // Park the pass INSIDE its publication transaction at the caller's fence
+    // hook — past the fence's live capture check (which now covers the
+    // admitted-unranked survivor), before the commit.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let parked!: () => void;
+    const parkedPastLiveCheck = new Promise<void>((resolve) => {
+      parked = resolve;
+    });
+    const { pass } = await startEmptyRankedPhotoPass(accountId, rankedEdges, {
+      fence: async () => {
+        parked();
+        await gate;
+      },
+    });
+    await withDeadline(parkedPastLiveCheck, 'the pass never reached its post-fence hook');
+
+    // The REAL activation writer arrives after the live check. It must queue
+    // for the captures row the publication now HOLDS through its commit.
+    const activation = db.transaction((tx) => activateAnalysis(tx, { captureId, analysisId: analysisB }));
+    void activation.catch(() => undefined);
+    try {
+      await waitForLockWaiters('%UPDATE captures%', 1);
+      // PROOF of held authority: while the publication is parked, the
+      // activation has NOT committed — the live pointer is still analysis A.
+      const parkedPointer = await db.query<{ active_analysis_id: string | null }>(
+        'SELECT active_analysis_id FROM captures WHERE id = $1',
+        [captureId],
+      );
+      expect(parkedPointer.rows[0]!.active_analysis_id).toBe(analysisA);
+    } finally {
+      release();
+    }
+
+    // The publication committed the admitted-unranked survivor under the
+    // authority it walked (A) — with ranked EMPTY the whole way: no card.
+    const result = await pass;
+    expect(result.expanded).toBe(true);
+    expect(result.counts.photoRoots).toBe(1);
+    // The fixture shape is pinned: three ranked observations dropped at the
+    // pre-write pin validation (their revisions bumped mid-pass) and the
+    // fourth stayed diversified-out — never promoted.
+    expect(result.counts.stalePinsBlocked).toBe(3);
+    expect(result.rejections['pinned_assertion_revision_changed']).toBe(3);
+    expect(result.counts.diversifiedOut).toBe(1);
+    expect(result.counts.frontierCreated).toBe(1);
+    expect(result.counts.recommendationsPublished).toBe(0);
+    expect(result.candidates).toHaveLength(0);
+    // ...and only then did the activation land (B).
+    expect(await activation).toBe(true);
+    const after = await db.query<{ active_analysis_id: string | null }>(
+      'SELECT active_analysis_id FROM captures WHERE id = $1',
+      [captureId],
+    );
+    expect(after.rows[0]!.active_analysis_id).toBe(analysisB);
+    // The survivor's frontier row committed ADMITTED (no card exists),
+    // pinned to A's projected capture-reference support root — projection
+    // never caught up mid-window, and the NEXT refresh walks B.
+    expect(await activeFrontierCount(accountId)).toBe(1);
+    const edge = await captureReferenceEdge(accountId, captureReferenceA.id);
+    expect(edge).not.toBeNull();
+    const { rows: survivor } = await db.query<{ state: string; root_ids: string[] }>(
+      `SELECT f.state, COALESCE(array_agg(sr.root_id ORDER BY sr.root_id), ARRAY[]::uuid[]) AS root_ids
+         FROM graph_frontier f
+         LEFT JOIN graph_frontier_support_roots sr
+           ON sr.frontier_id = f.id AND sr.owner_account_id = f.owner_account_id
+        WHERE f.owner_account_id = $1 AND f.node_id = $2
+        GROUP BY f.id, f.state`,
+      [accountId, survivorNodeId],
+    );
+    expect(survivor[0]!.state).toBe('admitted');
+    expect(survivor[0]!.root_ids).toEqual([edge]);
+  });
+
+  it('the fence decides the admitted-unranked photo survivor directly: activation A→B rejects what a ranked-empty pass would commit (DISC-SCR-027)', async () => {
+    const { accountId, captureId, captureReferenceA } = await photoFixture();
+    const analysisB = await analysisBWithReference(captureId);
+    const first = await expand(accountId);
+    if (!first.expanded) throw new Error(`fixture did not publish: ${first.reason}`);
+    const photo = first.candidates.find((o) => o.relevance.kind === 'photo');
+    if (!photo) throw new Error('fixture lost its photo candidate');
+    const { rows: state } = await db.query<{ projection_revision: number; deletion_generation: number }>(
+      'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1',
+      [accountId],
+    );
+    const start = {
+      projectionRevision: state[0]!.projection_revision,
+      generation: state[0]!.deletion_generation,
+      tasteRevision: (await db.query<{ revision: number }>('SELECT revision FROM taste_profiles WHERE owner_account_id = $1', [accountId]))
+        .rows[0]!.revision,
+    };
+
+    // Pre-activation, the admitted-unranked population may commit.
+    const clean = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), { accountId, start, ranked: [], admittedUnranked: [photo] }),
+    );
+    expect(clean).toBeNull();
+
+    // The real activation commits mid-pass (no projection catch-up: the
+    // projected support for A is still live).
+    expect(await db.transaction((tx) => activateAnalysis(tx, { captureId, analysisId: analysisB }))).toBe(true);
+    expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+
+    // The same admitted-unranked population is now stale A-rooted support:
+    // the fence rejects the whole pass (pre-repair it never looked at this
+    // population's relevance and returned null).
+    const stale = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(serializedTx(tx), { accountId, start, ranked: [], admittedUnranked: [photo] }),
+    );
+    expect(stale).toBe('support_withdrawn');
   });
 });
 
