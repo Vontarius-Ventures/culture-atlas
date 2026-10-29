@@ -198,6 +198,22 @@ export async function graphWorkWindowEnded(
 }
 
 /**
+ * PostgreSQL cancels a statement past its timeout with code 57014
+ * (query_canceled): `statement_timeout` and `lock_timeout` both surface this
+ * way. Deadline-bounded graph work (the expansion pass and research's
+ * storage pass) sets those timeouts to the window's REMAINING time, so a
+ * matching cancel from inside such a pass is the deadline itself firing —
+ * the same fact the fences' typed `graphWorkWindowEnded` checks report, and
+ * it must be classified the same way rather than surfacing as a raw
+ * database error before that mapping can run.
+ */
+export function isDeadlineCanceledStatement(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; message?: unknown };
+  return e.code === '57014' && typeof e.message === 'string' && /statement timeout|lock timeout/.test(e.message);
+}
+
+/**
  * Thrown by publication fences when the logical window of the work item has
  * ended (VAL-DISC-006): the attempt may have entered legally, but its
  * originally anchored deadline governs the commit, and delayed work is

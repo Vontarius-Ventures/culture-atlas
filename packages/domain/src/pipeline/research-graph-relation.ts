@@ -8,6 +8,7 @@ import {
   GraphWorkDeadlineExpiredError,
   graphWorkDeadlineSignal,
   graphWorkWindowEnded,
+  isDeadlineCanceledStatement,
   setGraphWorkBudgetState,
   stopGraphWorkBudgetIfExpired,
   type GraphWorkBudgetState,
@@ -326,46 +327,62 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     // after its own LOGICAL DEADLINE (VAL-DISC-006) — publishes nothing (the
     // paid call stays accounted, the work is discarded). The remaining window
     // also bounds every statement and lock wait of the storage pass.
-    const stored = await proposeResearchAssertions(ctx.db, {
-      sources: sourcesIn,
-      proposals,
-      sqlTimeoutMs: Math.max(1, liveBeforeExtraction.deadlineAt.getTime() - Date.now()),
-      fence: async (tx) => {
-        // The per-account publication-authority lock (DISC-SCR-008), acquired
-        // FIRST and held through this transaction's commit: the same row lock
-        // pause/resume take, so a pause either commits before this read
-        // (rejected just below) or waits for the publication commit — it can
-        // no longer slip between the check and the commit. The lock never
-        // blocks projection or support removal (foreign-key key-share work).
-        if (!(await lockAccountPublicationAuthority(tx, accountId))) throw new JobCancelledError('account deleted');
-        if ((await graphDiscoveryPausedAt(tx, accountId)) != null) {
-          throw new AppError('conflict', { message: 'Discovery is paused; research cannot publish.', retryable: false });
-        }
-        // The extraction ran under the ORIGINAL input versions (DISC-SCR-011):
-        // a taste change (a save/removal), a projection pass or an advanced
-        // deletion generation since means this delayed work is stale against
-        // current authority and publishes nothing. This holds across the held
-        // paid call AND across redelivery replays of a stored extraction.
-        const current = await currentAccountAuthorityVersions(tx, accountId);
-        if (
-          current.tasteRevision !== inputAuthority.tasteRevision ||
-          current.projectionRevision !== inputAuthority.projectionRevision ||
-          current.generation !== inputAuthority.generation
-        ) {
-          throw new AppError('conflict', {
-            message: 'This relation research landed behind a newer change; retrying from current state.',
-            retryable: false,
-            details: { rule: 'stale_authority' },
-          });
-        }
-        if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new JobCancelledError('lease lost');
-        // The durable deadline, re-read with the transaction's own clock: a
-        // delayed extraction or SQL/lock wait cannot commit past the anchor.
-        if (await graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey })) {
-          throw new GraphWorkDeadlineExpiredError();
-        }
-      },
-    });
+    let stored: Awaited<ReturnType<typeof proposeResearchAssertions>>;
+    try {
+      stored = await proposeResearchAssertions(ctx.db, {
+        sources: sourcesIn,
+        proposals,
+        sqlTimeoutMs: Math.max(1, liveBeforeExtraction.deadlineAt.getTime() - Date.now()),
+        fence: async (tx) => {
+          // The per-account publication-authority lock (DISC-SCR-008), acquired
+          // FIRST and held through this transaction's commit: the same row lock
+          // pause/resume take, so a pause either commits before this read
+          // (rejected just below) or waits for the publication commit — it can
+          // no longer slip between the check and the commit. The lock never
+          // blocks projection or support removal (foreign-key key-share work).
+          if (!(await lockAccountPublicationAuthority(tx, accountId))) throw new JobCancelledError('account deleted');
+          if ((await graphDiscoveryPausedAt(tx, accountId)) != null) {
+            throw new AppError('conflict', { message: 'Discovery is paused; research cannot publish.', retryable: false });
+          }
+          // The extraction ran under the ORIGINAL input versions (DISC-SCR-011):
+          // a taste change (a save/removal), a projection pass or an advanced
+          // deletion generation since means this delayed work is stale against
+          // current authority and publishes nothing. This holds across the held
+          // paid call AND across redelivery replays of a stored extraction.
+          const current = await currentAccountAuthorityVersions(tx, accountId);
+          if (
+            current.tasteRevision !== inputAuthority.tasteRevision ||
+            current.projectionRevision !== inputAuthority.projectionRevision ||
+            current.generation !== inputAuthority.generation
+          ) {
+            throw new AppError('conflict', {
+              message: 'This relation research landed behind a newer change; retrying from current state.',
+              retryable: false,
+              details: { rule: 'stale_authority' },
+            });
+          }
+          if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new JobCancelledError('lease lost');
+          // The durable deadline, re-read with the transaction's own clock: a
+          // delayed extraction or SQL/lock wait cannot commit past the anchor.
+          if (await graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey })) {
+            throw new GraphWorkDeadlineExpiredError();
+          }
+        },
+      });
+    } catch (err) {
+      // The storage pass's SQL and lock waits are bounded by the window's
+      // REMAINING time, and that bound IS the deadline: PostgreSQL cancels a
+      // statement past it with code 57014 (VAL-DISC-006) — possibly BEFORE the
+      // fence's typed window check above could run. Such a cancel is the same
+      // deadline fact and must surface as the typed terminal outcome, never a
+      // raw database error — but only when the durable window really ended: a
+      // still-live window means the cancel was not this deadline, and the raw
+      // error stays exactly what it is.
+      if (isDeadlineCanceledStatement(err) && (await graphWorkWindowEnded(ctx.db, { ownerAccountId: accountId, workKey }))) {
+        throw new GraphWorkDeadlineExpiredError();
+      }
+      throw err;
+    }
 
     await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'complete' });
     await ctx.trace({

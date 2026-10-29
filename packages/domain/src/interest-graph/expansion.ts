@@ -2,6 +2,7 @@ import type pg from 'pg';
 import type { Db, Queryable } from '../db/pool';
 import { activeKills } from '../flags/feature-flags';
 import { getTasteRevision } from '../services/taste';
+import { isDeadlineCanceledStatement } from './budgets';
 import { GRAPH_FRONTIER_MAX_LIFETIME_DAYS, INTEREST_GRAPH_POLICY_VERSION } from './schema';
 import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
@@ -475,13 +476,6 @@ async function boundPassSqlToDeadline(tx: Queryable, deadline: ExpansionDeadline
   const ms = Math.max(1, Math.ceil(remainingMs));
   await tx.query(`SET LOCAL statement_timeout = ${ms}`);
   await tx.query(`SET LOCAL lock_timeout = ${ms}`);
-}
-
-/** PostgreSQL cancels a statement past its timeout with code 57014 (query_canceled). */
-function isDeadlineCanceledStatement(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: unknown; message?: unknown };
-  return e.code === '57014' && typeof e.message === 'string' && /statement timeout|lock timeout/.test(e.message);
 }
 
 function disabledResult(): ExpansionResult {

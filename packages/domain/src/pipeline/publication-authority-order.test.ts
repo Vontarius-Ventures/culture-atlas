@@ -11,7 +11,7 @@ import {
   type StructuredTransport,
 } from '@culture-atlas/providers';
 import type { DomainConfig } from '../config';
-import type { Db, PoolDb } from '../db/pool';
+import type { Db, PoolDb, TransactionOptions } from '../db/pool';
 import type { JobType } from '../enums';
 import type { JobContext } from '../jobs/handler';
 import { claimJobs, enqueueJob, getJobById } from '../jobs/queue';
@@ -37,7 +37,15 @@ import { dispatchGraphResearch } from '../interest-graph/research-gate';
  *    fence reads it under the lock and the whole publication rolls back;
  *  - a publisher that holds the fence lock commits first: a contending pause
  *    cannot slip between the checks and the commit, and lands AFTER the
- *    publication;
+ *    publication. The publisher-wins fixtures PROVE that ownership: the
+ *    publisher is stalled INSIDE its publication transaction — past its
+ *    pause check, at its lease recheck — with the ordering lock really held,
+ *    and the pause's own lock wait against that held row is the proof. No
+ *    tuple-lock waiter queue is consulted: PostgreSQL's per-tuple lock grant
+ *    after a release is a wakeup race, not a FIFO queue, so a fixture that
+ *    releases a shared holder and assumes the first-arriving waiter wins can
+ *    honestly see the PAUSE win under load (the premise this suite used to
+ *    rely on failed 2 of 3 baseline runs at load ~5);
  *  - the lease recheck still gates publication through the new lock, the
  *    rejections roll everything back, and an independent account keeps
  *    publishing (the lock is per-account and never blocks projection,
@@ -111,6 +119,56 @@ function openTransactionDb(client: PoolClient): Db {
     },
   };
   return self;
+}
+
+/**
+ * A Db view over the shared pool that stalls ONE statement of a publisher's
+ * OPEN transaction: the lease recheck (`stillOwnsJob`) executed INSIDE the
+ * publication transaction — the expansion pass's fence hook or research's
+ * storage-pass fence hook, both of which run AFTER the account-authority
+ * lock was really taken — is held unsent on a client-side gate, while every
+ * pool-level statement (claim, entry checks, completion) passes through.
+ * The production handlers and engines are untouched.
+ *
+ * This is what makes the publisher-wins ordering PROVABLE without any
+ * tuple-lock waiter-queue assumption (PostgreSQL's per-tuple lock grant after
+ * a release is a wakeup race, not a FIFO queue): the publisher is parked
+ * mid-publication while it demonstrably OWNS the ordering lock, so a pause
+ * launched then contends against a HELD lock — its real lock wait is the
+ * proof of ownership — and can only land after the publisher's commit.
+ */
+function stalledFenceLeaseDb(gate: Promise<void>, onParked?: () => void): PoolDb {
+  const wrap = (handle: Db): Db => {
+    const self: Db = {
+      inTransaction: handle.inTransaction,
+      query<R extends QueryResultRow = QueryResultRow>(text: string, params?: readonly unknown[]) {
+        if (handle.inTransaction && text.includes('FROM jobs WHERE id = $1 AND lease_owner = $2')) {
+          onParked?.();
+          return gate.then(() => handle.query<R>(text, params));
+        }
+        return handle.query<R>(text, params);
+      },
+      transaction<T>(fn: (tx: Db) => Promise<T>, options?: TransactionOptions): Promise<T> {
+        return handle.transaction<T>((tx) => fn(wrap(tx)), options);
+      },
+    };
+    return self;
+  };
+  const view = wrap(db);
+  return Object.assign(view, { pool: db.pool }) as unknown as PoolDb;
+}
+
+/** Resolves when `awaitable` does, or fails honestly after `timeoutMs`. */
+async function withDeadline(awaitable: Promise<void>, what: string, timeoutMs = 5_000): Promise<void> {
+  let timeout!: ReturnType<typeof setTimeout>;
+  const guard = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(`${what} within ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    await Promise.race([awaitable, guard]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function expansionRunCount(accountId: string): Promise<number> {
@@ -393,45 +451,49 @@ describe('ordered authority publication: pause vs the expansion publisher', () =
     expect(await recommendationCount(accountId)).toBe(0);
   });
 
-  it('an expansion pass that reaches its fence first commits: a contending pause cannot slip in and lands after publication', async () => {
+  it('an expansion pass holding its fence lock commits first: a contending pause cannot slip in and lands after publication', async () => {
     const { accountId, jobId } = await queuedExpansion();
-    const holder = await db.pool.connect();
-    let holderOpen = true;
+
+    // Two contending connections: the publisher and the pause. The publisher
+    // is stalled INSIDE its publication transaction — past its pause check,
+    // at its lease recheck — with the account-authority lock REALLY taken.
+    // No holder releases a shared row and no waiter-queue order is assumed.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let parked!: () => void;
+    const parkedAtLeaseRecheck = new Promise<void>((resolve) => {
+      parked = resolve;
+    });
+    const stalled = stalledFenceLeaseDb(gate, parked);
     let run: Promise<{ state: string }> | undefined;
     let pause: Promise<{ paused: boolean }> | undefined;
     try {
-      await holder.query('BEGIN');
-      await holder.query('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
-
-      run = runJob(jobId, { config: graphOn });
+      run = runJob(jobId, { config: graphOn, db: stalled });
       void run.catch(() => undefined);
-      // The pass is parked INSIDE its fence: its authority checks have not run
-      // yet, and it holds nothing but its queue position.
-      await waitForLockWaiters('%FOR NO KEY UPDATE%', 1);
-
-      // The pause contends on the SAME account row and queues behind the
-      // pass's fence lock.
+      await withDeadline(parkedAtLeaseRecheck, 'the expansion pass never reached its fence lease recheck');
+      // The pass holds the ordering lock now. A pause arriving between its
+      // pause check and its commit must queue for the publication commit.
       pause = pauseGraphDiscovery(db, accountId);
       void pause.catch(() => undefined);
-      await waitForLockWaiters('%FOR NO KEY UPDATE%', 2);
-
-      // The pause cannot commit between the pass's checks and its commit:
-      // it is still invisible while the pass holds the ordering.
+      // The pause's real wait on the account-authority row is the PROOF the
+      // publisher owns the lock — it is the only backend that can hold it.
+      await waitForLockWaiters('%FOR NO KEY UPDATE%', 1);
+      // And while the publisher holds the ordering, the pause cannot commit.
       expect(await graphDiscoveryPausedAt(db, accountId)).toBeNull();
 
-      await holder.query('COMMIT');
-      holderOpen = false;
+      release();
     } finally {
-      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
-      holder.release();
+      release();
     }
 
     // The publisher wins the ordering: its publication commits first...
     const outcome = await run!;
     expect(outcome.state).toBe('complete');
     expect(await expansionRunCount(accountId)).toBe(1);
-    // ...and only then does the pause land (whichever won is decided by the
-    // lock, never by a lost visibility race).
+    // ...and only then does the pause land (decided by the held lock, never
+    // by a wakeup race between released waiters).
     const paused = await pause!;
     expect(paused.paused).toBe(true);
     expect(await graphDiscoveryPausedAt(db, accountId)).toBeInstanceOf(Date);
@@ -546,28 +608,39 @@ describe('ordered authority publication: pause vs the research publisher', () =>
     const fixture = await researchFixture();
     const jobId = await dispatchResearch(fixture);
 
-    const holder = await db.pool.connect();
-    let holderOpen = true;
+    // Two contending connections: the publisher and the pause. The storage
+    // pass is stalled INSIDE its publication transaction — past its pause
+    // check, at its lease recheck — with the account-authority lock REALLY
+    // taken. No holder releases a shared row and no waiter-queue order is
+    // assumed.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let parked!: () => void;
+    const parkedAtLeaseRecheck = new Promise<void>((resolve) => {
+      parked = resolve;
+    });
+    const stalled = stalledFenceLeaseDb(gate, parked);
     let run: Promise<{ state: string }> | undefined;
     let pause: Promise<{ paused: boolean }> | undefined;
     try {
-      await holder.query('BEGIN');
-      await holder.query('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [fixture.accountId]);
-
-      run = runJob(jobId, { providers: fixture.providers, config: researchOn });
+      run = runJob(jobId, { providers: fixture.providers, config: researchOn, db: stalled });
       void run.catch(() => undefined);
-      await waitForLockWaiters('%FOR NO KEY UPDATE%', 1);
-
+      await withDeadline(parkedAtLeaseRecheck, 'the research storage pass never reached its fence lease recheck');
+      // The storage pass holds the ordering lock now, PAST its pause check:
+      // a pause arriving here must queue for the publication commit.
       pause = pauseGraphDiscovery(db, fixture.accountId);
       void pause.catch(() => undefined);
-      await waitForLockWaiters('%FOR NO KEY UPDATE%', 2);
+      // The pause's real wait on the account-authority row is the PROOF the
+      // publisher owns the lock — it is the only backend that can hold it.
+      await waitForLockWaiters('%FOR NO KEY UPDATE%', 1);
+      // And while the publisher holds the ordering, the pause cannot commit.
       expect(await graphDiscoveryPausedAt(db, fixture.accountId)).toBeNull();
 
-      await holder.query('COMMIT');
-      holderOpen = false;
+      release();
     } finally {
-      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
-      holder.release();
+      release();
     }
 
     // The publisher wins the ordering: proposals commit first, then the pause.

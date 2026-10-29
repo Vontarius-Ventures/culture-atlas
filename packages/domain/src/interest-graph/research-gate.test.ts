@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
+import type { QueryResultRow } from 'pg';
 import {
   createProviderRegistry,
   ProviderError,
@@ -9,6 +10,7 @@ import {
   type ResearchSourceDoc,
   type StructuredTransport,
 } from '@culture-atlas/providers';
+import type { Db, PoolDb, TransactionOptions } from '../db/pool';
 import { accountCtx, runJob } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAccount, testConfig, testProviders } from '../testing';
 import { upsertGraphIdentity } from './evidence';
@@ -205,6 +207,54 @@ async function jobsOfKind(
     [accountId, type],
   );
   return rows;
+}
+
+/**
+ * Resolves once at least `atLeast` backends are observed WAITING on a lock
+ * whose in-flight query matches `pattern` — the park itself is never assumed.
+ * Fails honestly on timeout, so a barrier test cannot pass by racing past it.
+ */
+async function waitForLockWaiters(pattern: string, atLeast: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const { rows } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock' AND query ILIKE $1 AND datname = current_database()`,
+      [pattern],
+    );
+    if (Number(rows[0]!.n) >= atLeast) return;
+    if (Date.now() >= deadline)
+      throw new Error(`expected at least ${atLeast} lock waiter(s) matching ${pattern} within ${timeoutMs}ms`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+/**
+ * A Db view over the shared pool that rejects ONE statement of the storage
+ * pass's open transaction: the fence's pause check dies with exactly
+ * PostgreSQL's statement-timeout error shape (code 57014), while every
+ * pool-level statement (claim, entry checks, completion) passes through.
+ * The production handler and storage pass are untouched — this pins how a
+ * deadline-SHAPED cancel that is not this window's expiry is classified.
+ */
+function cancelFencePauseCheckDb(cancel: Error & { code: string }): PoolDb {
+  const wrap = (handle: Db): Db => {
+    const self: Db = {
+      inTransaction: handle.inTransaction,
+      query<R extends QueryResultRow = QueryResultRow>(text: string, params?: readonly unknown[]) {
+        if (handle.inTransaction && text.includes('SELECT discovery_paused_at FROM graph_refresh_state')) {
+          return Promise.reject(cancel);
+        }
+        return handle.query<R>(text, params);
+      },
+      transaction<T>(fn: (tx: Db) => Promise<T>, options?: TransactionOptions): Promise<T> {
+        return handle.transaction<T>((tx) => fn(wrap(tx)), options);
+      },
+    };
+    return self;
+  };
+  const view = wrap(db);
+  return Object.assign(view, { pool: db.pool }) as unknown as PoolDb;
 }
 
 // --- The gate matrix -----------------------------------------------------------------
@@ -748,5 +798,117 @@ describe('the anchored logical deadline governs research work', () => {
     expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
     const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
     expect(budget?.state).toBe('stopped');
+  });
+
+  it('the deadline canceling the storage pass itself is the typed window-expired outcome, never a raw database error', async () => {
+    // The storage pass's account-authority lock is contended by an open
+    // holder transaction, so its very first fenced statement parks on the
+    // row lock. The window's remaining time bounds that lock wait
+    // (`SET LOCAL lock_timeout`), so PostgreSQL cancels the statement with
+    // code 57014 AT the anchored deadline — BEFORE the fence's typed window
+    // check can run. That cancel IS the deadline firing and must surface as
+    // the truthful logical_deadline_expired terminal outcome (the run failed
+    // honestly, the window durably stopped, the paid call stays accounted,
+    // nothing published) — never as a raw SQL error.
+    const research = countingResearch(
+      (name) => [sourceDoc(name, `https://en.wikipedia.org/wiki/${encodeURIComponent(name)}`)],
+      extraction,
+    );
+    const { accountId, jobId, workKey, subjectNodeId, objectNodeId } = await dispatchedResearch(research.provider);
+    const providers = registryWithDurableLedger(research.provider);
+
+    // A window with room for the entry checks and the paid call, but not
+    // for a lock wait that outlives it.
+    await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'research',
+      workKey,
+      qlooAttemptsMax: 0,
+      deadlineMs: 1_500,
+    });
+
+    const holder = await db.pool.connect();
+    let holderOpen = true;
+    let run: Promise<{ state: string }> | undefined;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
+      // The storage pass enters legally and parks at its fence on the
+      // holder's row lock.
+      run = runJob(jobId, { providers, config: researchOn });
+      void run.catch(() => undefined);
+      await waitForLockWaiters('%FOR NO KEY UPDATE%', 1);
+      // The window ends while the storage pass is parked: the bounded lock
+      // wait cancels the statement at the anchor — never the holder's
+      // release, which stays held until the rejection has landed.
+      await expect(run).rejects.toMatchObject({ details: { rule: 'logical_deadline_expired' } });
+      await holder.query('ROLLBACK');
+      holderOpen = false;
+    } finally {
+      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+
+    // The paid call happened exactly once and stays accounted in provider_queries.
+    expect(research.calls.extractClaims).toBe(1);
+    const { rows: queries } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM provider_queries WHERE owner_account_id = $1 AND provider = 'research' AND operation = 'extract_claims'`,
+      [accountId],
+    );
+    expect(Number(queries[0]!.n)).toBe(1);
+    // Nothing committed: no proposal for the researched pair.
+    const { rows: assertions } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_assertions WHERE subject_node_id = $1 AND object_node_id = $2`,
+      [subjectNodeId, objectNodeId],
+    );
+    expect(Number(assertions[0]!.n)).toBe(0);
+    // The run is an honest failure, the window durably stopped, the job
+    // failed non-retryably: the terminal outcome is the typed one.
+    expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('stopped');
+    const { rows: failedJob } = await db.query<{ state: string; error_code: string; error_retryable: boolean }>(
+      `SELECT state, error_code, error_retryable FROM jobs WHERE id = $1`,
+      [jobId],
+    );
+    expect(failedJob[0]!.state).toBe('failed');
+    expect(failedJob[0]!.error_code).toBe('service_unavailable');
+    expect(failedJob[0]!.error_retryable).toBe(false);
+  });
+
+  it('a statement-timeout cancel while the window is still live stays the raw database error', async () => {
+    // Truthful classification cuts both ways: the deadline-bounded cancel is
+    // the typed window-expired outcome only when the durable window really
+    // ended. A deadline-SHAPED statement timeout hitting the storage pass
+    // while the anchored window is still live keeps its raw error — the
+    // window is never consumed or mislabeled by a cancel it did not cause.
+    const research = countingResearch(
+      (name) => [sourceDoc(name, `https://en.wikipedia.org/wiki/${encodeURIComponent(name)}`)],
+      extraction,
+    );
+    const { accountId, jobId, workKey, subjectNodeId, objectNodeId } = await dispatchedResearch(research.provider);
+    const providers = registryWithDurableLedger(research.provider);
+    // The default 45-second window, nowhere near its end.
+
+    const cancel = Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' });
+    await expect(
+      runJob(jobId, { providers, config: researchOn, db: cancelFencePauseCheckDb(cancel) }),
+    ).rejects.toMatchObject({ code: '57014', message: 'canceling statement due to statement timeout' });
+    // The window is untouched — still active — the attempt failed honestly,
+    // the paid call stays accounted, and nothing published.
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('active');
+    expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
+    expect(research.calls.extractClaims).toBe(1);
+    const { rows: queries } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM provider_queries WHERE owner_account_id = $1 AND provider = 'research' AND operation = 'extract_claims'`,
+      [accountId],
+    );
+    expect(Number(queries[0]!.n)).toBe(1);
+    const { rows: assertions } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_assertions WHERE subject_node_id = $1 AND object_node_id = $2`,
+      [subjectNodeId, objectNodeId],
+    );
+    expect(Number(assertions[0]!.n)).toBe(0);
   });
 });
