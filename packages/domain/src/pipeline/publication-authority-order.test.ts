@@ -3,9 +3,12 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { PoolClient, QueryResultRow } from 'pg';
 import {
   createProviderRegistry,
+  ProviderError,
+  type ModelProfile,
   type ProviderRegistry,
   type ResearchExtraction,
   type ResearchSourceDoc,
+  type StructuredTransport,
 } from '@culture-atlas/providers';
 import type { DomainConfig } from '../config';
 import type { Db, PoolDb } from '../db/pool';
@@ -217,6 +220,37 @@ function heldResearch(over: { hold?: boolean } = {}) {
   };
 }
 
+/** A research_text profile the gateway accepts (synthetic: never a production route). */
+const qualifiedResearchTextProfile: ModelProfile = {
+  gateway: 'concentrate',
+  role: 'research_text',
+  version: 'test-v1',
+  model: 'fixture/model-1',
+  provider: 'fixture',
+  allowedFallbackProviders: [],
+  maxOutputTokens: 4000,
+  maxInputTokens: 100_000,
+  maxInputBytes: 100_000,
+  image: { maxBytes: 0, maxPixels: 0, maxCount: 0, maxDimension: 0 },
+  timeoutMs: 5_000,
+  structuredOutput: true,
+  requireZdr: true,
+  providerZdrEligible: true,
+  contentLoggingEnabled: false,
+  privacyVerifiedAt: '2026-10-15T00:00:00Z',
+  promptVersion: 'research-p1',
+  schemaVersion: 'reference_notes',
+  catalogSnapshotAt: '2026-10-15T00:00:00Z',
+  qualificationArtifactId: 'synthetic-offline-only',
+  pricingSnapshotVersion: 'test-price1',
+  reservationMicros: 100,
+};
+
+/** The gateway's controlled transport: reaching it in this suite would be a bug. */
+const neverTransport: StructuredTransport = async () => {
+  throw new ProviderError('model-gateway', 'unavailable', 'the deterministic research override must serve this call');
+};
+
 /** The full production-shaped registry: Concentrate gateway with a DURABLE spend ledger. */
 function registryWithDurableLedger(research: ProviderRegistry['research']): ProviderRegistry {
   return createProviderRegistry(
@@ -231,7 +265,12 @@ function registryWithDurableLedger(research: ProviderRegistry['research']): Prov
       MODEL_MAX_UNKNOWN_SPEND_USD: '0.01',
     },
     { research },
-    { db },
+    {
+      db,
+      profiles: { research_text: qualifiedResearchTextProfile },
+      qualification: () => 'qualified',
+      transport: neverTransport,
+    },
   );
 }
 

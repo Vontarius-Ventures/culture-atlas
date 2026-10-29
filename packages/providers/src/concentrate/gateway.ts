@@ -72,6 +72,12 @@ export interface ModelGateway {
   composer: TextModelProvider;
   /** Only qualified roles get a dispatching runner. */
   runners: Partial<Record<ModelRole, StructuredResponseRunner>>;
+  /**
+   * Roles dispatching ONLY under the CONCENTRATE_DEMO_ALLOW_ROLES override: a
+   * runner exists, but an observed capability is not independent role
+   * qualification (DISC-SCR-010). Paid research must refuse these.
+   */
+  readonly experimentalRoles: ReadonlySet<ModelRole>;
   ledger?: ModelSpendLedger;
   /** Read-only per-role readiness (no paid probe, no network). */
   readiness(): Promise<Record<ModelRole, RoleReadiness>>;
@@ -138,6 +144,7 @@ export function createModelGateway(
     text: new UnavailableTextModel('not_configured'),
     composer: new UnavailableTextModel('not_configured'),
     runners: {},
+    experimentalRoles: new Set(),
     readiness: unavailableReadiness,
   });
   if (
@@ -222,6 +229,7 @@ export function createModelGateway(
       ? new ConcentrateTextModel(runners.composer)
       : new UnavailableTextModel('not_configured'),
     runners,
+    experimentalRoles: experimental,
     ledger,
     async readiness() {
       const out = {} as Record<ModelRole, RoleReadiness>;

@@ -1,4 +1,4 @@
-import type { CapabilityEntry } from '@culture-atlas/providers';
+import type { CapabilityEntry, ResearchClaimsPath } from '@culture-atlas/providers';
 import type { Queryable } from '../db/pool';
 import { activeKills } from '../flags/feature-flags';
 import { enqueueJob } from '../jobs/queue';
@@ -14,19 +14,26 @@ import { graphDiscoveryPausedAt } from './refresh';
  *    the flag is not killed globally or for the account;
  *  - the account has not paused discovery (pause stops research dispatch and
  *    publication, never projection or cleanup);
- *  - a COMPATIBLE QUALIFIED role serves relation research: the research
- *    claims capability must be available (through the real provider stack the
- *    gateway only hands research a dispatching runner when its model role is
- *    qualified, and the capability observes that state);
+ *  - the EFFECTIVE claims adapter is ACTUALLY QUALIFIED and fully
+ *    RESERVATION-BOUND (DISC-SCR-010): the registry declares the claims chain
+ *    (researchClaimsPath), the gateway hands its primary leg a dispatching
+ *    runner (only a role with a passing qualification artifact gets one), and
+ *    the role is NOT demo-dispatched — an OBSERVED capability of a
+ *    CONCENTRATE_DEMO_ALLOW_ROLES role is not independent qualification;
+ *  - EVERY paid leg of that chain (primary AND fallback) reserves and settles
+ *    through the gateway's durable account/global ledger: a chain that
+ *    contains MODEL_FALLBACK=elorian could route a primary timeout or invalid
+ *    response to a paid call outside the ledger, so research fails closed
+ *    rather than escaping its budget. Explicit deterministic test adapters
+ *    (constructor overrides the registry cannot analyze) may serve fault
+ *    tests, but the deployment invariants — a genuinely qualified non-demo
+ *    research_text role and durable limits — still bind them;
  *  - durable account/global daily spend limits are configured: the model
  *    gateway's spend ledger must exist with a durable store. The ledger is
  *    what every paid call reserves against; without it there is no bound.
  *
- * Deterministic adapters (test fakes) can satisfy the capability shape, but
- * the ledger requirement keeps a non-gateway deployment fail-closed: no
- * durable limits, no paid research. The handler re-checks the same gate
- * before its paid call, so a gate that closes between dispatch and run
- * refuses honestly without spending.
+ * The handler re-checks the same gate before its paid call, so a gate that
+ * closes between dispatch and run refuses honestly without spending.
  */
 
 /** Config subset the gate reads; DomainConfig satisfies it structurally. */
@@ -38,6 +45,8 @@ export interface ResearchGateConfig {
 /** The provider surface the gate reads; ProviderRegistry satisfies it structurally. */
 export interface ResearchGateProviders {
   research: { capability(): { claims: CapabilityEntry } };
+  /** The registry-declared effective claims chain paid research binds to (DISC-SCR-010). */
+  researchClaimsPath: ResearchClaimsPath;
   modelGateway?: { ledger?: { store: { durable: boolean } } };
 }
 
@@ -46,6 +55,7 @@ export type ResearchDispatchRejection =
   | 'killed'
   | 'paused'
   | 'role_not_qualified'
+  | 'fallback_unreserved'
   | 'limits_not_configured';
 
 const optedIn = (value: string | undefined) => value === 'true' || value === '1';
@@ -79,9 +89,27 @@ export async function researchDispatchGate(
   if (killed.has('interest_graph_research_enabled')) return { allowed: false, reason: 'killed' };
   if ((await graphDiscoveryPausedAt(db, input.accountId)) != null) return { allowed: false, reason: 'paused' };
   const claims = input.providers.research.capability().claims;
-  if (claims.status !== 'available') return { allowed: false, reason: 'role_not_qualified' };
+  if (claims.status === 'unavailable') return { allowed: false, reason: 'role_not_qualified' };
   const ledger = input.providers.modelGateway?.ledger;
   if (!ledger || !ledger.store.durable) return { allowed: false, reason: 'limits_not_configured' };
+  // DISC-SCR-010: bind paid research to the declared effective claims path.
+  // The registry must describe the chain it constructed; an undeclared path is
+  // unverifiable and fails closed.
+  const path = input.providers.researchClaimsPath;
+  if (!path) return { allowed: false, reason: 'fallback_unreserved' };
+  // Only a dispatching runner reserves and settles every paid primary attempt,
+  // and only a genuinely qualified role gets one. A demo-dispatched role has a
+  // runner too, but its OBSERVED capability is not independent qualification.
+  if (!path.primaryRunner) return { allowed: false, reason: 'role_not_qualified' };
+  if (path.demo) return { allowed: false, reason: 'role_not_qualified' };
+  // Every registry-constructed paid leg — primary AND fallback — must be
+  // reservation-bound. The operator-chosen Elorian fallback (MODEL_FALLBACK)
+  // spends outside the durable ledger, so a chain that could ever fall through
+  // to it refuses: potentially unreserved fallback fails closed. Explicit
+  // deterministic overrides replace the chain and carry no analyzable legs;
+  // the qualified-role and durable-ledger invariants above still bind them.
+  if (!path.explicitOverride && !path.legs.every((leg) => leg.reservationBound))
+    return { allowed: false, reason: 'fallback_unreserved' };
   return { allowed: true };
 }
 

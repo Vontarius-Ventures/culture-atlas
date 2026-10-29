@@ -15,6 +15,44 @@ import { UnavailableMusicRecognition, UnavailableVlmEnricher, UnavailableVlmVeri
 import type { VlmEnricher, VlmProvider } from './vlm/types';
 import type { VlmVerifier } from './vlm/verify';
 
+/** One paid leg of the effective research claims chain (primary first). */
+export interface ResearchClaimsLeg {
+  /** Operator-safe provider identity, e.g. "text:concentrate:<model>" — never a secret. */
+  readonly provider: string;
+  /** True when every paid attempt on this leg reserves and settles through the model gateway's durable account/global ledger. */
+  readonly reservationBound: boolean;
+}
+
+/**
+ * The effective claims chain the registry constructed for relation research
+ * (DISC-SCR-010, VAL-DISC-005/006). Optional paid graph research must bind to
+ * an ACTUALLY QUALIFIED adapter whose every primary/fallback paid call is
+ * account/global reservation-bound, or fail closed — a generic capability plus
+ * the presence of a gateway ledger does not bind anything.
+ */
+export interface ResearchClaimsPath {
+  /**
+   * True when the model gateway hands the primary claims leg a dispatching
+   * runner (only a qualified — or operator demo-allowed — role gets one).
+   */
+  readonly primaryRunner: boolean;
+  /**
+   * True when the primary dispatches only under the CONCENTRATE_DEMO_ALLOW_ROLES
+   * demo override: an observed capability of a demo role is not independent
+   * role qualification.
+   */
+  readonly demo: boolean;
+  /** Paid legs, primary first. Empty when the chain is an explicit constructor override the registry cannot analyze. */
+  readonly legs: readonly ResearchClaimsLeg[];
+  /**
+   * True when research/text was replaced by explicit constructor injection
+   * (deterministic test adapters). The registry cannot analyze such a chain;
+   * the deployment invariants (qualified non-demo role + durable ledger) still
+   * bind it.
+   */
+  readonly explicitOverride: boolean;
+}
+
 /** Every provider the domain uses, selected from environment configuration. */
 export interface ProviderRegistry {
   readonly config: ProviderConfig;
@@ -45,11 +83,13 @@ export interface ProviderRegistry {
   readonly modelGateway?: ReturnType<typeof createModelGateway>;
   /** Elorian vision model when MODEL_FALLBACK=elorian and ELORIAN_API_KEY are set. */
   readonly fallbackVlm?: VlmProvider;
+  /** The effective research claims chain paid research must bind to (DISC-SCR-010). */
+  readonly researchClaimsPath: ResearchClaimsPath;
   capabilities(): CapabilityMatrix;
 }
 
 export type ProviderOverrides = Partial<
-  Omit<ProviderRegistry, 'config' | 'capabilities' | 'modelGateway'>
+  Omit<ProviderRegistry, 'config' | 'capabilities' | 'modelGateway' | 'researchClaimsPath'>
 >;
 
 export function createProviderRegistry(
@@ -82,6 +122,36 @@ export function createProviderRegistry(
   const music = overrides.music ?? new UnavailableMusicRecognition('not_implemented');
   const storage = overrides.storage ?? createObjectStorage(config);
 
+  // DISC-SCR-010: describe the effective research claims chain the registry
+  // constructed, so the paid research gate can bind to an actually qualified,
+  // fully reservation-bound path. The primary leg is reservation-bound only
+  // when the gateway hands it a dispatching runner (every runner attempt
+  // reserves and settles on the durable account/global ledger). The
+  // operator-chosen Elorian fallback (MODEL_FALLBACK=elorian) is a PAID leg
+  // outside that ledger: a chain containing it could spend unreserved, so the
+  // gate must fail closed rather than let research escape the budget. An
+  // explicit constructor override replaces the chain with code the registry
+  // cannot analyze; the deployment invariants still bind it.
+  const claimsOverride = !!overrides.research || !!overrides.text;
+  const researchClaimsPath: ResearchClaimsPath = {
+    primaryRunner: !!modelGateway?.runners.research_text,
+    demo: !!modelGateway?.experimentalRoles.has('research_text'),
+    explicitOverride: claimsOverride,
+    legs: claimsOverride
+      ? []
+      : [
+          { provider: baseText.id, reservationBound: !!modelGateway?.runners.research_text },
+          ...(elorianEnabled(config)
+            ? [
+                {
+                  provider: `text:elorian:${config.ELORIAN_MODEL}`,
+                  reservationBound: false,
+                },
+              ]
+            : []),
+        ],
+  };
+
   return {
     config,
     vlm,
@@ -95,6 +165,7 @@ export function createProviderRegistry(
     storage,
     modelGateway,
     fallbackVlm,
+    researchClaimsPath,
     capabilities(): CapabilityMatrix {
       const q = qloo.capability();
       const r = research.capability();

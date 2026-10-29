@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createProviderRegistry, type ProviderRegistry, type ResearchExtraction, type ResearchSourceDoc } from '@culture-atlas/providers';
+import {
+  createProviderRegistry,
+  ProviderError,
+  type ModelProfile,
+  type ProviderRegistry,
+  type ResearchExtraction,
+  type ResearchSourceDoc,
+  type StructuredTransport,
+} from '@culture-atlas/providers';
 import { accountCtx, runJob } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAccount, testConfig, testProviders } from '../testing';
 import { upsertGraphIdentity } from './evidence';
@@ -15,12 +23,18 @@ import { ensureGraphWorkBudget, loadGraphWorkBudget } from './budgets';
 
 /**
  * VAL-DISC-005: paid relation research is DEFAULT-OFF and stays off until the
- * operator opt-in, no kill, no pause, a qualified research role AND durable
- * account/global spend limits all hold — and it never passively confirms
- * anything: proposals are unreviewed `proposed` assertions whose evidence is
- * machine-extraction, never confirmation of feed/photo/background outputs.
- * The handler re-checks the same gate at run time, so a gate that closes
- * between dispatch and run refuses without spending.
+ * operator opt-in, no kill, no pause, an ACTUALLY QUALIFIED effective claims
+ * adapter (a dispatching research_text runner, never a demo-observed role)
+ * AND durable account/global spend limits all hold — and it never passively
+ * confirms anything: proposals are unreviewed `proposed` assertions whose
+ * evidence is machine-extraction, never confirmation of feed/photo/background
+ * outputs. The handler re-checks the same gate at run time, so a gate that
+ * closes between dispatch and run refuses without spending.
+ *
+ * The deterministic research adapters here are explicit registry overrides
+ * (fault-test adapters, never live); the gate still requires the deployment's
+ * genuinely qualified research_text role and durable ledger, which these
+ * fixtures construct through the real gateway with a controlled transport.
  */
 
 const db = getTestDb();
@@ -92,6 +106,37 @@ function unqualifiedResearch(): ProviderRegistry['research'] {
   } as unknown as ProviderRegistry['research'];
 }
 
+/** A research_text profile the gateway accepts (synthetic: never a production route). */
+const qualifiedResearchTextProfile: ModelProfile = {
+  gateway: 'concentrate',
+  role: 'research_text',
+  version: 'test-v1',
+  model: 'fixture/model-1',
+  provider: 'fixture',
+  allowedFallbackProviders: [],
+  maxOutputTokens: 4000,
+  maxInputTokens: 100_000,
+  maxInputBytes: 100_000,
+  image: { maxBytes: 0, maxPixels: 0, maxCount: 0, maxDimension: 0 },
+  timeoutMs: 5_000,
+  structuredOutput: true,
+  requireZdr: true,
+  providerZdrEligible: true,
+  contentLoggingEnabled: false,
+  privacyVerifiedAt: '2026-10-15T00:00:00Z',
+  promptVersion: 'research-p1',
+  schemaVersion: 'reference_notes',
+  catalogSnapshotAt: '2026-10-15T00:00:00Z',
+  qualificationArtifactId: 'synthetic-offline-only',
+  pricingSnapshotVersion: 'test-price1',
+  reservationMicros: 100,
+};
+
+/** The gateway's controlled transport: reaching it in this suite would be a bug. */
+const neverTransport: StructuredTransport = async () => {
+  throw new ProviderError('model-gateway', 'unavailable', 'the deterministic research override must serve this call');
+};
+
 /** The full production-shaped registry: Concentrate gateway with a DURABLE spend ledger. */
 function registryWithDurableLedger(research: ProviderRegistry['research']): ProviderRegistry {
   return createProviderRegistry(
@@ -106,7 +151,14 @@ function registryWithDurableLedger(research: ProviderRegistry['research']): Prov
       MODEL_MAX_UNKNOWN_SPEND_USD: '0.01',
     },
     { research },
-    { db: getTestDb() },
+    {
+      db: getTestDb(),
+      profiles: { research_text: qualifiedResearchTextProfile },
+      qualification: () => 'qualified',
+      // The deterministic research override serves the claims calls; the
+      // gateway transport must never be reached in this suite.
+      transport: neverTransport,
+    },
   );
 }
 

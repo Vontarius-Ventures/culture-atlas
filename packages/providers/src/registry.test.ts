@@ -99,4 +99,40 @@ describe('provider registry', () => {
     expect(res.data[0]?.entity_id).toBe('E1');
     expect(reg.capabilities()['qloo.search'].status).toBe('available');
   });
+
+  it('declares the effective research claims path: no reservation-bound leg without a gateway runner', () => {
+    // Direct rollback providers (LLM_PROVIDER=anthropic) are paid but never
+    // reservation-bound, and no gateway runner exists for research_text.
+    const rollback = createProviderRegistry({
+      STORAGE_DRIVER: 'memory',
+      LLM_PROVIDER: 'anthropic',
+      ANTHROPIC_API_KEY: 'synthetic-rollback-only',
+    });
+    expect(rollback.researchClaimsPath).toEqual({
+      primaryRunner: false,
+      demo: false,
+      explicitOverride: false,
+      legs: [{ provider: 'text:anthropic:claude-sonnet-5-5', reservationBound: false }],
+    });
+
+    // A Concentrate registry without a qualified research_text role has an
+    // unverified primary leg: it cannot reserve, so it is not bound either.
+    const unqualified = createProviderRegistry({ STORAGE_DRIVER: 'memory', CONCENTRATE_API_KEY: 'synthetic' });
+    expect(unqualified.researchClaimsPath.primaryRunner).toBe(false);
+    expect(unqualified.researchClaimsPath.legs).toEqual([
+      {
+        provider: `text:concentrate:unverified:${PINNED_CONCENTRATE_ROUTES.text.model}`,
+        reservationBound: false,
+      },
+    ]);
+
+    // Overrides replace the chain: the registry declares them honestly and
+    // cannot claim any analyzable leg.
+    const overridden = createProviderRegistry(
+      { STORAGE_DRIVER: 'memory', CONCENTRATE_API_KEY: 'synthetic' },
+      { text: { id: 'text:fake', capability: () => ({ status: 'available' }), generateStructured: async () => ({}) as never } },
+    );
+    expect(overridden.researchClaimsPath.explicitOverride).toBe(true);
+    expect(overridden.researchClaimsPath.legs).toEqual([]);
+  });
 });
