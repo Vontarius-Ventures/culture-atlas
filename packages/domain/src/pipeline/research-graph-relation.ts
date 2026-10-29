@@ -15,7 +15,7 @@ import {
 } from '../interest-graph/budgets';
 import { INTEREST_GRAPH_POLICY_VERSION, type GraphPredicate, type GraphRunRow } from '../interest-graph/schema';
 import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from '../interest-graph/refresh';
-import { currentAccountAuthorityVersions } from '../interest-graph/expansion';
+import { currentAccountAuthorityVersions, lockAccountAuthorityVersions } from '../interest-graph/expansion';
 import {
   buildRelationResearchRequest,
   proposeResearchAssertions,
@@ -46,7 +46,7 @@ import { createGraphRun, graphRunForJob, recordGraphProviderQuery, setGraphRunSt
  * a lost lease reuses the completed output instead of re-buying it.
  *
  * The storage transaction is fenced and ORDERED (VAL-DISC-007,
- * DISC-SCR-008/011): its first statement takes the consistent per-account
+ * DISC-SCR-008/011/021): its first statement takes the consistent per-account
  * publication-authority lock (the same row lock pause/resume take) and holds it
  * through the commit, so a pause cannot land between the fence's checks and
  * the publication. Inside that lock the fence rechecks account existence, the
@@ -54,7 +54,12 @@ import { createGraphRun, graphRunForJob, recordGraphProviderQuery, setGraphRunSt
  * against the ORIGINAL input versions the run captured at first-attempt start
  * (a save/removal, projection pass or deletion generation during the held paid
  * call — or since a crashed attempt whose extraction is being replayed —
- * rejects publication), the lease and the durable logical deadline. Rejected
+ * rejects publication), the lease and the durable logical deadline. The
+ * version comparison itself is a LOCKED read of the rows the actual writers
+ * update (the taste row, materialized when absent, and the projection state
+ * row) held through the commit, so a writer commits before the comparison
+ * (rejected) or queues for the publication commit — it can no longer slip
+ * between the comparison and the storage commit (DISC-SCR-021). Rejected
  * work is discarded; the spend stays accounted; nothing is published.
  *
  * The anchored logical window spans the WHOLE attempt (VAL-DISC-006,
@@ -388,7 +393,16 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
           // deletion generation since means this delayed work is stale against
           // current authority and publishes nothing. This holds across the held
           // paid call AND across redelivery replays of a stored extraction.
-          const current = await currentAccountAuthorityVersions(tx, accountId);
+          // The comparison is a LOCKED read of the exact rows the real writers
+          // update (DISC-SCR-021), held through this transaction's commit —
+          // an absent taste row is materialized so the FIRST save is ordered
+          // too, and the projector's pass takes this same fence's account-row
+          // lock before it can create or bump the state row — so a writer
+          // commits before the read (rejected here) or queues for the storage
+          // commit: it can no longer land between the comparison and the
+          // commit, and the run's original input versions are never rewritten
+          // by the guard.
+          const current = await lockAccountAuthorityVersions(tx, accountId);
           if (
             current.tasteRevision !== inputAuthority.tasteRevision ||
             current.projectionRevision !== inputAuthority.projectionRevision ||

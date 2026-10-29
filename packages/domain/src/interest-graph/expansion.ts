@@ -1258,8 +1258,27 @@ export async function checkGraphPublicationFence(
     // must still be one of that analysis's currently authorized references. A
     // mid-pass activation A→B (before any projection catches up) fences the
     // stale A-rooted pass here instead of publishing it.
+    //
+    // DISC-SCR-020: that live check is ORDERED with its real writers through
+    // this commit. The writers — activateAnalysis's pointer move and a
+    // capture's soft deletion — are UPDATEs of the captures row, so holding
+    // that row's lock from before the authoritative re-read makes the order
+    // deterministic: a writer either commits before this read (the fence
+    // reads its result below and rejects the stale A-rooted pass) or queues
+    // for this transaction's commit (the pass published under exactly the
+    // capture authority it walked, and the activation lands after). Only
+    // live rows are locked: an already-deleted capture locks nothing and the
+    // re-read reports it as withdrawn support below, while a deletion of a
+    // locked live capture queues behind the publication like an activation.
+    // The lock is per-capture (never per-account), so other accounts'
+    // captures never wait; the wait itself is bounded by the pass's
+    // deadline-tightened lock_timeout.
     const photoRanked = input.ranked.filter((o) => o.relevance.kind === 'photo');
     if (photoRanked.length > 0) {
+      const captureIds = [...new Set(photoRanked.map((o) => (o.relevance as PhotoExpansionRelevance).captureId))];
+      await tx.query(`SELECT id FROM captures WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL FOR NO KEY UPDATE`, [
+        captureIds,
+      ]);
       const live = await loadExplicitSupport(tx, accountId);
       const liveByCapture = new Map(live.captures.map((c) => [c.captureId, c]));
       for (const obs of photoRanked) {
@@ -1346,6 +1365,68 @@ export async function currentAccountAuthorityVersions(
   const tasteRevision = await getTasteRevision(db, { kind: 'account', accountId });
   const { inputProjectionRevision, inputGeneration } = await graphStateFence(db, accountId);
   return { tasteRevision, projectionRevision: inputProjectionRevision, generation: inputGeneration };
+}
+
+/**
+ * The LOCKED account authority-version read for the research publication
+ * fence (DISC-SCR-021): the same versions `currentAccountAuthorityVersions`
+ * returns, read under row locks on the EXACT rows the real writers update,
+ * so the comparison against a run's ORIGINAL versions is ordered with every
+ * actual writer through the caller's commit:
+ *
+ *  - bumpTasteRevision — the decisive statement of every
+ *    save/remove/hide/unhide/correct — locks the taste_profiles row in its
+ *    ON CONFLICT DO UPDATE;
+ *  - the projector pass bumps projection_revision (and a deletion-generation
+ *    advance bumps deletion_generation) inside the personal_graph_state row,
+ *    locked here when it exists.
+ *
+ * A writer therefore either commits before this read (the fence sees the new
+ * version and rejects stale proposals) or queues for the publication commit
+ * (the published proposals held their input authority through commit). It
+ * can no longer land between the comparison and the storage commit.
+ *
+ * ABSENT authority rows are guarded without inventing projection state:
+ *  - a fresh account has NO taste_profiles row yet, and a lock on a missing
+ *    row locks nothing — the row is MATERIALIZED (revision 0) so the FIRST
+ *    writer's INSERT contends on the same unique key. A revision-0 row is
+ *    semantically identical to an absent one for every reader, so no reader
+ *    changes behavior;
+ *  - the personal_graph_state row is NOT materialized (a fabricated
+ *    behind-version row would enter the dispatch catch-up population and
+ *    fake a projection-completeness marker). Instead the projector's pass
+ *    takes the per-account publication-authority lock (the accounts row)
+ *    FIRST — the same lock this fence's caller already holds through its
+ *    commit — so a FIRST projection queues behind the publication at its
+ *    first statement, and a pass already holding the row is what this locked
+ *    read queues behind.
+ *
+ * Lock order: the caller takes the per-account publication-authority lock
+ * (the accounts row) FIRST, then this helper locks state and taste. Any
+ * account-scoped writer that needs several of these rows must take the
+ * account row first, the same protocol pause/resume, both publishers and the
+ * projector pass use.
+ */
+export async function lockAccountAuthorityVersions(
+  db: Queryable,
+  accountId: string,
+): Promise<{ tasteRevision: number; projectionRevision: number; generation: number }> {
+  const { rows: state } = await db.query<{ projection_revision: number; deletion_generation: number }>(
+    'SELECT projection_revision, deletion_generation FROM personal_graph_state WHERE owner_account_id = $1 FOR NO KEY UPDATE',
+    [accountId],
+  );
+  await db.query('INSERT INTO taste_profiles (owner_account_id, revision) VALUES ($1, 0) ON CONFLICT (owner_account_id) DO NOTHING', [
+    accountId,
+  ]);
+  const { rows: taste } = await db.query<{ revision: number }>(
+    'SELECT revision FROM taste_profiles WHERE owner_account_id = $1 FOR NO KEY UPDATE',
+    [accountId],
+  );
+  return {
+    tasteRevision: taste[0]?.revision ?? 0,
+    projectionRevision: state[0]?.projection_revision ?? 0,
+    generation: state[0]?.deletion_generation ?? 0,
+  };
 }
 
 /**

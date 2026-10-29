@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { PoolClient, QueryResultRow } from 'pg';
 import type { ServiceContext } from '../context';
-import type { PoolDb } from '../db/pool';
+import type { Db, PoolDb } from '../db/pool';
 import { upsertReference } from '../compiler/store';
 import type { GraphNodeDomain, GraphNodeKind, GraphPredicate } from './schema';
 import { accountCtx, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
 import { closeTestDb, createIsolatedDatabase, getTestDb, insertAccount, testConfig, testContext } from '../testing';
-import { submitCorrection } from '../services/analyses';
+import { activateAnalysis, submitCorrection } from '../services/analyses';
 import { recordPreference } from '../services/preferences';
 import {
   attachAssertionSupport,
@@ -2008,6 +2009,181 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
       [accountId],
     );
     expect(Number(runs[0]!.n)).toBe(1);
+  });
+
+  // --- DISC-SCR-020: the live capture authority is ordered with activation ------
+
+  /**
+   * A Db view of one dedicated pool client that joins the CALLER's
+   * already-open transaction instead of issuing its own BEGIN/COMMIT: the
+   * real activation runs its exact production statements while the test
+   * holds the commit barrier on that connection.
+   */
+  function openTransactionDb(client: PoolClient): Db {
+    const self: Db = {
+      inTransaction: true,
+      query<R extends QueryResultRow = QueryResultRow>(text: string, params?: readonly unknown[]) {
+        return client.query<R>(text, params as unknown[] | undefined);
+      },
+      transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
+        return fn(self);
+      },
+    };
+    return self;
+  }
+
+  /** Resolves when `awaitable` does, or fails honestly after `timeoutMs`. */
+  async function withDeadline(awaitable: Promise<void>, what: string, timeoutMs = 5_000): Promise<void> {
+    let timeout!: ReturnType<typeof setTimeout>;
+    const guard = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new Error(`${what} within ${timeoutMs}ms`)), timeoutMs);
+    });
+    try {
+      await Promise.race([awaitable, guard]);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /** A fresh analysis B (version 2) with its own authorized depicted reference. */
+  async function analysisBWithReference(captureId: string): Promise<string> {
+    const analysisB = (
+      await db.query<{ id: string }>(
+        `INSERT INTO analyses (capture_id, version, compiler_version, title, interpretation, section_statuses)
+         VALUES ($1, 2, 'test', 'A cloudy harbor pier', 'Different references stood out.', '{"observations":"complete"}')
+         RETURNING id`,
+        [captureId],
+      )
+    ).rows[0]!;
+    const otherReference = await insertReference({ name: `Subject B ${randomUUID().slice(0, 6)}` }, db);
+    await db.query(
+      `INSERT INTO capture_references (analysis_id, reference_id, relation, certainty, resolution_status, is_anchor, text_only, read_text)
+       VALUES ($1, $2, 'depicted', 0.9, 'resolved', true, false, NULL)`,
+      [analysisB.id, otherReference],
+    );
+    return analysisB.id;
+  }
+
+  it('publisher-first: an activation arriving after the live check queues for the publication commit, then lands (DISC-SCR-020)', async () => {
+    const { accountId, captureId, analysisA, captureReferenceA } = await photoFixture();
+    const analysisB = await analysisBWithReference(captureId);
+
+    // Park the pass INSIDE its publication transaction, past the fence's
+    // live capture check, at the caller's fence hook — the drift window the
+    // scrutiny gap needs (an activation arriving here, before the commit,
+    // used to be able to land while the pass published stale A-rooted
+    // output).
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let parked!: () => void;
+    const parkedPastLiveCheck = new Promise<void>((resolve) => {
+      parked = resolve;
+    });
+    const pass = expandAccountInterestGraph(db, {
+      accountId,
+      config: graphOn,
+      at: new Date(),
+      fence: async () => {
+        parked();
+        await gate;
+      },
+    });
+    void pass.catch(() => undefined);
+    await withDeadline(parkedPastLiveCheck, 'the pass never reached its post-fence hook');
+
+    // The REAL activation writer arrives after the live check. It must queue
+    // for the captures row the publication holds through its commit.
+    const activation = db.transaction((tx) => activateAnalysis(tx, { captureId, analysisId: analysisB }));
+    void activation.catch(() => undefined);
+    try {
+      await waitForLockWaiters('%UPDATE captures%', 1);
+      // PROOF of held authority: while the publication is parked, the
+      // activation has NOT committed — the live pointer is still analysis A.
+      const parkedPointer = await db.query<{ active_analysis_id: string | null }>(
+        'SELECT active_analysis_id FROM captures WHERE id = $1',
+        [captureId],
+      );
+      expect(parkedPointer.rows[0]!.active_analysis_id).toBe(analysisA);
+    } finally {
+      release();
+    }
+    // The publication committed under the authority it walked (A)...
+    const result = await pass;
+    expect(result.expanded).toBe(true);
+    expect(result.counts.photoRoots).toBe(1);
+    expect(result.counts.recommendationsPublished).toBe(1);
+    const { rows: runs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion'`,
+      [accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(1);
+    // ...and only then did the activation land (B). The delayed activation
+    // is the whole point: the pass held the capture authority through its
+    // commit instead of publishing while B slipped in underneath.
+    expect(await activation).toBe(true);
+    const after = await db.query<{ active_analysis_id: string | null }>(
+      'SELECT active_analysis_id FROM captures WHERE id = $1',
+      [captureId],
+    );
+    expect(after.rows[0]!.active_analysis_id).toBe(analysisB);
+    // Projection never caught up mid-window: A's projected support is still
+    // live, and the NEXT refresh walks B.
+    expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+  });
+
+  it('activation-first: an uncommitted activation holding the capture authority parks the live check; on its commit the stale A-rooted pass is rejected despite lagging projection (DISC-SCR-020)', async () => {
+    const { accountId, captureId, captureReferenceA } = await photoFixture();
+    const analysisB = await analysisBWithReference(captureId);
+
+    const holder = await db.pool.connect();
+    let holderOpen = true;
+    let pass: Promise<ExpansionResult> | undefined;
+    try {
+      await holder.query('BEGIN');
+      // The REAL activation writer runs inside the holder's open
+      // transaction: the captures row lock is held with the A→B pointer move
+      // uncommitted while the pass reaches its live authority check.
+      expect(await activateAnalysis(openTransactionDb(holder), { captureId, analysisId: analysisB })).toBe(true);
+
+      pass = expandAccountInterestGraph(db, { accountId, config: graphOn, at: new Date() });
+      void pass.catch(() => undefined);
+      // The fence's live capture authority read queues behind the writer.
+      await waitForLockWaiters('%FROM captures%FOR NO KEY UPDATE%', 1);
+
+      await holder.query('COMMIT');
+      holderOpen = false;
+    } finally {
+      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+
+    // Activation-first: the fence read the writer's COMMITTED pointer B, so
+    // the stale A-rooted pass is rejected — while projection still lags
+    // (A's support edge is live), proving the rejection came from live
+    // authority, not from projection having caught up.
+    const result = await pass!;
+    expect(result.expanded).toBe(false);
+    expect(result.reason).toBe('support_withdrawn');
+    expect(await activeFrontierCount(accountId)).toBe(0);
+    expect(await proofRows(accountId)).toHaveLength(0);
+    const { rows: recs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM recommendations WHERE owner_account_id = $1 AND graph_run_id IS NOT NULL`,
+      [accountId],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
+    const { rows: runs } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion'`,
+      [accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(0);
+    expect(await captureReferenceEdge(accountId, captureReferenceA.id)).not.toBeNull();
+    const after = await db.query<{ active_analysis_id: string | null }>(
+      'SELECT active_analysis_id FROM captures WHERE id = $1',
+      [captureId],
+    );
+    expect(after.rows[0]!.active_analysis_id).toBe(analysisB);
   });
 });
 

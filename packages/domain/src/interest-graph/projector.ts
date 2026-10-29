@@ -6,7 +6,7 @@ import { WEIGHTS } from '../library/taste-fold';
 import { loadFoldSaves } from '../services/taste';
 import { projectionEnabledForAccount, type ProjectionGateConfig } from './intent';
 import { loadExplicitSupport, removeSupersedesSaveSql, type ExplicitSupportSnapshot } from './explicit-support';
-import { noteExpansionDue } from './refresh';
+import { lockAccountPublicationAuthority, noteExpansionDue } from './refresh';
 import { INTEREST_GRAPH_POLICY_VERSION, PROJECTION_SUPPORT_VERSION } from './schema';
 import { addEdgeSupport, createGraphRun, setGraphRunState, upsertPersonalEdge } from './store';
 
@@ -16,8 +16,10 @@ import { addEdgeSupport, createGraphRun, setGraphRunState, upsertPersonalEdge } 
  * explicit state:
  *
  *  - every pass runs in one REPEATABLE READ transaction under the account's
- *    personal_graph_state row lock, so concurrent projectors serialize and a
- *    pass always builds one consistent snapshot (no mixed ready state);
+ *    publication-authority lock and then its personal_graph_state row lock,
+ *    so concurrent projectors serialize, the pass is ordered with the
+ *    publishers that fence on account authority (DISC-SCR-021), and a pass
+ *    always builds one consistent snapshot (no mixed ready state);
  *  - the build is a full deterministic rebuild: support rows are re-derived
  *    from current authority, so duplicate delivery, lease retries, worker
  *    restarts and out-of-order events converge to the same result and can
@@ -200,6 +202,21 @@ async function runPass(db: Db, input: ProjectAccountInterestGraphInput, pass: nu
           return p;
         },
       };
+      // The per-account publication-authority lock (the accounts row), taken
+      // FIRST and held through this pass's commit: this pass's
+      // projection_revision bump is exactly what makes relation research's
+      // storage-fence version comparison stale, so the pass is ordered with
+      // that publisher under the same account-row lock pause uses
+      // (DISC-SCR-021). This also closes the ABSENT-state-row case: the
+      // FIRST projection is the writer that creates the row, and a fence
+      // locking a missing row would lock nothing — but it holds the account
+      // row through its commit, and this pass cannot even start (let alone
+      // insert the row) until that publication commits, while a pass already
+      // holding the row forces the fence to queue and see its newer version.
+      // The pass never locks in the other direction (account row first, then
+      // the state row), so it cannot deadlock against a publisher.
+      const present = await lockAccountPublicationAuthority(tx, accountId);
+      if (!present) return accountMissing();
       // The per-account projector fence: create the state row if absent, then
       // hold its lock for the whole build. Mutations never take this lock;
       // they commit independently and are picked up by the tail check.

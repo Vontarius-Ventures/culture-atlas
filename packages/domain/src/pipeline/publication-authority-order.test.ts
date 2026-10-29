@@ -24,6 +24,7 @@ import { upsertGraphIdentity } from '../interest-graph/evidence';
 import { projectAccountInterestGraph } from '../interest-graph/projector';
 import { graphDiscoveryPausedAt, pauseGraphDiscovery, resumeGraphDiscovery } from '../interest-graph/refresh';
 import { dispatchGraphResearch } from '../interest-graph/research-gate';
+import { bumpTasteRevision } from '../services/taste';
 
 /**
  * Ordered authority publication (DISC-SCR-007/008/011, VAL-DISC-007).
@@ -895,5 +896,304 @@ describe('relation research publishes only under its original input authority', 
     const runs = await researchRunRows(fixture.accountId);
     expect(runs.map((r) => r.state)).toEqual(['complete']);
     expect(runs[0]!.input_taste_revision).toBe(before.tasteRevision);
+  });
+});
+
+// --- DISC-SCR-021: the version comparison is ordered with its actual writers ------
+
+describe('research authority versions are ordered with their actual writers through the storage commit (DISC-SCR-021)', () => {
+  /**
+   * Parks the research storage pass INSIDE its publication transaction, past
+   * its original-version comparison, at its lease recheck — the exact drift
+   * window scrutiny flagged: a writer arriving here has already passed the
+   * old unlocked comparison, and pre-repair it could commit before the
+   * storage commit, leaving stale extraction proposals published.
+   */
+  async function parkedResearchJob(
+    fixture: { providers: ProviderRegistry },
+    jobId: string,
+  ): Promise<{ run: Promise<{ state: string }>; release: () => void }> {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let parked!: () => void;
+    const parkedAtLeaseRecheck = new Promise<void>((resolve) => {
+      parked = resolve;
+    });
+    const stalled = stalledFenceLeaseDb(gate, parked);
+    const run = runJob(jobId, { providers: fixture.providers, config: researchOn, db: stalled });
+    void run.catch(() => undefined);
+    await withDeadline(parkedAtLeaseRecheck, 'the research storage pass never reached its fence lease recheck');
+    return { run, release };
+  }
+
+  /** Whether the account's projection state row / taste profile row exist yet. */
+  async function authorityRowPresence(accountId: string): Promise<{ state: boolean; taste: boolean }> {
+    const state = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM personal_graph_state WHERE owner_account_id = $1',
+      [accountId],
+    );
+    const taste = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM taste_profiles WHERE owner_account_id = $1',
+      [accountId],
+    );
+    return { state: Number(state.rows[0]!.n) > 0, taste: Number(taste.rows[0]!.n) > 0 };
+  }
+
+  it('a save arriving after the comparison cannot overtake it: the publication commits first, the save lands after', async () => {
+    const fixture = await researchFixture();
+    const jobId = await dispatchResearch(fixture);
+    const before = await authorityVersions(fixture.accountId);
+
+    const { run, release } = await parkedResearchJob(fixture, jobId);
+    // The ordinary taste writer — the bump every save/remove/hide performs —
+    // arrives in the drift window, AFTER the comparison already ran. It must
+    // queue for the storage commit instead of committing first.
+    const bump = bumpTasteRevision(db, { kind: 'account', accountId: fixture.accountId });
+    void bump.catch(() => undefined);
+    try {
+      await waitForLockWaiters('%ON CONFLICT (owner_account_id) DO UPDATE%', 1);
+      // PROOF of held authority: while the storage pass is parked past its
+      // comparison, the save has NOT committed — the committed revision is
+      // still the original one, whether or not the row existed before.
+      expect((await authorityVersions(fixture.accountId)).tasteRevision).toBe(before.tasteRevision);
+    } finally {
+      release();
+    }
+    // The publication committed under the ORIGINAL versions it compared...
+    const outcome = await run;
+    expect(outcome.state).toBe('complete');
+    expect(await proposedAssertionCount(fixture.subjectNodeId, fixture.objectNodeId)).toBe(1);
+    const runs = await researchRunRows(fixture.accountId);
+    expect(runs.map((r) => r.state)).toEqual(['complete']);
+    expect(runs[0]!.input_taste_revision).toBe(before.tasteRevision);
+    // ...and only then did the save land.
+    expect(await bump).toBe(before.tasteRevision + 1);
+    expect((await authorityVersions(fixture.accountId)).tasteRevision).toBe(before.tasteRevision + 1);
+    // The save stayed a pure authority bump: no projection run appeared.
+    const { rows: projectionRuns } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'projection'`,
+      [fixture.accountId],
+    );
+    expect(Number(projectionRuns[0]!.n)).toBe(0);
+  });
+
+  it('a projection pass arriving after the comparison cannot overtake it: publication first, projection after', async () => {
+    const fixture = await researchFixture();
+    // The account is projected BEFORE research dispatch, so the state row
+    // exists and the comparison's projection half is a real locked read.
+    const first = await projectAccountInterestGraph(db, {
+      accountId: fixture.accountId,
+      config: projectionOnly,
+      source: 'mutation_intent',
+    });
+    expect(first.projected).toBe(true);
+    const jobId = await dispatchResearch(fixture);
+    const before = await authorityVersions(fixture.accountId);
+    expect(before.projectionRevision).toBe(1);
+
+    const { run, release } = await parkedResearchJob(fixture, jobId);
+    // The REAL projector pass arrives in the drift window, after the
+    // comparison: it must queue for the storage commit. Its pass takes the
+    // per-account publication-authority lock first — the same accounts row
+    // the parked publication holds — so that real lock wait is the park.
+    const projection = projectAccountInterestGraph(db, {
+      accountId: fixture.accountId,
+      config: projectionOnly,
+      source: 'mutation_intent',
+    });
+    void projection.catch(() => undefined);
+    try {
+      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      // PROOF of held authority: the newer projection has not committed while
+      // the publication is parked.
+      expect((await authorityVersions(fixture.accountId)).projectionRevision).toBe(before.projectionRevision);
+    } finally {
+      release();
+    }
+    // The publication committed under the ORIGINAL projection version...
+    const outcome = await run;
+    expect(outcome.state).toBe('complete');
+    expect(await proposedAssertionCount(fixture.subjectNodeId, fixture.objectNodeId)).toBe(1);
+    const runs = await researchRunRows(fixture.accountId);
+    expect(runs[0]!.input_projection_revision).toBe(before.projectionRevision);
+    // ...and only then did the projection land.
+    const second = await projection;
+    expect(second.projected).toBe(true);
+    expect(second.projectionRevision).toBe(before.projectionRevision + 1);
+    expect((await authorityVersions(fixture.accountId)).projectionRevision).toBe(before.projectionRevision + 1);
+  });
+
+  it('a save holding the taste authority blocks the comparison; on its commit, research rejects stale proposals while the paid extraction stays accounted', async () => {
+    const fixture = await researchFixture();
+    const jobId = await dispatchResearch(fixture);
+    const before = await authorityVersions(fixture.accountId);
+
+    // The REAL taste writer runs inside the holder's open transaction: the
+    // revision bump is uncommitted while research's storage fence reads the
+    // current versions.
+    const holder = await db.pool.connect();
+    let holderOpen = true;
+    let run: Promise<{ state: string }> | undefined;
+    try {
+      await holder.query('BEGIN');
+      const bumped = await bumpTasteRevision(openTransactionDb(holder), { kind: 'account', accountId: fixture.accountId });
+      expect(bumped).toBe(before.tasteRevision + 1);
+
+      run = runJob(jobId, { providers: fixture.providers, config: researchOn });
+      void run.catch(() => undefined);
+      // Writer-first: the fence's guarded version read queues behind the
+      // writer's authority row.
+      await waitForLockWaiters('%taste_profiles%', 1);
+      // The paid call already happened and is durably accounted while the
+      // fence waits for the authority row.
+      expect(fixture.research.calls.extractClaims).toBe(1);
+      expect(await extractQueryCount(fixture.accountId)).toBe(1);
+      // Committed taste authority is still the ORIGINAL one.
+      expect((await authorityVersions(fixture.accountId)).tasteRevision).toBe(before.tasteRevision);
+
+      await holder.query('COMMIT');
+      holderOpen = false;
+    } finally {
+      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+
+    // The writer's newer authority is what the comparison now sees, so the
+    // stale proposals are rejected; the spend stays accounted.
+    await expect(run!).rejects.toMatchObject({ details: { rule: 'stale_authority' } });
+    expect((await jobRow(jobId)).state).toBe('failed');
+    expect(await proposedAssertionCount(fixture.subjectNodeId, fixture.objectNodeId)).toBe(0);
+    expect(await extractQueryCount(fixture.accountId)).toBe(1);
+    const runs = await researchRunRows(fixture.accountId);
+    expect(runs.map((r) => r.state)).toEqual(['failed']);
+    expect(runs[0]!.input_taste_revision).toBe(before.tasteRevision);
+  });
+
+  it('a projector pass holding the projection authority blocks the comparison; on its commit, research rejects stale proposals', async () => {
+    const fixture = await researchFixture();
+    const first = await projectAccountInterestGraph(db, {
+      accountId: fixture.accountId,
+      config: projectionOnly,
+      source: 'mutation_intent',
+    });
+    expect(first.projected).toBe(true);
+    const jobId = await dispatchResearch(fixture);
+    const before = await authorityVersions(fixture.accountId);
+    expect(before.projectionRevision).toBe(1);
+
+    // The REAL projector pass for a SECOND projection runs inside the
+    // holder's open transaction: it holds the state row lock with its
+    // revision bump uncommitted while research's storage fence reads.
+    const holder = await db.pool.connect();
+    let holderOpen = true;
+    let run: Promise<{ state: string }> | undefined;
+    try {
+      await holder.query('BEGIN');
+      const second = await projectAccountInterestGraph(openTransactionDb(holder), {
+        accountId: fixture.accountId,
+        config: projectionOnly,
+        source: 'mutation_intent',
+      });
+      expect(second.projected).toBe(true);
+      expect(second.projectionRevision).toBe(before.projectionRevision + 1);
+
+      run = runJob(jobId, { providers: fixture.providers, config: researchOn });
+      void run.catch(() => undefined);
+      // Writer-first: the storage fence's FIRST ordered statement — the
+      // per-account publication-authority lock — queues behind the writer's
+      // held account row, so the fence cannot even reach its comparison
+      // until the projector commits.
+      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      expect(fixture.research.calls.extractClaims).toBe(1);
+      expect(await extractQueryCount(fixture.accountId)).toBe(1);
+      // Committed projection authority is still the ORIGINAL one.
+      expect((await authorityVersions(fixture.accountId)).projectionRevision).toBe(before.projectionRevision);
+
+      await holder.query('COMMIT');
+      holderOpen = false;
+    } finally {
+      if (holderOpen) await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
+
+    await expect(run!).rejects.toMatchObject({ details: { rule: 'stale_authority' } });
+    expect((await jobRow(jobId)).state).toBe('failed');
+    expect(await proposedAssertionCount(fixture.subjectNodeId, fixture.objectNodeId)).toBe(0);
+    expect(await extractQueryCount(fixture.accountId)).toBe(1);
+    const runs = await researchRunRows(fixture.accountId);
+    expect(runs[0]!.input_projection_revision).toBe(before.projectionRevision);
+  });
+
+  it('absent authority rows are guarded too: the FIRST save and the FIRST projection both queue behind a parked publication', async () => {
+    const fixture = await researchFixture();
+    const jobId = await dispatchResearch(fixture);
+    const before = await authorityVersions(fixture.accountId);
+    // The account has neither an authority row yet: no taste profile, no
+    // projection state. Without the absent-row guard, both first-ever
+    // writers would commit between the comparison and the storage commit —
+    // an unlocked read of a missing row holds nothing.
+    expect(await authorityRowPresence(fixture.accountId)).toEqual({ state: false, taste: false });
+    expect(before.tasteRevision).toBe(0);
+    expect(before.projectionRevision).toBe(0);
+
+    const { run, release } = await parkedResearchJob(fixture, jobId);
+    const bump = bumpTasteRevision(db, { kind: 'account', accountId: fixture.accountId });
+    void bump.catch(() => undefined);
+    const projection = projectAccountInterestGraph(db, {
+      accountId: fixture.accountId,
+      config: projectionOnly,
+      source: 'mutation_intent',
+    });
+    void projection.catch(() => undefined);
+    try {
+      // Both first-ever writers queue behind the publication: the first save
+      // on the guarded taste row, the first projection on the account-row
+      // publication lock its pass takes first.
+      await waitForLockWaiters('%ON CONFLICT (owner_account_id) DO UPDATE%', 1);
+      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      expect((await authorityVersions(fixture.accountId)).tasteRevision).toBe(0);
+      expect((await authorityVersions(fixture.accountId)).projectionRevision).toBe(0);
+    } finally {
+      release();
+    }
+    // The publication committed under the ORIGINAL (absent-row) versions...
+    const outcome = await run;
+    expect(outcome.state).toBe('complete');
+    expect(await proposedAssertionCount(fixture.subjectNodeId, fixture.objectNodeId)).toBe(1);
+    const runs = await researchRunRows(fixture.accountId);
+    expect(runs[0]!.input_taste_revision).toBe(0);
+    expect(runs[0]!.input_projection_revision).toBe(0);
+    expect(runs[0]!.input_generation).toBe(0);
+    // ...and only then did both first-ever writers land.
+    expect(await bump).toBe(1);
+    const projected = await projection;
+    expect(projected.projected).toBe(true);
+    expect(projected.projectionRevision).toBe(1);
+  });
+
+  it('an independent account keeps saving and projecting while one research publication is parked past its comparison', async () => {
+    const a = await researchFixture();
+    const b = await researchFixture();
+    const jobIdA = await dispatchResearch(a);
+    const { run, release } = await parkedResearchJob(a, jobIdA);
+    const beforeB = await authorityVersions(b.accountId);
+    try {
+      // Account B's own writers never touch account A's guarded rows: both
+      // complete while A's publication is still parked.
+      expect(await bumpTasteRevision(db, { kind: 'account', accountId: b.accountId })).toBe(beforeB.tasteRevision + 1);
+      const projected = await projectAccountInterestGraph(db, {
+        accountId: b.accountId,
+        config: projectionOnly,
+        source: 'mutation_intent',
+      });
+      expect(projected.projected).toBe(true);
+    } finally {
+      release();
+    }
+    const outcome = await run;
+    expect(outcome.state).toBe('complete');
+    expect(await proposedAssertionCount(a.subjectNodeId, a.objectNodeId)).toBe(1);
   });
 });
