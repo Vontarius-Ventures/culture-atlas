@@ -44,6 +44,27 @@ export async function lockAccountPublicationAuthority(db: Queryable, accountId: 
   return rows.length > 0;
 }
 
+/**
+ * Tx-scoped desired-state write behind pause/resume and the typed settings
+ * PATCH (VAL-API-001). The caller holds the account publication-authority
+ * lock through the commit, exactly like pauseGraphDiscovery/resumeGraphDiscovery.
+ */
+export async function applyDiscoveryPaused(db: Queryable, accountId: string, paused: boolean): Promise<void> {
+  await db.query(
+    paused
+      ? `INSERT INTO graph_refresh_state (owner_account_id, discovery_paused_at)
+         VALUES ($1, now())
+         ON CONFLICT (owner_account_id)
+           DO UPDATE SET discovery_paused_at = COALESCE(graph_refresh_state.discovery_paused_at, now()), updated_at = now()
+            WHERE graph_refresh_state.discovery_paused_at IS NULL`
+      : `INSERT INTO graph_refresh_state (owner_account_id)
+         VALUES ($1)
+         ON CONFLICT (owner_account_id)
+           DO UPDATE SET discovery_paused_at = NULL, updated_at = now()`,
+    [accountId],
+  );
+}
+
 /** Pauses discovery refresh for the account (idempotent; keeps the first pause timestamp). */
 export async function pauseGraphDiscovery(db: Db, accountId: string): Promise<{ paused: boolean }> {
   // The lock and the write are ONE transaction, so the ordering lock is held
@@ -51,14 +72,7 @@ export async function pauseGraphDiscovery(db: Db, accountId: string): Promise<{ 
   // publisher contending on the same row cannot commit between them.
   return db.transaction(async (tx) => {
     await lockAccountPublicationAuthority(tx, accountId);
-    await tx.query(
-      `INSERT INTO graph_refresh_state (owner_account_id, discovery_paused_at)
-       VALUES ($1, now())
-       ON CONFLICT (owner_account_id)
-         DO UPDATE SET discovery_paused_at = COALESCE(graph_refresh_state.discovery_paused_at, now()), updated_at = now()
-          WHERE graph_refresh_state.discovery_paused_at IS NULL`,
-      [accountId],
-    );
+    await applyDiscoveryPaused(tx, accountId, true);
     const pausedAt = await graphDiscoveryPausedAt(tx, accountId);
     return { paused: pausedAt != null };
   });
@@ -69,13 +83,7 @@ export async function resumeGraphDiscovery(db: Db, accountId: string): Promise<v
   // Same ordered protocol as pause: the lock is held through the commit.
   await db.transaction(async (tx) => {
     await lockAccountPublicationAuthority(tx, accountId);
-    await tx.query(
-      `INSERT INTO graph_refresh_state (owner_account_id)
-       VALUES ($1)
-       ON CONFLICT (owner_account_id)
-         DO UPDATE SET discovery_paused_at = NULL, updated_at = now()`,
-      [accountId],
-    );
+    await applyDiscoveryPaused(tx, accountId, false);
   });
 }
 

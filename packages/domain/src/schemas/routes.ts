@@ -11,6 +11,7 @@ import * as J from './jobs';
 import * as O from './onboarding';
 import * as P from './plans';
 import * as Pref from './preferences';
+import * as IG from './interest-graph';
 import * as R from './references';
 import * as S from './sensor-connections';
 import * as T from './taste';
@@ -122,6 +123,16 @@ export const ROUTES = {
   listTastePicks: { method: 'GET', path: '/v1/taste/picks', auth: 'account', scopes: ['taste:read'], response: O.TastePicksResponse, status: 200, idempotent: false, extension: true },
   createTastePick: { method: 'POST', path: '/v1/taste/picks', auth: 'owner', scopes: [], body: O.CreatePickRequest, response: O.CreatePickResponse, status: 201, idempotent: true, extension: true },
   deleteTastePick: { method: 'DELETE', path: '/v1/taste/picks/{id}', auth: 'owner', scopes: [], params: O.PickParams, response: O.DeletePickResponse, status: 200, idempotent: true, extension: true },
+
+  // Typed owner/native interest-graph controls (PR 8 package E; VAL-API-001).
+  // Browser owner sessions and the four explicitly bridged native graph
+  // operations only (authz/native-owner.ts): agents gain no graph authority,
+  // there is no account id to name, and the mutations share one optimistic
+  // revision. No MCP tools: agents keep their existing operation matrix.
+  getMyInterestGraph: { method: 'GET', path: '/v2/me/interest-graph', auth: 'owner', scopes: [], query: IG.InterestGraphQuery, response: IG.InterestGraphSummaryResponse, status: 200, idempotent: false, extension: true },
+  updateMyInterestGraphSettings: { method: 'PATCH', path: '/v2/me/interest-graph/settings', auth: 'owner', scopes: [], body: IG.UpdateInterestGraphSettingsRequest, response: IG.UpdateInterestGraphSettingsResponse, status: 200, idempotent: true, extension: true },
+  updateMyInterestGraphInterest: { method: 'PATCH', path: '/v2/me/interest-graph/interests/{id}', auth: 'owner', scopes: [], params: IG.InterestGraphIdParams, body: IG.UpdateInterestGraphInterestRequest, response: IG.UpdateInterestGraphInterestResponse, status: 200, idempotent: true, extension: true },
+  getMyRecommendationConnection: { method: 'GET', path: '/v2/me/recommendations/{id}/connection', auth: 'owner', scopes: [], params: IdParams, response: IG.RecommendationConnectionResponse, status: 200, idempotent: false, extension: true },
 } as const satisfies Record<string, RouteContract>;
 
 export type RouteName = keyof typeof ROUTES;

@@ -39,7 +39,12 @@ and `ready-notice.json`; wire examples are the `onboarding_*`,
   session into its account owner (`sessionId: null`). It rechecks that the
   installation is neither revoked nor ended on every call and requires
   `X-Atlas-Expected-Account` on mutations (`account_mismatch` otherwise); every
-  other `/v1` route still answers `scope_denied`. `/v1` errors are flat
+  other `/v1` route still answers `scope_denied`. The same bridge also accepts
+  the owner's phone on exactly four `/v2` graph operations
+  (`NATIVE_OWNER_V2_GRAPH_OPERATIONS`: the interest-graph summary, its settings
+  and tentative-interest controls, and a recommendation connection) with the
+  same liveness and expected-account rules; the v1 allowlist itself never
+  grows. `/v1` errors are flat
   (`{code,message,…}`); both HTTP clients decode the flat and the `/v2` shape.
 - **Screen 14 on a phone:** three steps with "Step n of 3", Back from step 2,
   two-column image grid, Wear/Play/Watch/Eat pills with live Qloo search

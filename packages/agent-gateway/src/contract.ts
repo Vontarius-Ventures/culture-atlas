@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ROUTES } from '../../domain/src/schemas/routes';
 import { OAuthExchange } from '../../domain/src/schemas/agent-platform';
 import type { RouteContract } from '../../domain/src/schemas/routes';
+import { NATIVE_OWNER_V2_GRAPH_OPERATIONS } from '../../domain/src/authz/native-owner';
 import { TOOLS } from './tools';
 import { SCOPES, type Scope } from '../../domain/src/enums';
 import { CaptureCommandResponse, CommandAck, NativeCommandBatch } from '../../domain/src/schemas/agent-commands';
@@ -55,6 +56,10 @@ export function buildAgentContract() {
     if (r.method === 'PATCH' && (r.path === '/v2/me/preferences' || r.path === '/v2/shares/{id}')) parameters.push({ name: 'If-Match', in: 'header', required: true, schema: { type: 'string', pattern: '^"[1-9][0-9]*"$' } });
     const security = r.path === '/v2/shared/redeem' ? []
       : r.path.startsWith('/v2/shared/') && r.auth === 'public' ? [{ shareSession: [] }, { accountSession: [] }]
+        // The four typed graph operations also accept the owner's enrolled
+        // native installation session (NATIVE_OWNER_V2_GRAPH_OPERATIONS);
+        // agents still cannot reach them (auth 'owner', no bearer).
+        : NATIVE_OWNER_V2_GRAPH_OPERATIONS.has(`${r.method} ${r.path}`) && r.auth === 'owner' ? [{ accountSession: [] }, { installationSession: [] }]
         : r.auth === 'owner' ? [{ accountSession: [] }] : [{ bearerAuth: [] }, { accountSession: [] }];
     const op = {
       operationId: name, security,

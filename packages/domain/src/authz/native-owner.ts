@@ -20,6 +20,12 @@ import { operationKey, type OperationPolicy } from './operations';
  *  - every other `/v1` route still refuses installations with `scope_denied`,
  *    and agents are unaffected.
  *
+ * The owner's phone ALSO reaches the four typed v2 graph operations
+ * (`NATIVE_OWNER_V2_GRAPH_OPERATIONS`: the interest-graph summary, settings,
+ * tentative-interest controls and the recommendation connection) with the
+ * same liveness and expected-account rules. The v1 allowlist itself is
+ * never broadened by them.
+ *
  * The installation must still be live on every call (not revoked, authority
  * not ended, access token unexpired), and every mutation must name the
  * signed-in account in `X-Atlas-Expected-Account` (the same header the `/v2`
@@ -49,8 +55,24 @@ export const NATIVE_OWNER_OPERATIONS: ReadonlySet<string> = new Set([
   'PUT /v1/collections/{id}/items/{item_id}',
 ]);
 
+/**
+ * The v2 graph operations the native owner bridge also accepts (PR 8 package
+ * E; VAL-API-003). Deliberately a SEPARATE set so the v1 allowlist above stays
+ * byte-identical: new graph routes never broaden the existing v1 matrix, and
+ * every other v2 route keeps refusing installations (capture-v2 has its own
+ * installation-native authority; the agent-platform `me` routes are OAuth
+ * bearer only). The same live-installation and expected-account rules apply.
+ */
+export const NATIVE_OWNER_V2_GRAPH_OPERATIONS: ReadonlySet<string> = new Set([
+  'GET /v2/me/interest-graph',
+  'PATCH /v2/me/interest-graph/settings',
+  'PATCH /v2/me/interest-graph/interests/{id}',
+  'GET /v2/me/recommendations/{id}/connection',
+]);
+
 export function isNativeOwnerOperation(op: Pick<OperationPolicy, 'method' | 'path'>): boolean {
-  return NATIVE_OWNER_OPERATIONS.has(operationKey(op));
+  const key = operationKey(op);
+  return NATIVE_OWNER_OPERATIONS.has(key) || NATIVE_OWNER_V2_GRAPH_OPERATIONS.has(key);
 }
 
 /**
