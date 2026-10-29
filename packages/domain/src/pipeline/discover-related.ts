@@ -209,6 +209,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
           authority,
           category: ctx.payload.category ?? null,
           ensureActive: ctx.ensureActive,
+          signal: ctx.signal,
         }),
       );
       // Bounded-work telemetry: ids, versions, counters and rejection codes

@@ -1,4 +1,5 @@
 import type { Db, Queryable } from '../db/pool';
+import { AppError } from '../errors';
 import { upsertDiscoveryItem, insertRecommendations, type RecommendationParent } from '../composer/store';
 import type { Category, ItemKind, ReferenceType } from '../enums';
 import { LIMITS } from '../enums';
@@ -17,8 +18,9 @@ import {
   type EdgeRow,
   type WalkEdge,
 } from './expansion';
+import { GraphWorkDeadlineExpiredError, isDeadlineCanceledStatement } from './budgets';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
-import { lockScopedPublicationAuthority, type ScopedDiscoveryGrantAuthority } from './scoped-discovery';
+import { lockScopedPublicationAuthority, scopedWorkWindowEnded, type ScopedDiscoveryGrantAuthority } from './scoped-discovery';
 import { revalidatePinnedDependencies } from './validity';
 
 /**
@@ -52,10 +54,25 @@ import { revalidatePinnedDependencies } from './validity';
  * The pass deliberately does NOT consult the account discovery pause: that
  * marker stops background expansion/research, while this is the explicit
  * per-origin operation the grant authorizes. The grant publication fence
- * (lockScopedPublicationAuthority, called first inside the publication
- * transaction) holds the initiating connection and origin collection locks
- * through the commit and rejects stale authority; the job-liveness fence
- * (`ensureActive`) and the scoped parent's own deletion fence stay in place.
+ * (`lockScopedPublicationAuthority`, called FIRST inside the publication
+ * transaction — DISC-SCR-040) holds the initiating connection and origin
+ * collection locks through the commit, BEFORE the scoped parent's own row
+ * lock, so real collection deletion never deadlocks the publication in
+ * either order; the job-liveness fence (`ensureActive`) and the scoped
+ * parent's deletion fence stay in place.
+ *
+ * Bounded work (DISC-SCR-035): the immutable authority row's
+ * `work_deadline_at` (migration 400) anchors this discovery's ONE work
+ * window — the enqueue clock + the architectural 45 seconds, never reset by
+ * retry or redelivery. Every statement and lock wait of the pass is bounded
+ * to the window's CURRENT remaining time (re-tightened at each stage
+ * boundary, so successive waits cannot cumulatively outrun the anchor),
+ * and the final publication boundary re-reads the window and the grant's
+ * live expiry with the database's own clock AFTER the tail writes (DISC-
+ * SCR-038): an expired window or a connection that expired during an
+ * intervening wait rolls the whole transaction back — no partial scoped
+ * results, no provider fallback, and the typed outcomes stay distinct
+ * (logical deadline vs token expiry).
  */
 
 /** Operational bounds of one scoped graph pass: the shared expansion bounds. */
@@ -396,362 +413,462 @@ export async function runScopedGraphDiscovery(
     /** Job-liveness fence, invoked immediately before any publication write. */
     ensureActive: () => Promise<void>;
     at?: Date;
+    /**
+     * The clock the deadline stage checks read (default: real time). The
+     * FINAL publication boundary always uses the database's own clock.
+     */
+    now?: () => Date;
+    /** The worker's cooperative stop (lease loss, cancellation, per-attempt timer). */
+    signal?: AbortSignal;
   },
 ): Promise<ScopedGraphDiscoveryOutcome> {
   const at = input.at ?? new Date();
   const { authority } = input;
   const owner: Owner = { kind: 'account', accountId: authority.owner_account_id };
+  // The anchored end of this discovery's ONE scoped work window (DISC-SCR-
+  // 035, migration 400): immutable with the authority row, so this attempt,
+  // every retry and every redelivery share it — never a fresh 45 seconds.
+  const deadlineAt = authority.work_deadline_at;
+  const deadlineNow = input.now ?? (() => new Date());
 
-  return db.transaction(async (tx) => {
-    const counts = emptyCounts();
-    const rejections: Record<string, number> = {};
-    const noteRejection = (code: string) => {
-      rejections[code] = (rejections[code] ?? 0) + 1;
-    };
-    const truncated = { assertions: false, candidates: false };
+  try {
+    return await db.transaction(async (tx) => {
+      const counts = emptyCounts();
+      const rejections: Record<string, number> = {};
+      const noteRejection = (code: string) => {
+        rejections[code] = (rejections[code] ?? 0) + 1;
+      };
+      const truncated = { assertions: false, candidates: false };
 
-    // The scoped parent's own deletion fence: a deleted origin item cascades
-    // the discovery job away, and the locked row pins the parent (and its
-    // owner) through the commit.
-    const parentRow = await tx.query('SELECT 1 FROM discovery_jobs WHERE id = $1 AND owner_account_id = $2 FOR UPDATE', [
-      authority.discovery_job_id,
-      authority.owner_account_id,
-    ]);
-    if (!parentRow.rowCount) throw new JobCancelledError('origin deleted');
-    // The origin is the owner's own item OR a validated public sample (the
-    // shared ownerless items the owner saved into the granted collection —
-    // DISC-SCR-030): never another account's private item and never an
-    // arbitrary ownerless row, exactly like the enqueue-time eligibility rule.
-    const origin = await tx.query<{ id: string; canonical_key: string }>(
-      `SELECT id, canonical_key FROM discovery_items
-        WHERE id = $1 AND (owner_account_id = $2 OR (owner_account_id IS NULL AND is_sample))`,
-      [authority.origin_item_id, authority.owner_account_id],
-    );
-    if (!origin.rows[0]) throw new JobCancelledError('origin deleted');
-    // The grant publication fence (VAL-DISC-007): lock the initiating
-    // connection's row and the origin collection's row FOR SHARE and recheck
-    // the pinned epoch against CURRENT live state — liveness, authorization
-    // version, per-collection grant epoch, collection ownership and the
-    // origin's membership — holding both locks through this commit. A real
-    // owner revocation, narrowing, grant replace, membership removal or
-    // collection deletion either committed before this read (the work
-    // rejects; nothing publishes, and retry/dedupe/regrant cannot adopt the
-    // newer epoch) or waits behind it (publisher-first: the results publish
-    // under the authority held here, and read-time denial applies after the
-    // mutation lands). No work runs under a dead authority.
-    await lockScopedPublicationAuthority(tx, { authority });
-    const originItemId = origin.rows[0]!.id;
-    const originCanonicalKey = origin.rows[0]!.canonical_key;
-    await tx.query(`UPDATE discovery_jobs SET status = 'running' WHERE id = $1`, [authority.discovery_job_id]);
+      // The logical window governs every stage of this pass (DISC-SCR-035):
+      // each stage check ends a pass whose anchored deadline passed and
+      // re-tightens the SQL bound to the CURRENT remainder — the entry bound
+      // alone would let a LATE lock wait run a full window past the anchor
+      // before a later check rolled it back (the DISC-SCR-018 discipline).
+      // `SET LOCAL` is scoped to this transaction, so pooled clients never
+      // leak the limit.
+      const enforceDeadline = async (): Promise<void> => {
+        if (input.signal?.aborted) throw new JobCancelledError('attempt stopped');
+        if (deadlineNow().getTime() >= deadlineAt.getTime()) throw new GraphWorkDeadlineExpiredError();
+        const ms = Math.max(1, Math.ceil(deadlineAt.getTime() - deadlineNow().getTime()));
+        await tx.query(`SET LOCAL statement_timeout = ${ms}`);
+        await tx.query(`SET LOCAL lock_timeout = ${ms}`);
+      };
+      await enforceDeadline();
 
-    // --- Qualified roots: ONLY this origin's own current identities ----------------
-    const rootReferences = await qualifiedOriginRootReferences(tx, originItemId);
-    counts.rootReferences = rootReferences.length;
-    const resolution = await resolveReferenceNodes(tx, rootReferences.map((r) => r.id));
-    const rootNodeIds: string[] = [];
-    const rootReferenceByNode = new Map<string, QualifiedRootReference>();
-    for (const ref of rootReferences) {
-      const nodeId = resolution.byReference.get(ref.id);
-      if (!nodeId) {
-        counts.rootReferencesUnmapped++;
-        continue;
+      // The grant publication fence (VAL-DISC-007): lock the initiating
+      // connection's row and the origin collection's row FOR SHARE and
+      // recheck the pinned epoch against CURRENT live state — liveness,
+      // authorization version, per-collection grant epoch, collection
+      // ownership and the origin's membership — holding both locks through
+      // this commit. A real owner revocation, narrowing, grant replace,
+      // membership removal or collection deletion either committed before
+      // this read (the work rejects; nothing publishes, and
+      // retry/dedupe/regrant cannot adopt the newer epoch) or waits behind
+      // it (publisher-first: the results publish under the authority held
+      // here, and read-time denial applies after the mutation lands). No
+      // work runs under a dead authority. The fence also rechecks the
+      // connection's ACTUAL expiry at a fresh database clock after its own
+      // lock waits (DISC-SCR-038) and returns the pinned expiry for the
+      // pass's final publication boundary.
+      //
+      // LOCK ORDER (DISC-SCR-040): the fence runs BEFORE the scoped
+      // parent's row lock below. The real deleteCollection path locks the
+      // collection FOR UPDATE and its DELETE then fires the parent's ON
+      // DELETE SET NULL action, which must UPDATE the parent row — so a
+      // parent-first pass could hold the parent while waiting on the
+      // collection the deleter holds, a 40P01 deadlock cycle in both
+      // commit orders. Collection-before-parent matches the deletion path:
+      // deletion-first now lets the pass queue on the collection and then
+      // honestly reject (the collection is gone), and publisher-first lets
+      // the deletion queue behind the publication and land after it —
+      // where the durable scoped marker fails the job closed on
+      // redelivery. Never a deadlock.
+      const fence = await lockScopedPublicationAuthority(tx, { authority, bound: enforceDeadline });
+      await enforceDeadline();
+
+      // The scoped parent's own deletion fence: a deleted origin item cascades
+      // the discovery job away, and the locked row pins the parent (and its
+      // owner) through the commit.
+      const parentRow = await tx.query(
+        'SELECT 1 FROM discovery_jobs WHERE id = $1 AND owner_account_id = $2 FOR UPDATE',
+        [authority.discovery_job_id, authority.owner_account_id],
+      );
+      if (!parentRow.rowCount) throw new JobCancelledError('origin deleted');
+      await enforceDeadline();
+      // The origin is the owner's own item OR a validated public sample (the
+      // shared ownerless items the owner saved into the granted collection —
+      // DISC-SCR-030): never another account's private item and never an
+      // arbitrary ownerless row, exactly like the enqueue-time eligibility rule.
+      const origin = await tx.query<{ id: string; canonical_key: string }>(
+        `SELECT id, canonical_key FROM discovery_items
+          WHERE id = $1 AND (owner_account_id = $2 OR (owner_account_id IS NULL AND is_sample))`,
+        [authority.origin_item_id, authority.owner_account_id],
+      );
+      if (!origin.rows[0]) throw new JobCancelledError('origin deleted');
+      await enforceDeadline();
+      const originItemId = origin.rows[0]!.id;
+      const originCanonicalKey = origin.rows[0]!.canonical_key;
+      await tx.query(`UPDATE discovery_jobs SET status = 'running' WHERE id = $1`, [authority.discovery_job_id]);
+
+      // --- Qualified roots: ONLY this origin's own current identities ----------------
+      const rootReferences = await qualifiedOriginRootReferences(tx, originItemId);
+      counts.rootReferences = rootReferences.length;
+      const resolution = await resolveReferenceNodes(tx, rootReferences.map((r) => r.id));
+      await enforceDeadline();
+      const rootNodeIds: string[] = [];
+      const rootReferenceByNode = new Map<string, QualifiedRootReference>();
+      for (const ref of rootReferences) {
+        const nodeId = resolution.byReference.get(ref.id);
+        if (!nodeId) {
+          counts.rootReferencesUnmapped++;
+          continue;
+        }
+        if (!rootReferenceByNode.has(nodeId)) {
+          rootNodeIds.push(nodeId);
+          rootReferenceByNode.set(nodeId, ref);
+        }
       }
-      if (!rootReferenceByNode.has(nodeId)) {
-        rootNodeIds.push(nodeId);
-        rootReferenceByNode.set(nodeId, ref);
-      }
-    }
-    counts.roots = rootNodeIds.length;
-    const rootNodeSet = new Set(rootNodeIds);
+      counts.roots = rootNodeIds.length;
+      const rootNodeSet = new Set(rootNodeIds);
 
-    // --- Bounded two-hop walk (the shared walk primitives and bounds) -------------
-    const hop1 = new Map<string, WalkEdge[]>();
-    const hop2 = new Map<string, WalkEdge[]>();
-    const seen = new Set<string>();
-    if (rootNodeIds.length > 0) {
-      const hop1Rows: EdgeRow[] = await traversalRows(tx, rootNodeIds, [], SCOPED_DISCOVERY_BOUNDS.maxAssertionsTraversed, at);
-      counts.assertionsTraversed = hop1Rows.length;
-      truncated.assertions = hop1Rows.length === SCOPED_DISCOVERY_BOUNDS.maxAssertionsTraversed;
-      for (const row of hop1Rows) {
-        seen.add(row.id);
-        addOrientation(hop1, row, rootNodeSet);
-      }
-      const midIds = [...new Set([...hop1.values()].flat().map((e) => e.far))];
-      const remaining = SCOPED_DISCOVERY_BOUNDS.maxAssertionsTraversed - seen.size;
-      if (midIds.length > 0 && remaining > 0) {
-        const midSet = new Set(midIds);
-        const hop2Rows = await traversalRows(tx, midIds, [...seen], remaining, at);
-        counts.assertionsTraversed += hop2Rows.length;
-        if (hop2Rows.length === remaining) truncated.assertions = true;
-        for (const row of hop2Rows) {
+      // --- Bounded two-hop walk (the shared walk primitives and bounds) -------------
+      const hop1 = new Map<string, WalkEdge[]>();
+      const hop2 = new Map<string, WalkEdge[]>();
+      const seen = new Set<string>();
+      if (rootNodeIds.length > 0) {
+        const hop1Rows: EdgeRow[] = await traversalRows(tx, rootNodeIds, [], SCOPED_DISCOVERY_BOUNDS.maxAssertionsTraversed, at);
+        counts.assertionsTraversed = hop1Rows.length;
+        truncated.assertions = hop1Rows.length === SCOPED_DISCOVERY_BOUNDS.maxAssertionsTraversed;
+        for (const row of hop1Rows) {
           seen.add(row.id);
-          addOrientation(hop2, row, midSet);
+          addOrientation(hop1, row, rootNodeSet);
+        }
+        await enforceDeadline();
+        const midIds = [...new Set([...hop1.values()].flat().map((e) => e.far))];
+        const remaining = SCOPED_DISCOVERY_BOUNDS.maxAssertionsTraversed - seen.size;
+        if (midIds.length > 0 && remaining > 0) {
+          const midSet = new Set(midIds);
+          const hop2Rows = await traversalRows(tx, midIds, [...seen], remaining, at);
+          counts.assertionsTraversed += hop2Rows.length;
+          if (hop2Rows.length === remaining) truncated.assertions = true;
+          for (const row of hop2Rows) {
+            seen.add(row.id);
+            addOrientation(hop2, row, midSet);
+          }
         }
       }
-    }
+    await enforceDeadline();
 
-    // --- Candidate pairs (deterministic order) ------------------------------------
-    const pairs: Array<{ root: string; candidateNodeId: string; paths: Array<[WalkEdge, WalkEdge]> }> = [];
-    for (const root of [...rootNodeIds].sort()) {
-      const byCandidate = new Map<string, Array<[WalkEdge, WalkEdge]>>();
-      for (const e1 of hop1.get(root) ?? []) {
-        // Second hops from the midpoint come from both loaded layers,
-        // including edges already loaded in hop one and oriented from a
-        // midpoint that is itself a root — each distinct assertion still
-        // counts once (the row is already in `seen`).
-        const secondHops = [...(hop2.get(e1.far) ?? []), ...(hop1.get(e1.far) ?? [])];
-        for (const e2 of secondHops) {
-          if (e2.id === e1.id) continue;
-          if (e2.far === root) continue;
-          const paths = byCandidate.get(e2.far);
-          if (paths) paths.push([e1, e2]);
-          else byCandidate.set(e2.far, [[e1, e2]]);
+      // --- Candidate pairs (deterministic order) ------------------------------------
+      const pairs: Array<{ root: string; candidateNodeId: string; paths: Array<[WalkEdge, WalkEdge]> }> = [];
+      for (const root of [...rootNodeIds].sort()) {
+        const byCandidate = new Map<string, Array<[WalkEdge, WalkEdge]>>();
+        for (const e1 of hop1.get(root) ?? []) {
+          // Second hops from the midpoint come from both loaded layers,
+          // including edges already loaded in hop one and oriented from a
+          // midpoint that is itself a root — each distinct assertion still
+          // counts once (the row is already in `seen`).
+          const secondHops = [...(hop2.get(e1.far) ?? []), ...(hop1.get(e1.far) ?? [])];
+          for (const e2 of secondHops) {
+            if (e2.id === e1.id) continue;
+            if (e2.far === root) continue;
+            const paths = byCandidate.get(e2.far);
+            if (paths) paths.push([e1, e2]);
+            else byCandidate.set(e2.far, [[e1, e2]]);
+          }
         }
-      }
-      for (const candidateNodeId of [...byCandidate.keys()].sort()) {
-        if (rootNodeSet.has(candidateNodeId)) {
-          noteRejection('candidate_is_root');
-          continue;
-        }
-        const paths = byCandidate.get(candidateNodeId)!.sort((a, b) =>
-          a[0].id === b[0].id ? (a[1].id < b[1].id ? -1 : 1) : a[0].id < b[0].id ? -1 : 1,
-        );
-        pairs.push({ root, candidateNodeId, paths: paths.slice(0, SCOPED_DISCOVERY_BOUNDS.maxPathsPerCandidate) });
-      }
-    }
-
-    // --- Shared admission: the approved path grammar over current evidence --------
-    const admitted: ScopedObservation[] = [];
-    for (const pair of pairs) {
-      if (counts.candidatesEvaluated >= SCOPED_DISCOVERY_BOUNDS.maxCandidatesEvaluated) {
-        truncated.candidates = true;
-        break;
-      }
-      counts.candidatesEvaluated++;
-      let obs: ScopedObservation | null = null;
-      for (const [e1, e2] of pair.paths) {
-        const validation = await validateGraphPath(tx, {
-          rootNodeId: pair.root,
-          candidateNodeId: pair.candidateNodeId,
-          assertionIds: [e1.id, e2.id],
-          at,
-        });
-        if (validation.path) {
-          obs = await scopedObservationFromPath(
-            tx,
-            { rootNodeId: pair.root, rootReferenceId: rootReferenceByNode.get(pair.root)!.id, at },
-            validation.path,
+        for (const candidateNodeId of [...byCandidate.keys()].sort()) {
+          if (rootNodeSet.has(candidateNodeId)) {
+            noteRejection('candidate_is_root');
+            continue;
+          }
+          const paths = byCandidate.get(candidateNodeId)!.sort((a, b) =>
+            a[0].id === b[0].id ? (a[1].id < b[1].id ? -1 : 1) : a[0].id < b[0].id ? -1 : 1,
           );
-          // An approved composition with no live grounding witness admits
-          // nothing: unreviewed or withdrawn evidence never justifies a
-          // scoped reason, exactly as in the expansion admission.
-          if (obs) break;
-          noteRejection('no_live_evidence');
+          pairs.push({ root, candidateNodeId, paths: paths.slice(0, SCOPED_DISCOVERY_BOUNDS.maxPathsPerCandidate) });
+        }
+      }
+
+      // --- Shared admission: the approved path grammar over current evidence --------
+      const admitted: ScopedObservation[] = [];
+      for (const pair of pairs) {
+        if (counts.candidatesEvaluated >= SCOPED_DISCOVERY_BOUNDS.maxCandidatesEvaluated) {
+          truncated.candidates = true;
+          break;
+        }
+        await enforceDeadline();
+        counts.candidatesEvaluated++;
+        let obs: ScopedObservation | null = null;
+        for (const [e1, e2] of pair.paths) {
+          const validation = await validateGraphPath(tx, {
+            rootNodeId: pair.root,
+            candidateNodeId: pair.candidateNodeId,
+            assertionIds: [e1.id, e2.id],
+            at,
+          });
+          if (validation.path) {
+            obs = await scopedObservationFromPath(
+              tx,
+              { rootNodeId: pair.root, rootReferenceId: rootReferenceByNode.get(pair.root)!.id, at },
+              validation.path,
+            );
+            // An approved composition with no live grounding witness admits
+            // nothing: unreviewed or withdrawn evidence never justifies a
+            // scoped reason, exactly as in the expansion admission.
+            if (obs) break;
+            noteRejection('no_live_evidence');
+            continue;
+          }
+          noteRejection(validation.rejection!.code);
+        }
+        if (obs) admitted.push(obs);
+        else counts.rejected++;
+      }
+
+      // --- Best observation per candidate --------------------------------------------
+      const best = new Map<string, ScopedObservation>();
+      for (const obs of admitted) {
+        const prev = best.get(obs.nodeId);
+        if (!prev || betterObservation(obs, prev)) best.set(obs.nodeId, obs);
+      }
+      counts.admitted = best.size;
+
+      // --- Ranking: versioned, deterministic, diversified ----------------------------
+      const ranked = [...best.values()].sort(
+        (a, b) => b.score - a.score || (a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0),
+      );
+      const perMid = new Map<string, number>();
+      const diversified: ScopedObservation[] = [];
+      for (const obs of ranked) {
+        const n = (perMid.get(obs.midNodeId) ?? 0) + 1;
+        perMid.set(obs.midNodeId, n);
+        if (n > SCOPED_DISCOVERY_BOUNDS.maxCandidatesPerMidpoint) continue;
+        diversified.push(obs);
+      }
+
+      // Every surviving candidate's application reference, before the
+      // exclusion decisions that depend on its item shape.
+      const references = await candidateReferences(tx, diversified.map((o) => o.nodeId));
+
+      // --- Publication pins: exact revisions at a fresh clock (DISC-SCR-009) ----------
+      // The pinned dependency rows are locked FOR SHARE in one consistent
+      // ascending-id order and held to this transaction's commit, coordinating
+      // with the retraction path's ordering: a withdrawal or revision change
+      // either commits before these locked reads — visible here, so the result
+      // is dropped — or waits for this commit, and its dependent scan then
+      // invalidates whatever this pass published. Nothing can slip between the
+      // validation and the commit.
+      const pinAssertionIds = [...new Set(diversified.flatMap((o) => o.assertions.map((a) => a.id)))].sort();
+      const pinEvidenceIds = [...new Set(diversified.flatMap((o) => o.evidence.map((e) => e.id)))].sort();
+      await enforceDeadline();
+      if (pinAssertionIds.length > 0) {
+        await tx.query(`SELECT id FROM graph_assertions WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
+          pinAssertionIds,
+        ]);
+      }
+      // The evidence pin lock is a SECOND independent wait inside this one
+      // pin stage: the bound is re-tightened to the CURRENT remainder so the
+      // time the assertion wait consumed cannot widen this one (DISC-SCR-025).
+      await enforceDeadline();
+      if (pinEvidenceIds.length > 0) {
+        await tx.query(`SELECT id FROM graph_evidence WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
+          pinEvidenceIds,
+        ]);
+      }
+      await enforceDeadline();
+      let publishAt = at;
+      if (diversified.length > 0) {
+        const clock = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+        publishAt = clock.rows[0]!.now;
+      }
+      const publishing: Array<{ obs: ScopedObservation; reference: CandidateReference }> = [];
+      for (const obs of diversified) {
+        const reference = references.get(obs.nodeId);
+        if (!reference) {
+          counts.candidatesWithoutReferences++;
+          noteRejection('candidate_without_reference');
           continue;
         }
-        noteRejection(validation.rejection!.code);
-      }
-      if (obs) admitted.push(obs);
-      else counts.rejected++;
-    }
-
-    // --- Best observation per candidate --------------------------------------------
-    const best = new Map<string, ScopedObservation>();
-    for (const obs of admitted) {
-      const prev = best.get(obs.nodeId);
-      if (!prev || betterObservation(obs, prev)) best.set(obs.nodeId, obs);
-    }
-    counts.admitted = best.size;
-
-    // --- Ranking: versioned, deterministic, diversified ----------------------------
-    const ranked = [...best.values()].sort(
-      (a, b) => b.score - a.score || (a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : 0),
-    );
-    const perMid = new Map<string, number>();
-    const diversified: ScopedObservation[] = [];
-    for (const obs of ranked) {
-      const n = (perMid.get(obs.midNodeId) ?? 0) + 1;
-      perMid.set(obs.midNodeId, n);
-      if (n > SCOPED_DISCOVERY_BOUNDS.maxCandidatesPerMidpoint) continue;
-      diversified.push(obs);
-    }
-
-    // Every surviving candidate's application reference, before the
-    // exclusion decisions that depend on its item shape.
-    const references = await candidateReferences(tx, diversified.map((o) => o.nodeId));
-
-    // --- Publication pins: exact revisions at a fresh clock (DISC-SCR-009) ----------
-    // The pinned dependency rows are locked FOR SHARE in one consistent
-    // ascending-id order and held to this transaction's commit, coordinating
-    // with the retraction path's ordering: a withdrawal or revision change
-    // either commits before these locked reads — visible here, so the result
-    // is dropped — or waits for this commit, and its dependent scan then
-    // invalidates whatever this pass published. Nothing can slip between the
-    // validation and the commit.
-    const pinAssertionIds = [...new Set(diversified.flatMap((o) => o.assertions.map((a) => a.id)))].sort();
-    const pinEvidenceIds = [...new Set(diversified.flatMap((o) => o.evidence.map((e) => e.id)))].sort();
-    if (pinAssertionIds.length > 0) {
-      await tx.query(`SELECT id FROM graph_assertions WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
-        pinAssertionIds,
-      ]);
-    }
-    if (pinEvidenceIds.length > 0) {
-      await tx.query(`SELECT id FROM graph_evidence WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
-        pinEvidenceIds,
-      ]);
-    }
-    let publishAt = at;
-    if (diversified.length > 0) {
-      const clock = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');
-      publishAt = clock.rows[0]!.now;
-    }
-    const publishing: Array<{ obs: ScopedObservation; reference: CandidateReference }> = [];
-    for (const obs of diversified) {
-      const reference = references.get(obs.nodeId);
-      if (!reference) {
-        counts.candidatesWithoutReferences++;
-        noteRejection('candidate_without_reference');
-        continue;
-      }
-      // The requested category is the operation's existing filter: a scoped
-      // graph result materializes only within it, never padded from outside.
-      const shape = REFERENCE_ITEM_SHAPE[reference.type];
-      if (input.category && shape.category !== input.category) {
-        counts.categoryFiltered++;
-        continue;
-      }
-      const verdict = await revalidatePinnedDependencies(tx, {
-        assertions: obs.assertions,
-        evidence: obs.evidence,
-        at: publishAt,
-      });
-      if (!verdict.valid) {
-        counts.stalePinsDropped++;
-        noteRejection(`pinned_${verdict.reason ?? 'dependency_missing'}`);
-        continue;
-      }
-      publishing.push({ obs, reference });
-    }
-
-    // --- Results: existing owner items first, materialized catalog items otherwise --
-    const hidden = await hiddenKeys(tx, owner);
-    const referenceIds = [...new Set(publishing.map((p) => p.reference.referenceId))];
-    const existingItems = new Map<string, { id: string; canonical_key: string }>();
-    if (referenceIds.length > 0) {
-      const { rows } = await tx.query<{ id: string; canonical_key: string; reference_id: string }>(
-        `SELECT id, canonical_key, reference_id FROM discovery_items
-          WHERE owner_account_id = $1 AND reference_id = ANY($2::uuid[])
-          ORDER BY id`,
-        [authority.owner_account_id, referenceIds],
-      );
-      for (const row of rows) {
-        if (!existingItems.has(row.reference_id)) existingItems.set(row.reference_id, row);
-      }
-    }
-    const finalEntries: Array<{ obs: ScopedObservation; reference: CandidateReference; itemId: string; category: Category | null }> = [];
-    for (const { obs, reference } of publishing) {
-      if (reference.byLink) counts.candidatesResolvedByLink++;
-      const existing = existingItems.get(reference.referenceId);
-      // A candidate hidden by canonical key (its own item's or its
-      // reference's) never publishes; hiding is a current constraint.
-      if (hidden.has(reference.canonicalKey) || (existing && hidden.has(existing.canonical_key))) {
-        counts.hiddenExcluded++;
-        continue;
-      }
-      let itemId = existing?.id ?? null;
-      if (!itemId) {
-        itemId = await upsertDiscoveryItem(tx, owner, {
-          kind: REFERENCE_ITEM_SHAPE[reference.type].kind,
-          category: REFERENCE_ITEM_SHAPE[reference.type].category,
-          canonical_key: reference.canonicalKey,
-          title: reference.canonicalName,
-          display_metadata: { subtitle: REFERENCE_ITEM_SHAPE[reference.type].subtitle },
-          external_ids: reference.externalIds,
-          reference_id: reference.referenceId,
+        // The requested category is the operation's existing filter: a scoped
+        // graph result materializes only within it, never padded from outside.
+        const shape = REFERENCE_ITEM_SHAPE[reference.type];
+        if (input.category && shape.category !== input.category) {
+          counts.categoryFiltered++;
+          continue;
+        }
+        const verdict = await revalidatePinnedDependencies(tx, {
+          assertions: obs.assertions,
+          evidence: obs.evidence,
+          at: publishAt,
         });
-        counts.candidatesMaterialized++;
+        if (!verdict.valid) {
+          counts.stalePinsDropped++;
+          noteRejection(`pinned_${verdict.reason ?? 'dependency_missing'}`);
+          continue;
+        }
+        publishing.push({ obs, reference });
       }
-      // The origin itself is never one of its own results.
-      if (itemId === originItemId || reference.canonicalKey === originCanonicalKey) continue;
-      finalEntries.push({ obs, reference, itemId, category: REFERENCE_ITEM_SHAPE[reference.type].category });
-    }
 
-    // Re-rank after the honest exclusions so published ranks stay dense and
-    // deterministic, then cap the rail at the operation's cached max.
-    finalEntries.sort(
-      (a, b) =>
-        b.obs.score - a.obs.score || (a.obs.nodeId < b.obs.nodeId ? -1 : a.obs.nodeId > b.obs.nodeId ? 1 : 0),
-    );
-    const capped = finalEntries.slice(0, SCOPED_DISCOVERY_BOUNDS.maxResults);
-
-    // --- Attach to the scoped discovery parent ONLY ---------------------------------
-    await input.ensureActive();
-    await tx.query('DELETE FROM recommendations WHERE discovery_job_id = $1', [authority.discovery_job_id]);
-    const contributingReferenceIds = rootReferences.map((r) => r.id);
-    const parent: RecommendationParent = { kind: 'discovery_job', discoveryJobId: authority.discovery_job_id };
-    const results: ScopedGraphResult[] = [];
-    if (capped.length > 0) {
-      const recIds = await insertRecommendations(
-        tx,
-        parent,
-        capped.map((entry, i) => ({
-          discovery_item_id: entry.itemId,
-          category: entry.category,
-          rank: i + 1,
-          title: entry.reference.canonicalName,
-          external_ids: entry.reference.externalIds,
-          display_reason: entry.obs.reason,
-          origin: 'catalog' as const,
-          provider_query_ids: [],
-          contributing_reference_ids: contributingReferenceIds,
-          destination_url: null,
-        })),
-      );
-      for (let i = 0; i < capped.length; i += 1) {
-        const entry = capped[i]!;
-        await tx.query(
-          `INSERT INTO scoped_discovery_result_proofs
-             (owner_account_id, discovery_job_id, recommendation_id,
-              assertion_ids, assertion_revisions, evidence_ids, evidence_revisions,
-              reason_template, reason_template_version, root_node_id, mid_node_id, candidate_node_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-          [
-            authority.owner_account_id,
-            authority.discovery_job_id,
-            recIds[i],
-            entry.obs.assertions.map((a) => a.id),
-            entry.obs.assertions.map((a) => a.revision),
-            entry.obs.evidence.map((e) => e.id),
-            entry.obs.evidence.map((e) => e.revision),
-            entry.obs.templateKey,
-            entry.obs.grammarVersion,
-            entry.obs.rootNodeId,
-            entry.obs.midNodeId,
-            entry.obs.nodeId,
-          ],
+      // --- Results: existing owner items first, materialized catalog items otherwise --
+      const hidden = await hiddenKeys(tx, owner);
+      const referenceIds = [...new Set(publishing.map((p) => p.reference.referenceId))];
+      const existingItems = new Map<string, { id: string; canonical_key: string }>();
+      if (referenceIds.length > 0) {
+        const { rows } = await tx.query<{ id: string; canonical_key: string; reference_id: string }>(
+          `SELECT id, canonical_key, reference_id FROM discovery_items
+            WHERE owner_account_id = $1 AND reference_id = ANY($2::uuid[])
+            ORDER BY id`,
+          [authority.owner_account_id, referenceIds],
         );
-        counts.proofsPublished++;
-        results.push({
-          recommendationId: recIds[i]!,
-          discoveryItemId: entry.itemId,
-          candidateNodeId: entry.obs.nodeId,
-          rank: i + 1,
-          reason: entry.obs.reason,
-        });
+        for (const row of rows) {
+          if (!existingItems.has(row.reference_id)) existingItems.set(row.reference_id, row);
+        }
       }
-    }
-    counts.resultsPublished = results.length;
-    const state: 'complete' | 'partial' = results.length > 0 ? 'complete' : 'partial';
-    await tx.query(`UPDATE discovery_jobs SET status = $2 WHERE id = $1`, [authority.discovery_job_id, state]);
+      const finalEntries: Array<{ obs: ScopedObservation; reference: CandidateReference; itemId: string; category: Category | null }> = [];
+      for (const { obs, reference } of publishing) {
+        if (reference.byLink) counts.candidatesResolvedByLink++;
+        const existing = existingItems.get(reference.referenceId);
+        // A candidate hidden by canonical key (its own item's or its
+        // reference's) never publishes; hiding is a current constraint.
+        if (hidden.has(reference.canonicalKey) || (existing && hidden.has(existing.canonical_key))) {
+          counts.hiddenExcluded++;
+          continue;
+        }
+        let itemId = existing?.id ?? null;
+        if (!itemId) {
+          itemId = await upsertDiscoveryItem(tx, owner, {
+            kind: REFERENCE_ITEM_SHAPE[reference.type].kind,
+            category: REFERENCE_ITEM_SHAPE[reference.type].category,
+            canonical_key: reference.canonicalKey,
+            title: reference.canonicalName,
+            display_metadata: { subtitle: REFERENCE_ITEM_SHAPE[reference.type].subtitle },
+            external_ids: reference.externalIds,
+            reference_id: reference.referenceId,
+          });
+          counts.candidatesMaterialized++;
+        }
+        // The origin itself is never one of its own results.
+        if (itemId === originItemId || reference.canonicalKey === originCanonicalKey) continue;
+        finalEntries.push({ obs, reference, itemId, category: REFERENCE_ITEM_SHAPE[reference.type].category });
+      }
 
-    return {
-      state,
-      results,
-      counts,
-      rejections,
-      truncated,
-      rankingPolicyVersion: RANKING_POLICY_VERSION,
-      grammarVersion: GRAPH_PATH_GRAMMAR_VERSION,
-    };
-  });
+      // Re-rank after the honest exclusions so published ranks stay dense and
+      // deterministic, then cap the rail at the operation's cached max.
+      finalEntries.sort(
+        (a, b) =>
+          b.obs.score - a.obs.score || (a.obs.nodeId < b.obs.nodeId ? -1 : a.obs.nodeId > b.obs.nodeId ? 1 : 0),
+      );
+      const capped = finalEntries.slice(0, SCOPED_DISCOVERY_BOUNDS.maxResults);
+
+      // --- Attach to the scoped discovery parent ONLY ---------------------------------
+      // The tail writes are real lock waits too (a concurrent retraction can
+      // hold the rows being replaced): the bound is refreshed here, and the
+      // fresh-clock final boundary below rolls the whole pass back if a tail
+      // wait outlives the window.
+      await enforceDeadline();
+      await input.ensureActive();
+      await tx.query('DELETE FROM recommendations WHERE discovery_job_id = $1', [authority.discovery_job_id]);
+      const contributingReferenceIds = rootReferences.map((r) => r.id);
+      const parent: RecommendationParent = { kind: 'discovery_job', discoveryJobId: authority.discovery_job_id };
+      const results: ScopedGraphResult[] = [];
+      if (capped.length > 0) {
+        const recIds = await insertRecommendations(
+          tx,
+          parent,
+          capped.map((entry, i) => ({
+            discovery_item_id: entry.itemId,
+            category: entry.category,
+            rank: i + 1,
+            title: entry.reference.canonicalName,
+            external_ids: entry.reference.externalIds,
+            display_reason: entry.obs.reason,
+            origin: 'catalog' as const,
+            provider_query_ids: [],
+            contributing_reference_ids: contributingReferenceIds,
+            destination_url: null,
+          })),
+        );
+        for (let i = 0; i < capped.length; i += 1) {
+          const entry = capped[i]!;
+          await tx.query(
+            `INSERT INTO scoped_discovery_result_proofs
+               (owner_account_id, discovery_job_id, recommendation_id,
+                assertion_ids, assertion_revisions, evidence_ids, evidence_revisions,
+                reason_template, reason_template_version, root_node_id, mid_node_id, candidate_node_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [
+              authority.owner_account_id,
+              authority.discovery_job_id,
+              recIds[i],
+              entry.obs.assertions.map((a) => a.id),
+              entry.obs.assertions.map((a) => a.revision),
+              entry.obs.evidence.map((e) => e.id),
+              entry.obs.evidence.map((e) => e.revision),
+              entry.obs.templateKey,
+              entry.obs.grammarVersion,
+              entry.obs.rootNodeId,
+              entry.obs.midNodeId,
+              entry.obs.nodeId,
+            ],
+          );
+          counts.proofsPublished++;
+          results.push({
+            recommendationId: recIds[i]!,
+            discoveryItemId: entry.itemId,
+            candidateNodeId: entry.obs.nodeId,
+            rank: i + 1,
+            reason: entry.obs.reason,
+          });
+        }
+      }
+      counts.resultsPublished = results.length;
+      const state: 'complete' | 'partial' = results.length > 0 ? 'complete' : 'partial';
+      await tx.query(`UPDATE discovery_jobs SET status = $2 WHERE id = $1`, [authority.discovery_job_id, state]);
+
+      // --- The final publication boundary (DISC-SCR-035/038) ------------------------
+      // One fresh database clock has the last word AFTER the tail
+      // DELETE/INSERT/proof writes, immediately before this transaction
+      // commits: the immutable work window's anchored end, and the
+      // initiating connection's live expiry (its row is pinned under the
+      // fence's FOR SHARE lock — only time can move it now). A wait that
+      // resumed after either one passed rolls the WHOLE pass back — no
+      // partial scoped results, no provider fallback — and the two outcomes
+      // stay distinct: the logical deadline of the work window versus the
+      // grant's own token expiry.
+      const finalClock = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+      const finalNow = finalClock.rows[0]!.now;
+      if (deadlineAt.getTime() <= finalNow.getTime()) throw new GraphWorkDeadlineExpiredError();
+      if (fence.connectionExpiresAt && fence.connectionExpiresAt.getTime() <= finalNow.getTime()) {
+        throw new AppError('token_expired');
+      }
+
+      return {
+        state,
+        results,
+        counts,
+        rejections,
+        truncated,
+        rankingPolicyVersion: RANKING_POLICY_VERSION,
+        grammarVersion: GRAPH_PATH_GRAMMAR_VERSION,
+      };
+    });
+  } catch (err) {
+    // The pass's statement and lock waits are bounded by the work window's
+    // CURRENT remaining time (re-tightened at every stage boundary), and
+    // that bound IS the deadline: PostgreSQL cancels a statement past it
+    // with 57014. Such a cancel is the same deadline fact and must surface
+    // as the typed terminal outcome, never a raw database error — but only
+    // when the durable window really ended with the database's own clock. A
+    // still-live window keeps the raw error exactly what it is, and a caller
+    // whose own transaction already aborted keeps its original error.
+    if (isDeadlineCanceledStatement(err)) {
+      const ended = await scopedWorkWindowEnded(db, { deadlineAt }).then(
+        (yes) => yes,
+        () => false,
+      );
+      if (ended) throw new GraphWorkDeadlineExpiredError();
+    }
+    throw err;
+  }
 }

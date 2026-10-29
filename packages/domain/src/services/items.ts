@@ -6,6 +6,7 @@ import { LIMITS, type Category, type ItemKind, type RecommendationOrigin, type R
 import { AppError } from '../errors';
 import { SAMPLE_ITEMS, sampleKey } from '../feed/samples';
 import { enqueueJob, relatedDiscoveryDedupeKey } from '../jobs';
+import { GRAPH_EXPANSION_DEADLINE_MS } from '../interest-graph/budgets';
 import { lockAgentGrantEpoch, recordDiscoveryGrantAuthority, resolveScopedOriginSave } from '../interest-graph/scoped-discovery';
 import { loadItemAnchors } from '../library/anchors';
 import {
@@ -469,6 +470,13 @@ export async function startRelatedDiscovery(
     // transaction owns the job, so retry, redelivery and dedupe cannot adopt a
     // later grant epoch, owner or resource. Legacy whole-library enqueues (no
     // collection) write none.
+    //
+    // The row also anchors this discovery's ONE scoped work window (migration
+    // 400, DISC-SCR-035): now + the architectural 45-second graph deadline,
+    // immutable with the row so a retry or redelivery inherits the same
+    // window instead of resetting the queue's per-attempt timer. The legacy
+    // provider path keeps its existing per-attempt budget unchanged; only
+    // the graph pass reads this anchor.
     if (originCollectionId && owner.kind === 'account') {
       await recordDiscoveryGrantAuthority(db, {
         ownerAccountId: owner.accountId,
@@ -480,6 +488,7 @@ export async function startRelatedDiscovery(
         originCollectionId,
         originItemId: item.id,
         originSavedItemId: originSavedItemId!,
+        workDeadlineAt: new Date(ctx.now().getTime() + GRAPH_EXPANSION_DEADLINE_MS),
       });
     }
     await db.query('UPDATE discovery_jobs SET job_id = $2 WHERE id = $1', [discoveryJobId, job.id]);

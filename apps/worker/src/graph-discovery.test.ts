@@ -436,4 +436,40 @@ describe('scoped Discover more grant fencing through the real worker (VAL-DISC-0
     expect(Number(recs[0]!.n)).toBe(0);
     expect(qloo.calls).toHaveLength(0);
   });
+
+  it('a redelivered scoped job whose anchored window already passed fails honestly: no re-anchored work, no provider fallback', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const qloo = providers.qloo as FakeQloo;
+    const lib = await scopedLibrary(providers);
+    const { jobId, discoveryJobId } = await enqueueScoped(lib);
+    // The job sat in the queue across a worker restart while its immutable
+    // anchored work window (migration 400) expired long ago: the redelivery
+    // inherits the SAME durable row, never a fresh 45 seconds. The row is
+    // re-anchored through its own allowed closed path (DELETE + fresh
+    // INSERT, exactly the enqueue transaction's dedupe-race cleanup).
+    await db.query(
+      `WITH old AS (DELETE FROM discovery_grant_authorities WHERE discovery_job_id = $1 RETURNING *)
+       INSERT INTO discovery_grant_authorities
+         (owner_account_id, discovery_job_id, job_id, agent_connection_id, authorization_version,
+          collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+       SELECT owner_account_id, discovery_job_id, job_id, agent_connection_id, authorization_version,
+              collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id,
+              now() - interval '1 minute'
+         FROM old`,
+      [discoveryJobId],
+    );
+    await runJobs(lib.ownerCtx, [jobId]);
+    const outcome = await scopedOutcome(jobId);
+    expect(outcome.state).toBe('failed');
+    expect(outcome.error_code).toBe('service_unavailable');
+    expect(outcome.error_retryable).toBe(false);
+    const { rows: recs } = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM recommendations WHERE discovery_job_id = $1',
+      [discoveryJobId],
+    );
+    expect(Number(recs[0]!.n)).toBe(0);
+    // The marker keeps the expired window on the typed graph outcome — never
+    // a paid provider fallback and no partial scoped results.
+    expect(qloo.calls).toHaveLength(0);
+  });
 });

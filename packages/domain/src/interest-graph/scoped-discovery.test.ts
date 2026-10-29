@@ -574,32 +574,32 @@ describe('authorization matrix and legacy compatibility', () => {
     // A different owner cannot adopt the discovery's authority.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + interval '45 seconds')`,
         [other.principal.accountId, legacy.discovery_job_id, legacy.job_id, lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/violates foreign key/);
     // Exactly one authority per discovery job.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + interval '45 seconds')`,
         [lib.owner.accountId, started.discovery_job_id, started.job_id, lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/duplicate key|unique constraint/);
     // An initiating connection is recorded together with its authorization version.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, agent_connection_id, origin_collection_id, origin_item_id, origin_saved_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, agent_connection_id, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '45 seconds')`,
         [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, lib.agent.connectionId, lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/check constraint/);
     // An owner-only authority cannot claim a grant timestamp.
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '45 seconds')`,
         [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, new Date(), lib.col.id, lib.item, savedItemId],
       ),
     ).rejects.toThrow(/check constraint/);
@@ -608,8 +608,8 @@ describe('authorization matrix and legacy compatibility', () => {
     const otherOwned = await insertItem({ accountId: lib.owner.accountId }, { kind: 'film', qloo: `x-${randomUUID()}` });
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + interval '45 seconds')`,
         [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, lib.col.id, otherOwned, savedItemId],
       ),
     ).rejects.toThrow(/violates foreign key/);
@@ -617,8 +617,8 @@ describe('authorization matrix and legacy compatibility', () => {
     const foreignSave = await saveDirect(other.principal.accountId, otherOwned);
     await expect(
       db.query(
-        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + interval '45 seconds')`,
         [lib.owner.accountId, legacy.discovery_job_id, legacy.job_id, lib.col.id, otherOwned, foreignSave],
       ),
     ).rejects.toThrow(/violates foreign key/);
@@ -656,8 +656,8 @@ describe('authorization matrix and legacy compatibility', () => {
       [lib.owner.accountId, lib.item],
     );
     await db.query(
-      `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
+      `INSERT INTO discovery_grant_authorities (owner_account_id, discovery_job_id, job_id, origin_collection_id, origin_item_id, origin_saved_item_id, work_deadline_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + interval '45 seconds')`,
       [lib.owner.accountId, dj.rows[0]!.id, foreignJob.rows[0]!.id, lib.col.id, lib.item, await ownerSaveOf(lib.owner.accountId, lib.item)],
     );
     expect(

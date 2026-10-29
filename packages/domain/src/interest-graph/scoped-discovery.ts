@@ -44,7 +44,7 @@ import { AppError } from '../errors';
  * enqueues no authority row and keeps its unchanged operation shape.
  */
 
-/** Row shape of `discovery_grant_authorities` (migrations 360 + 390). */
+/** Row shape of `discovery_grant_authorities` (migrations 360 + 390 + 400). */
 export const DiscoveryGrantAuthorityRow = z.object({
   id: z.string().uuid(),
   owner_account_id: z.string().uuid(),
@@ -56,6 +56,14 @@ export const DiscoveryGrantAuthorityRow = z.object({
   origin_collection_id: z.string().uuid(),
   origin_item_id: z.string().uuid(),
   origin_saved_item_id: z.string().uuid(),
+  /**
+   * The anchored end of this discovery's ONE scoped work window (migration
+   * 400, DISC-SCR-035): written once at enqueue (created + the architectural
+   * 45 seconds) and immutable like the rest of the row, so every retry,
+   * redelivery and dedupe of the job inherits the same window — never a
+   * fresh one.
+   */
+  work_deadline_at: z.date(),
   created_at: z.date(),
 });
 export type DiscoveryGrantAuthorityRow = z.infer<typeof DiscoveryGrantAuthorityRow>;
@@ -68,7 +76,8 @@ export const ScopedDiscoveryGrantAuthority = DiscoveryGrantAuthorityRow.extend({
 export type ScopedDiscoveryGrantAuthority = z.infer<typeof ScopedDiscoveryGrantAuthority>;
 
 const AUTHORITY_COLUMNS = `id, owner_account_id, discovery_job_id, job_id, agent_connection_id,
-  authorization_version, collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id, created_at`;
+  authorization_version, collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id,
+  work_deadline_at, created_at`;
 
 /**
  * The live grant epoch of an initiating agent connection, read under the
@@ -167,6 +176,13 @@ export interface RecordDiscoveryGrantAuthorityInput {
   originItemId: string;
   /** The owner's save row that grounds the origin's membership (migration 390). */
   originSavedItemId: string;
+  /**
+   * The anchored end of this discovery's ONE scoped work window (migration
+   * 400): the enqueue clock + the architectural 45 seconds. Written once
+   * with the row and never rewritten, so retry and redelivery cannot reset
+   * it (DISC-SCR-035).
+   */
+  workDeadlineAt: Date;
 }
 
 /**
@@ -214,8 +230,9 @@ export async function recordDiscoveryGrantAuthority(
   const { rows } = await db.query<DiscoveryGrantAuthorityRow>(
     `INSERT INTO discovery_grant_authorities
        (owner_account_id, discovery_job_id, job_id, agent_connection_id,
-        authorization_version, collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        authorization_version, collection_granted_at, origin_collection_id, origin_item_id, origin_saved_item_id,
+        work_deadline_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING ${AUTHORITY_COLUMNS}`,
     [
       input.ownerAccountId,
@@ -227,6 +244,7 @@ export async function recordDiscoveryGrantAuthority(
       input.originCollectionId,
       input.originItemId,
       input.originSavedItemId,
+      input.workDeadlineAt,
     ],
   );
   return rows[0]!;
@@ -244,7 +262,7 @@ export async function discoveryGrantAuthorityForJob(
   const { rows } = await db.query<ScopedDiscoveryGrantAuthority>(
     `SELECT a.id, a.owner_account_id, a.discovery_job_id, a.job_id, a.agent_connection_id,
             a.authorization_version, a.collection_granted_at, a.origin_collection_id, a.origin_item_id,
-            a.origin_saved_item_id, a.created_at, j.type AS job_type, j.state AS job_state
+            a.origin_saved_item_id, a.work_deadline_at, a.created_at, j.type AS job_type, j.state AS job_state
        FROM discovery_grant_authorities a
        JOIN jobs j ON j.id = a.job_id AND j.owner_account_id = a.owner_account_id
       WHERE a.discovery_job_id = $1 AND a.owner_account_id = $2`,
@@ -271,13 +289,28 @@ export async function requireDiscoveryGrantAuthorityForJob(
 }
 
 /**
+ * What the publication fence proved and still holds for the pass.
+ */
+export interface ScopedPublicationFence {
+  /**
+   * The initiating connection's live `expires_at` as read under the fence's
+   * FOR SHARE lock, or null for owner-initiated authorities. The lock pins
+   * the row through the pass's commit, so the only way this authority can
+   * die after the fence is TIME: the pass rechecks this timestamp against a
+   * fresh database clock at its final publication boundary (DISC-SCR-038).
+   */
+  connectionExpiresAt: Date | null;
+}
+
+/**
  * The publication fence of the approved grant-scoped Discover more producer
  * (scoped-discover-revocation-publication; VAL-DISC-007).
  *
- * Called inside the scoped graph pass's ONE publication transaction, it locks
- * the initiating connection's row and the origin collection's row FOR SHARE
- * and rechecks the pinned enqueue-time authority against CURRENT live state,
- * holding both locks through the transaction's commit:
+ * Called as the FIRST authority step inside the scoped graph pass's ONE
+ * publication transaction, it locks the initiating connection's row and the
+ * origin collection's row FOR SHARE and rechecks the pinned enqueue-time
+ * authority against CURRENT live state, holding both locks through the
+ * transaction's commit:
  *
  *  - connection liveness: revoke → token_revoked, expiry (decided by the
  *    database's own clock) → token_expired;
@@ -290,7 +323,13 @@ export async function requireDiscoveryGrantAuthorityForJob(
  *    non-disclosing, exactly like the enqueue-time lock;
  *  - collection ownership and the origin's CURRENT membership in the pinned
  *    origin collection (a removed membership or a deleted collection, which
- *    also cascades the authority row away) → not_found.
+ *    also cascades the authority row away) → not_found;
+ *  - connection expiry is decided AGAIN at a fresh database clock AFTER the
+ *    fence's own lock waits (DISC-SCR-038): a connection that was still live
+ *    at the fence's start but expired while this transaction waited on the
+ *    collection row can never authorize new private output. The pass repeats
+ *    the same fresh-clock decision after its tail writes, just before the
+ *    commit.
  *
  * Every real owner mutation path takes one of these two locks first —
  * revoke/narrow/rotate UPDATE or lock agent_connections, v1 grant replace
@@ -303,29 +342,47 @@ export async function requireDiscoveryGrantAuthorityForJob(
  * redelivery, dedupe and regrant cannot adopt a newer epoch: the authority
  * row is immutable and this fence compares its pins.
  *
+ * LOCK ORDER (DISC-SCR-040): the pass takes this fence's collection lock
+ * BEFORE its discovery-parent row lock. deleteCollection does the reverse of
+ * the old order — it locks the collection FOR UPDATE and its DELETE then
+ * fires the discovery_jobs.origin_collection_id ON DELETE SET NULL action,
+ * which must UPDATE the parent row — so a pass that locked the parent first
+ * could hold it while waiting on the collection and deadlock the deletion
+ * (a real 40P01 cycle in both commit orders). With the fence first, the
+ * collection is always locked ahead of the parent, matching the deletion
+ * path: either order now resolves deterministically (the publisher either
+ * sees the deleted collection and rejects, or the deletion queues behind the
+ * fence and lands after the commit — where the durable scoped marker fails
+ * the job closed on redelivery). The pass may pass `bound` to re-tighten its
+ * SQL/lock waits to the work window's CURRENT remaining time before each of
+ * the fence's lock waits (DISC-SCR-035).
+ *
  * The origin's own save row is deliberately NOT locked: unsave deletes
  * saved_items (cascading memberships) without taking the collections lock
  * first, and locking it would invert the lock order against the collection
- * mutators (a deadlock cycle). A mid-pass unsave is instead fenced at READ
- * time — the agent grant-visibility rules recheck CURRENT membership on
- * every job-polling and related-read request — and the owner's own surfaces
- * stay first-party authorized.
+ * mutators (a deadlock cycle). Its revision bump of every affected collection
+ * still queues behind the fence's collection lock, and a mid-pass unsave is
+ * fenced at READ time — the agent grant-visibility rules recheck CURRENT
+ * membership on every job-polling and related-read request — while the
+ * owner's own surfaces stay first-party authorized.
  *
  * The rejection surfaces as a typed, non-retryable AppError: the whole pass
  * rolls back, nothing publishes, and the queue job records the code.
  */
 export async function lockScopedPublicationAuthority(
   db: Queryable,
-  input: { authority: DiscoveryGrantAuthorityRow },
-): Promise<void> {
+  input: { authority: DiscoveryGrantAuthorityRow; bound?: () => Promise<void> },
+): Promise<ScopedPublicationFence> {
   const { authority } = input;
   const nonDisclosing = () => new AppError('not_found', { message: 'Discovery grant authority not found.' });
+  let connectionExpiresAt: Date | null = null;
 
   // --- The initiating connection: liveness, version, grant epoch -----------
   // FOR SHARE blocks every row modification (revoke, narrow, rotate, v1
   // replace) while staying compatible with foreign-key key-share inserts and
   // concurrent publishers, and it is held to this transaction's commit.
   if (authority.agent_connection_id != null) {
+    await input.bound?.();
     const conn = await db.query<{
       authorization_version: number;
       library_access: string;
@@ -345,6 +402,7 @@ export async function lockScopedPublicationAuthority(
     // run-start clock (the DISC-SCR-009 discipline).
     const clock = await db.query<{ now: Date }>('SELECT clock_timestamp() AS now');
     if (row.expires_at <= clock.rows[0]!.now) throw new AppError('token_expired');
+    connectionExpiresAt = row.expires_at;
     // A v2 narrow/rotate bumped the live version: the pinned epoch is gone.
     if (row.authorization_version !== authority.authorization_version) throw new AppError('token_revoked');
     if (row.library_access === 'selected_collections') {
@@ -371,6 +429,7 @@ export async function lockScopedPublicationAuthority(
   // FOR UPDATE first, so the membership read below is serialized with them
   // through the commit (a change either committed before this fence — visible
   // — or waits behind it).
+  await input.bound?.();
   const collection = await db.query('SELECT 1 FROM collections WHERE id = $1 AND owner_account_id = $2 FOR SHARE', [
     authority.origin_collection_id,
     authority.owner_account_id,
@@ -382,4 +441,35 @@ export async function lockScopedPublicationAuthority(
     [authority.origin_collection_id, authority.owner_account_id, authority.origin_item_id],
   );
   if (!member.rowCount) throw nonDisclosing();
+
+  // --- The fresh-clock expiry recheck after the fence's own waits -----------
+  // DISC-SCR-038: FOR SHARE pins the row against every owner EDIT, but it
+  // cannot stop time. A connection that was still live at the fence's start
+  // can expire while this transaction WAITS on the collection row (a real
+  // collection mutation holds it); deciding expiry once, before that wait,
+  // let the pass commit private output under a grant that had already
+  // expired. The same live row is re-read here against the database's CURRENT
+  // clock, and the pass repeats this decision at its final boundary after
+  // the tail writes, so expiry during ANY intervening wait rejects the
+  // publication — with the grant's own typed outcome, never conflated with
+  // the logical work-deadline outcome.
+  if (connectionExpiresAt != null) {
+    const after = await db.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+    if (connectionExpiresAt.getTime() <= after.rows[0]!.now.getTime()) throw new AppError('token_expired');
+  }
+  return { connectionExpiresAt };
+}
+
+/**
+ * The last-word decision of the anchored scoped work window (DISC-SCR-035),
+ * read with the database's own clock: true when the window's immutable
+ * `work_deadline_at` anchor has passed. The pass checks it at entry and after
+ * its tail writes inside the publication transaction, and it verifies a raw
+ * SQL cancel (57014 from the window's own refreshed statement/lock timeout)
+ * before mapping it to the typed logical-deadline outcome — an in-memory
+ * anchor read at attempt entry is never sufficient on its own.
+ */
+export async function scopedWorkWindowEnded(db: Queryable, input: { deadlineAt: Date }): Promise<boolean> {
+  const { rows } = await db.query<{ now: Date }>('SELECT clock_timestamp() AS now');
+  return input.deadlineAt.getTime() <= rows[0]!.now.getTime();
 }
