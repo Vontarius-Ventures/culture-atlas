@@ -8,7 +8,7 @@ import { GRAPH_PATH_GRAMMAR_VERSION } from './assertion-policy';
 import { validateGraphPath, type ValidatedGraphPath } from './paths';
 import { loadExplicitSupport } from './explicit-support';
 import { graphDiscoveryPausedAt, lockAccountPublicationAuthority } from './refresh';
-import { currentAssertionJustification, revalidateFrontierPathVersions, revalidatePinnedDependencies } from './validity';
+import { currentAssertionJustification, frontierPathPins, revalidateFrontierPathVersions, revalidatePinnedDependencies } from './validity';
 import { bilaterallyVerifiedReferenceNodes } from './identity-links';
 import {
   createGraphRun,
@@ -552,6 +552,15 @@ function emptyCounts(): ExpansionCounts {
 
 // --- The expansion pass ----------------------------------------------------------------
 
+/**
+ * The frontier's canonical dedupe key for one expansion observation. Shared
+ * by the admission loop and the retained-population pre-read (DISC-SCR-024)
+ * so the two can never disagree about which stored row a refresh retains.
+ */
+function frontierDedupeKey(intent: 'personal' | 'photo', nodeId: string): string {
+  return `expansion:${intent}:node:${nodeId}`;
+}
+
 async function runExpansion(
   tx: Queryable,
   input: { accountId: string; jobId?: string; at: Date; fence?: (tx: Queryable) => Promise<void>; deadline?: ExpansionDeadlineInput },
@@ -782,8 +791,45 @@ async function runExpansion(
   if (best.size > 0) {
     const publishClock = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');
     publishAt = publishClock.rows[0]!.now;
-    const pinAssertionIds = [...new Set([...best.values()].flatMap((o) => o.assertions.map((a) => a.id)))].sort();
-    const pinEvidenceIds = [...new Set([...best.values()].flatMap((o) => o.evidence.map((e) => e.id)))].sort();
+    // DISC-SCR-024: the dependency population this pass protects is not
+    // only the newly selected observations. A dedupe refresh RETAINS the
+    // stored row and its recorded path, which can be a DIFFERENT
+    // still-valid path than every newly selected observation (a changed
+    // winning root leaves the old root edge pinned by the stored row
+    // alone). Those RETAINED-ONLY assertion/evidence rows join the same
+    // FOR SHARE pin locks and the final publication fence — otherwise the
+    // retained revalidation in the frontier loop is an unlocked read, and a
+    // concurrent corpus support addition can bump the retained-only
+    // assertion's revision after that read but before the commit, leaving
+    // a live admitted row that immediately fails the shared read
+    // validator. The live rows the loop will refresh are pre-read here:
+    // the only writer of a live row's recorded path is this engine (one
+    // active expansion per account), retraction changes state only, and
+    // this loop's own reconciliation pins only already-locked
+    // new-observation dependencies — so the pre-read set is exactly the
+    // retained population the upserts will return. Rows that expire or
+    // are pruned before their loop iteration merely lock pins that do not
+    // commit (a harmless superset).
+    const dedupeKeys = [...new Set([...best.values()].map((o) => frontierDedupeKey(o.intent, o.nodeId)))];
+    const { rows: retainedRows } = await tx.query<{ path_versions: unknown }>(
+      `SELECT path_versions FROM graph_frontier
+        WHERE owner_account_id = $1 AND dedupe_key = ANY($2::text[]) AND state IN ('active','admitted')`,
+      [accountId, dedupeKeys],
+    );
+    const retainedPins = retainedRows.map((row) => frontierPathPins(row.path_versions));
+    await enforceDeadline();
+    const pinAssertionIds = [
+      ...new Set([
+        ...[...best.values()].flatMap((o) => o.assertions.map((a) => a.id)),
+        ...retainedPins.flatMap((pins) => pins.assertions.map((a) => a.id)),
+      ]),
+    ].sort();
+    const pinEvidenceIds = [
+      ...new Set([
+        ...[...best.values()].flatMap((o) => o.evidence.map((e) => e.id)),
+        ...retainedPins.flatMap((pins) => pins.evidence.map((e) => e.id)),
+      ]),
+    ].sort();
     if (pinAssertionIds.length > 0) {
       await tx.query(`SELECT id FROM graph_assertions WHERE id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, [
         pinAssertionIds,
@@ -852,6 +898,15 @@ async function runExpansion(
     counts.frontierPruned = pruned.rowCount ?? 0;
   }
 
+  // The retained-only dependency populations this pass is COMMITTING
+  // (DISC-SCR-024): a dedupe refresh that KEEPS its valid recorded path
+  // commits those pins — paths absent from every newly selected observation
+  // — so they join the final publication fence's dependency population like
+  // every other committing observation.
+  const retainedCommitting: Array<{
+    assertions: ReadonlyArray<{ id: string }>;
+    evidence: ReadonlyArray<{ id: string }>;
+  }> = [];
   for (const obs of best.values()) {
     const pathVersions = {
       template: obs.templateKey,
@@ -868,7 +923,7 @@ async function runExpansion(
       runId: run.id,
       nodeId: obs.nodeId,
       intent: 'expansion',
-      dedupeKey: `expansion:${obs.intent}:node:${obs.nodeId}`,
+      dedupeKey: frontierDedupeKey(obs.intent, obs.nodeId),
       supportRootIds: obs.supportEdgeIds,
       score: obs.score,
       pathVersions,
@@ -909,6 +964,17 @@ async function runExpansion(
           });
           counts.frontierReconciled++;
           noteRejection(`retained_${retained.reason ?? 'evidence_missing'}`);
+        } else {
+          // DISC-SCR-024: the retained path revalidated UNDER the shared
+          // FOR SHARE pin locks this pass holds through its commit, so the
+          // pins it keeps are a committing dependency population — carried
+          // into the publication fence even though no newly selected
+          // observation names them.
+          const pins = frontierPathPins(upserted.row.path_versions);
+          retainedCommitting.push({
+            assertions: pins.assertions.map((a) => ({ id: a.id })),
+            evidence: pins.evidence.map((e) => ({ id: e.id })),
+          });
         }
       }
     }
@@ -1073,6 +1139,9 @@ async function runExpansion(
     // Admitted-unranked candidates commit frontier rows without a card: their
     // pins get the same last-word dependency recheck (DISC-SCR-009).
     admittedUnranked: [...best.values()].filter((o) => !ranked.includes(o)),
+    // Retained-only pins a dedupe refresh KEEPS commit with this pass too
+    // (DISC-SCR-024): the same last-word dependency recheck covers them.
+    retainedFrontier: retainedCommitting,
   });
   if (violation) throw new GraphFenceError(violation);
   // The caller's fence hook runs last, closest to the commit: the queue
@@ -1142,6 +1211,19 @@ export interface GraphPublicationFenceInput {
    * the whole pass.
    */
   admittedUnranked?: ReadonlyArray<{
+    assertions: ReadonlyArray<{ id: string }>;
+    evidence: ReadonlyArray<{ id: string }>;
+  }>;
+  /**
+   * The RETAINED-ONLY frontier dependency populations this pass commits
+   * (DISC-SCR-024): dedupe-refreshed live rows whose VALID retained pins are
+   * KEPT — recorded paths that can differ from every newly selected
+   * observation (a changed winning root), so they appear in no `ranked` or
+   * `admittedUnranked` entry. They get the same last-word dependency
+   * recheck: a late expiry or invalidation of a retained pin rejects the
+   * whole pass instead of committing an immediately invalid live row.
+   */
+  retainedFrontier?: ReadonlyArray<{
     assertions: ReadonlyArray<{ id: string }>;
     evidence: ReadonlyArray<{ id: string }>;
   }>;
@@ -1296,8 +1378,9 @@ export async function checkGraphPublicationFence(
   }
 
   // Source invalidation at the FRESH publication clock (DISC-SCR-009), over
-  // EVERY committing observation — ranked cards and admitted-unranked
-  // frontier candidates alike. Exact (id, revision) pin agreement and the
+  // EVERY committing observation — ranked cards, admitted-unranked frontier
+  // candidates, and the RETAINED-ONLY pins a dedupe refresh keeps
+  // (DISC-SCR-024) alike. Exact (id, revision) pin agreement and the
   // per-observation drop already happened before the writes (the pinned rows
   // are locked FOR SHARE through this commit, so their STATE cannot have
   // changed since); what can still land in the drift window before the commit
@@ -1305,11 +1388,13 @@ export async function checkGraphPublicationFence(
   // path's own rules — a pinned assertion must still be currently justified,
   // and every committing observation must retain at least one currently-valid
   // pinned evidence row as a live grounding witness — so publication-time and
-  // read-time validity agree on every emitted proof. A violation found here is
-  // a late landing and rejects the whole pass (the next window rebuilds).
+  // read-time validity agree on every emitted proof and committed frontier
+  // row. A violation found here is a late landing and rejects the whole pass
+  // (the next window rebuilds).
   const committing: ReadonlyArray<{ assertions: ReadonlyArray<{ id: string }>; evidence: ReadonlyArray<{ id: string }> }> = [
     ...input.ranked,
     ...(input.admittedUnranked ?? []),
+    ...(input.retainedFrontier ?? []),
   ];
   if (committing.length > 0) {
     const { rows: clockRows } = await tx.query<{ now: Date }>('SELECT clock_timestamp() AS now');

@@ -1137,6 +1137,44 @@ describe('publication fence races (VAL-DISC-007, VAL-PROJ-010)', () => {
     expect(violation).toBe('support_withdrawn');
   });
 
+  it('rejects a pass whose RETAINED-ONLY frontier dependency was retracted mid-pass (DISC-SCR-024)', async () => {
+    const { accountId, ranked } = await publishableFixture();
+    const start = await startVersions(accountId);
+    const assertionIds = [...new Set(ranked.flatMap((o) => o.assertions.map((a) => a.id)))];
+    expect(assertionIds.length).toBeGreaterThan(0);
+    const { rows: evidenceRows } = await db.query<{ evidence_id: string }>(
+      `SELECT DISTINCT s.evidence_id FROM graph_assertion_support s WHERE s.assertion_id = ANY($1::uuid[])`,
+      [assertionIds],
+    );
+    expect(evidenceRows.length).toBeGreaterThan(0);
+
+    // The retained path of a dedupe-refreshed live row pins its own
+    // assertion/evidence population — one that no newly selected observation
+    // of the pass names (a changed winning root). Its witness is withdrawn
+    // mid-pass: the pre-repair fence never looked at this population.
+    await retractGraphEvidence(db, { evidenceId: evidenceRows[0]!.evidence_id, reason: 'mid-pass retraction of a retained-only witness' });
+    const retainedFrontier = [
+      {
+        assertions: assertionIds.map((id) => ({ id })),
+        evidence: [{ id: evidenceRows[0]!.evidence_id }],
+      },
+    ];
+
+    // Pre-repair shape: the population was absent from the fence's
+    // dependency set, so the pass committed over the withdrawn witness.
+    const unseen = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, start, ranked: [] }),
+    );
+    expect(unseen).toBeNull();
+
+    // Repaired shape: the same retained population is decided by the
+    // last-word fence and rejects the whole pass.
+    const seen = await db.transaction(async (tx) =>
+      checkGraphPublicationFence(tx, { accountId, start, ranked: [], retainedFrontier }),
+    );
+    expect(seen).toBe('source_invalidated');
+  });
+
   it('a fence rejection rolls the whole pass back: zero rows survive', async () => {
     const { principal, ctx } = await accountCtx({ config: graphOn });
     const accountId = principal.accountId;

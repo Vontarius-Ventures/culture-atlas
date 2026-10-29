@@ -43,6 +43,22 @@ import type { GraphNodeDomain, GraphNodeKind, GraphPredicate } from './schema';
  *    its stored pins/roots untouched, and terminal rows keep their
  *    historical record (never revived, never rewritten).
  *
+ *  - DISC-SCR-024: the retained pins revalidated above were read UNLOCKED
+ *    — the publication FOR SHARE locks and the final fence covered the
+ *    NEWLY SELECTED observations only. A changed winning root leaves the
+ *    stored row's old path as a RETAINED-ONLY dependency (absent from every
+ *    selected observation), so a concurrent corpus support addition could
+ *    bump its assertion revision after the unlocked read but before the
+ *    commit, and the pass committed a live admitted row that immediately
+ *    failed the shared read validator. Repaired contract: the ACTUAL
+ *    retained dependency population joins the same ascending FOR SHARE pin
+ *    locks (held through the commit, coordinating with retraction's
+ *    ordering) and the final publication fence's dependency population. A
+ *    real two-connection regression proves the ordering: the support
+ *    addition queues behind the parked publisher, the row commits valid,
+ *    and post-commit drift is honestly visible at read time and reconciled
+ *    by the next refresh.
+ *
  * The file runs on ONE isolated database (the documented pattern): the
  * two-connection barrier holds real locks and the engine fixtures are
  * population-heavy, so this file owns its accounts and corpus rows
@@ -227,7 +243,7 @@ async function sharedMidpointCandidates() {
     candidates.push({ node: cand.node.id, itemId, edge });
   }
   await project(accountId);
-  return { accountId, rootEdge, candidates };
+  return { accountId, ctx, creator: creator.node.id, rootEdge, candidates };
 }
 
 /** The first pass's admitted-unranked candidate (the live frontier row a refresh hits). */
@@ -721,5 +737,233 @@ describe('a dedupe refresh validates the ACTUAL retained observation pins (DISC-
     expect(afterB?.state).toBe('admitted');
     expect(afterB!.path).toEqual(before!.path);
     expect(await frontierRoots(afterB!.id)).toEqual([]);
+  });
+});
+
+// --- DISC-SCR-024: the retained-only population is protected through the commit ------
+
+describe('a retained-only frontier dependency is protected through the publication commit (DISC-SCR-024)', () => {
+  /**
+   * Resolves once the predicate holds; fails honestly if it never does.
+   */
+  async function waitUntil(predicate: () => boolean, message: string, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+      if (Date.now() >= deadline) throw new Error(`${message} within ${timeoutMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  /**
+   * Resolves once the backend holds an ungranted lock request — the
+   * publisher's dependency lock the concurrent support addition must queue
+   * behind — and fails HONESTLY the moment the addition completes instead:
+   * completion while the publisher is parked IS the unprotected-population
+   * regression (DISC-SCR-024), and a plain timeout would hide which side
+   * won the race.
+   */
+  async function waitForBlockedOrSettled(pid: number, settled: () => boolean, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (settled()) {
+        throw new Error(
+          'the concurrent support addition completed while the publisher was parked: the retained-only dependency was unprotected (DISC-SCR-024)',
+        );
+      }
+      const { rows } = await isoDb.query<{ n: number }>(
+        'SELECT count(*) AS n FROM pg_locks WHERE pid = $1 AND NOT granted',
+        [pid],
+      );
+      if (Number(rows[0]!.n) > 0) return;
+      if (Date.now() >= deadline) {
+        throw new Error(`backend ${pid} neither blocked on the publisher nor completed within ${timeoutMs}ms`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  /**
+   * The changed-winning-root scenario: pass one leaves one candidate
+   * ADMITTED-UNRANKED with the first root's path recorded; a second explicit
+   * root whose root-edge assertion sorts EARLIER is then saved and
+   * projected, so pass two selects ITS path for every candidate and the
+   * stored row's old root edge becomes a RETAINED-ONLY dependency — absent
+   * from every newly selected observation. UUID order is random, so the
+   * scenario retries its whole fixture until the second root wins the
+   * deterministic tie-break (score and template tie; assertion ids decide).
+   * Abandoned attempts keep their own accounts/corpus and are unreachable
+   * from the returned account's roots.
+   */
+  async function changedWinnerScenario() {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const fx = await sharedMidpointCandidates();
+      const first = await expand(fx.accountId);
+      if (!first.expanded) throw new Error(`fixture did not publish: ${first.reason}`);
+      const unranked = unrankedCandidateOf(first, fx.candidates);
+      const before = await frontierRow(fx.accountId, unranked.node);
+      expect(before?.state).toBe('admitted');
+      const secondRoot = await corpusNode({ name: 'Earlier-sorting root' });
+      const secondEdge = await justifiedEdge({
+        subject: secondRoot.node.id,
+        predicate: 'CREATED_BY',
+        object: fx.creator,
+      });
+      if (secondEdge.assertionId > fx.rootEdge.assertionId) continue; // lost the UUID coin flip: rebuild
+      await savedItem(fx.ctx, fx.accountId, secondRoot.referenceId!);
+      await project(fx.accountId);
+      return { fx, first, unranked, before, secondEdge };
+    }
+    throw new Error('changedWinnerScenario: no lexicographically earlier root edge in 50 attempts');
+  }
+
+  it('a changed winning root still revalidates the RETAINED-ONLY path: a drifted retained-only assertion reconciles', async () => {
+    const { fx, unranked, before, secondEdge } = await changedWinnerScenario();
+    const rootsBefore = await frontierRoots(before!.id);
+
+    // The corpus support-addition writer bumps the RETAINED-ONLY assertion's
+    // revision BEFORE the refresh: the stored path (old root edge at its
+    // recorded revision) must fail revalidation and reconcile to the newly
+    // selected observation — never keep stale live pins behind a changed
+    // winner. (The DISC-SCR-022 regressions used the same selected path in
+    // both passes, so they never exercised this retained-only population.)
+    const spare = await evidence();
+    await attachAssertionSupport(isoDb, {
+      assertionId: fx.rootEdge.assertionId,
+      evidenceId: spare.evidenceId,
+      derivation: 'primary',
+      sourceFamilyKey: spare.familyKey,
+    });
+
+    const second = await expand(fx.accountId);
+    expect(second.expanded).toBe(true);
+    expect(second.counts.frontierReconciled).toBe(1);
+    expect(second.rejections['retained_assertion_revision_changed'] ?? 0).toBe(1);
+
+    const after = await frontierRow(fx.accountId, unranked.node);
+    expect(after?.state).toBe('admitted');
+    expect(after!.path.assertion_ids).toEqual([secondEdge.assertionId, unranked.edge.assertionId]);
+    const { rows: assertionRows } = await isoDb.query<{ id: string; revision: number }>(
+      'SELECT id, revision FROM graph_assertions WHERE id = ANY($1::uuid[])',
+      [[secondEdge.assertionId, unranked.edge.assertionId]],
+    );
+    const revisionById = new Map(assertionRows.map((r) => [r.id, r.revision]));
+    expect(after!.path.assertion_revisions).toEqual([
+      revisionById.get(secondEdge.assertionId)!,
+      revisionById.get(unranked.edge.assertionId)!,
+    ]);
+    // The reconciled grounding replaces the retained roots with the new
+    // winning root's own edge — one coherent story, never a merge.
+    expect(await frontierRoots(after!.id)).toHaveLength(1);
+    expect(await frontierRoots(after!.id)).not.toEqual(rootsBefore);
+    const verdict = await frontierPinVerdict(after!.id);
+    expect(verdict.valid, `reconciled pins revalidate (${verdict.reason})`).toBe(true);
+  });
+
+  it('a real two-connection support-addition bump on the retained-only assertion is ordered behind the publication: no immediately invalid admitted row commits', async () => {
+    const { fx, unranked, before } = await changedWinnerScenario();
+    const rootsBefore = await frontierRoots(before!.id);
+
+    // Connection 1 — the REAL publisher: pass two runs inside an open
+    // transaction and parks at the publication fence, which is AFTER the
+    // retained-pin validation and BEFORE the commit — exactly the window
+    // the review's schedule races in.
+    const publisher = await isoDb.pool.connect();
+    let publisherOpen = true;
+    try {
+      await publisher.query('BEGIN');
+      let fenceParked = false;
+      let openGate!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      const parkedPass = expandAccountInterestGraph(openTransactionDb(publisher), {
+        accountId: fx.accountId,
+        config: graphOn,
+        fence: async () => {
+          fenceParked = true;
+          await gate;
+        },
+      });
+      void parkedPass.catch(() => undefined);
+      await waitUntil(() => fenceParked, 'the expansion never parked at the publication fence');
+
+      // Connection 2 — the REAL corpus support-addition writer: a NEW
+      // independent family attached to the RETAINED-ONLY assertion (the
+      // revision bump) inside its own open transaction.
+      const bumper = await isoDb.pool.connect();
+      let bumperOpen = true;
+      try {
+        const pid = (await bumper.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]!.pid;
+        const spare = await evidence();
+        await bumper.query('BEGIN');
+        let bumpSettled = false;
+        const bump = attachAssertionSupport(openTransactionDb(bumper), {
+          assertionId: fx.rootEdge.assertionId,
+          evidenceId: spare.evidenceId,
+          derivation: 'primary',
+          sourceFamilyKey: spare.familyKey,
+        });
+        void bump.then(
+          () => {
+            bumpSettled = true;
+          },
+          () => {
+            bumpSettled = true;
+          },
+        );
+
+        // The ordering discriminator (observed in pg_locks, never a sleep):
+        // the bump must QUEUE on the publisher's dependency lock while the
+        // publisher is parked. Completing instead is the regression.
+        await waitForBlockedOrSettled(pid, () => bumpSettled);
+        expect(bumpSettled).toBe(false);
+
+        // Release the barrier: the publisher commits FIRST (the bump is
+        // still queued behind the pass's dependency locks)...
+        openGate();
+        const second = await parkedPass;
+        expect(second.expanded).toBe(true);
+        expect(second.counts.frontierDeduped).toBeGreaterThanOrEqual(1);
+        expect(second.counts.frontierReconciled).toBe(0);
+        await publisher.query('COMMIT');
+        publisherOpen = false;
+
+        // ...and only then does the support addition land.
+        const bumped = await bump;
+        expect(bumped.revisionBumped).toBe(true);
+        await bumper.query('COMMIT');
+        bumperOpen = false;
+
+        // The committed row kept its valid retained path and roots (the
+        // documented dedupe behavior) and was VALID at its commit instant:
+        // the revision bump committed strictly AFTER the publication.
+        const after = await frontierRow(fx.accountId, unranked.node);
+        expect(after?.state).toBe('admitted');
+        expect(after!.path).toEqual(before!.path);
+        expect(await frontierRoots(after!.id)).toEqual(rootsBefore);
+
+        // Post-commit drift stays honest: the read path's live-witness rule
+        // reports the bumped revision at read time...
+        const staleRead = await frontierPinVerdict(after!.id);
+        expect(staleRead.valid).toBe(false);
+        expect(staleRead.reason).toBe('assertion_revision_changed');
+
+        // ...and the NEXT refresh reconciles the drifted retained path
+        // coherently — the row is never left wedged with stale live pins.
+        const third = await expand(fx.accountId);
+        expect(third.expanded).toBe(true);
+        expect(third.counts.frontierReconciled).toBe(1);
+        const repaired = await frontierRow(fx.accountId, unranked.node);
+        expect(repaired?.state).toBe('admitted');
+        const repairedVerdict = await frontierPinVerdict(repaired!.id);
+        expect(repairedVerdict.valid, `reconciled pins revalidate (${repairedVerdict.reason})`).toBe(true);
+      } finally {
+        if (bumperOpen) await bumper.query('ROLLBACK').catch(() => undefined);
+        bumper.release();
+      }
+    } finally {
+      if (publisherOpen) await publisher.query('ROLLBACK').catch(() => undefined);
+      publisher.release();
+    }
   });
 });
