@@ -25,7 +25,7 @@ import { setProvidersForTesting, type QlooEntity } from '@culture-atlas/provider
 import { FakeQloo } from '@culture-atlas/providers/testing';
 import { upsertReference } from '../../../../packages/domain/src/compiler/store';
 import { ensureSampleItems, sampleKey } from '../../../../packages/domain/src/feed/samples';
-import { insertItem, runClaimedAttempt, runJob } from '../../../../packages/domain/src/test-support/library';
+import { gatedReadDb, insertItem, runClaimedAttempt, runJob } from '../../../../packages/domain/src/test-support/library';
 
 vi.mock('server-only', () => ({}));
 
@@ -856,5 +856,157 @@ describe('GET /v1/items/{id} never borrows mixed graph/legacy attempt history (D
     expect(empty.related).toEqual([]);
     expect(empty.related_state).toBe('none');
     expect(empty.related_job_id).toBe(fresh.job_id);
+  });
+});
+
+/**
+ * Route-level check of the round-12 repair (DISC-SCR-050): the real
+ * /v1/items/{id} handler must never serve a CONCURRENT result-publication
+ * substitution. A graph pass can commit its publication (results, proofs,
+ * terminal parent status) and die before terminal queue completion; a
+ * graph-on read can classify that complete parent as the compatible cache,
+ * and an expired-lease graph-off redelivery can then commit its legacy
+ * DELETE/INSERT on the SAME parent BETWEEN the read's classification and its
+ * row loading. The read is parked on that exact barrier (a gated db wrapper
+ * holding only the read's own statements), so the interleaving is
+ * deterministic — and the replacement's proofless provider rows must never
+ * inherit the selected graph class. Graph-off reads keep the legacy pairing.
+ */
+describe('GET /v1/items/{id} never serves the concurrent provider replacement (DISC-SCR-050)', () => {
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const noCallQloo = () => new FakeQloo({}, { live: true });
+
+  it('a graph-off redelivery committed between class selection and row loading never fills the selected graph rail (owner cookie and granted agent bearer)', async () => {
+    const owner = await browserOwner();
+    const ownerCtx = testContext(owner.principal, { db: iso.db, config: graphOn });
+    const rodinRef = await upsertReference(iso.db, {
+      canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+      name: 'Auguste Rodin',
+      type: 'creator',
+      externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    await upsertReference(iso.db, {
+      canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+      name: 'Georges Seurat',
+      type: 'creator',
+      externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+    });
+    const origin = await insertItem(
+      { accountId: owner.principal.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      iso.db,
+    );
+    const col = await collections.createCollection(ownerCtx, { name: `Museum A ${randomUUID().slice(0, 6)}` });
+    await collections.addCollectionItem(ownerCtx, { id: col.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(
+      owner.principal,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [col.id] },
+      iso.db,
+    );
+    await linkGraphReferenceIdentities(iso.db);
+
+    // The graph-on claim COMMITS the scoped pass's publication (results,
+    // proofs, terminal parent status) and then dies before terminal queue
+    // completion: the queue row keeps 'running' with its lease, so an
+    // expired-lease redelivery can legitimately re-publish on the same parent.
+    const scoped = await items.startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'play' } });
+    const graphQloo = noCallQloo();
+    const first = await runClaimedAttempt(scoped.job_id, {
+      db: iso.db,
+      config: graphOn,
+      providers: testProviders({ qloo: graphQloo }),
+      crashAfterPublication: true,
+      leaseMs: 300,
+    });
+    expect(first).toMatchObject({ state: 'running', attempt: 1, interrupted: true, published: true });
+    expect(graphQloo.calls).toEqual([]);
+    const { rows: graphRows } = await iso.db.query<{ discovery_item_id: string }>(
+      'SELECT discovery_item_id FROM recommendations WHERE discovery_job_id = $1 ORDER BY rank',
+      [scoped.discovery_job_id],
+    );
+    const candidate = graphRows[0]!.discovery_item_id;
+    expect(candidate).toBeTruthy();
+
+    // The lease lapses; a fresh graph-on scoped request makes the context's
+    // newest work pending, and the crashed complete parent is its compatible
+    // cache — its valid proof-bearing row still serves through the route.
+    await sleep(450);
+    const fresh = await items.startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: col.id, category: 'watch' } });
+    const before = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { cookie: owner.token })).body as unknown as Rail;
+    expect(before.related_state).toBe('pending');
+    expect(before.related_job_id).toBe(fresh.job_id);
+    expect(before.related.map((r) => r.id)).toEqual([candidate]);
+
+    // Two reads through the REAL route (the owner's cookie and the granted
+    // agent's bearer) park BETWEEN their context classification and their
+    // row loading; the graph-off redelivery commits its provider replacement
+    // on the same parent in that window.
+    let classified = 0;
+    let bothClassified!: () => void;
+    const classifiedSignal = new Promise<void>((resolve) => {
+      bothClassified = resolve;
+    });
+    let releaseRows!: () => void;
+    const rowsHeld = new Promise<void>((resolve) => {
+      releaseRows = resolve;
+    });
+    const gated = gatedReadDb(iso.db, {
+      onClassified: () => {
+        classified += 1;
+        if (classified >= 2) bothClassified();
+      },
+      beforeRowsLoad: () => rowsHeld,
+    });
+    try {
+      setDbForTesting(gated);
+      const ownerGet = get(`/v1/items/${origin}?collection_id=${col.id}`, { cookie: owner.token });
+      const agentGet = get(`/v1/items/${origin}?collection_id=${col.id}`, { bearer: `Bearer ${agent.credential}` });
+      await classifiedSignal;
+      const providerQloo = legacyResultsQloo('websub');
+      const second = await runClaimedAttempt(scoped.job_id, {
+        db: iso.db,
+        config: graphOff,
+        providers: testProviders({ qloo: providerQloo }),
+      });
+      expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+      const { rows: providerRows } = await iso.db.query<{ discovery_item_id: string }>(
+        'SELECT discovery_item_id FROM recommendations WHERE discovery_job_id = $1 ORDER BY rank',
+        [scoped.discovery_job_id],
+      );
+      const providerIds = providerRows.map((r) => r.discovery_item_id);
+      expect(providerIds.length).toBeGreaterThan(0);
+      expect(providerIds).not.toEqual([candidate]);
+      releaseRows();
+
+      // The parked reads must not serve the replacement: the fresh request's
+      // pending rail stays honest and empty for the owner AND the agent.
+      const [ownerRes, agentRes] = await Promise.all([ownerGet, agentGet]);
+      expect(ownerRes.status).toBe(200);
+      const ownerRail = ownerRes.body as unknown as Rail;
+      expect(ownerRail.related).toEqual([]);
+      expect(ownerRail.related_state).toBe('pending');
+      expect(ownerRail.related_job_id).toBe(fresh.job_id);
+      expect(agentRes.status).toBe(200);
+      const agentRail = agentRes.body as unknown as Rail;
+      expect(agentRail.related).toEqual([]);
+      expect(agentRail.related_state).toBe('pending');
+      expect(agentRail.related_job_id).toBe(fresh.job_id);
+
+      // Graph-off control through the same route: the legacy pairing
+      // survives — the replacement provider card is the pending rail's
+      // cached result there.
+      try {
+        setDomainConfigForTesting(graphOff);
+        const offPending = (await get(`/v1/items/${origin}?collection_id=${col.id}`, { cookie: owner.token }))
+          .body as unknown as Rail;
+        expect(offPending.related_state).toBe('pending');
+        expect(offPending.related_job_id).toBe(fresh.job_id);
+        expect(offPending.related.map((r) => r.id)).toEqual(providerIds);
+      } finally {
+        setDomainConfigForTesting(graphOn);
+      }
+    } finally {
+      setDbForTesting(iso.db);
+    }
   });
 });

@@ -12,7 +12,7 @@ import { cancelJob } from '../jobs/queue';
 import { resolvePrincipal } from '../services/auth';
 import { addCollectionItem, createCollection } from '../services/collections';
 import { getItem, startRelatedDiscovery } from '../services/items';
-import { insertItem, runClaimedAttempt, runJob } from '../test-support/library';
+import { gatedReadDb, insertItem, runClaimedAttempt, runJob } from '../test-support/library';
 import {
   createIsolatedDatabase,
   insertAccount,
@@ -1063,5 +1063,317 @@ describe('mixed graph/legacy attempt history never lends provider results to gra
     expect(pending.related_state).toBe('pending');
     expect(pending.related_job_id).toBe(fresh.job_id);
     expect(pending.related.map((r) => r.id)).toEqual([candidate]);
+  });
+});
+
+/**
+ * Concurrent result-publication substitution (round-12 repair DISC-SCR-050).
+ *
+ * The round-11 fix classified each job's results once, in the selection
+ * statement; the rail then re-loaded the parent's rows in a SEPARATE query
+ * with the permissive missing-verdict serve rule. A graph pass may COMMIT its
+ * publication (results, proofs, terminal status) and die before terminal
+ * queue completion, so an expired-lease redelivery with graph disabled can
+ * legitimately re-publish legacy provider rows on the SAME discovery parent —
+ * and if that replacement commits BETWEEN a graph-on read's classification
+ * and its row loading, the read serves the replacement's proofless provider
+ * rows under the already-selected graph class (or under a saved sample's
+ * explicit graph rail). These tests park the REAL read path on explicit
+ * barriers — between class selection and row loading, and between row and
+ * proof loading — using the real queue claim/lease/redelivery, the real
+ * producer branches and fake providers only:
+ *
+ *  - a graph-class rail serves ONLY rows their own CURRENT pinned scoped
+ *    proof proves (present AND positive), so a provider replacement (proofs
+ *    cascade-deleted with the rows it replaces) is denied at every
+ *    interleaving, including when the proof disappears after the
+ *    recommendation rows loaded;
+ *  - proofless LEGACY rows keep their ordinary serve rule on their own
+ *    compatible path: graph-off reads keep the legacy pairing, and a
+ *    legacy-class context never inherits the strict graph rule;
+ *  - valid proof-bearing graph cache still serves (the crashed complete
+ *    parent is a legitimate compatible cache), honest pending/empty
+ *    outcomes stand, and the saved sample keeps its carousel when the
+ *    mixed history is no longer explicit graph work.
+ */
+describe('concurrent result-publication substitution never fills the selected graph rail (DISC-SCR-050)', () => {
+  let isoDb: PoolDb;
+  let dropIso: () => Promise<void>;
+
+  beforeAll(async () => {
+    const created = await createIsolatedDatabase('scrdrow');
+    isoDb = created.db;
+    dropIso = created.drop;
+    await admitGraphCorpus(isoDb, getCorpusManifestFile());
+  });
+  afterAll(async () => {
+    await dropIso();
+  });
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const proofCount = (discoveryJobId: string) =>
+    isoDb
+      .query<{ n: number }>('SELECT count(*)::int AS n FROM scoped_discovery_result_proofs WHERE discovery_job_id = $1', [
+        discoveryJobId,
+      ])
+      .then(({ rows }) => Number(rows[0]!.n));
+
+  /** The Rodin origin fixture: corpus-linked origin, its scoped collection and the A-granted agent. */
+  async function rodinFixture() {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    const rodinRef = await qlooPersonReference(isoDb, RODIN_QLOO_ID, 'Auguste Rodin');
+    await qlooPersonReference(isoDb, SEURAT_QLOO_ID, 'Georges Seurat');
+    const origin = await insertItem(
+      { accountId: owner.accountId },
+      { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+      isoDb,
+    );
+    const colA = await createCollection(ownerCtx, { name: `Museum A ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+    const agent = await insertAgentConnection(
+      owner,
+      { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id] },
+      isoDb,
+    );
+    await linkGraphReferenceIdentities(isoDb);
+    return { owner, ownerCtx, ownerOffCtx, origin, colA, agent };
+  }
+
+  /**
+   * The crashed-after-publication graph parent (DISC-SCR-050's premise): the
+   * real graph-on claim COMMITS the scoped pass's publication — admitted
+   * results, their pinned proofs and the parent's terminal status — then
+   * dies before terminal queue completion, so the queue row keeps 'running'
+   * with its claim lease and an expired-lease redelivery can legitimately
+   * re-publish on the same discovery parent.
+   */
+  async function crashedGraphParent(ownerCtx: ReturnType<typeof testContext>, origin: string, colId: string) {
+    const scoped = await startRelatedDiscovery(ownerCtx, { id: origin, body: { collection_id: colId, category: 'play' } });
+    const graphQloo = noCallQloo();
+    const first = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOn,
+      providers: testProviders({ qloo: graphQloo }),
+      crashAfterPublication: true,
+      leaseMs: 300,
+    });
+    expect(first).toMatchObject({ state: 'running', attempt: 1, interrupted: true, published: true });
+    expect(graphQloo.calls).toEqual([]);
+    return scoped;
+  }
+
+  it('a graph-off redelivery committed between class selection and row loading never fills the selected graph rail (owner and A-granted agent)', async () => {
+    const f = await rodinFixture();
+    const scoped = await crashedGraphParent(f.ownerCtx, f.origin, f.colA.id);
+    const candidate = (await publishedItemIds(isoDb, scoped.discovery_job_id))[0]!;
+    expect(candidate).toBeTruthy();
+    expect(await proofCount(scoped.discovery_job_id)).toBeGreaterThan(0);
+
+    // The lease really lapses by the clock, then a fresh graph-on scoped
+    // request makes the context's newest work pending — the crashed complete
+    // parent is its compatible cache, and its valid proof-bearing rows serve.
+    await sleep(450);
+    const fresh = await startRelatedDiscovery(f.ownerCtx, { id: f.origin, body: { collection_id: f.colA.id, category: 'watch' } });
+    const before = await getItem(f.ownerCtx, { id: f.origin, query: { collection_id: f.colA.id } });
+    expect(before.related_state).toBe('pending');
+    expect(before.related_job_id).toBe(fresh.job_id);
+    expect(before.related.map((r) => r.id)).toEqual([candidate]);
+
+    // Two graph-on reads (the owner's and the A-granted agent's) park BETWEEN
+    // their context classification and their rail row loading. The graph-off
+    // redelivery then commits its legacy DELETE/INSERT — proofs cascade off
+    // with the replaced rows — before the parked row loads run.
+    let classified = 0;
+    let bothClassified!: () => void;
+    const classifiedSignal = new Promise<void>((resolve) => {
+      bothClassified = resolve;
+    });
+    let releaseRows!: () => void;
+    const rowsHeld = new Promise<void>((resolve) => {
+      releaseRows = resolve;
+    });
+    const gated = gatedReadDb(isoDb, {
+      onClassified: () => {
+        classified += 1;
+        if (classified >= 2) bothClassified();
+      },
+      beforeRowsLoad: () => rowsHeld,
+    });
+    const gatedCtx = testContext(f.owner, { db: gated, config: graphOn });
+    const gatedAgentCtx = await freshAgentCtx(gated, f.agent.credential);
+    const ownerGet = getItem(gatedCtx, { id: f.origin, query: { collection_id: f.colA.id } });
+    const agentGet = getItem(gatedAgentCtx, { id: f.origin, query: { collection_id: f.colA.id } });
+    await classifiedSignal;
+    const providerQloo = legacyResultsQloo('sub');
+    const second = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+    });
+    expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+    expect(providerQloo.calls.length).toBeGreaterThan(0);
+    const providerIds = await publishedItemIds(isoDb, scoped.discovery_job_id);
+    expect(providerIds.length).toBeGreaterThan(0);
+    expect(providerIds).not.toEqual([candidate]);
+    expect(await proofCount(scoped.discovery_job_id)).toBe(0);
+    releaseRows();
+
+    // The parked reads must not serve the replacement: the fresh request's
+    // pending rail stays honest and empty for the owner AND the agent.
+    const [ownerRail, agentRail] = await Promise.all([ownerGet, agentGet]);
+    expect(ownerRail.related).toEqual([]);
+    expect(ownerRail.related_state).toBe('pending');
+    expect(ownerRail.related_job_id).toBe(fresh.job_id);
+    expect(agentRail.related).toEqual([]);
+    expect(agentRail.related_state).toBe('pending');
+    expect(agentRail.related_job_id).toBe(fresh.job_id);
+
+    // Graph-off reads keep the legacy pairing: the same pending context
+    // carries the replacement provider card as its cached rail there.
+    const offPending = await getItem(f.ownerOffCtx, { id: f.origin, query: { collection_id: f.colA.id } });
+    expect(offPending.related_state).toBe('pending');
+    expect(offPending.related_job_id).toBe(fresh.job_id);
+    expect(offPending.related.map((r) => r.id)).toEqual(providerIds);
+
+    // A sequential graph-on read agrees with the parked reads.
+    const after = await getItem(f.ownerCtx, { id: f.origin, query: { collection_id: f.colA.id } });
+    expect(after.related).toEqual([]);
+    expect(after.related_state).toBe('pending');
+    expect(after.related_job_id).toBe(fresh.job_id);
+  });
+
+  it('rows whose proof disappeared after the recommendation load are withdrawn: the parked verdict query denies them', async () => {
+    const f = await rodinFixture();
+    const scoped = await crashedGraphParent(f.ownerCtx, f.origin, f.colA.id);
+    const candidate = (await publishedItemIds(isoDb, scoped.discovery_job_id))[0]!;
+    expect(candidate).toBeTruthy();
+    expect(await proofCount(scoped.discovery_job_id)).toBeGreaterThan(0);
+
+    await sleep(450);
+    const fresh = await startRelatedDiscovery(f.ownerCtx, { id: f.origin, body: { collection_id: f.colA.id, category: 'watch' } });
+
+    // The owner read parks BETWEEN its rail row loading and its proof
+    // loading: the rows it loaded are the valid graph rows, but the
+    // graph-off redelivery commits its replacement — deleting their proofs
+    // with the rows it replaces — before the verdict query runs. The rows
+    // no longer carry a live proof, so they must not serve.
+    let rowsLoaded!: () => void;
+    const rowsLoadedSignal = new Promise<void>((resolve) => {
+      rowsLoaded = resolve;
+    });
+    let releaseProofs!: () => void;
+    const proofsHeld = new Promise<void>((resolve) => {
+      releaseProofs = resolve;
+    });
+    const gated = gatedReadDb(isoDb, {
+      onRowsLoaded: () => rowsLoaded(),
+      beforeProofLoad: () => proofsHeld,
+    });
+    const gatedCtx = testContext(f.owner, { db: gated, config: graphOn });
+    const ownerGet = getItem(gatedCtx, { id: f.origin, query: { collection_id: f.colA.id } });
+    await rowsLoadedSignal;
+    const providerQloo = legacyResultsQloo('pv');
+    const second = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+    });
+    expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+    expect(await proofCount(scoped.discovery_job_id)).toBe(0);
+    releaseProofs();
+
+    const rail = await ownerGet;
+    expect(rail.related).toEqual([]);
+    expect(rail.related_state).toBe('pending');
+    expect(rail.related_job_id).toBe(fresh.job_id);
+
+    // Graph-off control: the legacy pairing serves the replacement.
+    const providerIds = await publishedItemIds(isoDb, scoped.discovery_job_id);
+    expect(providerIds.length).toBeGreaterThan(0);
+    const offPending = await getItem(f.ownerOffCtx, { id: f.origin, query: { collection_id: f.colA.id } });
+    expect(offPending.related_state).toBe('pending');
+    expect(offPending.related_job_id).toBe(fresh.job_id);
+    expect(offPending.related.map((r) => r.id)).toEqual(providerIds);
+  });
+
+  it("a saved sample's explicit graph rail never serves the concurrent provider replacement; the carousel returns once the history is mixed", async () => {
+    const owner = await insertAccount(isoDb);
+    const ownerCtx = testContext(owner, { db: isoDb, config: graphOn });
+    const ownerOffCtx = testContext(owner, { db: isoDb, config: graphOff });
+    await ensureSampleItems(isoDb);
+    const sample = await insertItem(
+      null,
+      {
+        kind: 'artist',
+        category: 'play',
+        title: 'Sample sculptor',
+        key: `sample:sculptor-row-${randomUUID().slice(0, 6)}`,
+        qloo: `artist-${randomUUID()}`,
+      },
+      isoDb,
+    );
+    const col = await createCollection(ownerCtx, { name: `Sample shelf ${randomUUID().slice(0, 6)}` });
+    await addCollectionItem(ownerCtx, { id: col.id, item_id: sample, body: {} });
+
+    // Control: before any discovery the ordinary example carousel serves.
+    const before = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(before.related_state).toBe('cached');
+    expect(before.related.length).toBeGreaterThan(0);
+    expect(before.related.every((r) => r.is_example)).toBe(true);
+
+    // The sample's scoped graph pass commits (it admits nothing — no corpus
+    // identity) and the worker dies before queue completion: the explicit
+    // graph rail is live and honestly pending on the crashed parent.
+    const scoped = await crashedGraphParent(ownerCtx, sample, col.id);
+    expect(await publishedItemIds(isoDb, scoped.discovery_job_id)).toEqual([]);
+    await sleep(450);
+
+    // The graph-on sample read parks between its scopedOnly classification
+    // and its row loading; the graph-off redelivery publishes provider rows
+    // on the SAME parent in that window. The explicit rail must not serve
+    // them — its honest pending outcome stands.
+    let classifiedOnce!: () => void;
+    const classifiedSignal = new Promise<void>((resolve) => {
+      classifiedOnce = resolve;
+    });
+    let releaseRows!: () => void;
+    const rowsHeld = new Promise<void>((resolve) => {
+      releaseRows = resolve;
+    });
+    const gated = gatedReadDb(isoDb, {
+      onClassified: () => classifiedOnce(),
+      beforeRowsLoad: () => rowsHeld,
+    });
+    const gatedCtx = testContext(owner, { db: gated, config: graphOn });
+    const sampleGet = getItem(gatedCtx, { id: sample, query: {} });
+    await classifiedSignal;
+    const providerQloo = legacyResultsQloo('smp');
+    const second = await runClaimedAttempt(scoped.job_id, {
+      db: isoDb,
+      config: graphOff,
+      providers: testProviders({ qloo: providerQloo }),
+    });
+    expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+    const providerIds = await publishedItemIds(isoDb, scoped.discovery_job_id);
+    expect(providerIds.length).toBeGreaterThan(0);
+    releaseRows();
+    const rail = await sampleGet;
+    expect(rail.related).toEqual([]);
+    expect(rail.related_state).toBe('pending');
+    expect(rail.related_job_id).toBe(scoped.job_id);
+
+    // After the replacement a fresh graph-on sample read classifies the job
+    // as mixed history (no longer explicit graph work): the ordinary example
+    // carousel returns. The graph-off read keeps the carousel unchanged.
+    const carousel = await getItem(ownerCtx, { id: sample, query: {} });
+    expect(carousel.related_state).toBe('cached');
+    expect(carousel.related.length).toBeGreaterThan(0);
+    expect(carousel.related.every((r) => r.is_example)).toBe(true);
+    const offCarousel = await getItem(ownerOffCtx, { id: sample, query: {} });
+    expect(offCarousel.related_state).toBe('cached');
+    expect(offCarousel.related.length).toBeGreaterThan(0);
+    expect(offCarousel.related.every((r) => r.is_example)).toBe(true);
   });
 });

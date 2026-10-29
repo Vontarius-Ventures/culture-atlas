@@ -272,6 +272,16 @@ interface DiscoveryJobRow {
   scoped: boolean;
   /** The job's one compatible context: its origin collection, null = legacy whole-library. */
   origin_collection_id: string | null;
+  /**
+   * The job's actual execution class AS THIS READ'S CLASSIFICATION selected
+   * it (DISC-SCR-050): non-null only when the read classifies contexts
+   * (graph-on reads and the saved-sample scopedOnly filter). The class is a
+   * property of the publication OBSERVED by the classification statement,
+   * never an enduring property of the parent — a concurrent republication on
+   * the same parent can change the rows without changing this value, so the
+   * rail binds ADMISSION to the rows actually served (see discoveryContextRail).
+   */
+  graph_class: boolean | null;
 }
 
 /**
@@ -315,6 +325,16 @@ interface DiscoveryJobRow {
  *    work of the other class, never lend results to this read. Without it,
  *    the origin's NEWEST visible context wins. Graph-off reads keep the
  *    legacy collection-only context unchanged.
+ *
+ * DISC-SCR-050: the selected class is a property of the publication the
+ * classification statement OBSERVED, never an enduring property of the
+ * parent — a concurrent successor (a committed graph pass whose worker died
+ * before queue completion, redelivered graph-off after lease expiry) can
+ * re-publish legacy rows on the same parent after this query. The selected
+ * class therefore only CHOOSES the context; the rail's ADMISSION is bound to
+ * the rows actually served (their own current pinned proofs, see
+ * discoveryContextRail), so a replacement publication never inherits the
+ * selected class or the permissive missing-proof verdict.
  * `scopedOnly` restricts the selection to selected-collection jobs of the
  * GRAPH execution class — the saved-sample read (DISC-SCR-044) honors only
  * an explicit scoped graph operation and never mistakes a graph-off
@@ -391,7 +411,8 @@ async function latestDiscoveryJobs(
          FROM discovery_jobs dj LEFT JOIN jobs j ON j.id = dj.job_id
         WHERE dj.origin_item_id = $1 AND ${own('dj')} ${grantFor('dj')} ${scopedOnly('dj')} ${collectionFilter}
      )
-     SELECT id, job_id, status, job_state, scoped, origin_collection_id
+     SELECT id, job_id, status, job_state, scoped, origin_collection_id,
+            ${classifies ? graphClass('visible_jobs') : 'NULL::boolean'} AS graph_class
        FROM visible_jobs
       WHERE origin_collection_id IS NOT DISTINCT FROM ${newest('d2.origin_collection_id')}
         ${opts.graphEligible ? `AND (${graphClass('visible_jobs')}) IS NOT DISTINCT FROM ${newest(graphClass('d2'))}` : ''}
@@ -430,6 +451,16 @@ interface DiscoveryRail {
  * never pads it from unrelated interest pools — instead of silently turning
  * into a global/other-collection fallback. Graph-off reads keep the
  * unchanged legacy padding through the caller's gate.
+ *
+ * DISC-SCR-050: the row query below is a separate statement from the context
+ * classification, so it can observe a DIFFERENT publication of the same
+ * parent. Admission is therefore bound to the rows actually served: a
+ * GRAPH-class scoped parent serves only rows their own current pinned proof
+ * proves (the verdict map holds only the parent's live proofs — a provider
+ * replacement whose proofs were cascade-deleted, and a row whose proof
+ * disappeared after the recommendation load, are both denied), while
+ * legacy-class contexts and unclassified graph-off reads keep the ordinary
+ * permissive missing-proof rule for proofless legacy rows.
  */
 async function discoveryContextRail(
   ctx: ServiceContext,
@@ -461,7 +492,28 @@ async function discoveryContextRail(
     let serving = rows;
     if (done.scoped) {
       const verdicts = await scopedResultServingVerdicts(ctx.db, { discoveryJobId: done.id, at: ctx.now() });
-      serving = rows.filter((r) => verdicts.get(r.recommendation_id) !== false);
+      // The admission rule is bound to the rows actually served, not to the
+      // parent the classification observed (DISC-SCR-050): the rail's row
+      // query is a SEPARATE statement from the classification, and a
+      // legitimate successor — a graph pass that committed its publication
+      // then died before queue completion, redelivered after lease expiry
+      // with graph disabled — can re-publish LEGACY provider rows on the
+      // SAME discovery parent between the two, deleting the graph proofs
+      // with the rows it replaces. A GRAPH-class scoped parent therefore
+      // serves only rows their own CURRENT pinned proof proves (present AND
+      // positive — the verdict map holds only the parent's live proofs, so a
+      // proofless replacement row, or a row whose proof disappeared after
+      // the recommendation load, is denied at every interleaving). The
+      // scoped pass alone writes those proofs, one per published row, so
+      // this never denies a legitimate graph row. Every OTHER scoped
+      // context — a legacy-class context, or a graph-off read that did not
+      // classify at all — keeps the ordinary permissive rule: a proofless
+      // (non-scoped) row always serves, and graph-off legacy pairing is
+      // unchanged.
+      const requireGraphProof = done.graph_class === true;
+      serving = rows.filter((r) =>
+        requireGraphProof ? verdicts.get(r.recommendation_id) === true : verdicts.get(r.recommendation_id) !== false,
+      );
     }
     relatedIds = serving.filter((r) => !hidden.has(r.canonical_key) && r.item_id !== item.id).map((r) => r.item_id);
     if (!active) relatedJobId = done.job_id;

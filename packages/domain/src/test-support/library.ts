@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import type { QueryResultRow } from 'pg';
+import type { QueryResult, QueryResultRow } from 'pg';
 import type { ProviderRegistry } from '@culture-atlas/providers';
 import type { DomainConfig } from '../config';
 import type { ServiceContext } from '../context';
-import type { Db, PoolDb, Queryable } from '../db/pool';
+import { PoolDb, type Db, type Queryable } from '../db/pool';
 import type { Category, ItemKind, JobType, ReferenceType } from '../enums';
 import { claimJobs, completeJob, failJob, getJobById, markJobCancelled, setJobStage, stillOwnsJob } from '../jobs/queue';
 import { JobCancelledError, type JobContext } from '../jobs/handler';
@@ -260,8 +260,16 @@ export interface ClaimedAttemptResult {
   state: string;
   /** The real attempt this execution claimed. */
   attempt: number;
-  /** True when the publication barrier interrupted this execution. */
+  /** True when this execution was interrupted without a terminal queue write. */
   interrupted: boolean;
+  /**
+   * True when that interruption happened AFTER the durable publication
+   * committed (`crashAfterPublication`): results, their pinned proofs and
+   * the discovery parent's terminal status all stand, while the queue row
+   * keeps its 'running' state and the claim's lease — the worker that died
+   * between its publication commit and queue completion.
+   */
+  published?: boolean;
 }
 
 /**
@@ -280,6 +288,15 @@ export interface ClaimedAttemptResult {
  *    persisting its stage evidence, so a later attempt can redeliver the
  *    same job once the lease lapses (pass a short `leaseMs` and wait, or
  *    claim the abandoned row directly);
+ *  - `crashAfterPublication` interrupts one step LATER: the handler runs to
+ *    completion through its REAL publication transaction (the scoped graph
+ *    pass commits its results, their pinned proofs and the discovery
+ *    parent's terminal status together, then reports `publicationCommitted`),
+ *    and the crash lands between that commit and the terminal queue write —
+ *    again NO `completeJob`, so the claimed row keeps 'running' with the
+ *    claim's lease while the DURABLE publication stands (DISC-SCR-050's
+ *    crashed-after-publication shape: an expired-lease redelivery can then
+ *    legitimately re-publish on the same discovery parent);
  *  - an uninterrupted execution completes through the real `completeJob`
  *    with the handler's own outcome (and reads its state back like `runJob`).
  */
@@ -290,6 +307,7 @@ export async function runClaimedAttempt(
     config?: DomainConfig;
     providers?: ProviderRegistry;
     interruptPublication?: boolean;
+    crashAfterPublication?: boolean;
     leaseMs?: number;
   } = {},
 ): Promise<ClaimedAttemptResult> {
@@ -330,9 +348,17 @@ export async function runClaimedAttempt(
     state: 'complete' | 'partial';
     resultType?: string;
     resultId?: string;
+    publicationCommitted?: true;
   }>;
   try {
     const outcome = await handler(ctx);
+    if (options.crashAfterPublication && outcome.publicationCommitted) {
+      // The worker that died AFTER its durable publication committed: no
+      // terminal queue write. The claimed row keeps its 'running' state and
+      // the claim's lease; the committed publication (scoped results, their
+      // pinned proofs and the parent's terminal status) stands.
+      return { state: 'running', attempt: job.attempt, interrupted: true, published: true };
+    }
     await completeJob(db, job.id, workerId, job.attempt, outcome);
   } catch (err) {
     if (err instanceof PublicationBarrierError) {
@@ -353,4 +379,47 @@ export async function runClaimedAttempt(
   }
   const done = await getJobById(db, job.id);
   return { state: done!.state, attempt: job.attempt, interrupted: false };
+}
+
+/** The item read's statements a `gatedReadDb` barrier can observe (DISC-SCR-050). */
+export interface ReadBarrierGates {
+  /** Invoked after each discovery-context classification query returns. */
+  onClassified?: () => void;
+  /** Invoked after the rail's recommendation-rows query returns. */
+  onRowsLoaded?: () => void;
+  /** Awaited — and the read parked — before the rail's recommendation-rows query runs. */
+  beforeRowsLoad?: () => Promise<void>;
+  /** Awaited — and the read parked — before the rail's scoped-proof verdict query runs. */
+  beforeProofLoad?: () => Promise<void>;
+}
+
+/**
+ * A read-path barrier db (DISC-SCR-050): wraps a real pool and lets a test
+ * park the item read BETWEEN its own statements — after the discovery-context
+ * CLASSIFICATION (`latestDiscoveryJobs`' 'WITH visible_jobs' statement) and
+ * before/after the rail's RESULT-LOADING query, and before the scoped-PROOF
+ * verdict query — the exact windows where a concurrent publication can
+ * substitute the rows a classified context selected. The parked read holds no
+ * database connection while it waits, and every other query passes through
+ * untouched, so the genuine read path runs unmodified.
+ */
+export function gatedReadDb(base: PoolDb, gates: ReadBarrierGates): PoolDb {
+  const rowsQuery = 'di.canonical_key, r.id AS recommendation_id';
+  const proofQuery = 'FROM scoped_discovery_result_proofs WHERE discovery_job_id = $1';
+  return new (class extends PoolDb {
+    constructor() {
+      super(base.pool);
+    }
+    override async query<R extends QueryResultRow = QueryResultRow>(
+      text: string,
+      params?: readonly unknown[],
+    ): Promise<QueryResult<R>> {
+      if (gates.beforeRowsLoad && text.includes(rowsQuery)) await gates.beforeRowsLoad();
+      if (gates.beforeProofLoad && text.includes(proofQuery)) await gates.beforeProofLoad();
+      const result = await super.query<R>(text, params);
+      if (gates.onClassified && text.includes('WITH visible_jobs AS (')) gates.onClassified();
+      if (gates.onRowsLoaded && text.includes(rowsQuery)) gates.onRowsLoaded();
+      return result;
+    }
+  })();
 }

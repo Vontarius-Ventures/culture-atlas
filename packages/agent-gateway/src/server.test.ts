@@ -26,7 +26,7 @@ import {
 import { upsertReference } from '../../domain/src/compiler/store';
 import { GraphWorkDeadlineExpiredError } from '../../domain/src/interest-graph/budgets';
 import { ensureSampleItems, sampleKey } from '../../domain/src/feed/samples';
-import { insertItem, runClaimedAttempt, runJob } from '../../domain/src/test-support/library';
+import { gatedReadDb, insertItem, runClaimedAttempt, runJob } from '../../domain/src/test-support/library';
 import { connectMcp, ConnectionRefusedError } from '../../../apps/demo-agent/src/client';
 import { SPEC_TOOL_NAMES } from './tools';
 import { errorDetailText } from './server';
@@ -1501,6 +1501,201 @@ describe('scoped Discover more mixed attempt history over MCP (DISC-SCR-049)', (
       }
     } finally {
       await s.iso.drop();
+    }
+  });
+});
+
+describe('scoped Discover more concurrent result substitution over MCP (DISC-SCR-050)', () => {
+  const RODIN_QLOO_ID = '0A4E018D-ED71-43C0-B16E-0431CDC5C403';
+  const SEURAT_QLOO_ID = '9E815B4D-1392-4952-AA23-996274BACD45';
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const noCallQloo = () => new FakeQloo({}, { live: true });
+
+  /** Legacy provider results (the graph-off Discover more path). */
+  function legacyResultsQloo(prefix: string): FakeQloo {
+    const entity = (id: string, name: string): QlooEntity => ({ entity_id: id, name, types: [], properties: {}, tags: [] });
+    return new FakeQloo(
+      {
+        insights: (req) => ({
+          entities: [entity(`${prefix}-${req.filterType.split(':').pop()}`, `Provider pick ${prefix}`)],
+          tags: [],
+        }),
+      },
+      { live: true },
+    );
+  }
+
+  it('get_item never serves a graph-off redelivery committed between classification and row loading; the graph-off client keeps the legacy pairing', async () => {
+    const iso = await createIsolatedDatabase('scrdrowmcp');
+    try {
+      await admitGraphCorpus(iso.db, getCorpusManifestFile());
+      const graphOn = testConfig({
+        INTEREST_GRAPH_PROJECTION_ENABLED: 'true',
+        INTEREST_GRAPH_DISCOVERY_ENABLED: 'true',
+      });
+      const graphOff = testConfig();
+      const owner = await insertAccount(iso.db);
+      const ownerCtx = testContext(owner, { db: iso.db, config: graphOn });
+      const rodinRef = await upsertReference(iso.db, {
+        canonicalKey: `qloo:${RODIN_QLOO_ID}`,
+        name: 'Auguste Rodin',
+        type: 'creator',
+        externalIds: { qloo: RODIN_QLOO_ID, qloo_types: ['urn:entity:person'] },
+      });
+      await upsertReference(iso.db, {
+        canonicalKey: `qloo:${SEURAT_QLOO_ID}`,
+        name: 'Georges Seurat',
+        type: 'creator',
+        externalIds: { qloo: SEURAT_QLOO_ID, qloo_types: ['urn:entity:person'] },
+      });
+      const origin = await insertItem(
+        { accountId: owner.accountId },
+        { kind: 'artist', category: 'play', title: 'Auguste Rodin', qloo: RODIN_QLOO_ID, referenceId: rodinRef },
+        iso.db,
+      );
+      const colA = await collections.createCollection(ownerCtx, { name: 'Museum A' });
+      await collections.addCollectionItem(ownerCtx, { id: colA.id, item_id: origin, body: {} });
+      await linkGraphReferenceIdentities(iso.db);
+      const { credential } = await insertAgentConnection(
+        owner,
+        { scopes: ['collections:read'], libraryAccess: 'selected_collections', collectionIds: [colA.id] },
+        iso.db,
+      );
+      const providers = testProviders({ qloo: noCallQloo() });
+
+      const client = await connectMcp({
+        url: MCP_URL,
+        token: credential,
+        fetch: mcpFetch(providers, { db: iso.db, config: graphOn }),
+      });
+      try {
+        // The scoped operation is enqueued through the real MCP tool, then
+        // the graph-on claim COMMITS its publication (results, proofs,
+        // terminal parent status) and dies before terminal queue completion:
+        // the queue row keeps 'running' with its lease.
+        const started = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: origin,
+          collection_id: colA.id,
+          category: 'play',
+        });
+        expect(started.ok).toBe(true);
+        const jobId = started.ok ? started.data.job_id : '';
+        const graphQloo = noCallQloo();
+        const first = await runClaimedAttempt(jobId, {
+          db: iso.db,
+          config: graphOn,
+          providers: testProviders({ qloo: graphQloo }),
+          crashAfterPublication: true,
+          leaseMs: 300,
+        });
+        expect(first).toMatchObject({ state: 'running', attempt: 1, interrupted: true, published: true });
+        expect(graphQloo.calls).toEqual([]);
+        const { rows: dj } = await iso.db.query<{ id: string }>('SELECT id FROM discovery_jobs WHERE job_id = $1', [jobId]);
+        const discoveryJobId = dj[0]!.id;
+        const { rows: graphRows } = await iso.db.query<{ discovery_item_id: string }>(
+          'SELECT discovery_item_id FROM recommendations WHERE discovery_job_id = $1 ORDER BY rank',
+          [discoveryJobId],
+        );
+        const candidate = graphRows[0]!.discovery_item_id;
+        expect(candidate).toBeTruthy();
+
+        // The lease lapses; a fresh graph-on scoped request makes the
+        // context's newest work pending with the crashed parent as its
+        // compatible cache (its valid proof-bearing row still serves).
+        await sleep(450);
+        const fresh = await client.callTool<{ job_id: string }>('discover_related', {
+          item_id: origin,
+          collection_id: colA.id,
+          category: 'watch',
+        });
+        expect(fresh.ok).toBe(true);
+        const freshJobId = fresh.ok ? fresh.data.job_id : '';
+        const before = await client.callTool<{ related: { id: string }[]; related_state: string; related_job_id: string | null }>(
+          'get_item',
+          { item_id: origin, collection_id: colA.id },
+        );
+        expect(before.ok && before.data.related_state).toBe('pending');
+        expect(before.ok && before.data.related_job_id).toBe(freshJobId);
+        expect(before.ok && before.data.related.map((r) => r.id)).toEqual([candidate]);
+
+        // The agent's get_item through the REAL transport parks BETWEEN its
+        // classification and its row loading (the gated db holds only the
+        // read's own statements); the graph-off redelivery commits its
+        // provider replacement on the same parent in that window.
+        let classifiedOnce!: () => void;
+        const classifiedSignal = new Promise<void>((resolve) => {
+          classifiedOnce = resolve;
+        });
+        let releaseRows!: () => void;
+        const rowsHeld = new Promise<void>((resolve) => {
+          releaseRows = resolve;
+        });
+        const gated = gatedReadDb(iso.db, {
+          onClassified: () => classifiedOnce(),
+          beforeRowsLoad: () => rowsHeld,
+        });
+        let providerIds: string[] = [];
+        const gatedClient = await connectMcp({
+          url: MCP_URL,
+          token: credential,
+          fetch: mcpFetch(providers, { db: gated, config: graphOn }),
+        });
+        try {
+          const pending = gatedClient.callTool<{ related: unknown[]; related_state: string; related_job_id: string | null }>(
+            'get_item',
+            { item_id: origin, collection_id: colA.id },
+          );
+          await classifiedSignal;
+          const providerQloo = legacyResultsQloo('rowmcp');
+          const second = await runClaimedAttempt(jobId, {
+            db: iso.db,
+            config: graphOff,
+            providers: testProviders({ qloo: providerQloo }),
+          });
+          expect(second).toMatchObject({ state: 'complete', attempt: 2, interrupted: false });
+          const { rows: providerRows } = await iso.db.query<{ discovery_item_id: string }>(
+            'SELECT discovery_item_id FROM recommendations WHERE discovery_job_id = $1 ORDER BY rank',
+            [discoveryJobId],
+          );
+          providerIds = providerRows.map((r) => r.discovery_item_id);
+          expect(providerIds.length).toBeGreaterThan(0);
+          releaseRows();
+
+          // The parked read must not serve the replacement: the fresh
+          // request's pending rail stays honest and empty under the grant.
+          const rail = await pending;
+          expect(rail.ok && rail.data.related).toEqual([]);
+          expect(rail.ok && rail.data.related_state).toBe('pending');
+          expect(rail.ok && rail.data.related_job_id).toBe(freshJobId);
+        } finally {
+          await gatedClient.close();
+        }
+
+        // Graph-off control through the same transport: the legacy pairing
+        // survives — the replacement provider card is the pending rail's
+        // cached result there.
+        const offClient = await connectMcp({
+          url: MCP_URL,
+          token: credential,
+          fetch: mcpFetch(providers, { db: iso.db, config: graphOff }),
+        });
+        try {
+          const offPending = await offClient.callTool<{
+            related: { id: string }[];
+            related_state: string;
+            related_job_id: string | null;
+          }>('get_item', { item_id: origin, collection_id: colA.id });
+          expect(offPending.ok && offPending.data.related_state).toBe('pending');
+          expect(offPending.ok && offPending.data.related_job_id).toBe(freshJobId);
+          expect(offPending.ok && offPending.data.related.map((r) => r.id)).toEqual(providerIds);
+        } finally {
+          await offClient.close();
+        }
+      } finally {
+        await client.close();
+      }
+    } finally {
+      await iso.drop();
     }
   });
 });
