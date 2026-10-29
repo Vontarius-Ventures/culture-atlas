@@ -108,6 +108,45 @@ describe('durable graph work budgets (VAL-DISC-006)', () => {
     expect(await reserveGraphWorkQlooAttempt(db, { ownerAccountId: accountId, workKey })).toBe(false);
   });
 
+  it('refuses a new attempt after the anchored deadline even while attempts remain', async () => {
+    const accountId = await newAccount();
+    const workKey = workKeyFor('expired-window');
+    // The window was anchored by an earlier attempt and has since ended: the
+    // row is still active with the full allowance left, but the LOGICAL
+    // deadline is durably past. A delayed first claim or redelivery — a fresh
+    // process would start a new 45 seconds — must not reserve a new attempt.
+    const anchored = new Date(Date.now() - (GRAPH_EXPANSION_DEADLINE_MS + 5_000));
+    await ensureGraphWorkBudget(db, { ownerAccountId: accountId, workKind: 'expansion', workKey, at: anchored });
+    const row = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(row?.state).toBe('active');
+    expect(row?.qloo_attempts_used).toBe(0);
+
+    // Delayed work cannot reserve a new attempt after its original deadline...
+    expect(await reserveGraphWorkQlooAttempt(db, { ownerAccountId: accountId, workKey })).toBe(false);
+    // ...and the refusal charged nothing and left the window state intact.
+    const after = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(after?.qloo_attempts_used).toBe(0);
+    expect(after?.state).toBe('active');
+
+    // The same durable refusal holds through the real Qloo session: every
+    // counted HTTP attempt reserves through the same guarded statement, so a
+    // session over the expired window stops with BudgetExhaustedError before
+    // any request is sent — no uncontrolled paid fallback.
+    const budget = await ensureGraphWorkBudget(db, { ownerAccountId: accountId, workKind: 'expansion', workKey });
+    expect(budget.deadlineExpired).toBe(true);
+    const session = graphWorkQlooSession(failingProvider(), db, {
+      ownerAccountId: accountId,
+      workKey,
+      remainingQlooAttempts: budget.remainingQlooAttempts,
+    });
+    expect(session.searchUsable()).toBe(true);
+    await expect(session.search('late query', undefined, { attempt: 'delayed' })).rejects.toBeInstanceOf(
+      BudgetExhaustedError,
+    );
+    const finalRow = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(finalRow?.qloo_attempts_used).toBe(0);
+  });
+
   it('a stopped budget refuses further reservations', async () => {
     const accountId = await newAccount();
     const workKey = workKeyFor('stopped');

@@ -5,7 +5,11 @@ import { stillOwnsJob } from '../jobs/queue';
 import type { ResearchSourceDoc } from '@culture-atlas/providers';
 import {
   ensureGraphWorkBudget,
+  GraphWorkDeadlineExpiredError,
+  graphWorkDeadlineSignal,
+  graphWorkWindowEnded,
   setGraphWorkBudgetState,
+  stopGraphWorkBudgetIfExpired,
   type GraphWorkBudgetState,
 } from '../interest-graph/budgets';
 import { INTEREST_GRAPH_POLICY_VERSION, type GraphPredicate } from '../interest-graph/schema';
@@ -104,6 +108,23 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     });
   }
 
+  // The remaining logical window governs every stage of this attempt
+  // (VAL-DISC-006), not just the entry check above: each provider boundary
+  // re-reads the durable row and refuses once the anchored deadline passed —
+  // a delayed first claim or a redelivery never gets a fresh 45 seconds.
+  const windowLive = async (): Promise<GraphWorkBudgetState> => {
+    const live = await ensureGraphWorkBudget(ctx.db, { ownerAccountId: accountId, workKind: 'research', workKey, qlooAttemptsMax: 0 });
+    if (live.deadlineExpired) {
+      await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'stopped' });
+      throw new AppError('service_unavailable', {
+        message: 'This relation-research window expired; a new one is on the way.',
+        retryable: false,
+        details: { rule: 'logical_deadline_expired' },
+      });
+    }
+    return live;
+  };
+
   // Public-only request: canonical names/ids of the shared identity layer.
   const request = await buildRelationResearchRequest(ctx.db, {
     subjectNodeId: ctx.payload.subject_node_id,
@@ -155,6 +176,7 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
       });
       return true;
     };
+    await windowLive();
     const subjectDocs = await ctx.providers.research.findSources({
       name: request.subject.canonicalName,
       type: request.subject.nodeKind,
@@ -186,18 +208,28 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     }
 
     // --- The paid extraction, stage-wrapped: a retry reuses the completed
-    // output instead of re-buying it.
-    const extraction = await ctx.runStage('research:extract', () =>
-      ctx.providers.research.extractClaims(
-        {
-          name: request.subject.canonicalName,
-          type: request.subject.nodeKind,
-          sources: kept,
-          maxClaims: RESEARCH_MAX_PROPOSED_ASSERTIONS,
-        },
-        { signal: ctx.signal },
-      ),
-    );
+    // output instead of re-buying it. The window must still be live BEFORE the
+    // paid call, and the call itself cannot outlive the window: the combined
+    // signal aborts at the original anchored deadline (a redelivery's fresh
+    // per-attempt deadline never extends it).
+    const liveBeforeExtraction = await windowLive();
+    const window = graphWorkDeadlineSignal(liveBeforeExtraction.deadlineAt, ctx.signal);
+    let extraction: Awaited<ReturnType<typeof ctx.providers.research.extractClaims>>;
+    try {
+      extraction = await ctx.runStage('research:extract', () =>
+        ctx.providers.research.extractClaims(
+          {
+            name: request.subject.canonicalName,
+            type: request.subject.nodeKind,
+            sources: kept,
+            maxClaims: RESEARCH_MAX_PROPOSED_ASSERTIONS,
+          },
+          { signal: window.signal },
+        ),
+      );
+    } finally {
+      window.dispose();
+    }
     await ctx.ensureActive();
     await recordGraphProviderQuery(ctx.db, {
       ownerAccountId: accountId,
@@ -255,11 +287,14 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
         : [];
 
     // --- Fenced storage: publication rechecks current authority inside the
-    // transaction, so delayed work after deletion, pause or lease loss
-    // publishes nothing (the paid call stays accounted, the work is discarded).
+    // transaction, so delayed work after deletion, pause, lease loss — or
+    // after its own LOGICAL DEADLINE (VAL-DISC-006) — publishes nothing (the
+    // paid call stays accounted, the work is discarded). The remaining window
+    // also bounds every statement and lock wait of the storage pass.
     const stored = await proposeResearchAssertions(ctx.db, {
       sources: sourcesIn,
       proposals,
+      sqlTimeoutMs: Math.max(1, liveBeforeExtraction.deadlineAt.getTime() - Date.now()),
       fence: async (tx) => {
         const { rows } = await tx.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
         if (rows.length === 0) throw new JobCancelledError('account deleted');
@@ -267,6 +302,11 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
           throw new AppError('conflict', { message: 'Discovery is paused; research cannot publish.', retryable: false });
         }
         if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new JobCancelledError('lease lost');
+        // The durable deadline, re-read with the transaction's own clock: a
+        // delayed extraction or SQL/lock wait cannot commit past the anchor.
+        if (await graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey })) {
+          throw new GraphWorkDeadlineExpiredError();
+        }
       },
     });
 
@@ -287,7 +327,10 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
   } catch (err) {
     // The run record is lineage, not authority: a failed attempt leaves an
     // honest failed run (and the paid provider query recorded above stays).
+    // A window that ended while the attempt ran is durably stopped here, so
+    // no later redelivery can re-open the spent window (VAL-DISC-006).
     await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'failed' }).catch(() => undefined);
+    await stopGraphWorkBudgetIfExpired(ctx.db, { ownerAccountId: accountId, workKey }).catch(() => undefined);
     throw err;
   }
 };

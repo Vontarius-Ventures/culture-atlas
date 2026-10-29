@@ -255,12 +255,16 @@ export interface ExpansionCounts {
 }
 
 /**
- * Why an expansion did not publish. Every code except 'disabled' comes from
- * the transactional publication fence (VAL-DISC-007): delayed work re-checks
- * current authority inside the publication transaction, and a violation rolls
- * the whole pass back — no run, no frontier entry, no recommendations, no
- * proofs. Rejected work never publishes private results or resurrects
- * withdrawn proofs.
+ * Why an expansion did not publish. 'disabled' comes from the discovery gate;
+ * 'lease_lost' from the caller's fence hook; 'deadline_expired' from the
+ * logical window of the durable work budget (VAL-DISC-006: the anchored
+ * 45-second deadline governs the whole pass, not just handler entry — bounded
+ * stage checks, bounded SQL/lock waits and the publication decision all stop
+ * at it). Every remaining code comes from the transactional publication fence
+ * (VAL-DISC-007): delayed work re-checks current authority inside the
+ * publication transaction, and a violation rolls the whole pass back — no
+ * run, no frontier entry, no recommendations, no proofs. Rejected work never
+ * publishes private results or resurrects withdrawn proofs.
  */
 export type ExpansionRejectionReason =
   | 'disabled'
@@ -270,7 +274,8 @@ export type ExpansionRejectionReason =
   | 'exclusion_landed'
   | 'source_invalidated'
   | 'support_withdrawn'
-  | 'lease_lost';
+  | 'lease_lost'
+  | 'deadline_expired';
 
 /** Thrown inside the publication transaction to reject the whole pass; the wrapper converts it to a rejection result. */
 export class GraphFenceError extends Error {
@@ -307,6 +312,23 @@ interface AdmittedObservation extends ExpansionCandidateObservation {
   expiresAtCap: Date | null;
 }
 
+export interface ExpansionDeadlineInput {
+  /**
+   * The ABSOLUTE end of the logical window (VAL-DISC-006): the durable work
+   * budget's anchored deadline — never a per-attempt clock. The pass may not
+   * execute stages, wait on locks or publish at or after this point.
+   */
+  at: Date;
+  /** The clock stage checks read (default: real time; tests may control it). */
+  now?: () => Date;
+  /**
+   * The worker's cooperative stop: lease loss, cancellation or the
+   * per-attempt deadline abort it. A stage check that observes an aborted
+   * signal ends the pass before any publication.
+   */
+  signal?: AbortSignal;
+}
+
 export interface ExpandAccountInterestGraphInput {
   accountId: string;
   config: DiscoveryGateConfig;
@@ -323,6 +345,15 @@ export interface ExpandAccountInterestGraphInput {
    * `GraphFenceError` to surface a specific rejection reason.
    */
   fence?: (tx: Queryable) => Promise<void>;
+  /**
+   * The logical deadline of this expansion (VAL-DISC-006): the queue handler
+   * passes the durable work budget's anchored window. Without it the pass is
+   * unbounded (direct non-queue callers keep their current semantics); with
+   * it every stage check, SQL/lock wait and the publication decision stop at
+   * the original anchor, and a pass that exceeds its window is rejected with
+   * 'deadline_expired' — nothing publishes.
+   */
+  deadline?: ExpansionDeadlineInput;
 }
 
 // --- Internal row shapes ------------------------------------------------------------
@@ -397,20 +428,51 @@ export async function expandAccountInterestGraph(db: Db, input: ExpandAccountInt
           return p;
         },
       };
+      // The logical window bounds SQL and lock waits too (VAL-DISC-006): a
+      // delayed statement or a lock parked on another transaction cannot
+      // push this pass past its deadline — the bounded wait fails, the
+      // transaction rolls back, and the rejection below is the honest
+      // outcome instead of a commit after the window ended.
+      if (input.deadline) await boundPassSqlToDeadline(tx, input.deadline);
       // Re-check the gate inside the transaction: a kill that landed between
       // the pre-check and this pass must halt publication before any write.
       if (!(await discoveryEnabledForAccount(tx, { accountId: input.accountId, config: input.config }))) {
         return disabledResult();
       }
-      return runExpansion(tx, { accountId: input.accountId, jobId: input.jobId, at, fence: input.fence });
+      return runExpansion(tx, { accountId: input.accountId, jobId: input.jobId, at, fence: input.fence, deadline: input.deadline });
     });
   } catch (err) {
     // A fence violation rejects the whole pass: the transaction above rolled
     // back, so no run, frontier entry, recommendation or proof row survives.
     // The rejection itself is an honest result, not an internal error.
     if (err instanceof GraphFenceError) return rejectedResult(err.code);
+    // A bounded SQL/lock wait that exceeded the logical window (VAL-DISC-006)
+    // is the same honest outcome: the statement was canceled by the pass's
+    // own deadline, the transaction rolled back, nothing published.
+    if (input.deadline && isDeadlineCanceledStatement(err)) return rejectedResult('deadline_expired');
     throw err;
   }
+}
+
+/**
+ * Bounds every statement and lock wait of the pass to the logical window's
+ * REMAINING time: `SET LOCAL` is scoped to this transaction, so pooled
+ * clients never leak the limit. The inter-stage deadline checks below bound
+ * the pass as a whole; this bounds each individual wait.
+ */
+async function boundPassSqlToDeadline(tx: Queryable, deadline: ExpansionDeadlineInput): Promise<void> {
+  const deadlineNow = deadline.now ?? (() => new Date());
+  const remainingMs = deadline.at.getTime() - deadlineNow().getTime();
+  const ms = Math.max(1, Math.ceil(remainingMs));
+  await tx.query(`SET LOCAL statement_timeout = ${ms}`);
+  await tx.query(`SET LOCAL lock_timeout = ${ms}`);
+}
+
+/** PostgreSQL cancels a statement past its timeout with code 57014 (query_canceled). */
+function isDeadlineCanceledStatement(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; message?: unknown };
+  return e.code === '57014' && typeof e.message === 'string' && /statement timeout|lock timeout/.test(e.message);
 }
 
 function disabledResult(): ExpansionResult {
@@ -468,7 +530,7 @@ function emptyCounts(): ExpansionCounts {
 
 async function runExpansion(
   tx: Queryable,
-  input: { accountId: string; jobId?: string; at: Date; fence?: (tx: Queryable) => Promise<void> },
+  input: { accountId: string; jobId?: string; at: Date; fence?: (tx: Queryable) => Promise<void>; deadline?: ExpansionDeadlineInput },
 ): Promise<ExpansionResult> {
   const { accountId, at } = input;
   const counts = emptyCounts();
@@ -476,6 +538,19 @@ async function runExpansion(
   const noteRejection = (code: string) => {
     rejections[code] = (rejections[code] ?? 0) + 1;
   };
+
+  // The logical window governs every stage of the pass (VAL-DISC-006): the
+  // stage checks below end a pass whose anchored deadline passed or whose
+  // worker grant died, and the publication fence has the last word. Throwing
+  // GraphFenceError rolls the whole transaction back — nothing survives.
+  const deadline = input.deadline;
+  const deadlineNow = deadline?.now ?? (() => new Date());
+  const checkDeadline = () => {
+    if (!deadline) return;
+    if (deadline.signal?.aborted) throw new GraphFenceError('deadline_expired');
+    if (deadlineNow().getTime() >= deadline.at.getTime()) throw new GraphFenceError('deadline_expired');
+  };
+  checkDeadline();
 
   // Early authority checks (cheap, fail fast): the account must exist, and a
   // paused account publishes nothing (pause stops expansion dispatch AND
@@ -488,6 +563,7 @@ async function runExpansion(
   // Current authoritative explicit state: the relevance half of every
   // admission decision reads THIS, never projection-event totals.
   const snapshot = await loadExplicitSupport(tx, accountId);
+  checkDeadline();
 
   const run = await createGraphRun(tx, {
     ownerAccountId: accountId,
@@ -507,6 +583,7 @@ async function runExpansion(
 
   const roots = await resolveRoots(tx, { accountId, snapshot, counts });
   const truncated = { assertions: false, candidates: false };
+  checkDeadline();
 
   // --- Bounded walk ---------------------------------------------------------------
   const rootNodeIds = [...new Set(roots.map((r) => r.nodeId))];
@@ -523,6 +600,7 @@ async function runExpansion(
       seen.add(row.id);
       addOrientation(hop1, row, rootNodeSet);
     }
+    checkDeadline();
     const midIds = [...new Set([...hop1.values()].flat().map((e) => e.far))];
     const remaining = EXPANSION_BOUNDS.maxAssertionsTraversed - seen.size;
     if (midIds.length > 0 && remaining > 0) {
@@ -535,6 +613,7 @@ async function runExpansion(
         addOrientation(hop2, row, midSet);
       }
     }
+    checkDeadline();
   }
 
   // --- Candidate pairs (deterministic order) --------------------------------------
@@ -587,6 +666,7 @@ async function runExpansion(
       truncated.candidates = true;
       break;
     }
+    checkDeadline();
     counts.candidatesEvaluated++;
     let obs: AdmittedObservation | null = null;
     for (const [e1, e2] of pair.paths) {
@@ -785,6 +865,7 @@ async function runExpansion(
   }
 
   for (const obs of ranked) {
+    checkDeadline();
     const meta = nodeMeta.get(obs.nodeId);
     obs.candidateName = meta?.canonical_name ?? '';
     const directItem = meta?.cultural_reference_id ? itemByReference.get(meta.cultural_reference_id) : undefined;
@@ -833,6 +914,7 @@ async function runExpansion(
   // statements (READ COMMITTED), so stale work is rejected and rolled back
   // rather than publishing. Pre-dispatch checks alone are insufficient — this
   // is the last word before the run is marked complete.
+  checkDeadline();
   const violation = await checkGraphPublicationFence(tx, {
     accountId,
     at,

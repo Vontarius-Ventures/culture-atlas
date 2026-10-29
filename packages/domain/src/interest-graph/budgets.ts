@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { QlooProvider } from '@culture-atlas/providers';
 import { QlooSession } from '../composer/provider-calls';
+import { AppError } from '../errors';
 import type { Db, Queryable } from '../db/pool';
 
 /**
@@ -117,9 +118,12 @@ export async function ensureGraphWorkBudget(db: Queryable, input: EnsureGraphWor
 
 /**
  * Atomically reserves one more Qloo HTTP attempt of the logical item; false
- * once the durable cap is reached (or the budget is no longer active). A
- * refused reservation sends no request — the caller stops bounded work
- * instead of starting an uncontrolled paid fallback.
+ * once the durable cap is reached, the budget is no longer active, or the
+ * anchored LOGICAL DEADLINE has passed (VAL-DISC-006: a delayed first claim
+ * or redelivery inherits the old anchor and must not spend past it — a fresh
+ * process never gets a fresh 45 seconds). A refused reservation sends no
+ * request — the caller stops bounded work instead of starting an
+ * uncontrolled paid fallback.
  */
 export async function reserveGraphWorkQlooAttempt(
   db: Queryable,
@@ -130,6 +134,7 @@ export async function reserveGraphWorkQlooAttempt(
         SET qloo_attempts_used = qloo_attempts_used + 1, updated_at = now()
       WHERE owner_account_id = $1 AND work_key = $2 AND state = 'active'
         AND qloo_attempts_used < qloo_attempts_max
+        AND (deadline_started_at + deadline_ms * interval '1 millisecond') > clock_timestamp()
       RETURNING id`,
     [input.ownerAccountId, input.workKey],
   );
@@ -146,6 +151,102 @@ export async function setGraphWorkBudgetState(
       WHERE owner_account_id = $1 AND work_key = $2`,
     [input.ownerAccountId, input.workKey, input.state],
   );
+}
+
+/**
+ * Stops an ACTIVE window whose anchored deadline has passed, decided by the
+ * database's own clock in one guarded statement (VAL-DISC-006): after any
+ * terminal outcome of an attempt — success aside — an expired window can
+ * never be re-opened by a later redelivery. Returns true when this call
+ * stopped the window; already-terminal or still-live windows are untouched.
+ */
+export async function stopGraphWorkBudgetIfExpired(
+  db: Queryable,
+  input: { ownerAccountId: string; workKey: string },
+): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `UPDATE graph_work_budgets SET state = 'stopped', updated_at = now()
+      WHERE owner_account_id = $1 AND work_key = $2 AND state = 'active'
+        AND (deadline_started_at + deadline_ms * interval '1 millisecond') <= clock_timestamp()`,
+    [input.ownerAccountId, input.workKey],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+/**
+ * Re-reads the durable logical window INSIDE a publication transaction with
+ * the database's own clock (VAL-DISC-006): true when the window has ended —
+ * its anchored deadline passed, or the row is no longer an active window
+ * (stopped/complete/missing) — so a delayed pass must not commit. This is the
+ * last-word check before commit; an in-memory anchor read at attempt entry is
+ * never sufficient on its own.
+ */
+export async function graphWorkWindowEnded(
+  tx: Queryable,
+  input: { ownerAccountId: string; workKey: string },
+): Promise<boolean> {
+  const { rows } = await tx.query<{ state: GraphWorkBudgetRow['state']; deadline_at: Date; now: Date }>(
+    `SELECT state,
+            deadline_started_at + deadline_ms * interval '1 millisecond' AS deadline_at,
+            clock_timestamp() AS now
+       FROM graph_work_budgets WHERE owner_account_id = $1 AND work_key = $2`,
+    [input.ownerAccountId, input.workKey],
+  );
+  const row = rows[0];
+  if (!row) return true;
+  return row.state !== 'active' || row.deadline_at.getTime() <= row.now.getTime();
+}
+
+/**
+ * Thrown by publication fences when the logical window of the work item has
+ * ended (VAL-DISC-006): the attempt may have entered legally, but its
+ * originally anchored deadline governs the commit, and delayed work is
+ * discarded honestly — the spend stays accounted, nothing publishes.
+ */
+export class GraphWorkDeadlineExpiredError extends AppError {
+  constructor() {
+    super('service_unavailable', {
+      message: 'This graph work window expired; a new one is on the way.',
+      retryable: false,
+      details: { rule: 'logical_deadline_expired' },
+    });
+    this.name = 'GraphWorkDeadlineExpiredError';
+  }
+}
+
+export interface GraphWorkDeadlineSignal {
+  /** Aborts when the worker's signal aborts OR the logical deadline passes. */
+  signal: AbortSignal;
+  /** Releases the deadline timer and the worker-signal listener. */
+  dispose(): void;
+}
+
+/**
+ * A cooperative stop signal for one bounded attempt of a logical work item:
+ * it aborts when the caller's worker signal aborts (lease loss,
+ * cancellation, the per-attempt deadline) OR when the ORIGINAL anchored
+ * deadline passes — whichever comes first. A redelivery with a fresh
+ * per-attempt deadline still ends at the original window's end; an in-flight
+ * provider call or SQL wait observes the abort instead of outliving it.
+ */
+export function graphWorkDeadlineSignal(deadlineAt: Date, signal?: AbortSignal): GraphWorkDeadlineSignal {
+  const controller = new AbortController();
+  const remainingMs = deadlineAt.getTime() - Date.now();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  if (remainingMs > 0) timer = setTimeout(() => controller.abort(), remainingMs);
+  else controller.abort();
+  const onAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      if (timer !== null) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    },
+  };
 }
 
 export interface GraphWorkQlooSessionInput {

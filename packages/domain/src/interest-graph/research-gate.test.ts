@@ -11,6 +11,7 @@ import {
   researchEnabledInConfig,
 } from './research-gate';
 import { RESEARCH_MAX_SOURCE_DOCUMENTS } from './research';
+import { ensureGraphWorkBudget, loadGraphWorkBudget } from './budgets';
 
 /**
  * VAL-DISC-005: paid relation research is DEFAULT-OFF and stays off until the
@@ -508,5 +509,192 @@ describe('the relation-research handler (VAL-DISC-005)', () => {
     expect(budgets[0]!.work_kind).toBe('research');
     expect(budgets[0]!.qloo_attempts_max).toBe(0);
     expect(budgets[0]!.state).toBe('active');
+  });
+});
+
+// --- The anchored logical deadline governs research work (VAL-DISC-006, DISC-SCR-006) ---
+
+describe('the anchored logical deadline governs research work', () => {
+  /** The dedupe key that carries the research item's logical identity. */
+  async function researchWorkKey(jobId: string): Promise<string> {
+    const { rows } = await db.query<{ dedupe_key: string }>('SELECT dedupe_key FROM jobs WHERE id = $1', [jobId]);
+    if (!rows[0]?.dedupe_key) throw new Error('research job has no dedupe key');
+    return rows[0].dedupe_key;
+  }
+
+  /** One dispatched, still-queued research job with one approved source. */
+  async function dispatchedResearch(
+    research: ProviderRegistry['research'],
+  ): Promise<{ accountId: string; jobId: string; workKey: string; subjectNodeId: string; objectNodeId: string }> {
+    const { principal } = await accountCtx({});
+    const accountId = principal.accountId;
+    const { subjectNodeId, objectNodeId } = await nodePair();
+    const providers = registryWithDurableLedger(research);
+    const dispatched = await dispatchGraphResearch(db, {
+      accountId,
+      config: researchOn,
+      providers,
+      subjectNodeId,
+      objectNodeId,
+      predicate: 'CREATED_BY',
+    });
+    expect(dispatched.dispatched).toBe(true);
+    return {
+      accountId,
+      jobId: dispatched.jobId!,
+      workKey: await researchWorkKey(dispatched.jobId!),
+      subjectNodeId,
+      objectNodeId,
+    };
+  }
+
+  /** Run states of the account's research runs (nothing published → empty). */
+  async function researchRunStates(accountId: string): Promise<Record<string, number>> {
+    const { rows } = await db.query<{ state: string; n: number }>(
+      `SELECT state, count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1 GROUP BY state`,
+      [accountId],
+    );
+    return Object.fromEntries(rows.map((r) => [r.state, Number(r.n)]));
+  }
+
+  it('a delayed claim whose window already ended refuses before any provider call', async () => {
+    const research = countingResearch(
+      (name) => [sourceDoc(name, `https://en.wikipedia.org/wiki/${encodeURIComponent(name)}`)],
+      extraction,
+    );
+    const { accountId, jobId, workKey } = await dispatchedResearch(research.provider);
+    const providers = registryWithDurableLedger(research.provider);
+
+    // The window was anchored long ago (an earlier attempt of this logical
+    // item) and has ended: a delayed first claim or redelivery inherits the
+    // same row and must refuse honestly — never a fresh 45 seconds of work.
+    await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'research',
+      workKey,
+      qlooAttemptsMax: 0,
+      at: new Date(Date.now() - 60_000),
+    });
+
+    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toMatchObject({
+      details: { rule: 'logical_deadline_expired' },
+    });
+    // No provider was called at all.
+    expect(research.calls.findSources).toBe(0);
+    expect(research.calls.extractClaims).toBe(0);
+    // The window is durably stopped and nothing was published.
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('stopped');
+    expect(await researchRunStates(accountId)).toEqual({});
+  });
+
+  it('work delayed past its deadline cannot commit: the storage fence rejects after the paid call', async () => {
+    // The paid extraction takes longer than the window has left, so the
+    // storage fence is the last word: the call stays accounted, the proposals
+    // publish nothing, and the window stops honestly.
+    const calls = { findSources: 0, extractClaims: 0, urls: [] as string[] };
+    const available = { status: 'available' as const, provider: 'fake' };
+    const slowProvider = {
+      id: 'research:fake',
+      capability: () => ({ sources: available, claims: available }),
+      findSources: async (query: { name: string }) => {
+        calls.findSources++;
+        const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(query.name)}`;
+        calls.urls.push(url);
+        return [sourceDoc(query.name, url)];
+      },
+      extractClaims: async (input: { name: string; sources: ResearchSourceDoc[] }) => {
+        calls.extractClaims++;
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        return extraction(input.name, input.sources[0]!.url);
+      },
+    } as unknown as ProviderRegistry['research'];
+    const { accountId, jobId, workKey, subjectNodeId, objectNodeId } = await dispatchedResearch(slowProvider);
+    const providers = registryWithDurableLedger(slowProvider);
+
+    // A short remaining window (as a redelivery near the anchor's end holds):
+    // the pass enters legally, the paid call happens, and the commit is fenced.
+    await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'research',
+      workKey,
+      qlooAttemptsMax: 0,
+      deadlineMs: 400,
+    });
+
+    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toMatchObject({
+      details: { rule: 'logical_deadline_expired' },
+    });
+    // The paid call happened exactly once and stays accounted in provider_queries.
+    expect(calls.extractClaims).toBe(1);
+    const { rows: queries } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM provider_queries WHERE owner_account_id = $1 AND provider = 'research' AND operation = 'extract_claims'`,
+      [accountId],
+    );
+    expect(Number(queries[0]!.n)).toBe(1);
+    // But nothing committed: no source revision for this job's URL, no
+    // proposed assertion, no evidence — the storage transaction rolled back.
+    const { rows: sources } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_source_revisions WHERE source_family_key = $1`,
+      [`research:${calls.urls[0]}`],
+    );
+    expect(Number(sources[0]!.n)).toBe(0);
+    const { rows: assertions } = await db.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM graph_assertions WHERE subject_node_id = $1 AND object_node_id = $2`,
+      [subjectNodeId, objectNodeId],
+    );
+    expect(Number(assertions[0]!.n)).toBe(0);
+    // The run is an honest failure and the window is durably stopped.
+    expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('stopped');
+  });
+
+  it('the paid extraction cannot outlive its window: the deadline aborts the call', async () => {
+    // An extraction that would never finish on its own: only the deadline's
+    // abort can end it. The pass entered legally, so the call is bound by the
+    // remaining window, not by a fresh per-attempt allowance.
+    const calls = { extractClaims: 0 };
+    const available = { status: 'available' as const, provider: 'fake' };
+    const hangingProvider = {
+      id: 'research:fake',
+      capability: () => ({ sources: available, claims: available }),
+      findSources: async (query: { name: string }) => [
+        sourceDoc(query.name, `https://en.wikipedia.org/wiki/${encodeURIComponent(query.name)}`),
+      ],
+      extractClaims: async (input: { name: string; sources: ResearchSourceDoc[] }, options?: { signal?: AbortSignal }) => {
+        calls.extractClaims++;
+        await new Promise<void>((resolve, reject) => {
+          const fallback = setTimeout(resolve, 5_000); // honest RED without the fix: never hangs the suite
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(fallback);
+              reject(new Error('extraction aborted at the logical deadline'));
+            },
+            { once: true },
+          );
+        });
+        return extraction(input.name, input.sources[0]!.url);
+      },
+    } as unknown as ProviderRegistry['research'];
+    const { accountId, jobId, workKey } = await dispatchedResearch(hangingProvider);
+    const providers = registryWithDurableLedger(hangingProvider);
+
+    await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'research',
+      workKey,
+      qlooAttemptsMax: 0,
+      deadlineMs: 300,
+    });
+
+    await expect(runJob(jobId, { providers, config: researchOn })).rejects.toThrow(
+      /aborted at the logical deadline/,
+    );
+    expect(calls.extractClaims).toBe(1);
+    expect(await researchRunStates(accountId)).toEqual({ failed: 1 });
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('stopped');
   });
 });

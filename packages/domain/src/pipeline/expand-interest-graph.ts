@@ -4,6 +4,8 @@ import type { JobOutcome } from '../jobs/types';
 import { stillOwnsJob } from '../jobs/queue';
 import {
   ensureGraphWorkBudget,
+  graphWorkDeadlineSignal,
+  graphWorkWindowEnded,
   setGraphWorkBudgetState,
 } from '../interest-graph/budgets';
 import { consumeExpansionDue } from '../interest-graph/refresh';
@@ -22,9 +24,13 @@ import {
  *  - the DURABLE budget of the logical expansion (at most four Qloo HTTP
  *    attempts including retries, a 45-second deadline) anchors at the FIRST
  *    attempt of the job's dedupe key and is never reset by lease loss, worker
- *    restart or redelivery. An expired logical deadline stops bounded work
- *    honestly — no run, no publication, and never a fallback to the legacy
- *    paid expansion;
+ *    restart or redelivery. The anchored deadline governs the WHOLE pass, not
+ *    just handler entry: the engine's stage checks, SQL/lock waits and the
+ *    publication fence all stop at the remaining window, so a delayed first
+ *    attempt or a redelivery can neither spend, reserve nor commit after the
+ *    original deadline — and an expired window stops bounded work honestly
+ *    with no run, no publication, and never a fallback to the legacy paid
+ *    expansion;
  *  - the publication transaction rechecks the handler's lease ownership
  *    through the engine's fence hook, so a lost or superseded lease cannot
  *    publish;
@@ -66,17 +72,35 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
   }
 
   const at = new Date();
-  const result = await expandAccountInterestGraph(ctx.db, {
-    accountId,
-    config: ctx.config,
-    jobId: ctx.job.id,
-    at,
-    // Publication-time lease recheck, inside the transaction: work published
-    // after a lost or superseded lease cannot exist.
-    fence: async (tx) => {
-      if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new GraphFenceError('lease_lost');
-    },
-  });
+  // The remaining logical window governs the WHOLE pass (VAL-DISC-006), not
+  // just this entry: the engine bounds stage execution and SQL/lock waits by
+  // it, and the signal aborts cooperative work the moment the window ends or
+  // the worker's own grant dies — whichever comes first. The anchor itself is
+  // the durable row above and is never reset.
+  const window = graphWorkDeadlineSignal(budget.deadlineAt, ctx.signal);
+  let result;
+  try {
+    result = await expandAccountInterestGraph(ctx.db, {
+      accountId,
+      config: ctx.config,
+      jobId: ctx.job.id,
+      at,
+      deadline: { at: budget.deadlineAt, signal: window.signal },
+      // Publication-time rechecks, INSIDE the transaction: work published
+      // after a lost/superseded lease or after its logical window ended
+      // cannot exist.
+      fence: async (tx) => {
+        if (!(await stillOwnsJob(tx, ctx.job.id, ctx.workerId))) throw new GraphFenceError('lease_lost');
+        // The durable deadline, re-read with the transaction's own clock: a
+        // delayed SQL/lock wait cannot commit past the original anchor.
+        if (await graphWorkWindowEnded(tx, { ownerAccountId: accountId, workKey })) {
+          throw new GraphFenceError('deadline_expired');
+        }
+      },
+    });
+  } finally {
+    window.dispose();
+  }
 
   if (!result.expanded) {
     const reason = result.reason as ExpansionRejectionReason | undefined;
@@ -92,6 +116,25 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
       case 'lease_lost':
         // The lease recheck rejected the publication; the worker must stop.
         throw new JobCancelledError('lease lost before publication');
+      case 'deadline_expired': {
+        // The pass stopped at its logical window. Re-read the DURABLE row to
+        // report the honest terminal outcome: an expired window is stopped for
+        // good (never re-anchored, never retried into a fresh 45 seconds);
+        // a still-live window means the worker's own signal ended the pass
+        // (lease loss/cancellation), and the worker owns that outcome — the
+        // window is not consumed and the due marker stays.
+        const live = await ensureGraphWorkBudget(ctx.db, { ownerAccountId: accountId, workKind: 'expansion', workKey });
+        if (live.deadlineExpired) {
+          await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'stopped' });
+          await ctx.trace({ kind: 'note', name: 'graph_expansion_window_expired', data: { reason } });
+          throw new AppError('service_unavailable', {
+            message: 'This graph refresh window expired; a new one is on the way.',
+            retryable: false,
+            details: { rule: 'logical_deadline_expired' },
+          });
+        }
+        throw new JobCancelledError('worker stopped the pass before publication');
+      }
       case 'disabled':
         // The flag (or a kill) halted publication. Nothing this job can do;
         // the due marker stays until the operator re-enables discovery.

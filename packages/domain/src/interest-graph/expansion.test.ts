@@ -22,6 +22,7 @@ import { linkGraphReferenceIdentities } from './identity-links';
 import { projectAccountInterestGraph } from './projector';
 import { pauseGraphDiscovery } from './refresh';
 import { createGraphRun } from './store';
+import { GRAPH_EXPANSION_DEADLINE_MS } from './budgets';
 import { currentAssertionJustification, retractGraphEvidence } from './validity';
 import {
   EXPANSION_BOUNDS,
@@ -1623,5 +1624,67 @@ describe('corpus admission reaches real application references', () => {
     expect(after.candidates.find((o) => o.nodeId === candidateNodeId)!.intent).toBe('personal');
     expect(after.counts.assertionsTraversed).toBe(2);
     expect(after.counts.admitted).toBe(1);
+  });
+});
+
+// --- The logical deadline governs the whole pass (VAL-DISC-006, DISC-SCR-006) ---
+
+describe('the anchored logical deadline governs the whole expansion pass', () => {
+  /** A would-be publishable account: one projected personal root ready to walk. */
+  async function deadlineFixture() {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    await savedRoot(ctx, accountId);
+    await project(accountId);
+    return { accountId };
+  }
+
+  it('a pass whose logical window already ended publishes nothing', async () => {
+    const { accountId } = await deadlineFixture();
+    const runsBefore = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1', [accountId])).rows[0]!.n,
+    );
+
+    // The window ended before this pass started (a delayed claim or a
+    // redelivery inheriting an old anchor): the engine enforces the durable
+    // boundary for direct callers too — no run, no publication, nothing kept.
+    const result = await expandAccountInterestGraph(db, {
+      accountId,
+      config: graphOn,
+      deadline: { at: new Date(Date.now() - 1) },
+    });
+    expect(result.expanded).toBe(false);
+    expect(result.reason).toBe('deadline_expired');
+
+    const runsAfter = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1', [accountId])).rows[0]!.n,
+    );
+    expect(runsAfter).toBe(runsBefore);
+    expect(await activeFrontierCount(accountId)).toBe(0);
+    expect(await proofRows(accountId)).toHaveLength(0);
+  });
+
+  it('a pass whose worker signal already aborted publishes nothing', async () => {
+    const { accountId } = await deadlineFixture();
+    const runsBefore = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1', [accountId])).rows[0]!.n,
+    );
+    const controller = new AbortController();
+    controller.abort();
+
+    // The worker's cooperative stop (lease loss, cancellation) must halt the
+    // engine before any write: the pass never gets to publish on a dead grant.
+    const result = await expandAccountInterestGraph(db, {
+      accountId,
+      config: graphOn,
+      deadline: { at: new Date(Date.now() + GRAPH_EXPANSION_DEADLINE_MS), signal: controller.signal },
+    });
+    expect(result.expanded).toBe(false);
+    expect(result.reason).toBe('deadline_expired');
+    const runsAfter = Number(
+      (await db.query<{ n: number }>('SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1', [accountId])).rows[0]!.n,
+    );
+    expect(runsAfter).toBe(runsBefore);
+    expect(await activeFrontierCount(accountId)).toBe(0);
   });
 });

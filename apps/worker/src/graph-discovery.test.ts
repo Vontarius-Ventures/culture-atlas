@@ -6,6 +6,8 @@ import {
   discovery,
   dispatchGraphOutbox,
   enqueueJob,
+  ensureGraphWorkBudget,
+  loadGraphWorkBudget,
   preferences,
   upsertGraphIdentity,
 } from '@culture-atlas/domain';
@@ -265,5 +267,65 @@ describe('graph discovery through the real worker', () => {
     expect(legacy[0]!.state).toBe('queued');
     // The graph pipeline never dispatched anything: discovery is off.
     expect(await jobsOf(accountId, 'expand_interest_graph')).toHaveLength(0);
+  });
+
+  it('a redelivered window whose logical deadline already passed fails honestly: no re-anchored work', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const ctx = await accountCtx(providers, config);
+    if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+    const accountId = ctx.principal.accountId;
+    const qloo = providers.qloo as FakeQloo;
+
+    // A dispatch window's job sat in the queue across a worker restart while
+    // its logical budget was anchored and expired long ago (VAL-DISC-006): the
+    // redelivery inherits the same durable row, never a fresh 45 seconds.
+    const { job } = await enqueueJob(db, {
+      type: 'expand_interest_graph',
+      owner: { kind: 'account', accountId },
+      payload: { account_id: accountId },
+      dedupeKey: `graph_expansion:delayed:${randomUUID()}`,
+      maxAttempts: 3,
+      budget: { qloo_requests: 4, deadline_ms: 45_000 },
+      resultType: 'graph_expansion',
+    });
+    await ensureGraphWorkBudget(db, {
+      ownerAccountId: accountId,
+      workKind: 'expansion',
+      workKey: job.dedupe_key!,
+      at: new Date(Date.now() - 60_000),
+    });
+
+    // The real worker claims exactly this delayed job (no sweeps, no other work).
+    const worker = new Worker({
+      db: getTestDb(),
+      providers: ctx.providers,
+      config,
+      handlers: JOB_HANDLERS,
+      log: () => undefined,
+      heartbeatMs: 1_000,
+      jobIds: [job.id],
+    });
+    await worker.drain();
+
+    // Honest terminal outcome: failed non-retryably, window stopped, nothing
+    // published, nothing reserved, nothing spent.
+    const expansions = await jobsOf(accountId, 'expand_interest_graph');
+    expect(expansions).toHaveLength(1);
+    expect(expansions[0]!.state).toBe('failed');
+    const { rows: failed } = await db.query<{ error_code: string; error_retryable: boolean }>(
+      'SELECT error_code, error_retryable FROM jobs WHERE id = $1',
+      [job.id],
+    );
+    expect(failed[0]!.error_code).toBe('service_unavailable');
+    expect(failed[0]!.error_retryable).toBe(false);
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey: job.dedupe_key! });
+    expect(budget?.state).toBe('stopped');
+    expect(budget?.qloo_attempts_used).toBe(0);
+    const { rows: runs } = await db.query<{ n: number }>(
+      'SELECT count(*)::int AS n FROM graph_runs WHERE owner_account_id = $1',
+      [accountId],
+    );
+    expect(Number(runs[0]!.n)).toBe(0);
+    expect(qloo.calls).toHaveLength(0);
   });
 });

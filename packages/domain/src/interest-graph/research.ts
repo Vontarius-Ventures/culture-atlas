@@ -225,6 +225,13 @@ export async function proposeResearchAssertions(
     proposals: ResearchProposalInput[];
     /** Publication fence, run inside the storage transaction before any write. */
     fence?: (tx: Queryable) => Promise<void>;
+    /**
+     * The logical window's remaining time (VAL-DISC-006): every statement and
+     * lock wait of the storage pass is bounded by it, so a delayed write or a
+     * lock parked on another transaction cannot push publication past the
+     * work item's original deadline. Unset keeps default statement limits.
+     */
+    sqlTimeoutMs?: number;
   },
 ): Promise<ResearchProposalResult> {
   if (input.sources.length > RESEARCH_MAX_SOURCE_DOCUMENTS) {
@@ -267,6 +274,14 @@ export async function proposeResearchAssertions(
   }
 
   return db.transaction(async (tx) => {
+    // The remaining logical window bounds this storage pass's SQL and lock
+    // waits (VAL-DISC-006); `SET LOCAL` is scoped to this transaction, so a
+    // pooled client never leaks the limit.
+    if (input.sqlTimeoutMs !== undefined) {
+      const ms = Math.max(1, Math.ceil(input.sqlTimeoutMs));
+      await tx.query(`SET LOCAL statement_timeout = ${ms}`);
+      await tx.query(`SET LOCAL lock_timeout = ${ms}`);
+    }
     // Transactional publication recheck: authority that changed after the paid
     // call rejects the storage here — delayed work publishes nothing.
     await input.fence?.(tx);
