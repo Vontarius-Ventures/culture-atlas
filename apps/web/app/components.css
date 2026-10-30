@@ -2561,6 +2561,92 @@
   gap: var(--space-3);
 }
 
+/* ---- Settings → account deletion (VAL-DELETE-001) ---------------------------- */
+
+.settings__account-links {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: calc(-1 * var(--space-2));
+}
+
+.settings__deletion-link {
+  font-size: 14px;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.settings__deletion-link:hover {
+  color: #8a2f22;
+}
+
+.settings__lead {
+  margin-top: var(--space-6);
+  font-size: 17px;
+}
+
+.disclosure-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.disclosure-list li {
+  position: relative;
+  padding-left: 18px;
+  font-size: 15px;
+}
+
+.disclosure-list li::before {
+  content: '–';
+  position: absolute;
+  left: 2px;
+  color: var(--muted);
+}
+
+.deletion-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.deletion-steps li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 15px;
+}
+
+.deletion-steps__mark {
+  flex: 0 0 auto;
+  width: 18px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.deletion-steps__done .deletion-steps__mark {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.deletion-steps__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.deletion-steps__state {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* While a dialog or bottom sheet is open, toasts sit at the top so they never
    cover the sheet's primary action. */
 body:has(.dialog-scrim) .toast {

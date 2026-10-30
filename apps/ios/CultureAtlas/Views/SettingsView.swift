@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
   @EnvironmentObject private var controller: CaptureController
   @State private var confirmSignOut = false
+  @State private var deletionSheet = false
   @State private var agents: [AgentConnectionList.Connection] = []
   @State private var agentsState = AgentsState.loading
 
@@ -89,6 +90,14 @@ struct SettingsView: View {
         } label: {
           Label("Sign out or switch account", systemImage: "rectangle.portrait.and.arrow.right")
         }
+        // First-party deletion entry (VAL-DELETE-001): the sheet explains the
+        // server's disclosure — private-data removal, authority revocation
+        // and the real retention limits — before it asks to confirm.
+        Button(role: .destructive) {
+          deletionSheet = true
+        } label: {
+          Label("Delete account…", systemImage: "trash")
+        }
       } footer: {
         Text("culture atlas \(version)")
           .frame(maxWidth: .infinity)
@@ -102,6 +111,9 @@ struct SettingsView: View {
     }
     .task { await loadAgents() }
     .refreshable { await Task { await loadAgents() }.value }
+    .sheet(isPresented: $deletionSheet) {
+      AccountDeletionConfirmSheet()
+    }
     .confirmationDialog("Sign out", isPresented: $confirmSignOut, titleVisibility: .visible) {
       Button("Keep on this device") { Task { await controller.signOut(drafts: .keep) } }
       Button("Delete local drafts", role: .destructive) { Task { await controller.signOut(drafts: .delete) } }

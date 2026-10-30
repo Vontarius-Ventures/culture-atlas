@@ -126,6 +126,13 @@ export function AccountSection() {
           {busy ? 'Signing out…' : 'Sign out'}
         </button>
       </div>
+      <div className="settings__account-links">
+        {/* First-party deletion entry (VAL-DELETE-001): a page that explains
+            what deletion removes before it asks to confirm. */}
+        <Link href="/settings/deletion" className="settings__deletion-link">
+          Delete account…
+        </Link>
+      </div>
       {error && (
         <p className="form-error" role="alert">
           {error}

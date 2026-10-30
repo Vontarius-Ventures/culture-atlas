@@ -74,6 +74,8 @@ export type RequestOptions<N extends RouteName> = ([ParamsOf<N>] extends [never]
     idempotencyKey?: string;
     ifMatch?: string;
     signal?: AbortSignal;
+    /** Extra request headers (e.g. the deletion status route's capability token). */
+    headers?: Record<string, string>;
   };
 
 export function newIdempotencyKey(): string {
@@ -179,6 +181,7 @@ export class ApiClient {
       response: Schema | null;
     };
     const headers: Record<string, string> = { accept: 'application/json' };
+    if (options.headers) Object.assign(headers, options.headers);
     const isMutation = contract.method !== 'GET';
     // Every call waits for the session first: parallel first-visit requests
     // without a cookie would otherwise each mint their own anonymous session,

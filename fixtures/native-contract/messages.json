@@ -1813,6 +1813,113 @@
         "support": null,
         "unavailable_reason": "support_withdrawn"
       }
+    },
+    "account_deletion_overview_response": {
+      "direction": "response",
+      "route": "GET /v2/me/account-deletion",
+      "schema": "schemas.AccountDeletionOverviewResponse",
+      "body": {
+        "requested": false,
+        "state": "none",
+        "status": null,
+        "disclosure": {
+          "summary": "Deleting your account revokes every credential immediately and purges every private store through a durable cleanup. Completion is claimed only after that cleanup finished; failures stay visible and retry. Shared cultural facts and other accounts are untouched.",
+          "immediate": [
+            "Every browser session, agent token, native phone installation, share link and sensor connection is revoked.",
+            "Every queued or running analysis, discovery, research and graph job for the account is cancelled and can never publish."
+          ],
+          "cleanup_steps": [
+            "Your media objects (photos, uploads, derivatives) are deleted from private storage.",
+            "Every private record — captures, analyses, saves, collections, plans, preferences, graph, traces — is deleted."
+          ],
+          "retained": [
+            "Independently sourced cultural facts stay: they are shared public data and never contained your private context.",
+            "Security and abuse-prevention logs are kept for a bounded operational window with your account reference removed; they never contain photos or library data.",
+            "Provider-side processing records (for example the vision model's) follow the provider's documented retention terms; this server cannot delete them.",
+            "Encrypted backups roll off on the platform schedule; a deleted account is never restored from them."
+          ]
+        }
+      }
+    },
+    "account_deletion_accept_request": {
+      "direction": "request",
+      "route": "POST /v2/me/account-deletion",
+      "schema": "schemas.RequestAccountDeletionRequest",
+      "body": {
+        "confirm": true,
+        "status_token": "example-deletion-status-token-not-a-real-secret"
+      }
+    },
+    "account_deletion_accept_response": {
+      "direction": "response",
+      "route": "POST /v2/me/account-deletion",
+      "schema": "schemas.RequestAccountDeletionResponse",
+      "body": {
+        "status": {
+          "state": "pending",
+          "requested_at": "2026-10-30T09:15:00Z",
+          "accepted_at": "2026-10-30T09:15:01Z",
+          "completed_at": null,
+          "completed_steps": [],
+          "pending_steps": ["media_objects", "private_rows"],
+          "attempts": 1,
+          "last_error_code": null,
+          "retrying": true
+        },
+        "status_token": "example-deletion-status-token-not-a-real-secret",
+        "disclosure": {
+          "summary": "Deleting your account revokes every credential immediately and purges every private store through a durable cleanup. Completion is claimed only after that cleanup finished; failures stay visible and retry. Shared cultural facts and other accounts are untouched.",
+          "immediate": [
+            "Every browser session, agent token, native phone installation, share link and sensor connection is revoked.",
+            "Every queued or running analysis, discovery, research and graph job for the account is cancelled and can never publish."
+          ],
+          "cleanup_steps": [
+            "Your media objects (photos, uploads, derivatives) are deleted from private storage.",
+            "Every private record — captures, analyses, saves, collections, plans, preferences, graph, traces — is deleted."
+          ],
+          "retained": [
+            "Independently sourced cultural facts stay: they are shared public data and never contained your private context.",
+            "Security and abuse-prevention logs are kept for a bounded operational window with your account reference removed; they never contain photos or library data.",
+            "Provider-side processing records (for example the vision model's) follow the provider's documented retention terms; this server cannot delete them.",
+            "Encrypted backups roll off on the platform schedule; a deleted account is never restored from them."
+          ]
+        }
+      }
+    },
+    "account_deletion_status_response": {
+      "direction": "response",
+      "route": "GET /v2/account-deletion/status",
+      "schema": "schemas.AccountDeletionStatusResponse",
+      "body": {
+        "status": {
+          "state": "complete",
+          "requested_at": "2026-10-30T09:15:00Z",
+          "accepted_at": "2026-10-30T09:15:01Z",
+          "completed_at": "2026-10-30T09:15:40Z",
+          "completed_steps": ["media_objects", "private_rows"],
+          "pending_steps": [],
+          "attempts": 1,
+          "last_error_code": null,
+          "retrying": false
+        },
+        "disclosure": {
+          "summary": "Deleting your account revokes every credential immediately and purges every private store through a durable cleanup. Completion is claimed only after that cleanup finished; failures stay visible and retry. Shared cultural facts and other accounts are untouched.",
+          "immediate": [
+            "Every browser session, agent token, native phone installation, share link and sensor connection is revoked.",
+            "Every queued or running analysis, discovery, research and graph job for the account is cancelled and can never publish."
+          ],
+          "cleanup_steps": [
+            "Your media objects (photos, uploads, derivatives) are deleted from private storage.",
+            "Every private record — captures, analyses, saves, collections, plans, preferences, graph, traces — is deleted."
+          ],
+          "retained": [
+            "Independently sourced cultural facts stay: they are shared public data and never contained your private context.",
+            "Security and abuse-prevention logs are kept for a bounded operational window with your account reference removed; they never contain photos or library data.",
+            "Provider-side processing records (for example the vision model's) follow the provider's documented retention terms; this server cannot delete them.",
+            "Encrypted backups roll off on the platform schedule; a deleted account is never restored from them."
+          ]
+        }
+      }
     }
   }
 }

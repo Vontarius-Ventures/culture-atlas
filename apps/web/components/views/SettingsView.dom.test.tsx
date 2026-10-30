@@ -72,4 +72,13 @@ describe('sign-out with pending local uploads (SCREEN-CONTRACT Upload rule)', ()
     await waitFor(() => expect(request).toHaveBeenCalledWith('signOut', { body: {} }));
     expect(screen.queryByText(/still only on this device/)).toBeNull();
   });
+
+  it('offers the first-party deletion entry and changes nothing when it is only opened', () => {
+    render(<AccountSection />);
+    const entry = screen.getByRole('link', { name: /Delete account/ });
+    expect(entry.closest('a')?.getAttribute('href')).toBe('/settings/deletion');
+    // Merely exposing the entry touches nothing: no sign-out, no request.
+    expect(request).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
+  });
 });

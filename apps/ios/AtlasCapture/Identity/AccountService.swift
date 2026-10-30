@@ -175,7 +175,10 @@ public actor AccountService {
 
   // MARK: Helpers
 
-  static func randomURLSafe(bytes count: Int) -> String {
+  /// URL-safe random string (base64url, no padding), for PKCE verifiers,
+  /// states and one-time capability tokens such as the account-deletion
+  /// status token the app generates before accepting a deletion.
+  public static func randomURLSafe(bytes count: Int) -> String {
     var bytes = [UInt8](repeating: 0, count: count)
     precondition(SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess)
     return Data(bytes).base64URLEncodedString()

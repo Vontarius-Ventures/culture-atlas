@@ -5,6 +5,7 @@ struct RootView: View {
   @EnvironmentObject private var controller: CaptureController
   @EnvironmentObject private var onboarding: OnboardingController
   @EnvironmentObject private var graphStore: InterestGraphStore
+  @EnvironmentObject private var deletion: AccountDeletionModel
   @EnvironmentObject private var notices: ReadyNoticeCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -51,6 +52,7 @@ struct RootView: View {
       }
     }
     .animation(reduceMotion ? .easeInOut(duration: 0.2) : .easeInOut(duration: 0.45), value: stage)
+    .task { await deletion.restoreIfNeeded() }
     .task(id: controller.phase) {
       if controller.signedInAccount != nil {
         await onboarding.evaluate()
@@ -79,6 +81,12 @@ struct RootView: View {
       .animation(AtlasMotion.spring, value: controller.flash)
     }
     .tint(AtlasTheme.olive)
+    // The honest deletion status surface after acceptance (VAL-DELETE-001):
+    // it covers whatever is behind it (the app is signed out by then) and
+    // stays until the server's cleanup completes or the user leaves it.
+    .fullScreenCover(isPresented: deletionPresented) {
+      AccountDeletionStatusScreen()
+    }
     .sheet(item: $notices.presented) { route in
       NavigationStack {
         AnalysisResultView(route: route)
@@ -134,6 +142,16 @@ struct RootView: View {
       set: { tab in
         if tab == controller.rootTab { controller.popToRoot(tab) }
         controller.rootTab = tab
+      })
+  }
+
+  /// Presented exactly while an accepted deletion's status is owed or shown;
+  /// dismissing it runs the model's own dismissal rules.
+  private var deletionPresented: Binding<Bool> {
+    Binding(
+      get: { deletion.phase != .idle },
+      set: { shown in
+        if !shown { deletion.dismiss() }
       })
   }
 }

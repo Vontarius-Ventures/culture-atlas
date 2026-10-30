@@ -18,7 +18,8 @@ public struct HTTPTransport: Sendable {
 
   public func send(
     baseURL: URL, method: String, path: String, query: [URLQueryItem] = [], body: Data?,
-    bearer: String?, idempotencyKey: UUID?, expectedAccount: UUID?, timeout: TimeInterval = 30
+    bearer: String?, idempotencyKey: UUID?, expectedAccount: UUID?, timeout: TimeInterval = 30,
+    extraHeaders: [String: String] = [:]
   ) async throws -> Response {
     var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
     if !query.isEmpty { components.queryItems = query }
@@ -36,6 +37,7 @@ public struct HTTPTransport: Sendable {
     if let expectedAccount {
       request.setValue(expectedAccount.uuidString.lowercased(), forHTTPHeaderField: "X-Atlas-Expected-Account")
     }
+    for (name, value) in extraHeaders { request.setValue(value, forHTTPHeaderField: name) }
     let data: Data
     let response: URLResponse
     do {
@@ -71,12 +73,14 @@ public struct HTTPTransport: Sendable {
 
   public func json<Body: Encodable, Result: Decodable>(
     baseURL: URL, method: String, path: String, query: [URLQueryItem] = [], body: Body?,
-    bearer: String?, idempotencyKey: UUID?, expectedAccount: UUID?, timeout: TimeInterval = 30
+    bearer: String?, idempotencyKey: UUID?, expectedAccount: UUID?, timeout: TimeInterval = 30,
+    extraHeaders: [String: String] = [:]
   ) async throws -> Result {
     let encoded = try body.map { try AtlasJSON.encoder().encode($0) }
     let response = try await send(
       baseURL: baseURL, method: method, path: path, query: query, body: encoded, bearer: bearer,
-      idempotencyKey: idempotencyKey, expectedAccount: expectedAccount, timeout: timeout)
+      idempotencyKey: idempotencyKey, expectedAccount: expectedAccount, timeout: timeout,
+      extraHeaders: extraHeaders)
     do {
       return try AtlasJSON.decoder().decode(Result.self, from: response.data)
     } catch {

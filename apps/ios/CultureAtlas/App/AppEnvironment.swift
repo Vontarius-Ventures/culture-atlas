@@ -24,6 +24,7 @@ final class AppEnvironment {
   let controller: CaptureController
   let onboarding: OnboardingController
   let graphStore: InterestGraphStore
+  let deletionModel: AccountDeletionModel
   let notices: ReadyNoticeCenter
 
   private init() {
@@ -56,6 +57,7 @@ final class AppEnvironment {
       transfer: transfer, receipts: receipts, wearables: wearables)
     onboarding = OnboardingController(api: api)
     graphStore = InterestGraphStore(service: api)
+    deletionModel = AccountDeletionModel(service: api, tokenStore: AccountDeletionModel.KeychainTokenStore(keychain: keychain))
     notices = ReadyNoticeCenter(
       api: api, sessions: sessions, directory: drafts.root.appendingPathComponent("ready", isDirectory: true))
     // Stop wake-ups for this phone before its session ends.

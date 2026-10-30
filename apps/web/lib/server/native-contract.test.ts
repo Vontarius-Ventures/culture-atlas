@@ -43,6 +43,7 @@ import {
   setDbForTesting,
   setDomainConfigForTesting,
   NATIVE_OWNER_OPERATIONS,
+  NATIVE_OWNER_V2_ACCOUNT_OPERATIONS,
   NATIVE_OWNER_V2_GRAPH_OPERATIONS,
   toErrorBody,
   type CaptureIdentityAdapter,
@@ -1400,7 +1401,12 @@ describe('native taste onboarding fixtures (amendment 2.2)', () => {
         r as schemas.RouteContract,
       ]),
     );
-    const graphMessages = Object.entries(messages).filter(([, m]) => / \/v2\/me\//.test(m.route));
+    // The account-deletion owner operations are a separate bridged set with
+    // their own examples (the `it` below); they are not graph operations.
+    const isDeletionRoute = (route: string) => /account-deletion/.test(route);
+    const graphMessages = Object.entries(messages).filter(
+      ([, m]) => / \/v2\/me\//.test(m.route) && !isDeletionRoute(m.route),
+    );
     expect(graphMessages.length).toBeGreaterThanOrEqual(10);
     for (const [name, message] of graphMessages) {
       if (name === 'revision_conflict_error') {
@@ -1420,6 +1426,38 @@ describe('native taste onboarding fixtures (amendment 2.2)', () => {
       graphMessages.filter(([name]) => name !== 'revision_conflict_error').map(([, m]) => m.route),
     );
     expect(graphRoutes).toEqual(new Set(NATIVE_OWNER_V2_GRAPH_OPERATIONS));
+  });
+
+  it('every account-deletion wire example names its route and parses with the route schema', () => {
+    const byRoute = new Map(
+      Object.values(schemas.ROUTES).map((r) => [
+        `${r.method} ${r.path}`,
+        r as schemas.RouteContract,
+      ]),
+    );
+    const deletionMessages = Object.entries(messages).filter(([, m]) => /account-deletion/.test(m.route));
+    expect(deletionMessages.length).toBeGreaterThanOrEqual(4);
+    for (const [name, message] of deletionMessages) {
+      const route = byRoute.get(message.route);
+      expect(route, name).toBeDefined();
+      const schema = message.direction === 'request' ? route!.body : route!.response;
+      expect((schema as z.ZodType).safeParse(message.body).success, name).toBe(true);
+    }
+    // The routes the examples cover are exactly the two owner operations the
+    // native owner bridge accepts (VAL-DELETE-002: the enrolled phone may
+    // read and accept its own deletion) plus the token-gated public status
+    // route that keeps answering after every authority is revoked. No other
+    // v2 account route broadens for installations, and agents get none.
+    expect(new Set(deletionMessages.map(([, m]) => m.route))).toEqual(
+      new Set([...NATIVE_OWNER_V2_ACCOUNT_OPERATIONS, 'GET /v2/account-deletion/status']),
+    );
+    // The acceptance example is the typed one: confirm must be literally
+    // true, and the one-time capability token is URL-safe (the caller can
+    // generate it so a lost response can be retried idempotently).
+    expect(messages.account_deletion_accept_request!.body).toEqual({
+      confirm: true,
+      status_token: expect.stringMatching(/^[A-Za-z0-9_-]{43,128}$/),
+    });
   });
 
   it('copy matches the design copy file exactly', () => {
