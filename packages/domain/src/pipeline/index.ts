@@ -7,6 +7,7 @@ import { analyzeCapture } from './analyze-capture';
 import { discoverRelated } from './discover-related';
 import { generatePlan } from './generate-plan';
 import { purgeDeleted } from './purge';
+import { purgeAccount } from './account-purge';
 import { replacePlanSection } from './replace-plan-section';
 import { sensorPoll } from './sensor-poll';
 import { interestExpand } from './interest-expand';
@@ -20,6 +21,7 @@ export const JOB_HANDLERS: JobHandlerMap = {
   replace_plan_section: replacePlanSection,
   sensor_poll: sensorPoll,
   purge_deleted: purgeDeleted,
+  purge_account: purgeAccount,
   taste_seed: tasteSeed,
   interest_expand: interestExpand,
   analyze_audio: analyzeAudio,
@@ -27,3 +29,6 @@ export const JOB_HANDLERS: JobHandlerMap = {
   expand_interest_graph: expandInterestGraph,
   research_graph_relation: researchGraphRelation,
 };
+
+export { accountPurgeDedupeKey, ensureAccountDeletionPurgeJobs, setAccountMediaStorage } from './account-purge';
+export { ACCOUNT_PURGE_STEPS } from './account-purge';

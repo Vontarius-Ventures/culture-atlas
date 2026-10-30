@@ -17,6 +17,7 @@ import * as S from './sensor-connections';
 import * as T from './taste';
 import * as Tr from './traces';
 import * as U from './uploads';
+import * as AD from './account-deletion';
 import { AGENT_ROUTES } from './agent-routes';
 import { SHARE_ROUTES } from './share-routes';
 
@@ -133,6 +134,23 @@ export const ROUTES = {
   updateMyInterestGraphSettings: { method: 'PATCH', path: '/v2/me/interest-graph/settings', auth: 'owner', scopes: [], body: IG.UpdateInterestGraphSettingsRequest, response: IG.UpdateInterestGraphSettingsResponse, status: 200, idempotent: true, extension: true },
   updateMyInterestGraphInterest: { method: 'PATCH', path: '/v2/me/interest-graph/interests/{id}', auth: 'owner', scopes: [], params: IG.InterestGraphIdParams, body: IG.UpdateInterestGraphInterestRequest, response: IG.UpdateInterestGraphInterestResponse, status: 200, idempotent: true, extension: true },
   getMyRecommendationConnection: { method: 'GET', path: '/v2/me/recommendations/{id}/connection', auth: 'owner', scopes: [], params: IdParams, response: IG.RecommendationConnectionResponse, status: 200, idempotent: false, extension: true },
+
+  // Account deletion lifecycle (VAL-DELETE-002/004). Owner operations: the
+  // browser owner session or the owner's enrolled native phone (the v2
+  // account-operation bridge), never agents. The acceptance transaction
+  // revokes every credential and cancels every producer; the response's
+  // status_token is the ONLY credential that keeps answering afterwards,
+  // on the public status route below, and it restores no authority. No MCP
+  // tools: agents never gain deletion authority.
+  getMyAccountDeletion: { method: 'GET', path: '/v2/me/account-deletion', auth: 'owner', scopes: [], response: AD.AccountDeletionOverviewResponse, status: 200, idempotent: false, extension: true },
+  // The shown-once status token is never stored in the idempotency replay
+  // store (oneTimeSecrets); a retried acceptance returns the same durable
+  // status without re-running or restoring anything.
+  requestMyAccountDeletion: { method: 'POST', path: '/v2/me/account-deletion', auth: 'owner', scopes: [], body: AD.RequestAccountDeletionRequest, response: AD.RequestAccountDeletionResponse, status: 200, idempotent: true, oneTimeSecrets: ['status_token'], extension: true },
+  // Capability-token gated public status: the token's hash answers the honest
+  // lifecycle snapshot after every session, installation and agent token is
+  // revoked. A wrong or missing token is a plain not_found (nothing disclosed).
+  getAccountDeletionStatus: { method: 'GET', path: '/v2/account-deletion/status', auth: 'public', scopes: [], response: AD.AccountDeletionStatusResponse, status: 200, idempotent: false, extension: true },
 } as const satisfies Record<string, RouteContract>;
 
 export type RouteName = keyof typeof ROUTES;

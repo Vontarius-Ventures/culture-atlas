@@ -22,4 +22,5 @@ export * from './collection-media';
 export * from './collection-shares';
 export * from './sensor-connections';
 export * from './traces';
+export * from './account-deletion';
 export * from './routes';

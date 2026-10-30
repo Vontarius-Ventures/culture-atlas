@@ -70,9 +70,28 @@ export const NATIVE_OWNER_V2_GRAPH_OPERATIONS: ReadonlySet<string> = new Set([
   'GET /v2/me/recommendations/{id}/connection',
 ]);
 
+/**
+ * The v2 ACCOUNT operations the native owner bridge also accepts (the
+ * account-deletion lifecycle, VAL-DELETE-002): the owner's enrolled phone may
+ * read its own deletion state and accept the deletion, exactly like the
+ * browser owner. A separate set so the graph set above stays byte-identical
+ * and no other v2 route broadens for installations. The same live-installation
+ * and expected-account rules apply: a phone that switched accounts can never
+ * delete the previous one, and an installation whose authority ended (the
+ * deletion acceptance itself ends it) is refused from then on.
+ */
+export const NATIVE_OWNER_V2_ACCOUNT_OPERATIONS: ReadonlySet<string> = new Set([
+  'GET /v2/me/account-deletion',
+  'POST /v2/me/account-deletion',
+]);
+
 export function isNativeOwnerOperation(op: Pick<OperationPolicy, 'method' | 'path'>): boolean {
   const key = operationKey(op);
-  return NATIVE_OWNER_OPERATIONS.has(key) || NATIVE_OWNER_V2_GRAPH_OPERATIONS.has(key);
+  return (
+    NATIVE_OWNER_OPERATIONS.has(key) ||
+    NATIVE_OWNER_V2_GRAPH_OPERATIONS.has(key) ||
+    NATIVE_OWNER_V2_ACCOUNT_OPERATIONS.has(key)
+  );
 }
 
 /**

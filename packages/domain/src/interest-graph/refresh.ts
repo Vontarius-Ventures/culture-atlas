@@ -37,10 +37,19 @@ import type { Db, Queryable } from '../db/pool';
  * on this row — projection passes, support removal and deletion cleanup are
  * never blocked by the ordering.
  *
- * Returns false when the account row is gone (the caller reports deletion).
+ * A pending account deletion is the same authority revocation: the tombstone
+ * (`accounts.deleted_at`, set in the acceptance transaction that holds this
+ * same lock) makes every publication refuse here, exactly like the row being
+ * gone after the durable cleanup (VAL-DELETE-002/003).
+ *
+ * Returns false when the account row is gone or tombstoned (the caller
+ * reports deletion).
  */
 export async function lockAccountPublicationAuthority(db: Queryable, accountId: string): Promise<boolean> {
-  const { rows } = await db.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
+  const { rows } = await db.query<{ id: string }>(
+    'SELECT id FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE',
+    [accountId],
+  );
   return rows.length > 0;
 }
 

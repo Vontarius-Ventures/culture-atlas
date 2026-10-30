@@ -1005,7 +1005,7 @@ describe('research authority versions are ordered with their actual writers thro
     });
     void projection.catch(() => undefined);
     try {
-      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      await waitForLockWaiters('%FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE%', 1);
       // PROOF of held authority: the newer projection has not committed while
       // the publication is parked.
       expect((await authorityVersions(fixture.accountId)).projectionRevision).toBe(before.projectionRevision);
@@ -1105,7 +1105,7 @@ describe('research authority versions are ordered with their actual writers thro
       // per-account publication-authority lock — queues behind the writer's
       // held account row, so the fence cannot even reach its comparison
       // until the projector commits.
-      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      await waitForLockWaiters('%FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE%', 1);
       expect(fixture.research.calls.extractClaims).toBe(1);
       expect(await extractQueryCount(fixture.accountId)).toBe(1);
       // Committed projection authority is still the ORIGINAL one.
@@ -1152,7 +1152,7 @@ describe('research authority versions are ordered with their actual writers thro
       // on the guarded taste row, the first projection on the account-row
       // publication lock its pass takes first.
       await waitForLockWaiters('%ON CONFLICT (owner_account_id) DO UPDATE%', 1);
-      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      await waitForLockWaiters('%FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE%', 1);
       expect((await authorityVersions(fixture.accountId)).tasteRevision).toBe(0);
       expect((await authorityVersions(fixture.accountId)).projectionRevision).toBe(0);
     } finally {

@@ -4,9 +4,11 @@ import type { ServiceContext } from '../context';
 import type { PoolDb } from '../db/pool';
 import { insertCaptureWithAnalysis, insertItem, insertReference, saveDirect } from '../test-support/library';
 import { createIsolatedDatabase, insertAccount, insertAgentConnection, testConfig, testContext } from '../testing';
-import { getCapture } from '../services/captures';
+import { getCapture, deleteCapture } from '../services/captures';
 import { getDiscoveries, rebuildFeedSnapshots } from '../services/discovery';
+import { recordPreference } from '../services/preferences';
 import { getRecommendationConnection } from '../services/interest-graph';
+import { projectAccountInterestGraph } from './projector';
 import {
   attachAssertionSupport,
   insertEvidence,
@@ -809,9 +811,9 @@ describe('scoped feed-context reasons', () => {
 
 // --- Photo graph reads (the capture page) ---------------------------------------------
 
-describe('photo graph reads (the capture page)', () => {
-  async function savedCaptureWithNode(accountId: string) {
-    const ref = await insertReference({ name: `Fixture work ${randomUUID().slice(0, 6)}` }, isoDb);
+/** A saved capture with a derived personal edge supported by its analysis reference. */
+async function savedCaptureWithNode(accountId: string) {
+  const ref = await insertReference({ name: `Fixture work ${randomUUID().slice(0, 6)}` }, isoDb);
     const node = await upsertGraphIdentity(isoDb, {
       canonicalKey: `atlas:${randomUUID()}`,
       canonicalName: `Fixture work ${randomUUID().slice(0, 6)}`,
@@ -842,8 +844,9 @@ describe('photo graph reads (the capture page)', () => {
       captureReferenceId: captureReference[0]!.id,
     });
     return { captureId: cap.captureId, analysisId: cap.analysisId, captureItemId: cap.itemId, edgeId: edge.id };
-  }
+}
 
+describe('photo graph reads (the capture page)', () => {
   it("serves the latest published run's photo cards bound to the capture's active analysis, and withdraws them on retraction, correction or support loss", async () => {
     const { principal, ctx } = await accountOn();
     const accountId = principal.accountId;
@@ -936,6 +939,70 @@ describe('photo graph reads (the capture page)', () => {
 
     const graphRead = await getCapture(ctx, { id: cap.captureId });
     expect(graphRead.recommendations.map((r) => r.id)).toContain(photoItem);
+  });
+});
+
+// --- Capture deletion withdrawal (VAL-DELETE-005) ------------------------------------
+
+describe('capture deletion withdraws graph cards immediately', () => {
+  it('a pinned old cursor skips a card whose sole support died with the capture, without any projector pass; independent support survives', async () => {
+    const { principal, ctx } = await accountOn();
+    const accountId = principal.accountId;
+    const cap = await savedCaptureWithNode(accountId);
+    const work = await corpusNode();
+    const creator = await corpusNode({ kind: 'creator' });
+    const path = await justifiedEdge({ subject: work.node.id, predicate: 'CREATED_BY', object: creator.node.id });
+
+    const captureItem = await insertItem({ accountId }, { title: 'Capture-supported card' }, isoDb);
+    const independentItem = await insertItem({ accountId }, { title: 'Independent card' }, isoDb);
+    // The independent card rests on an EXPLICIT save (a real preference
+    // event), so it is projector-stable: a later pass re-derives its support
+    // and the card survives while the capture card stays withdrawn.
+    const independentRootFilm = await insertItem({ accountId }, { title: 'Independent root film' }, isoDb);
+    await recordPreference(ctx, { action: 'save', target_type: 'discovery_item', target_id: independentRootFilm });
+    const { rows: rootSaved } = await isoDb.query<{ id: string }>(
+      `SELECT id FROM saved_items WHERE owner_account_id = $1 AND discovery_item_id = $2`,
+      [accountId, independentRootFilm],
+    );
+    const rootEdgeRow = await upsertPersonalEdge(isoDb, {
+      ownerAccountId: accountId,
+      target: { kind: 'item', discoveryItemId: independentRootFilm },
+      origin: 'explicit',
+      policyVersion: 'graph-policy-1',
+    });
+    await addEdgeSupport(isoDb, {
+      ownerAccountId: accountId,
+      edgeId: rootEdgeRow.id,
+      originKind: 'saved_item',
+      savedItemId: rootSaved[0]!.id,
+    });
+    const rootEdge = rootEdgeRow.id;
+    const [captureCard, independentCard] = (await publishedRun(accountId, [
+      { itemId: captureItem, path, supportEdgeIds: [cap.edgeId] },
+      { itemId: independentItem, path, supportEdgeIds: [rootEdge] },
+    ])) as [GraphCardFixture, GraphCardFixture];
+
+    await feedIds(ctx, { refresh: true });
+    const snapshot = await latestSnapshot(accountId);
+    const first = await feedIds(ctx, { cursor: cursorFor(snapshot) });
+    expect(first.items.map((c) => c.id)).toContain(captureItem);
+    expect(first.items.map((c) => c.id)).toContain(independentItem);
+
+    // The capture dies AFTER the snapshot is pinned. No projection pass runs:
+    // the read itself must withdraw the card whose only support was the capture.
+    await deleteCapture(ctx, { id: cap.captureId });
+    const after = await feedIds(ctx, { cursor: cursorFor(snapshot) });
+    expect(after.items.map((c) => c.id)).not.toContain(captureItem);
+    expect(after.items.map((c) => c.id)).toContain(independentItem);
+    expect((await getRecommendationConnection(ctx, captureCard.recId)).state).toBe('unavailable');
+    expect((await getRecommendationConnection(ctx, independentCard.recId)).state).toBe('connected');
+
+    // The withdrawal is durable: a later projector pass converges to the same
+    // answer and never resurrects the withdrawn card.
+    await projectAccountInterestGraph(isoDb, { accountId, config: graphOn, source: 'mutation_intent' });
+    const converged = await feedIds(ctx, { cursor: cursorFor(snapshot) });
+    expect(converged.items.map((c) => c.id)).not.toContain(captureItem);
+    expect(converged.items.map((c) => c.id)).toContain(independentItem);
   });
 });
 

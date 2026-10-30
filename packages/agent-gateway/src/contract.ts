@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { ROUTES } from '../../domain/src/schemas/routes';
 import { OAuthExchange } from '../../domain/src/schemas/agent-platform';
 import type { RouteContract } from '../../domain/src/schemas/routes';
-import { NATIVE_OWNER_V2_GRAPH_OPERATIONS } from '../../domain/src/authz/native-owner';
+import { NATIVE_OWNER_V2_GRAPH_OPERATIONS, NATIVE_OWNER_V2_ACCOUNT_OPERATIONS } from '../../domain/src/authz/native-owner';
 import { TOOLS } from './tools';
 import { SCOPES, type Scope } from '../../domain/src/enums';
 import { CaptureCommandResponse, CommandAck, NativeCommandBatch } from '../../domain/src/schemas/agent-commands';
@@ -60,6 +60,11 @@ export function buildAgentContract() {
         // native installation session (NATIVE_OWNER_V2_GRAPH_OPERATIONS);
         // agents still cannot reach them (auth 'owner', no bearer).
         : NATIVE_OWNER_V2_GRAPH_OPERATIONS.has(`${r.method} ${r.path}`) && r.auth === 'owner' ? [{ accountSession: [] }, { installationSession: [] }]
+        // The account-deletion lifecycle operations accept the owner's
+        // enrolled phone too; the public status route below answers only its
+        // one-time capability token, so no principal applies there.
+        : NATIVE_OWNER_V2_ACCOUNT_OPERATIONS.has(`${r.method} ${r.path}`) && r.auth === 'owner' ? [{ accountSession: [] }, { installationSession: [] }]
+        : r.auth === 'public' ? []
         : r.auth === 'owner' ? [{ accountSession: [] }] : [{ bearerAuth: [] }, { accountSession: [] }];
     const op = {
       operationId: name, security,

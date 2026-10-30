@@ -25,7 +25,12 @@ export async function projectInterestGraph(ctx: JobContext<'project_interest_gra
 
   // Deletion fence: jobs cascade with the account, but a claimed job can
   // still race deletion; the projector would fail on the missing state row.
-  const { rows } = await ctx.db.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
+  // A tombstoned account (pending deletion, VAL-DELETE-002/003) is deleted
+  // for publication purposes even before the row purge takes it away.
+  const { rows } = await ctx.db.query<{ id: string }>(
+    'SELECT id FROM accounts WHERE id = $1 AND deleted_at IS NULL',
+    [accountId],
+  );
   if (rows.length === 0) return { state: 'complete' };
 
   const result = await projectAccountInterestGraph(ctx.db, {

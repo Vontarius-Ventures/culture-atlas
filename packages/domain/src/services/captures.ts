@@ -822,6 +822,30 @@ async function deleteCaptureTx(ctx: ServiceContext, tx: Db, owner: Owner, captur
   // Analyses cascade to capture_references, provider_queries and recommendations.
   await tx.query('UPDATE captures SET active_analysis_id = NULL WHERE id = $1', [capture.id]);
   await tx.query('DELETE FROM analyses WHERE capture_id = $1', [capture.id]);
+
+  // Immediate graph withdrawal (VAL-DELETE-005): the capture's derived
+  // support rows go NOW, in this transaction, so every read-time live-support
+  // check (old pinned feed cursors included) withdraws its cards before any
+  // projector pass runs. Edges that lose their last support are withdrawn
+  // exactly as the projector's rebuild would; suppression markers survive
+  // untouched, and independent support keeps its edges. The committed
+  // capture_deleted intent below still drives convergence and is idempotent
+  // against this (the projector re-derives from current state).
+  if (owner.kind === 'account') {
+    await tx.query(
+      `DELETE FROM personal_interest_support s
+        USING personal_interest_edges e
+        WHERE s.edge_id = e.id AND e.owner_account_id = $1 AND s.capture_id = $2`,
+      [owner.accountId, capture.id],
+    );
+    await tx.query(
+      `DELETE FROM personal_interest_edges e
+        WHERE e.owner_account_id = $1 AND e.origin = 'derived'
+          AND NOT EXISTS (SELECT 1 FROM personal_interest_support s WHERE s.edge_id = e.id)`,
+      [owner.accountId],
+    );
+  }
+
   await tx.query(
     `UPDATE captures SET status = 'deleted', deleted_at = now(), purge_after = now() + interval '24 hours',
             private_object_key = NULL, original_object_key = NULL, updated_at = now()

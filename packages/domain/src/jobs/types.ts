@@ -112,6 +112,14 @@ export const JobPayloads = {
     predicate: GraphPredicate,
     association_subtype: z.string().min(1).max(200).optional(),
   }),
+  /**
+   * PR 8 deletion lifecycle: purge every private store of one accepted
+   * account deletion. The payload mirrors the account_deletions record; the
+   * job is system-owned so it survives the account rows it deletes.
+   */
+  purge_account: z.object({
+    account_id: Uuid,
+  }),
 } as const satisfies Record<JobType, z.ZodType>;
 
 export type JobPayload<T extends JobType> = z.infer<(typeof JobPayloads)[T]>;

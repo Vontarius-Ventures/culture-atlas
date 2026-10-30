@@ -7271,6 +7271,493 @@
         }
       }
     },
+    "/v2/me/account-deletion": {
+      "get": {
+        "operationId": "getMyAccountDeletion",
+        "security": [
+          {
+            "accountSession": []
+          },
+          {
+            "installationSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "requested": {
+                      "type": "boolean"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "pending",
+                        "purging",
+                        "failed",
+                        "complete"
+                      ]
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "state": {
+                              "type": "string",
+                              "enum": [
+                                "pending",
+                                "purging",
+                                "failed",
+                                "complete"
+                              ]
+                            },
+                            "requested_at": {
+                              "type": "string"
+                            },
+                            "accepted_at": {
+                              "type": "string"
+                            },
+                            "completed_at": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "completed_steps": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "pending_steps": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "attempts": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "last_error_code": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "retrying": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "state",
+                            "requested_at",
+                            "accepted_at",
+                            "completed_at",
+                            "completed_steps",
+                            "pending_steps",
+                            "attempts",
+                            "last_error_code",
+                            "retrying"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "disclosure": {
+                      "type": "object",
+                      "properties": {
+                        "summary": {
+                          "type": "string"
+                        },
+                        "immediate": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "cleanup_steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "retained": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "summary",
+                        "immediate",
+                        "cleanup_steps",
+                        "retained"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "requested",
+                    "state",
+                    "status",
+                    "disclosure"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Version (If-Match) changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      },
+      "post": {
+        "operationId": "requestMyAccountDeletion",
+        "security": [
+          {
+            "accountSession": []
+          },
+          {
+            "installationSession": []
+          }
+        ],
+        "x-required-scopes": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "confirm": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "status_token": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{43,128}$"
+                  }
+                },
+                "required": [
+                  "confirm"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "purging",
+                            "failed",
+                            "complete"
+                          ]
+                        },
+                        "requested_at": {
+                          "type": "string"
+                        },
+                        "accepted_at": {
+                          "type": "string"
+                        },
+                        "completed_at": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "completed_steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pending_steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "attempts": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "last_error_code": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "retrying": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "requested_at",
+                        "accepted_at",
+                        "completed_at",
+                        "completed_steps",
+                        "pending_steps",
+                        "attempts",
+                        "last_error_code",
+                        "retrying"
+                      ]
+                    },
+                    "status_token": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "disclosure": {
+                      "type": "object",
+                      "properties": {
+                        "summary": {
+                          "type": "string"
+                        },
+                        "immediate": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "cleanup_steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "retained": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "summary",
+                        "immediate",
+                        "cleanup_steps",
+                        "retained"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "status_token",
+                    "disclosure"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Version (If-Match) changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
+    "/v2/account-deletion/status": {
+      "get": {
+        "operationId": "getAccountDeletionStatus",
+        "security": [],
+        "x-required-scopes": [],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Authorized result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "object",
+                      "properties": {
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "purging",
+                            "failed",
+                            "complete"
+                          ]
+                        },
+                        "requested_at": {
+                          "type": "string"
+                        },
+                        "accepted_at": {
+                          "type": "string"
+                        },
+                        "completed_at": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "completed_steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pending_steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "attempts": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "last_error_code": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "retrying": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "state",
+                        "requested_at",
+                        "accepted_at",
+                        "completed_at",
+                        "completed_steps",
+                        "pending_steps",
+                        "attempts",
+                        "last_error_code",
+                        "retrying"
+                      ]
+                    },
+                    "disclosure": {
+                      "type": "object",
+                      "properties": {
+                        "summary": {
+                          "type": "string"
+                        },
+                        "immediate": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "cleanup_steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "retained": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "summary",
+                        "immediate",
+                        "cleanup_steps",
+                        "retained"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "disclosure"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired or revoked credential"
+          },
+          "403": {
+            "description": "Missing permission"
+          },
+          "404": {
+            "description": "Missing or inaccessible resource"
+          },
+          "412": {
+            "description": "Version (If-Match) changed"
+          },
+          "429": {
+            "description": "Rate limit, see Retry-After"
+          }
+        }
+      }
+    },
     "/v2/oauth/token": {
       "post": {
         "operationId": "oauthToken",

@@ -139,8 +139,8 @@ export async function resolvePrincipal(
   }
 
   if (!input.sessionToken) return null;
-  const { rows } = await db.query<SessionRow>(
-    `SELECT s.id, s.account_id, s.expires_at, s.revoked_at, a.is_demo_owner
+  const { rows } = await db.query<SessionRow & { deleted_at: Date | null }>(
+    `SELECT s.id, s.account_id, s.expires_at, s.revoked_at, a.is_demo_owner, a.deleted_at
        FROM sessions s LEFT JOIN accounts a ON a.id = s.account_id
       WHERE s.token_hash = $1`,
     [hashToken(input.sessionToken)],
@@ -149,6 +149,9 @@ export async function resolvePrincipal(
   // Expired/unknown cookies are treated as absent so the visitor gets a fresh session.
   if (!row || row.revoked_at || row.expires_at <= now) return null;
   if (row.account_id) {
+    // A deleted account's session is gone with it (VAL-DELETE-002): the
+    // visitor falls back to a fresh anonymous session, never the account.
+    if (row.deleted_at) return null;
     return { kind: 'account', accountId: row.account_id, sessionId: row.id, isDemoOwner: !!row.is_demo_owner };
   }
   return { kind: 'anonymous', sessionId: row.id, expiresAt: row.expires_at };

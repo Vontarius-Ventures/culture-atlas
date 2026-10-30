@@ -37,7 +37,12 @@ Photos and private preferences are never used for training.
 
 Disconnecting World Sensor (`DELETE /v1/sensor-connections/{id}`) erases the stored viewer credential and revokes the bridge token. Captures already imported stay until deleted individually.
 
-**TODO (account deletion):** the spec requires deletion and disclosure. Confirm the account deletion flow end to end once the accounts stream lands. Every private table cascades from `accounts`.
+**Account deletion** (`POST /v2/me/account-deletion`, implemented in `packages/domain/src/services/account-deletion.ts`; owner browser session or the owner's enrolled phone, never an agent):
+
+- **In one transaction:** the account is tombstoned (`accounts.deleted_at`) — every publication fence treats it as deleted from that commit — every session, agent token, native phone session, share link/invitation and sensor connection is revoked, the phone capture authority ends, every queued or running analysis/discovery/research/graph job is cancelled (workers refuse to publish and the queue never re-claims them), and the interest-graph flags are killed so no replay can re-arm the account's work.
+- **Right after the transaction:** a durable `purge_account` job runs the cleanup. It deletes the account's private objects from both storage namespaces (photos, uploads, derivatives) and then every private row — captures, analyses, saves, collections, plans, preferences, graph, media, traces — in one transaction. The account row itself is deleted; nothing private is kept.
+- **Truthful status:** the acceptance returns a one-time status token (`GET /v2/account-deletion/status`) that answers the cleanup lifecycle after every credential is gone. It restores no authority. Completion is claimed only after the required stores are gone; a failed attempt stays visible as failed-and-retrying and is re-armed by the worker sweep (a storage outage never blocks the purge forever, and never restores access in the meantime).
+- **Retained:** independently sourced cultural facts (shared public data, never private context), security/abuse-prevention logs for a bounded operational window (account references null out; no photos or library data), provider-side processing records under the provider's own retention terms, and encrypted backups that roll off on the platform schedule — a deleted account is never restored from them. These are also disclosed in the API response itself (`docs/api` contract).
 
 ## Backups
 

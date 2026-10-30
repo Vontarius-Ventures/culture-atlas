@@ -1056,7 +1056,7 @@ describe('the anchored logical deadline governs research work', () => {
       await accountHolder.query('SELECT id FROM accounts WHERE id = $1 FOR NO KEY UPDATE', [accountId]);
       run = runJob(jobId, { providers, config: researchOn });
       void run.catch(() => undefined);
-      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      await waitForLockWaiters('%FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE%', 1);
       await new Promise((resolve) => setTimeout(resolve, 1_600));
       await accountHolder.query('COMMIT');
 

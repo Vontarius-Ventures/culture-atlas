@@ -65,6 +65,20 @@ export async function publishForCapture<T>(
   return db.transaction(async (tx) => {
     const capture = await lockLiveCapture(tx, captureId);
     if (!capture) throw new JobCancelledError('capture deleted');
+    // Account-deletion fence (VAL-DELETE-003): acceptance tombstones the
+    // account in the same transaction that cancels this job, and a producer
+    // whose liveness checks all passed can still race it here. FOR SHARE on
+    // the accounts row conflicts with the acceptance's publication-authority
+    // lock, so the two order totally: either this publication committed first
+    // (its rows are then purged by the durable cleanup) or the acceptance
+    // committed first and this transaction sees the tombstone and refuses.
+    if (capture.owner_account_id) {
+      const { rows } = await tx.query<{ id: string }>(
+        'SELECT id FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR SHARE',
+        [capture.owner_account_id],
+      );
+      if (!rows.length) throw new JobCancelledError('account deleted');
+    }
     return fn(tx, capture);
   });
 }

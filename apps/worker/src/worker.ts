@@ -9,6 +9,7 @@ import {
   dispatchGraphOutbox,
   discoveryEnabledInConfig,
   enqueueJob,
+  ensureAccountDeletionPurgeJobs,
   failJob,
   heartbeatJob,
   isAppError,
@@ -73,6 +74,15 @@ export interface WorkerOptions {
    */
   scheduleGraphExpansion?: boolean;
   graphExpansionEveryMs?: number;
+  /**
+   * Re-arm durable account-deletion cleanups periodically (default: on unless
+   * jobIds is set): every accepted deletion whose cleanup is still owed
+   * (pending or last-attempt failed) gets its system-owned purge job back
+   * after a crash, restart or terminal queue failure. Authority is never
+   * restored by a retry; the acceptance revoked it durably.
+   */
+  scheduleAccountDeletionPurges?: boolean;
+  accountDeletionPurgeEveryMs?: number;
 }
 
 /** One purge per hour bucket at most: the dedupe key makes concurrent workers agree. */
@@ -117,6 +127,7 @@ export class Worker {
   private lastSensorSweep = 0;
   private lastGraphDispatch = 0;
   private lastGraphExpansion = 0;
+  private lastAccountDeletionPurge = 0;
 
   constructor(private readonly opts: WorkerOptions) {
     this.workerId = opts.workerId ?? `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
@@ -183,6 +194,19 @@ export class Worker {
       this.lastGraphExpansion = Date.now();
       await dispatchGraphExpansion(this.opts.db, { config: this.opts.config }).catch((e: Error) =>
         this.log('graph expansion sweep failed', { error: e.message }),
+      );
+    }
+    // Account-deletion cleanup re-arm (VAL-DELETE-004): deletions whose
+    // cleanup is still owed get their purge job back after a crash, restart
+    // or terminal queue failure. Deduplicated by the queue; never re-runs a
+    // completed deletion and never restores any authority.
+    if (
+      (this.opts.scheduleAccountDeletionPurges ?? !this.opts.jobIds) &&
+      Date.now() - this.lastAccountDeletionPurge > (this.opts.accountDeletionPurgeEveryMs ?? 30_000)
+    ) {
+      this.lastAccountDeletionPurge = Date.now();
+      await ensureAccountDeletionPurgeJobs(this.opts.db).catch((e: Error) =>
+        this.log('account-deletion purge sweep failed', { error: e.message }),
       );
     }
     const free = this.concurrency - this.running.size;

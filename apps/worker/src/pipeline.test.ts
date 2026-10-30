@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { analyses, captures, getJobById, references, type ServiceContext } from '@culture-atlas/domain';
+import { accountDeletion, analyses, captures, getJobById, references, type ServiceContext } from '@culture-atlas/domain';
 import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
 import { ProviderError, UnavailableVlm, type VlmProvider } from '@culture-atlas/providers';
 import { FakeTextModel } from '@culture-atlas/providers/testing';
@@ -305,6 +305,39 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
     expect((await db.query('SELECT 1 FROM analyses WHERE capture_id = $1', [capture_id])).rows).toHaveLength(0);
     expect((await db.query('SELECT 1 FROM discovery_items WHERE capture_id = $1', [capture_id])).rows).toHaveLength(0);
     expect(await providers.storage.get(key)).toBeNull();
+  });
+
+  it('an account deletion during a running job prevents publication for the account (VAL-DELETE-003)', async () => {
+    let ownerCtxRef: ServiceContext | null = null;
+    const deletingVlm: VlmProvider = {
+      id: 'vlm:account-deleting',
+      capability: () => ({ status: 'available' }),
+      async analyzeImage() {
+        // The account is deleted MID-ANALYSIS, after the job's last liveness
+        // check: the publication transaction itself must refuse the tombstone.
+        await accountDeletion.requestAccountDeletion(ownerCtxRef!, { confirm: true });
+        return { analysis: vlmFixture('clear-outfit.json'), model: 'fake', durationMs: 1 };
+      },
+    };
+    const { providers } = world({ overrides: { vlm: deletingVlm } });
+    const ctx = await accountCtx(providers);
+    ownerCtxRef = ctx;
+    const { capture_id, job_id } = await submit(ctx);
+    const accountId = (ctx.principal as { accountId: string }).accountId;
+
+    await runJobs(ctx, [job_id]);
+
+    // The job stopped (cancelled by acceptance or fenced at publication);
+    // nothing was published for the deleted account either way.
+    expect((await getJobById(db, job_id))?.state).toBe('cancelled');
+    expect(await recRows(capture_id)).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM analyses WHERE capture_id = $1 AND version = 2`, [capture_id])).rows).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM accounts WHERE id = $1 AND deleted_at IS NOT NULL`, [accountId])).rows).toHaveLength(1);
+    // The durable cleanup is armed and nothing about the account came back.
+    expect(
+      (await db.query(`SELECT 1 FROM jobs WHERE type = 'purge_account' AND payload->>'account_id' = $1`, [accountId])).rows,
+    ).toHaveLength(1);
+    expect((await db.query(`SELECT 1 FROM sessions WHERE account_id = $1 AND revoked_at IS NULL`, [accountId])).rows).toEqual([]);
   });
 
   it('corrections queue a new analysis version without the rejected reference', async () => {

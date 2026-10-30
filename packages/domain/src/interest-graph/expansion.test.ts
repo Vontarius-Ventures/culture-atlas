@@ -8,6 +8,7 @@ import type { GraphNodeDomain, GraphNodeKind, GraphPredicate } from './schema';
 import { accountCtx, insertCaptureWithAnalysis, insertItem, insertReference } from '../test-support/library';
 import { closeTestDb, createIsolatedDatabase, getTestDb, insertAccount, testConfig, testContext } from '../testing';
 import { activateAnalysis, submitCorrection } from '../services/analyses';
+import { deleteCapture } from '../services/captures';
 import { recordPreference } from '../services/preferences';
 import {
   attachAssertionSupport,
@@ -434,6 +435,51 @@ describe('shared admission (VAL-DISC-001)', () => {
     expect(referenceEdge).not.toBeNull();
     expect(photoProof.support_edge_ids).toEqual([referenceEdge]);
     expect(personalProof.support_edge_ids).not.toContain(referenceEdge);
+  });
+
+  it('capture deletion withdraws the photo root: a later pass cannot publish or restore it (VAL-DELETE-005)', async () => {
+    const { principal, ctx } = await accountCtx({ config: graphOn });
+    const accountId = principal.accountId;
+    const r1 = await savedRoot(ctx, accountId);
+    const sharedCreator = await plainNode({ kind: 'creator', sense: 'painter' });
+    const personalCandidate = await corpusNode({ kind: 'work', name: 'Personal survivor' });
+    await justifiedEdge({ subject: r1.node.id, predicate: 'CREATED_BY', object: sharedCreator.node.id });
+    await justifiedEdge({ subject: personalCandidate.node.id, predicate: 'CREATED_BY', object: sharedCreator.node.id });
+    await candidateItem(accountId, personalCandidate.referenceId);
+    const photo = await corpusNode({ kind: 'work', name: 'Photo subject' });
+    const cap = await photoCapture(ctx, accountId, { referenceId: photo.referenceId! });
+    const photoCreator = await plainNode({ kind: 'creator', sense: 'painter', name: 'Photo creator' });
+    const photoCandidate = await corpusNode({ kind: 'work', name: 'Photo candidate' });
+    await justifiedEdge({ subject: photo.node.id, predicate: 'CREATED_BY', object: photoCreator.node.id });
+    await justifiedEdge({ subject: photoCandidate.node.id, predicate: 'CREATED_BY', object: photoCreator.node.id });
+    await candidateItem(accountId, photoCandidate.referenceId);
+    await project(accountId);
+
+    const first = await expand(accountId);
+    expect(first.expanded).toBe(true);
+    expect(first.candidates.filter((c) => c.intent === 'photo').map((c) => c.nodeId)).toEqual([photoCandidate.node.id]);
+    const photoProofBefore = (await proofRows(accountId)).find((p) => p.intent === 'photo')!;
+
+    // Deleting the capture withdraws its lineage immediately; the next pass
+    // cannot publish from the dead root, and the withdrawn proof never serves.
+    await deleteCapture(ctx, { id: cap.captureId });
+    const after = await expand(accountId);
+    expect(after.expanded).toBe(true);
+    expect(after.counts.photoRoots).toBe(0);
+    expect(after.candidates.filter((c) => c.intent === 'photo')).toEqual([]);
+    // The personal root and its recommendations survive untouched.
+    expect(after.candidates.filter((c) => c.intent === 'personal').map((c) => c.nodeId)).toContain(personalCandidate.node.id);
+
+    // The photo proof's support is gone NOW (not only after a projector pass):
+    // no held or late producer can restore what the deletion withdrew.
+    const { graphRecommendationServingVerdicts } = await import('./feed-reads');
+    const verdicts = await graphRecommendationServingVerdicts(db, {
+      ownerAccountId: accountId,
+      recommendationIds: [photoProofBefore.recommendation_id],
+      at: new Date(),
+    });
+    expect(verdicts.get(photoProofBefore.recommendation_id)).toMatchObject({ serves: false });
+    expect((await db.query(`SELECT 1 FROM captures WHERE id = $1 AND deleted_at IS NOT NULL`, [cap.captureId])).rows).toHaveLength(1);
   });
 
   it('rejected evidence cannot be overridden by preference, and no unsupported filler completes the rail', async () => {
@@ -2319,7 +2365,7 @@ describe('live photo-analysis authority at the publication fence (DISC-SCR-007)'
         deadline: { at: deadlineAt },
       });
       void pass.catch(() => undefined);
-      await waitForLockWaiters('%accounts WHERE id = $1 FOR NO KEY UPDATE%', 1);
+      await waitForLockWaiters('%FROM accounts WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE%', 1);
       await new Promise((resolve) => setTimeout(resolve, 1_200));
       await accountHolder.query('COMMIT');
 

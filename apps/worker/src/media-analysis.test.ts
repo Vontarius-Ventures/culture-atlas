@@ -9,10 +9,13 @@ import {
   AppError,
   JOB_HANDLERS,
   MediaAnalysis,
+  accountDeletion,
   agentMedia,
   authorizeMedia,
   collections,
   createCaptureV2Context,
+  getJobById,
+  setAccountMediaStorage,
   setAnalysisReadyListener,
   type AnalysisReadyEvent,
   type PoolDb,
@@ -715,6 +718,60 @@ describe('v2 media analysis worker (Concentrate, offline fixtures)', { timeout: 
       ).rows[0]!.n,
     ).toBe(0);
     expect(display.objects.size).toBe(keysBefore);
+  });
+
+  it('account deletion during inference fences publication, and the durable purge erases the media objects (VAL-DELETE-003/004)', async () => {
+    const principal = await insertAccount(db);
+    const accountId = principal.accountId;
+    const assetId = await photoAsset(accountId, 'blue');
+    const { gateway, fetchImpl } = gatewayWith(async () => {
+      // The account is deleted while the model call is in flight: the
+      // publisher must lose its lease and publish nothing.
+      await accountDeletion.requestAccountDeletion(testContext(principal, { db, config }), { confirm: true });
+      return envelope(JSON.stringify(reading([{ name: 'Bauhaus' }])));
+    });
+    const req = await request(accountId, assetId, { mode: 'photo' });
+    const keysBefore = display.objects.size;
+    await worker(gateway, accountId).drain();
+
+    const row = await analysisRow(req.analysis_id);
+    expect(row.state).toBe('cancelled');
+    expect(row.capture_id).toBeNull();
+    expect(row.observation).toBeNull();
+    expect(
+      (await db.query('SELECT count(*)::int AS n FROM captures WHERE media_asset_id=$1', [assetId]))
+        .rows[0]!.n,
+    ).toBe(0);
+    expect(display.objects.size).toBe(keysBefore);
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(
+      (await db.query(`SELECT 1 FROM accounts WHERE id=$1 AND deleted_at IS NOT NULL`, [accountId])).rows,
+    ).toHaveLength(1);
+
+    // The durable cleanup removes the account's v2 media objects (the same
+    // namespace this worker reads through).
+    setAccountMediaStorage(storage);
+    try {
+      const purgeJobId = (
+        await db.query<{ id: string }>(`SELECT id FROM jobs WHERE type='purge_account' AND payload->>'account_id'=$1`, [accountId])
+      ).rows[0]!.id;
+      const w = new Worker({
+        db,
+        providers: testProviders(),
+        config,
+        handlers: JOB_HANDLERS,
+        jobIds: [purgeJobId],
+        log: () => undefined,
+        heartbeatMs: 1_000,
+      });
+      await w.drain();
+      expect((await getJobById(db, purgeJobId))?.state).toBe('complete');
+      const left: string[] = [];
+      for await (const info of storage.list(`accounts/${accountId}`)) left.push(info.key);
+      expect(left).toEqual([]);
+    } finally {
+      setAccountMediaStorage(undefined);
+    }
   });
 
 

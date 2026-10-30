@@ -74,6 +74,17 @@ export const JOB_TYPES = [
    * flag, a qualified role and durable account/global spend limits.
    */
   'research_graph_relation',
+  /**
+   * PR 8 deletion lifecycle: the durable private-store cleanup for one
+   * accepted account deletion (VAL-DELETE-004). System-owned (no owner: it
+   * must survive the account rows it deletes), enqueued by acceptance and
+   * re-armed by the worker sweep after crashes, restarts or terminal
+   * failures. Idempotent: objects are removed before rows, every delete is
+   * re-runnable, and completion is claimed only after every required store
+   * is gone. Failures leave the deletion failed-but-owed and never restore
+   * any account authority.
+   */
+  'purge_account',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;

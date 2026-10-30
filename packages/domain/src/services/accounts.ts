@@ -334,14 +334,14 @@ export async function signIn(
       retryAfter: secondsUntilUtcMidnight(ctx.now()),
     });
   }
-  const { rows } = await ctx.db.query<{ account_id: string; password_hash: string; is_demo_owner: boolean }>(
-    `SELECT c.account_id, c.password_hash, a.is_demo_owner
+  const { rows } = await ctx.db.query<{ account_id: string; password_hash: string; is_demo_owner: boolean; deleted_at: Date | null }>(
+    `SELECT c.account_id, c.password_hash, a.is_demo_owner, a.deleted_at
        FROM account_credentials c JOIN accounts a ON a.id = c.account_id WHERE c.email = $1`,
     [email],
   );
   const row = rows[0];
   const ok = await verifyPassword(input.password, row?.password_hash ?? (await dummyPasswordHash()));
-  if (!row || !ok) {
+  if (!row || !ok || row.deleted_at) {
     await tryConsume(ctx.db, { bucket, metric: 'sign_in_failures', day, limit: SIGN_IN_FAILURES_PER_DAY + 1 });
     throw new AppError('unauthenticated', { message: 'Email or password is incorrect.' });
   }
