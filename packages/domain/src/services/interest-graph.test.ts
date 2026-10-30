@@ -13,6 +13,7 @@ import {
   upsertGraphIdentity,
 } from '../interest-graph/evidence';
 import { createGraphRun, insertGraphRecommendation, insertRecommendationProof } from '../interest-graph/store';
+import { PROJECTION_SUPPORT_VERSION } from '../interest-graph/schema';
 import { retractGraphEvidence } from '../interest-graph/validity';
 import { recordPreference } from './preferences';
 import * as interestGraph from './interest-graph';
@@ -28,7 +29,38 @@ import * as interestGraph from './interest-graph';
  */
 
 const db = getTestDb();
-afterAll(closeTestDb);
+
+/**
+ * Accounts whose control PATCHes created their `personal_graph_state` row at
+ * the DEFAULT support version without a projection pass. This file runs on
+ * the run's SHARED database, and such a bare control row is exactly what
+ * `dispatchGraphOutbox`'s support-version catch-up phase hands to the queue
+ * as repair work — a row left behind keeps polluting every later file's
+ * GLOBAL sweep, so dispatch.test.ts's exact fairness lists are only
+ * deterministic when earlier files leave no catch-up-eligible rows behind.
+ * Each control test registers its account here and the file converges every
+ * registered row through the real projector before closing the database —
+ * the same current-state repair production's catch-up performs — instead of
+ * deleting the fixture or weakening anyone else's assertions.
+ */
+const controlFixtureAccounts: string[] = [];
+
+afterAll(async () => {
+  for (const accountId of controlFixtureAccounts) {
+    const converged = await projectAccountInterestGraph(db, {
+      accountId,
+      config: projectionOn,
+      source: 'support_version_catch_up',
+    });
+    expect(converged.projected).toBe(true);
+    const { rows } = await db.query<{ support_version: number }>(
+      'SELECT support_version FROM personal_graph_state WHERE owner_account_id = $1',
+      [accountId],
+    );
+    expect(rows[0]!.support_version).toBe(PROJECTION_SUPPORT_VERSION);
+  }
+  await closeTestDb();
+});
 
 const projectionOn = testConfig({ INTEREST_GRAPH_PROJECTION_ENABLED: 'true' });
 
@@ -247,6 +279,7 @@ describe('owner/native graph summary (GET /v2/me/interest-graph)', () => {
 describe('optimistic settings (PATCH /v2/me/interest-graph/settings)', () => {
   it('pauses and resumes through the existing discovery pause, bumping the shared control revision', async () => {
     const { principal, ctx } = await accountCtx({ config: projectionOn });
+    controlFixtureAccounts.push(principal.accountId);
     const paused = await interestGraph.updateInterestGraphSettings(ctx, { expected_revision: 0, discovery_paused: true });
     expect(paused.settings).toMatchObject({ revision: 1, discovery_paused: true });
     expect(paused.settings.paused_at).toBeTruthy();
@@ -259,7 +292,8 @@ describe('optimistic settings (PATCH /v2/me/interest-graph/settings)', () => {
   });
 
   it('desired-state retries are idempotent: a satisfied pause neither bumps nor conflicts', async () => {
-    const { ctx } = await accountCtx({ config: projectionOn });
+    const { principal, ctx } = await accountCtx({ config: projectionOn });
+    controlFixtureAccounts.push(principal.accountId);
     const paused = await interestGraph.updateInterestGraphSettings(ctx, { expected_revision: 0, discovery_paused: true });
     const retried = await interestGraph.updateInterestGraphSettings(ctx, { expected_revision: 0, discovery_paused: true });
     expect(retried.settings.revision).toBe(paused.settings.revision);
@@ -267,7 +301,8 @@ describe('optimistic settings (PATCH /v2/me/interest-graph/settings)', () => {
   });
 
   it('a stale revision with a different desired state is a typed revision_conflict', async () => {
-    const { ctx } = await accountCtx({ config: projectionOn });
+    const { principal, ctx } = await accountCtx({ config: projectionOn });
+    controlFixtureAccounts.push(principal.accountId);
     await interestGraph.updateInterestGraphSettings(ctx, { expected_revision: 0, discovery_paused: true });
     const res = await code(interestGraph.updateInterestGraphSettings(ctx, { expected_revision: 0, discovery_paused: false }));
     expect(res.code).toBe('revision_conflict');

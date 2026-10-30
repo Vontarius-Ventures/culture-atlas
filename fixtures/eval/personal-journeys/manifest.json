@@ -1,0 +1,167 @@
+{
+  "manifest_version": 1,
+  "frozen_at": "2026-10-30T14:29:45.000Z",
+  "frozen_at_provenance": {
+    "original_recorded_value": "2026-10-30T15:30:00.000Z",
+    "correction": "The original value was a timezone misconversion (2026-10-30 is EDT, UTC-4, not UTC-5). Corrected 2026-10-30 to the verified filesystem creation time of this manifest file.",
+    "evidence": [
+      "This manifest file's filesystem birth time is 2026-10-30T14:29:45Z (10:29:45 EDT) and it was never modified after creation.",
+      "The first raw variant report (existing.json) begins at 2026-10-30T14:37:01Z (file birth; its recorded_at is 14:38:53.378Z).",
+      "The curated report was written 2026-10-30T14:41:10Z and the graph report 2026-10-30T14:54:22Z.",
+      "The rubric review (review.json) was applied at 2026-10-30T14:58:46.431Z, which matches that file's own birth time exactly.",
+      "This manifest and the runner were committed in d53265c at 2026-10-30T15:35:22Z."
+    ],
+    "conclusion": "The freeze-before-review order holds: the protocol was frozen at 14:29:45Z, before any output existed (first output 14:37:01Z) and before the review (14:58:46Z). The original 15:30:00Z value would have placed the 'freeze' after all outputs and the review, which the filesystem evidence disproves.",
+    "scope": "Timestamp metadata correction only. No predeclared journey, pick, save, rubric, denominator or budget bound was changed after outputs were seen."
+  },
+  "purpose": "Fresh personal-preference comparison of the existing (legacy Qloo taste seed), curated-only (labeled example feed, no personalization) and graph-assisted (interest-graph projection + corpus expansion) discovery variants (VAL-QUAL-002). Frozen BEFORE any output was reviewed: journeys, picks, saves, rubric, denominators and budget bounds below are predeclared and must not change after outputs are seen.",
+  "stack": {
+    "base_url": "http://127.0.0.1:3200",
+    "database": "ca_graph_pr8_3bb8f6d4 (isolated mission journey DB; the real web app, real job worker, real PostgreSQL)",
+    "variants": {
+      "existing": "Graph flags OFF, taste seed ON (the current product defaults for a fresh account): onboarding completion runs the real Qloo taste_seed job through the real worker; cards come from the legacy personalization path.",
+      "curated-only": "Graph flags OFF, taste seed OFF: the account's feed is the deterministic curated example feed (labeled `is_example` cards) with no personalization and zero provider calls.",
+      "graph-assisted": "Graph projection + discovery ON, taste seed OFF, reviewed pilot corpus admitted: the journey's explicit save projects as personal graph support, the real worker's expansion walks reviewed corpus paths and publishes source-backed cards with Why this."
+    }
+  },
+  "budget": {
+    "new_paid_allowance_usd": 100,
+    "decision_date": "2026-10-30",
+    "note": "Only the existing variant makes live paid Qloo requests (the real taste_seed job: one insights call per eat/wear/play/watch category, job budget capped at 12 requests including retries). The curated-only and graph-assisted variants make zero live provider calls. Historical Qloo lookups made before 2026-10-30 are excluded from this allowance by user decision; their external charges remain unknown, not zero. Concentrate non-photo model verification is tracked separately in the durable inference_attempts ledger against the same $100 all-time ceiling."
+  },
+  "review_protocol": {
+    "reviewer": "One reviewer: the AI quality worker (factory droid). NO independent human reviewer; these are not independent human judgments. Automated scoring: none; every judgment below is made by the single AI reviewer against this frozen rubric.",
+    "review_order": "Each variant-journey's served cards are collected raw first; judgments are then applied per card using only the journey's declared profile and the rubric below. Empty, failed and unavailable outcomes stay in the denominators and are never replaced or retried away."
+  },
+  "rubric": {
+    "personal_relevance": {
+      "definition": "Would this card plausibly interest the journey's declared person, judging only from the card's title/category/subtitle and the declared profile?",
+      "levels": {
+        "relevant": "The card names or clearly connects to the profile's declared subject or its stated domain of interest.",
+        "partial": "Topically adjacent to the declared profile (same broad domain) but not connected to its declared subject.",
+        "not": "No plausible connection to the declared profile."
+      }
+    },
+    "useful_card": {
+      "definition": "A card judged 'relevant' that is also NEW to the person: it is not a restatement of the person's own pick or explicitly saved item (the profile already names it), and not a duplicate of another card in the same journey-variant output.",
+      "note": "Duplicates count once as useful; repeats are counted under repetition."
+    },
+    "source_faithfulness": {
+      "definition": "For graph-assisted cards with a Why this disclosure: does the displayed explanation state exactly what its cited corpus evidence supports (creator/museum attribution and the reviewed path), with the source link present? Judged 'fully_supported' when the reason matches the corpus record, 'unsupported' when the reason asserts anything the cited evidence does not support, and 'unavailable' when the card shows no explanation at all.",
+      "note": "Existing-variant cards carry no Why this (the legacy path has no source disclosure): they are reported as source_unavailable, never as supported."
+    },
+    "empty_journey": "A variant-journey whose feed serves zero non-example cards (existing/graph) or zero cards at all (curated-only) after its pipeline reached a terminal state.",
+    "repetition": "Count of canonical duplicate titles among the journey-variant's served non-example cards.",
+    "latency": "Milliseconds from onboarding completion (existing/curated) or the explicit save's API response (graph-assisted) until the first non-example card is observable in /v1/discoveries, measured at a 2-second poll cadence. Timeout (120s) is recorded as unavailable, never as a pass.",
+    "domain_coverage": "Distinct domains (art, sculpture, ceramics, interiors, plus the feed's eat/wear/play/watch lifestyle categories) represented among the journey-variant's non-example cards, counted from card categories and corpus domains."
+  },
+  "denominators": {
+    "journeys": "Every predeclared journey below runs in every variant; every attempt (including empty, error and unavailable outcomes) stays in the aggregate denominators.",
+    "cards": "Every non-example served card is judged; cards that cannot be judged (missing title) count as not_relevant/unsupported and stay in the denominator.",
+    "sample_size_vs_proposal": "PR #8 proposed 20 DISTINCT personal journeys; this frozen set is 6 distinct journeys, each run in all three variants (6 x 3 = 18 variant attempts). The shortfall is 14 distinct journeys against the 20-journey proposal and is reported as unmet, never rounded up. The 18 figure is the attempt count, not a sample of 18 distinct journeys and not a comparison of 18 against the 20-journey target."
+  },
+  "journeys": [
+    {
+      "id": "rodin-sculpture",
+      "profile": "A person who loves figurative sculpture and visits museum sculpture galleries; their favorite sculptor is Auguste Rodin.",
+      "domain": "sculpture",
+      "picks": ["img-forms", "chip-play-classical", "chip-watch-documentary"],
+      "save": {
+        "title": "Auguste Rodin",
+        "detail": "French sculptor, 1840–1917",
+        "reference": {
+          "canonical_key": "qloo:0A4E018D-ED71-43C0-B16E-0431CDC5C403",
+          "name": "Auguste Rodin",
+          "type": "creator",
+          "external_ids": { "qloo": "0A4E018D-ED71-43C0-B16E-0431CDC5C403", "qloo_types": ["urn:entity:person"] }
+        },
+        "expected_linkage": "verified (corpus qloo mapping)"
+      }
+    },
+    {
+      "id": "seurat-painting",
+      "profile": "A person who loves pointillist and post-impressionist painting; their favorite painter is Georges Seurat.",
+      "domain": "art",
+      "picks": ["img-listening", "chip-play-jazz", "chip-watch-french-new-wave"],
+      "save": {
+        "title": "Georges Seurat",
+        "detail": "French painter, 1859–1891",
+        "reference": {
+          "canonical_key": "qloo:9E815B4D-1392-4952-AA23-996274BACD45",
+          "name": "Georges Seurat",
+          "type": "creator",
+          "external_ids": { "qloo": "9E815B4D-1392-4952-AA23-996274BACD45", "qloo_types": ["urn:entity:person"] }
+        },
+        "expected_linkage": "verified (corpus qloo mapping)"
+      }
+    },
+    {
+      "id": "vangogh-painting",
+      "profile": "A person who loves Vincent van Gogh's colors and post-impressionist painting.",
+      "domain": "art",
+      "picks": ["img-night", "chip-play-ambient", "chip-watch-slow-cinema"],
+      "save": {
+        "title": "Vincent van Gogh",
+        "detail": "Dutch painter, 1853–1890",
+        "reference": {
+          "canonical_key": "person:vincent-van-gogh",
+          "name": "Vincent van Gogh",
+          "type": "creator",
+          "external_ids": {}
+        },
+        "expected_linkage": "unresolved (the reviewed corpus ships no qloo mapping for van Gogh: Qloo search returned five same-named persons, so the honest state is no verified link)"
+      }
+    },
+    {
+      "id": "cezanne-still-life",
+      "profile": "A person who loves Paul Cézanne's still lifes and post-impressionist painting.",
+      "domain": "art",
+      "picks": ["img-table", "chip-play-bossa-nova", "chip-watch-documentary"],
+      "save": {
+        "title": "Paul Cézanne",
+        "detail": "French painter, 1839–1906",
+        "reference": {
+          "canonical_key": "person:paul-cezanne",
+          "name": "Paul Cézanne",
+          "type": "creator",
+          "external_ids": {}
+        },
+        "expected_linkage": "unresolved (the reviewed corpus ships no qloo mapping for Cézanne: Qloo search returned two same-named persons)"
+      }
+    },
+    {
+      "id": "maiolica-ceramics",
+      "profile": "A person who collects tin-glazed maiolica ceramics and loves colorful Renaissanceware.",
+      "domain": "ceramics",
+      "picks": ["img-linen", "chip-wear-wabi-sabi", "chip-eat-mezze"],
+      "save": {
+        "title": "Francesco Durantino maiolica",
+        "detail": "Tin-glazed earthenware tradition",
+        "reference": {
+          "canonical_key": "person:francesco-durantino",
+          "name": "Francesco Durantino",
+          "type": "creator",
+          "external_ids": {}
+        },
+        "expected_linkage": "unresolved (no verified provider mapping for this corpus creator)"
+      }
+    },
+    {
+      "id": "aesthetic-interiors",
+      "profile": "A person who furnishes their home with Aesthetic Movement pieces and loves Godwin's furniture designs.",
+      "domain": "interiors",
+      "picks": ["img-corners", "chip-wear-art-deco", "chip-play-lo-fi"],
+      "save": {
+        "title": "Edward William Godwin",
+        "detail": "British furniture designer, 1833–1886",
+        "reference": {
+          "canonical_key": "person:edward-william-godwin",
+          "name": "Edward William Godwin",
+          "type": "creator",
+          "external_ids": {}
+        },
+        "expected_linkage": "unresolved (no verified provider mapping for this corpus creator)"
+      }
+    }
+  ]
+}

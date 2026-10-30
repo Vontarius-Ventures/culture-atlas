@@ -23,7 +23,7 @@ State at the time of writing:
 ### 0.1 One-time setup
 
 ```sh
-cd "/Users/vontariusfalls/culture-atlas-worktrees/factory3-integration"   # or your checkout of this branch
+cd ~/culture-atlas-worktrees/factory3-integration   # or your checkout of this branch
 pnpm install --frozen-lockfile
 createdb -h localhost -U culture_atlas ca_handtest    # password culture_atlas
 mkdir -p ~/ca-handtest/{objects,mail}
@@ -33,8 +33,8 @@ Create `~/ca-handtest/env.sh`. It layers the secrets file over the repo `.env` a
 
 ```sh
 set -a
-. "/Users/vontariusfalls/culture atlas/.env"
-. /Users/vontariusfalls/culture-atlas-worktrees/.secrets.env
+. "$HOME/culture atlas/.env"
+. ~/culture-atlas-worktrees/.secrets.env
 NODE_ENV=development
 PORT=3700
 # Must be the exact origin the PHONE uses (see 0.3). Sign-in links and signed

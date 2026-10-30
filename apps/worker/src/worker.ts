@@ -14,6 +14,7 @@ import {
   heartbeatJob,
   isAppError,
   markJobCancelled,
+  projectionEnabledInConfig,
   reapJobs,
   runStageOnce,
   sensorConnections,
@@ -128,6 +129,25 @@ export class Worker {
   private lastGraphDispatch = 0;
   private lastGraphExpansion = 0;
   private lastAccountDeletionPurge = 0;
+  /**
+   * The closed-app quiescence epoch. Every execution SETTLING bumps it, and
+   * each scheduled graph sweep records the epoch it ran against: a sweep
+   * counts as having verified the idle state only when no execution settled
+   * after it ran. Wall-clock comparisons cannot prove that ordering — a
+   * sweep that raced a projection's commit shares its millisecond, and the
+   * projection stamps `expansion_due_since` in database time — so drain()
+   * asks the epoch, never the clock.
+   */
+  private executionEpoch = 0;
+  private graphDispatchRanEpoch = 0;
+  private graphExpansionRanEpoch = 0;
+  /**
+   * The most recent graph-sweep rejection and its sequence number. The
+   * production poll loop logs and retries these; drain() fails on them
+   * honestly so a broken sweep can never masquerade as a quiet pass.
+   */
+  private graphSweepErrorSeq = 0;
+  private lastGraphSweepError: unknown = null;
 
   constructor(private readonly opts: WorkerOptions) {
     this.workerId = opts.workerId ?? `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`;
@@ -146,19 +166,35 @@ export class Worker {
     (this.opts.log ?? ((m, d) => console.log(`[worker ${this.workerId}] ${m}`, d ?? '')))(message, data);
   }
 
+  /** Whether this worker schedules the interest-graph outbox dispatch sweep. */
+  private get schedulesGraphDispatch(): boolean {
+    return (this.opts.scheduleGraphDispatch ?? !this.opts.jobIds) && projectionEnabledInConfig(this.opts.config);
+  }
+
+  /** Whether this worker schedules the closed-app expansion sweep. */
+  private get schedulesGraphExpansion(): boolean {
+    return (this.opts.scheduleGraphExpansion ?? !this.opts.jobIds) && discoveryEnabledInConfig(this.opts.config);
+  }
+
   /** Claim and start up to the free capacity. Returns the number of jobs started. */
   async tick(): Promise<number> {
-    if (Date.now() - this.lastReap > 15_000) {
+    // Sweep windows are "elapsed >= interval", never "> interval": a
+    // zero-interval sweep (the tests' `*EveryMs: 0`) means EVERY tick —
+    // including a tick that shares the previous sweep's millisecond, which
+    // is exactly when the closed-app chain's projection settles. Production
+    // throttles keep their shape (a 5-second window still fires at five
+    // seconds, never sooner for interval > 0).
+    if (Date.now() - this.lastReap >= 15_000) {
       this.lastReap = Date.now();
       await reapJobs(this.opts.db).catch((e: Error) => this.log('reap failed', { error: e.message }));
     }
-    if ((this.opts.schedulePurge ?? !this.opts.jobIds) && Date.now() - this.lastPurge > (this.opts.purgeEveryMs ?? 600_000)) {
+    if ((this.opts.schedulePurge ?? !this.opts.jobIds) && Date.now() - this.lastPurge >= (this.opts.purgeEveryMs ?? 600_000)) {
       this.lastPurge = Date.now();
       await enqueueJob(this.opts.db, { type: 'purge_deleted', owner: null, payload: {}, dedupeKey: purgeDedupeKey(new Date()), maxAttempts: 3 }).catch((e: Error) =>
         this.log('purge enqueue failed', { error: e.message }),
       );
     }
-    if ((this.opts.scheduleSensorPolls ?? !this.opts.jobIds) && Date.now() - this.lastSensorSweep > (this.opts.sensorSweepEveryMs ?? 60_000)) {
+    if ((this.opts.scheduleSensorPolls ?? !this.opts.jobIds) && Date.now() - this.lastSensorSweep >= (this.opts.sensorSweepEveryMs ?? 60_000)) {
       this.lastSensorSweep = Date.now();
       await sensorConnections.ensureSensorPollJobs(this.opts.db).catch((e: Error) => this.log('sensor sweep failed', { error: e.message }));
     }
@@ -170,15 +206,20 @@ export class Worker {
     // projector semantics are rebuilt from current state without a new user
     // mutation. Only runs when the operator opted the server in; per-account
     // kill flags are still honored inside the dispatch pass.
-    if (
-      (this.opts.scheduleGraphDispatch ?? !this.opts.jobIds) &&
-      Date.now() - this.lastGraphDispatch > (this.opts.graphDispatchEveryMs ?? 5_000) &&
-      (this.opts.config.INTEREST_GRAPH_PROJECTION_ENABLED === 'true' || this.opts.config.INTEREST_GRAPH_PROJECTION_ENABLED === '1')
-    ) {
+    if (this.schedulesGraphDispatch && Date.now() - this.lastGraphDispatch >= (this.opts.graphDispatchEveryMs ?? 5_000)) {
       this.lastGraphDispatch = Date.now();
-      await dispatchGraphOutbox(this.opts.db, { config: this.opts.config }).catch((e: Error) =>
-        this.log('graph outbox dispatch failed', { error: e.message }),
-      );
+      // The sweep verifies the state as of THIS epoch, captured before its
+      // database work: an execution settling while it runs bumps the epoch and
+      // makes this pass stale for drain()'s idle verification.
+      const ranAtEpoch = this.executionEpoch;
+      try {
+        await dispatchGraphOutbox(this.opts.db, { config: this.opts.config });
+        this.graphDispatchRanEpoch = ranAtEpoch;
+      } catch (e) {
+        this.log('graph outbox dispatch failed', { error: (e as Error).message });
+        this.lastGraphSweepError = e;
+        this.graphSweepErrorSeq++;
+      }
     }
     // Interest-graph expansion sweep (PR 8 discovery): the closed-app sweeper.
     // Accounts whose committed projection published fresh support (or whose
@@ -186,15 +227,17 @@ export class Worker {
     // coalesced by the queue dedupe; the sweep only runs when the operator
     // opted the server into discovery. Gate/kill/pause checks and the periodic
     // bound stay inside dispatchGraphExpansion.
-    if (
-      (this.opts.scheduleGraphExpansion ?? !this.opts.jobIds) &&
-      Date.now() - this.lastGraphExpansion > (this.opts.graphExpansionEveryMs ?? 5_000) &&
-      discoveryEnabledInConfig(this.opts.config)
-    ) {
+    if (this.schedulesGraphExpansion && Date.now() - this.lastGraphExpansion >= (this.opts.graphExpansionEveryMs ?? 5_000)) {
       this.lastGraphExpansion = Date.now();
-      await dispatchGraphExpansion(this.opts.db, { config: this.opts.config }).catch((e: Error) =>
-        this.log('graph expansion sweep failed', { error: e.message }),
-      );
+      const ranAtEpoch = this.executionEpoch;
+      try {
+        await dispatchGraphExpansion(this.opts.db, { config: this.opts.config });
+        this.graphExpansionRanEpoch = ranAtEpoch;
+      } catch (e) {
+        this.log('graph expansion sweep failed', { error: (e as Error).message });
+        this.lastGraphSweepError = e;
+        this.graphSweepErrorSeq++;
+      }
     }
     // Account-deletion cleanup re-arm (VAL-DELETE-004): deletions whose
     // cleanup is still owed get their purge job back after a crash, restart
@@ -202,7 +245,7 @@ export class Worker {
     // completed deletion and never restores any authority.
     if (
       (this.opts.scheduleAccountDeletionPurges ?? !this.opts.jobIds) &&
-      Date.now() - this.lastAccountDeletionPurge > (this.opts.accountDeletionPurgeEveryMs ?? 30_000)
+      Date.now() - this.lastAccountDeletionPurge >= (this.opts.accountDeletionPurgeEveryMs ?? 30_000)
     ) {
       this.lastAccountDeletionPurge = Date.now();
       await ensureAccountDeletionPurgeJobs(this.opts.db).catch((e: Error) =>
@@ -224,19 +267,54 @@ export class Worker {
       // running, and the old execution settling must never erase the
       // successor's slot (drain/stop await both executions).
       const key = `${job.id}#${job.attempt}`;
-      const p = this.execute(job).finally(() => this.running.delete(key));
+      const p = this.execute(job).finally(() => {
+        this.running.delete(key);
+        // Any settle is new execution activity: a graph sweep that ran before
+        // it (and so may have missed work the execution committed, like a
+        // projection stamping `expansion_due_since`) is stale until it runs
+        // again. drain() consults this epoch before calling the queue quiet.
+        this.executionEpoch++;
+      });
       this.running.set(key, p);
     }
     return jobs.length;
   }
 
-  /** Process until no more claimable jobs and all running jobs finished (tests). */
+  /**
+   * Process until no more claimable jobs, all running jobs finished, AND a
+   * complete eligible idle verification pass (the closed-app quiescence
+   * contract): every scheduled graph sweep last ran against the state left by
+   * the most recent settled execution. A tick that starts nothing and leaves
+   * nothing running is NOT quiescent while a graph sweep that would discover
+   * due work has not re-run since the last execution settled — including when
+   * its throttle window is still closed: the loop keeps waiting for the window
+   * to open, so production sweep throttling is respected, never bypassed.
+   * Graph-sweep errors fail the drain honestly instead of masquerading as a
+   * quiet pass.
+   */
   async drain(): Promise<void> {
+    const sweepErrorsSeen = this.graphSweepErrorSeq;
     for (;;) {
       const started = await this.tick();
-      if (started === 0 && this.running.size === 0) return;
+      if (this.graphSweepErrorSeq !== sweepErrorsSeen) {
+        const error = this.lastGraphSweepError;
+        throw new Error(`graph sweep failed during drain: ${(error as Error | undefined)?.message ?? String(error)}`, { cause: error });
+      }
+      if (started === 0 && this.running.size === 0 && this.graphSweepsVerified()) return;
       await Promise.race([...this.running.values(), new Promise((r) => setTimeout(r, 10))]);
     }
+  }
+
+  /**
+   * True when every scheduled graph sweep last ran with no execution settle
+   * after it — the complete idle verification pass. A sweep whose window has
+   * not opened since the last settle simply has not re-verified yet, so the
+   * caller keeps waiting for the window; throttling stays intact.
+   */
+  private graphSweepsVerified(): boolean {
+    if (this.schedulesGraphDispatch && this.graphDispatchRanEpoch !== this.executionEpoch) return false;
+    if (this.schedulesGraphExpansion && this.graphExpansionRanEpoch !== this.executionEpoch) return false;
+    return true;
   }
 
   start(): void {

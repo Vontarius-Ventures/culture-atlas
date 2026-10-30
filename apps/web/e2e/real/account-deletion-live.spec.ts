@@ -75,9 +75,35 @@ test.afterAll(async () => {
   await closeJourneyDb();
 });
 
+/**
+ * credential-evidence-containment (EXP-SCR-024): the once-shown agent
+ * credential is on screen for the deletionlive-04 capture, so a failed run
+ * must never leave its connection active behind it. The owner session is
+ * recorded as soon as the connection exists; afterEach revokes through the
+ * owner-authorized route. A completed journey needs nothing here — the
+ * account deletion revokes the connection in the same purge transaction,
+ * and the tolerated 401/404 is exactly that path, never an exercise of the
+ * agent token.
+ */
+let journeyAgent: { cookie: string; csrf: string; connectionId: string } | null = null;
+
 // If a step fails while the workers are held, release them again so the
-// journey stack is left in its running state for the next run.
+// journey stack is left in its running state for the next run. The agent
+// connection teardown runs first: containment beats stack hygiene.
 test.afterEach(async () => {
+  const own = journeyAgent;
+  journeyAgent = null;
+  if (own) {
+    const revoke = await fetch(`${BASE}/v2/agent-connections/${own.connectionId}`, {
+      method: 'DELETE',
+      headers: { cookie: `${SESSION_COOKIE}=${own.cookie}`, [CSRF_HEADER]: own.csrf },
+    });
+    // 204: revoked now. 401/404: the journey's own deletion already revoked
+    // it in the account purge, so the credential is dead either way.
+    if (revoke.status !== 204 && revoke.status !== 401 && revoke.status !== 404) {
+      throw new Error(`containment teardown could not revoke the journey agent connection: DELETE answered ${revoke.status}`);
+    }
+  }
   for (const service of ['worker', 'media_worker'] as const) {
     if (spawnSync('sh', [CONTROL, 'health', service]).status !== 0) {
       await startService(service, service === 'worker' ? '[worker] starting' : '[media-worker]').catch(() => undefined);
@@ -564,6 +590,22 @@ test('settings deletion ends a live private journey: revoke at once, fence late 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { collections: { name: string }[] };
     expect(body.collections.some((c) => c.name === COLLECTION)).toBe(true);
+    // credential-evidence-containment: from the moment the once-shown
+    // credential exists, the journey OWNS its teardown. afterEach revokes
+    // this connection through the owner route even when a later step fails.
+    const own = await fetch(`${BASE}/v2/agent-connections`, {
+      headers: { cookie: `${SESSION_COOKIE}=${sessionCookie}` },
+    });
+    expect(own.status).toBe(200);
+    const ownBody = (await own.json()) as {
+      connections?: { id: string; client_name: string }[];
+      items?: { id: string; client_name: string }[];
+    };
+    journeyAgent = {
+      cookie: sessionCookie,
+      csrf: csrfToken,
+      connectionId: (ownBody.connections ?? ownBody.items)!.find((c) => c.client_name === 'Journey helper')!.id,
+    };
   });
 
   let shareLink = '';

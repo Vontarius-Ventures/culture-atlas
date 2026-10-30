@@ -46,6 +46,16 @@ import { createGraphRun, graphRunForJob, recordGraphProviderQuery, setGraphRunSt
  * settles it. The paid extraction runs inside ctx.runStage, so a retry after
  * a lost lease reuses the completed output instead of re-buying it.
  *
+ * A redelivery of a COMMITTED pass reuses the run instead of re-running it
+ * (the same committed-run reuse the expansion handler performs): the pass's
+ * publication — the proposed assertions, or the honest empty-sources lookup —
+ * commits with the run's 'complete' state, and the budget close and the job
+ * completion after it are bookkeeping. A worker that dies between that commit
+ * and the queue acknowledgment leaves a complete run that the redelivery
+ * returns as-is: no re-open, no re-anchored spend, no provider call, no
+ * republish — inside OR past the original 45-second window, whose complete
+ * row stays exactly as the pass left it.
+ *
  * The storage transaction is fenced and ORDERED (VAL-DISC-007,
  * DISC-SCR-008/011/021): its first statement takes the consistent per-account
  * publication-authority lock (the same row lock pause/resume take) and holds it
@@ -93,6 +103,35 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
   }
   await ctx.ensureActive();
 
+  // The durable budget of the logical research item: research makes NO Qloo
+  // calls (allowance 0, so any accidental Qloo usage in this path is refused)
+  // and anchors its logical deadline so redelivery cannot reset it.
+  const workKey = ctx.job.dedupe_key ?? `research:${ctx.job.id}`;
+
+  // At-least-once redelivery of a COMMITTED pass (the same crash boundary the
+  // expansion handler owns): the pass's publication — the proposed
+  // assertions, or the honest empty-sources lookup — commits with the run's
+  // 'complete' state, and the budget close and the job completion after it
+  // are bookkeeping. A worker that dies between that commit and the queue
+  // acknowledgment leaves the job 'running' with a lease and a COMMITTED
+  // complete run, and a redelivery must REUSE it: the complete budget is not
+  // an active window (its durable ended-check reports the window over), so
+  // re-running the pass would reopen the committed run, re-invoke providers
+  // and republish — and past the 45-second anchor the entry check would
+  // overwrite the complete window as stopped and falsely fail the finished
+  // job. Reuse instead: no re-open, no re-anchored spend, no provider call, no
+  // republish — the original run's result.
+  const priorRun = await graphRunForJob(ctx.db, { ownerAccountId: accountId, jobId: ctx.job.id });
+  if (priorRun && priorRun.state === 'complete') {
+    // Finish the committed pass's bookkeeping idempotently: the window closes
+    // (state only — the deadline columns are never rewritten, so an
+    // already-complete window keeps its exact anchor) if the crash interrupted
+    // it, and an already-complete row stays complete.
+    await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'complete' });
+    await ctx.trace({ kind: 'note', name: 'graph_research_redelivery_reused', data: { run_id: priorRun.id } });
+    return { state: 'complete', resultType: 'graph_research', resultId: priorRun.id };
+  }
+
   // The dispatch gate, re-checked at run time: a gate that closed between
   // dispatch and run refuses honestly, before any paid call.
   const gate = await researchDispatchGate(ctx.db, {
@@ -117,10 +156,6 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
   const { rows: accountRows } = await ctx.db.query<{ id: string }>('SELECT id FROM accounts WHERE id = $1', [accountId]);
   if (accountRows.length === 0) return { state: 'complete', resultType: 'graph_research' };
 
-  // The durable budget of the logical research item: research makes NO Qloo
-  // calls (allowance 0, so any accidental Qloo usage in this path is refused)
-  // and anchors its logical deadline so redelivery cannot reset it.
-  const workKey = ctx.job.dedupe_key ?? `research:${ctx.job.id}`;
   const budget: GraphWorkBudgetState = await ensureGraphWorkBudget(ctx.db, {
     ownerAccountId: accountId,
     workKind: 'research',
@@ -175,8 +210,10 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
   // — persisted on the run, and reused verbatim by every later redelivery
   // (which replays the stored extraction), never re-read fresh at a
   // redelivery's callback entry. The storage fence below compares CURRENT
-  // versions against that original capture before any write.
-  const priorRun = await graphRunForJob(ctx.db, { ownerAccountId: accountId, jobId: ctx.job.id });
+  // versions against that original capture before any write. (A prior run
+  // already in state 'complete' never reaches here: the committed-run reuse
+  // above returned it instead, so this branch only serves the not-yet-
+  // committed shapes — a first attempt, or a redelivery of a failed run.)
   let run: GraphRunRow;
   if (priorRun) {
     // A redelivery of an attempt that already created the job's run: reuse
@@ -283,6 +320,11 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
         traceId: ctx.job.trace_id ?? undefined,
       });
       await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'complete' });
+      // The logical item is finished: close its durable budget window so a
+      // completed pass never lingers in the ops metrics as a stuck window
+      // (the same close the expansion pass runs after publication). The
+      // deadline anchor, not the state, governs any later redelivery.
+      await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'complete' });
       return { state: 'complete', resultType: 'graph_research', resultId: run.id };
     }
 
@@ -466,6 +508,8 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     }
 
     await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'complete' });
+    // Same honest close as the empty-sources path above: the window is spent.
+    await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'complete' });
     await ctx.trace({
       kind: 'note',
       name: 'graph_research_proposed',

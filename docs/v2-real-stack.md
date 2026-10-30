@@ -23,7 +23,7 @@ What it covers:
    - `/v2/capabilities` reports analysis as unavailable;
    - "Explore this video" is disabled and says why;
    - `POST /v2/media/{id}/analysis` with `sampled_video` returns 503,
-     "Exploration is temporarily unavailable.";
+     "Exploration is not available on this server yet.";
    - no result link is created.
 6. **Collection.** Create one, then select both media in the library and save
    them to it.

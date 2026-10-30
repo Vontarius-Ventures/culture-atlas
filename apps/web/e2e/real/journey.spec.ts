@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { expectNoHorizontalScroll, SCREENSHOT_DIR, settleImages } from '../helpers';
+import { secretControlMask } from '../secret-mask';
 
 /**
  * The spec's consumer acceptance journey against the REAL app + worker (no
@@ -19,12 +20,12 @@ async function shot(page: Page, info: TestInfo, name: string) {
     document.querySelectorAll('img[loading="lazy"]').forEach((img) => img.setAttribute('loading', 'eager')),
   );
   await settleImages(page, true);
-  // Never put a credential in a committed screenshot.
+  // Never put a credential or share secret in a committed screenshot.
   await page.screenshot({
     path: path.join(SCREENSHOT_DIR, `real-${name}-${info.project.name}.png`),
     fullPage: true,
     animations: 'disabled',
-    mask: [page.locator('.credential__value')],
+    mask: secretControlMask(page),
   });
 }
 

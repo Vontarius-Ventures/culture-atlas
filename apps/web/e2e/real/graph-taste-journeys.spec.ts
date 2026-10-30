@@ -168,8 +168,26 @@ async function answerQuestionnaire(page: Page, info: TestInfo) {
   await page.getByRole('group', { name: 'Play' }).getByRole('button', { name: 'Jazz' }).click();
   await expect(page.locator('.pick-counter')).toHaveText('Ready');
   if (info.project.name !== 'desktop') await page.getByRole('button', { name: 'Next', exact: true }).click();
+  // 'Build my feed' POSTs /v1/onboarding/complete and only then navigates, so
+  // the real post-build proof is the server's own truth, not a URL pattern:
+  // a loose alternation like /\/welcome\/building|\// accepts every URL and
+  // the earlier green run therefore did not actually verify the build landed.
+  const completed = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === '/v1/onboarding/complete' && r.ok(),
+    { timeout: 30_000 },
+  );
   await page.getByRole('button', { name: 'Build my feed' }).click();
-  await expect(page).toHaveURL(/\/welcome\/building|\/$/, { timeout: 30_000 });
+  expect((await completed).status(), 'onboarding completion must reach the server').toBe(200);
+  // Server truth before anything else navigates: the account is no longer
+  // onboarding-required.
+  const state = (await (await page.request.get('/v1/onboarding/state')).json()) as {
+    state: { required: boolean };
+  };
+  expect(state.state.required).toBe(false);
+  // The concrete post-build navigation: the building screen, which then
+  // auto-advances to the Discover root. Anchored end-to-end so no unrelated
+  // route can satisfy it.
+  await expect(page).toHaveURL(/^https?:\/\/[^/]+\/(welcome\/building)?$/, { timeout: 30_000 });
 }
 
 test('onboarding to source-backed discovery with reversible saves and honest taste controls', async ({ browser }, info: TestInfo) => {
@@ -258,15 +276,26 @@ test('onboarding to source-backed discovery with reversible saves and honest tas
   await test.step('expansion publishes the source-backed Seurat card into the feed', async () => {
     await waitForExpansionRuns(accountId, 1);
     // The published card is the account's own item on the candidate reference,
-    // carrying the reviewed association as its reason.
-    const rec = await one<{ discovery_item_id: string; display_reason: string; origin: string }>(
-      `SELECT discovery_item_id, display_reason, origin FROM recommendations
-        WHERE owner_account_id = $1 AND graph_run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
-      [accountId],
-    );
-    expect(rec?.discovery_item_id).toBe(seuratItem);
-    expect(rec?.display_reason).toBe('Also work on display at Art Institute of Chicago');
-    expect(rec?.origin).toBe('catalog');
+    // carrying the reviewed association as its reason. The first COMPLETED
+    // expansion run may already be the pre-save pick-roots pass (the sweep
+    // dispatches as soon as onboarding picks project as support), so the run
+    // count alone cannot prove the save's pass published; poll for the
+    // published recommendation row itself, bounded like the card wait below.
+    await expect
+      .poll(
+        () =>
+          one<{ discovery_item_id: string; display_reason: string; origin: string }>(
+            `SELECT discovery_item_id, display_reason, origin FROM recommendations
+              WHERE owner_account_id = $1 AND graph_run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+            [accountId],
+          ),
+        { timeout: 120_000 },
+      )
+      .toEqual({
+        discovery_item_id: seuratItem,
+        display_reason: 'Also work on display at Art Institute of Chicago',
+        origin: 'catalog',
+      });
     await expect
       .poll(() => pollCardCount(page, '/', /^\/v1\/discover$/, SEURAT), { timeout: 120_000 })
       .toBeGreaterThanOrEqual(1);

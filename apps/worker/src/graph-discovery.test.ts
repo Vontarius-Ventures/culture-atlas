@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { FakeQloo } from '@culture-atlas/providers/testing';
 import {
   JOB_HANDLERS,
@@ -34,7 +34,7 @@ import {
   testContext,
 } from '@culture-atlas/domain/testing';
 import { accountCtx, runJobs, world } from './test-world';
-import { Worker } from './worker';
+import { Worker, type WorkerOptions } from './worker';
 
 /**
  * VAL-DISC-003 real-stack evidence: the closed-app discovery chain and the
@@ -136,7 +136,7 @@ async function refreshRow(
   return rows[0] ?? { expansion_due_since: null, last_expansion_at: null };
 }
 
-function makeWorker(ctx: Awaited<ReturnType<typeof accountCtx>>, dbFor: PoolDb = db): Worker {
+function makeWorker(ctx: Awaited<ReturnType<typeof accountCtx>>, dbFor: Db = db, overrides: Partial<WorkerOptions> = {}): Worker {
   return new Worker({
     db: dbFor,
     providers: ctx.providers,
@@ -146,7 +146,37 @@ function makeWorker(ctx: Awaited<ReturnType<typeof accountCtx>>, dbFor: PoolDb =
     heartbeatMs: 1_000,
     graphDispatchEveryMs: 0,
     graphExpansionEveryMs: 0,
+    ...overrides,
   });
+}
+
+/**
+ * Bounded real-time poll for the drain-quiescence regressions. The bound is
+ * an iteration count over real `setTimeout` waits, never a `Date.now()`
+ * deadline: the zero-interval regression deliberately freezes the wall clock
+ * to make the same-millisecond interleaving deterministic, so a clock-based
+ * bound would never expire.
+ */
+async function pollUntil(check: () => Promise<boolean>, attempts = 600, everyMs = 10): Promise<void> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, everyMs));
+  }
+  throw new Error(`poll condition not reached within ${attempts} attempts`);
+}
+
+/** The completed durable budget of one dispatched expansion window. */
+async function expansionBudget(
+  accountId: string,
+  workKey: string | null,
+  dbFor: Db,
+): Promise<{ state: string; qloo_attempts_used: number } | undefined> {
+  const { rows } = await dbFor.query<{ state: string; qloo_attempts_used: number }>(
+    `SELECT state, qloo_attempts_used FROM graph_work_budgets
+      WHERE owner_account_id = $1 AND work_key = $2`,
+    [accountId, workKey],
+  );
+  return rows[0];
 }
 
 describe('graph discovery through the real worker', () => {
@@ -220,6 +250,200 @@ describe('graph discovery through the real worker', () => {
       );
       expect(Number(edges[0]!.n)).toBeGreaterThanOrEqual(1);
       expect(saved.nodeId).toBeDefined();
+    } finally {
+      await created.drop();
+    }
+  });
+
+  /**
+   * The closed-app drain-quiescence race (experience-release scrutiny, the
+   * nonzero 2356/2357 run), pinned as a DETERMINISTIC interleaving on this
+   * file's own isolated queue. The failing shape: the worker's first tick
+   * sweeps before the projection commits (nothing due yet) and claims the
+   * projection job; the projection settles and stamps `expansion_due_since`;
+   * the next tick shares the first sweep's millisecond, so a zero-interval
+   * sweep gate that excludes the same millisecond skips the sweep, claims
+   * nothing and drain() exits on an empty running map — the committed due
+   * marker is never handed to the queue.
+   */
+  it('a zero-interval drain whose ticks share one millisecond still hands committed due work to the queue', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const created = await createIsolatedDatabase('scrdwqui');
+    const isoDb = created.db;
+    // Freeze the wall clock AFTER the isolated database exists: every later
+    // tick then provably shares the first sweep's millisecond, the exact
+    // same-millisecond condition the real run hit under load.
+    const frozenAt = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => frozenAt);
+    try {
+      const owner = await insertAccount(isoDb);
+      const ctx = testContext(owner, { db: isoDb, providers, config });
+      if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+      const accountId = ctx.principal.accountId;
+      await savedCorpusItem(ctx, accountId, isoDb);
+
+      const worker = makeWorker(ctx, isoDb, { schedulePurge: false });
+      // Tick 1: the dispatch sweep hands the intent to the queue, the
+      // expansion sweep finds nothing (the projection has not committed) and
+      // the claim starts the projection execution.
+      await worker.tick();
+      // The claimed projection settles out of band (real time): its
+      // committed pass stamped the due marker.
+      await pollUntil(async () => {
+        const jobs = await jobsOf(accountId, 'project_interest_graph', isoDb);
+        return jobs.length > 0 && jobs.every((j) => j.state === 'complete');
+      });
+      expect((await refreshRow(accountId, isoDb)).expansion_due_since).toBeInstanceOf(Date);
+
+      // The drain, with every tick inside the frozen millisecond. Quiescence
+      // must still mean a COMPLETE eligible verification pass over the
+      // settled state: the committed due marker is real work, and an
+      // eligible expansion sweep has to observe it before drain() may exit.
+      await worker.drain();
+
+      const expansions = await jobsOf(accountId, 'expand_interest_graph', isoDb);
+      expect(expansions).toHaveLength(1);
+      expect(expansions[0]!.state).toBe('complete');
+      expect(expansions[0]!.result_type).toBe('graph_expansion');
+      expect((await refreshRow(accountId, isoDb)).expansion_due_since).toBeNull();
+      const budget = await expansionBudget(accountId, expansions[0]!.dedupe_key, isoDb);
+      expect(budget?.state).toBe('complete');
+      expect(budget?.qloo_attempts_used).toBeLessThanOrEqual(4);
+    } finally {
+      clock.mockRestore();
+      await created.drop();
+    }
+  });
+
+  /**
+   * The second leg of the same race: a tick's graph sweeps run BEFORE an
+   * in-flight projection settles (the projection job is still 'running', so
+   * the sweep honestly finds nothing), and the execution settles DURING that
+   * same tick — after its sweeps, before its exit check. drain() must not
+   * treat that tick as the idle verification pass: the settled execution's
+   * committed due marker is undiscovered work, so the drain keeps verifying
+   * until an eligible sweep observes the settled state.
+   */
+  it('a projection settling after the drain last swept keeps the drain verifying until its due work is handed over', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const created = await createIsolatedDatabase('scrdwqui2');
+    const isoDb = created.db;
+    try {
+      const owner = await insertAccount(isoDb);
+      const ctx = testContext(owner, { db: isoDb, providers, config });
+      if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+      const accountId = ctx.principal.accountId;
+      await savedCorpusItem(ctx, accountId, isoDb);
+
+      // Two deterministic parks on the worker's own Db view:
+      //  - the completion park holds the projection execution's terminal
+      //    queue write: the projection transaction (and its due marker) is
+      //    already committed, but the job row stays 'running' and the
+      //    execution unsettled until the gate opens — the settle moment is
+      //    fully under the test's control;
+      //  - the claim park holds the drain loop's SECOND claim: the tick
+      //    whose graph sweeps already ran against that still-running
+      //    projection (and therefore found nothing due).
+      const claimPark = parkedDb(isoDb, /FOR NO KEY UPDATE SKIP LOCKED/, 2);
+      const completionPark = parkedDb(claimPark.db, /UPDATE jobs SET state = \$4, result_type/);
+      const worker = makeWorker(ctx, completionPark.db, { schedulePurge: false });
+      const drained = worker.drain();
+      await completionPark.arrived;
+      await claimPark.arrived;
+
+      // The projection settles only NOW — after the parked tick's sweeps
+      // already ran. Releasing the completion park lets the terminal write
+      // commit and the execution settle; the poll observes the settled row
+      // (and the settle itself flushes before the poll returns), so the
+      // claim is released into a provably empty running map holding
+      // committed due work. A drain that trusts "started nothing, nothing
+      // running" would exit here with the marker undiscovered; the
+      // quiescence contract keeps verifying instead.
+      completionPark.release();
+      await pollUntil(async () => {
+        const jobs = await jobsOf(accountId, 'project_interest_graph', isoDb);
+        return jobs.length > 0 && jobs.every((j) => j.state === 'complete');
+      });
+      // The settle margin: the terminal write committed (the poll saw it);
+      // this lets the execution's own response land and its running-map
+      // slot clear, so the claim is released into a PROVABLY empty running
+      // map — the exact state the exit check misreads as quiescence.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      claimPark.release();
+      await drained;
+
+      const expansions = await jobsOf(accountId, 'expand_interest_graph', isoDb);
+      expect(expansions).toHaveLength(1);
+      expect(expansions[0]!.state).toBe('complete');
+      expect(expansions[0]!.result_type).toBe('graph_expansion');
+      expect((await refreshRow(accountId, isoDb)).expansion_due_since).toBeNull();
+      const budget = await expansionBudget(accountId, expansions[0]!.dedupe_key, isoDb);
+      expect(budget?.state).toBe('complete');
+      expect(budget?.qloo_attempts_used).toBeLessThanOrEqual(4);
+    } finally {
+      await created.drop();
+    }
+  });
+
+  /**
+   * The production counterpart of the closed-app chain: continuous polling
+   * with REAL throttled sweep windows (nonzero intervals, the 5-second
+   * defaults' shape, shrunk only for test speed — the sweep still waits out
+   * its window, never bypassing the throttle) finds the due marker a
+   * projection committed while the window was closed and completes it, with
+   * no client read anywhere in the chain.
+   */
+  it('continuous throttled production polling finds the retained due marker after projection completion', async () => {
+    const { providers } = world({ qloo: {}, research: false, composer: false });
+    const created = await createIsolatedDatabase('scrdwpoll');
+    const isoDb = created.db;
+    try {
+      const owner = await insertAccount(isoDb);
+      const ctx = testContext(owner, { db: isoDb, providers, config });
+      if (ctx.principal.kind !== 'account') throw new Error('test requires an account principal');
+      const accountId = ctx.principal.accountId;
+      await savedCorpusItem(ctx, accountId, isoDb);
+
+      const worker = new Worker({
+        db: isoDb,
+        providers,
+        config,
+        handlers: JOB_HANDLERS,
+        log: () => undefined,
+        heartbeatMs: 1_000,
+        graphDispatchEveryMs: 250,
+        graphExpansionEveryMs: 250,
+        pollMs: 20,
+      });
+      worker.start();
+      try {
+        // The poll loop carries the whole chain: its first tick dispatches
+        // and claims the projection, and the committed due marker lands
+        // while the expansion window is still closed.
+        await pollUntil(async () => {
+          const jobs = await jobsOf(accountId, 'project_interest_graph', isoDb);
+          return jobs.length > 0 && jobs.every((j) => j.state === 'complete');
+        });
+        expect((await refreshRow(accountId, isoDb)).expansion_due_since).toBeInstanceOf(Date);
+        await pollUntil(async () => {
+          const expansions = await jobsOf(accountId, 'expand_interest_graph', isoDb);
+          return expansions.length === 1 && expansions[0]!.state === 'complete';
+        });
+      } finally {
+        await worker.stop();
+      }
+
+      const expansions = await jobsOf(accountId, 'expand_interest_graph', isoDb);
+      expect(expansions).toHaveLength(1);
+      expect(expansions[0]!.state).toBe('complete');
+      expect(expansions[0]!.result_type).toBe('graph_expansion');
+      expect(expansions[0]!.budget.qloo_requests).toBe(4);
+      expect(expansions[0]!.budget.deadline_ms).toBe(45_000);
+      expect((await refreshRow(accountId, isoDb)).expansion_due_since).toBeNull();
+      expect((await refreshRow(accountId, isoDb)).last_expansion_at).toBeInstanceOf(Date);
+      const budget = await expansionBudget(accountId, expansions[0]!.dedupe_key, isoDb);
+      expect(budget?.state).toBe('complete');
+      expect(budget?.qloo_attempts_used).toBeLessThanOrEqual(4);
     } finally {
       await created.drop();
     }
@@ -935,6 +1159,14 @@ describe('scoped Discover more queue attempt fencing through the real worker (DI
       workerId: 'w-real',
       heartbeatMs: 60_000,
       leaseMs: 30_000,
+      // Deterministic transfer precondition (the round-2 intermittent
+      // line-947 failure): with free slots the parked worker's own drain
+      // loop polls for claimable jobs every ~10ms, so once the lease is
+      // lapsed the SAME worker can reclaim it before this test's explicit
+      // w2 claim — the claim then finds a fresh lease and returns no row.
+      // The parked old execution occupies the only slot, so the explicit
+      // claim below is the sole transfer of the lapsed lease.
+      concurrency: 1,
     });
     const drained = worker.drain();
     try {

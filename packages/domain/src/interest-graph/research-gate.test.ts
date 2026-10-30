@@ -75,19 +75,26 @@ function extraction(subjectName: string, url: string): ResearchExtraction {
   };
 }
 
-/** A counting research fake: call counts prove paid calls happened or not. */
+/**
+ * A counting research fake: call counts prove paid calls happened or not, and
+ * `urls` records every offered source URL — the complete universe of source
+ * revisions this fixture's job could ever commit (the per-run database is
+ * shared across serial files, so assertions must be scoped to them).
+ */
 function countingResearch(
   sources: (name: string) => ResearchSourceDoc[],
   extract: (name: string, url: string) => ResearchExtraction,
 ) {
-  const calls = { findSources: 0, extractClaims: 0 };
+  const calls = { findSources: 0, extractClaims: 0, urls: [] as string[] };
   const available = { status: 'available' as const, provider: 'fake' };
   const provider = {
     id: 'research:fake',
     capability: () => ({ sources: available, claims: available }),
     findSources: async (query: { name: string }) => {
       calls.findSources++;
-      return sources(query.name);
+      const docs = sources(query.name);
+      calls.urls.push(...docs.map((doc) => doc.url));
+      return docs;
     },
     extractClaims: async (input: { name: string; sources: ResearchSourceDoc[] }) => {
       calls.extractClaims++;
@@ -647,8 +654,16 @@ describe('the relation-research handler (VAL-DISC-005)', () => {
 
     // The paid call happened exactly once, through the bounded sources.
     expect(research.calls.extractClaims).toBe(1);
+    // THREE documents were offered per name, but this job kept at most the
+    // approved two: its own committed revisions stay under the per-job
+    // ceiling. The count is scoped to THIS fixture's offered URLs (their
+    // unique per-run names make the family keys this job's alone), so
+    // unrelated completed research from another serial file's fixtures in
+    // the shared per-run database cannot fail the ceiling assertion.
+    const offeredFamilyKeys = [...new Set(research.calls.urls.map((url) => `research:${url}`))];
     const { rows: sources } = await db.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM graph_source_revisions WHERE source_family_key LIKE 'research:%'`,
+      `SELECT count(*)::int AS n FROM graph_source_revisions WHERE source_family_key = ANY($1)`,
+      [offeredFamilyKeys],
     );
     expect(Number(sources[0]!.n)).toBeLessThanOrEqual(RESEARCH_MAX_SOURCE_DOCUMENTS);
 
@@ -738,7 +753,9 @@ describe('the relation-research handler (VAL-DISC-005)', () => {
     expect(budgets).toHaveLength(1);
     expect(budgets[0]!.work_kind).toBe('research');
     expect(budgets[0]!.qloo_attempts_max).toBe(0);
-    expect(budgets[0]!.state).toBe('active');
+    // A completed pass CLOSES its window (the same honest close the expansion
+    // pass runs); an 'active' window after success was the ops-metric leak.
+    expect(budgets[0]!.state).toBe('complete');
   });
 });
 

@@ -13,6 +13,7 @@ import {
   ProviderError,
   type ModelProfile,
   type ProviderRegistry,
+  type ResearchSourceDoc,
   type StructuredTransport,
 } from '@culture-atlas/providers';
 import { Worker } from './worker';
@@ -327,5 +328,41 @@ describe('the real Worker classifies research deadline expiry, cancellation and 
     const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
     expect(budget?.state).toBe('active');
     expect(await runState(accountId)).toBe('failed');
+  });
+});
+
+describe('a successful research pass closes its durable work-budget window', () => {
+  it('the honest empty-sources completion leaves no active window behind (ops metric hygiene)', async () => {
+    // A completed logical item must close its budget window exactly like the
+    // expansion pass does; before the repair the window stayed 'active'
+    // forever after a successful run, inflating GraphBudgetWindowsStuck.
+    // Deterministic registry, never a live or paid call.
+    const available = { status: 'available' as const, provider: 'fake' };
+    const emptySources = {
+      id: 'research:fake',
+      capability: () => ({ sources: available, claims: available }),
+      findSources: async () => [] as ResearchSourceDoc[],
+      extractClaims: async () => {
+        throw new Error('extraction must never run when no approved source was found');
+      },
+    } as unknown as ProviderRegistry['research'];
+    const { accountId, jobId, workKey, providers } = await dispatchedResearchJob(emptySources);
+
+    const worker = new Worker({
+      db,
+      providers,
+      config: researchOn,
+      handlers: JOB_HANDLERS,
+      jobIds: [jobId],
+      log: () => undefined,
+      heartbeatMs: 500,
+    });
+    await worker.drain();
+
+    const job = await jobRow(jobId);
+    expect(job.state).toBe('complete');
+    expect(await runState(accountId)).toBe('complete');
+    const budget = await loadGraphWorkBudget(db, { ownerAccountId: accountId, workKey });
+    expect(budget?.state).toBe('complete');
   });
 });

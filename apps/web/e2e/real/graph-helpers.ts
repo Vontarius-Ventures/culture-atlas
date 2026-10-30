@@ -4,6 +4,7 @@ import { expect } from '@playwright/test';
 import { loadRootEnv } from '../../../../packages/domain/src/config';
 import { getDb, type PoolDb } from '../../../../packages/domain/src/db/pool';
 import { SCREENSHOT_DIR, settleImages } from '../helpers';
+import { secretControlMask } from '../secret-mask';
 
 /**
  * Shared helpers for the PR 8 real-stack graph journeys (graph-off-visit and
@@ -161,7 +162,7 @@ export async function waitForExpansionRuns(accountId: string, min: number, timeo
   return runs;
 }
 
-/** Journey screenshot; never captures a credential (the flows type passwords into masked inputs). */
+/** Journey screenshot; every secret-bearing control is masked (EXP-SCR-024: the deletion journey's agent-credential screen included). */
 export async function shot(page: Page, info: TestInfo, name: string, fullPage = true) {
   await page.evaluate(() =>
     document.querySelectorAll('img[loading="lazy"]').forEach((img) => img.setAttribute('loading', 'eager')),
@@ -171,6 +172,6 @@ export async function shot(page: Page, info: TestInfo, name: string, fullPage = 
     path: path.join(SCREENSHOT_DIR, `real-graph-${name}-${info.project.name}.png`),
     fullPage,
     animations: 'disabled',
-    mask: [page.locator('input[type="password"], input[type="email"]')],
+    mask: secretControlMask(page),
   });
 }

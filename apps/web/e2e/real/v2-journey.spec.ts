@@ -6,6 +6,7 @@ import path from 'node:path';
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test';
 import { connectMcp } from '../../../demo-agent/src/client';
 import { expectNoHorizontalScroll, SCREENSHOT_DIR, settleImages } from '../helpers';
+import { secretControlMask } from '../secret-mask';
 
 /**
  * Capture platform v2 acceptance journey against the REAL stack: the web app,
@@ -83,10 +84,42 @@ async function shot(page: Page, info: TestInfo, name: string) {
     path: path.join(SCREENSHOT_DIR, `real-v2-${name}-${info.project.name}.png`),
     fullPage: true,
     animations: 'disabled',
-    // Never put a credential or share secret in a committed screenshot.
-    mask: [page.locator('input[readonly], .credential__value')],
+    // Never put a credential or share secret in a committed screenshot. The
+    // shared inventory covers SecretOnce's readonly textarea (EXP-SCR-024),
+    // CopyField's readonly share-link input and the v1 API-key code element.
+    mask: secretControlMask(page),
   });
 }
+
+/**
+ * credential-evidence-containment (EXP-SCR-024): the once-shown agent
+ * credential was on screen during the secret-once capture, so the journey
+ * must not leave its connection active behind it. The owner session revokes
+ * it through the owner-authorized route and verifies the denial by the
+ * owner route's own connection status — never by exercising the agent
+ * token. afterEach makes the teardown guaranteed: it runs even when a later
+ * step fails, and a failing teardown fails the run.
+ */
+let journeyAgent: { page: Page; connectionId: string } | null = null;
+
+async function revokeJourneyAgentConnection(owner: Page, connectionId: string, info: TestInfo): Promise<void> {
+  const headers = await mutationHeaders(owner.request);
+  const revoke = await owner.request.delete(`/v2/agent-connections/${connectionId}`, { headers });
+  expect(revoke.status(), await revoke.text().catch(() => '')).toBe(204);
+  const after = await (await owner.request.get('/v2/agent-connections')).json();
+  const revoked = (after.connections ?? after.items).find((c: { id: string }) => c.id === connectionId);
+  expect(revoked?.status, 'the owner route must list the journey connection as revoked').toBe('revoked');
+  info.annotations.push({ type: 'journey-agent-connection-revoked', description: connectionId });
+}
+
+test.afterEach(async () => {
+  const own = journeyAgent;
+  journeyAgent = null;
+  if (own) {
+    // A failed step must still not leak a live journey credential.
+    await revokeJourneyAgentConnection(own.page, own.connectionId, test.info());
+  }
+});
 
 function mailTime(file: string): number {
   // Files are named `<ISO time with ':' replaced by '-'>-<uuid>.json`.
@@ -277,7 +310,10 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
   await test.step('sign up with an email link', async () => {
     await page.goto('/library');
     await expect(page.getByText('Your library is private.')).toBeVisible();
-    await page.getByRole('link', { name: 'Sign in' }).click();
+    // The signed-out Library page really carries two Sign-in affordances (the
+    // header nav link and the private-library block's v2 button); scope to the
+    // block's own button so the strict locator matches the observed page.
+    await page.getByLabel('Your library is private.').getByRole('link', { name: 'Sign in' }).click();
     await expect(page).toHaveURL(/\/identity$/);
     await page.getByLabel('Email').fill(email);
     const started = Date.now();
@@ -452,7 +488,10 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
       data: { mode: 'sampled_video', expected_generation: detail.generation },
     });
     expect(refused.status()).toBe(503);
-    expect((await refused.json()).error.message).toBe('Exploration is temporarily unavailable.');
+    // The backend's honest server-state refusal (capture-v2/analysis.ts):
+    // unconfigured/unqualified AI is "not available on this server yet",
+    // not a transient outage — retrying cannot change it.
+    expect((await refused.json()).error.message).toBe('Exploration is not available on this server yet.');
     // Nothing was invented: no analysis link appeared on the item.
     const after = await (await page.request.get(`/v2/media/${videoId}`)).json();
     expect(after.links.analysis ?? null).toBeNull();
@@ -520,6 +559,10 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
     connectionId = (connections.items ?? connections.connections).find(
       (c: { client_name: string }) => c.client_name === 'Harbour helper',
     ).id;
+    // credential-evidence-containment: from the moment the once-shown
+    // credential exists, the journey OWNS its teardown. afterEach revokes the
+    // connection through the owner route even when a later step fails.
+    journeyAgent = { page, connectionId };
   });
 
   await test.step('the agent sees exactly the collection media over REST and MCP', async () => {
@@ -543,7 +586,12 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
     });
     try {
       const tools = await client.listTools();
-      expect(tools).toEqual(expect.arrayContaining(['list_media', 'get_media', 'analyze_media']));
+      // The connection was granted only media:read (plus the collection and
+      // device grants above) — tools/list shows exactly what the scopes allow,
+      // so analyze_media (media:analyze) stays invisible and the refusal
+      // below is a missing-tool refusal, never a silent queued analysis.
+      expect(tools).toEqual(expect.arrayContaining(['list_media', 'get_media']));
+      expect(tools).not.toContain('analyze_media');
       const listed = await client.callTool<{ items: Array<{ media: { id: string } }> }>(
         'list_media',
         {},
@@ -689,6 +737,14 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
     } finally {
       await viewer.close();
     }
+  });
+
+  await test.step('the journey revokes its own agent connection through the owner route', async () => {
+    // EXP-SCR-024: the retained journey connection was the exposure's blast
+    // radius. The owner session tears it down before the journey ends, and
+    // afterEach guarantees this even when an earlier step failed.
+    await revokeJourneyAgentConnection(page, connectionId, info);
+    journeyAgent = null;
   });
 
   expect(serverErrors, 'no server errors during the journey').toEqual([]);
