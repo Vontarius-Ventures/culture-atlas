@@ -5,8 +5,11 @@ import SwiftUI
 /// VAL-NATIVE-001): the pinned proof exactly as the server recorded it —
 /// the owner's support roots, the shared cultural path and the permitted
 /// source links. The recommendation id is the one displayed in the card
-/// that was opened, never another run's reason. An unavailable proof is
-/// shown as unavailable, never substituted, and a record that is not the
+/// that was opened, never another run's reason. Every entry (first open and
+/// re-entry alike) revalidates that proof with the server before showing it
+/// as current, so a withdrawal another client already made shows the honest
+/// unavailable record, never the previously shown one. An unavailable proof
+/// is shown as unavailable, never substituted, and a record that is not the
 /// owner's hides the disclosure entirely.
 struct WhyThisConnection: View {
   @EnvironmentObject private var graph: InterestGraphStore
@@ -49,7 +52,7 @@ struct WhyThisConnection: View {
                 .font(.footnote)
                 .foregroundStyle(AtlasTheme.muted)
               Button("Try again") {
-                Task { await graph.connection(for: recommendationID, refresh: true) }
+                Task { await graph.connection(for: recommendationID) }
               }
               .font(.callout.weight(.medium))
             }

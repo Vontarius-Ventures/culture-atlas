@@ -198,14 +198,17 @@ public final class InterestGraphStore: ObservableObject {
   }
 
   /// The pinned Why-this record for a recommendation the owner already saw.
-  /// Cached per recommendation while the account stays bound; a 404/scope
-  /// denial hides the disclosure (the context is not ours to disclose).
-  public func connection(for recommendationID: UUID, refresh: Bool = false) async {
+  /// Every disclosure entry revalidates that exact recommendation's current
+  /// proof with the real owner API, so a withdrawal the server has already
+  /// recorded (another client suppressed the support, a retraction, a
+  /// deletion) shows the record's honest unavailable state instead of the
+  /// previously shown one — a cached `.shown` phase is never treated as
+  /// current (VAL-CROSS-005). Only a fetch already in flight for this
+  /// recommendation is deduped; a 404/scope denial hides the disclosure (the
+  /// context is not ours to disclose).
+  public func connection(for recommendationID: UUID) async {
     guard ownerAccount != nil else { return }
-    if !refresh {
-      if case .shown = connectionPhases[recommendationID] { return }
-      if case .loading = connectionPhases[recommendationID] { return }
-    }
+    if case .loading = connectionPhases[recommendationID] { return }
     let epoch = self.epoch
     connectionPhases[recommendationID] = .loading
     do {

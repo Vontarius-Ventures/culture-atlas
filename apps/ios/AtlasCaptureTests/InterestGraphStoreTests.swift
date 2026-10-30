@@ -52,9 +52,12 @@ final class InterestGraphStoreTests: XCTestCase {
       tentative: InterestGraphPage(items: tentativeRows, nextCursor: tentativeCursor))
   }
 
-  private func makeConnection(state: RecommendationConnection.State = .connected) -> RecommendationConnection {
+  private func makeConnection(
+    recommendationID: UUID = UUID(),
+    state: RecommendationConnection.State = .connected
+  ) -> RecommendationConnection {
     RecommendationConnection(
-      recommendationID: UUID(), origin: "research", provenance: .graphRun, state: state, intent: .personal,
+      recommendationID: recommendationID, origin: "research", provenance: .graphRun, state: state, intent: .personal,
       graphRunID: UUID(), reason: RecommendationConnection.Reason(text: "Also work on display.", template: nil),
       path: [], sources: [], support: nil, unavailableReason: state == .unavailable ? "support_withdrawn" : nil)
   }
@@ -341,33 +344,156 @@ final class InterestGraphStoreTests: XCTestCase {
 
   // MARK: Why-this connections
 
-  func testConnectionCachesShownRecordsAndClearsOnSwitch() async {
-    let connection = makeConnection()
+  /// The VAL-CROSS-005 stale-cache regression: re-entering an already-shown
+  /// Why-this revalidates that recommendation's current pinned proof with the
+  /// real owner API. When another client withdraws the support (the web
+  /// suppresses the photo affinity), the server answers the same
+  /// recommendation with its honest withdrawn record — the phone shows that,
+  /// never the stale connected cache.
+  func testConnectionRevalidatesWithdrawnProofOnReentry() async {
+    let id = UUID()
     let service = ScriptedGraphService(summary: makeSummary(owner: ownerA))
-    await service.setConnectionOutcome(.success(connection))
+    await service.setConnectionOutcome(.success(makeConnection(recommendationID: id)))
     let store = InterestGraphStore(service: service)
     store.bind(account: ownerA)
 
-    await store.connection(for: connection.recommendationID)
-    XCTAssertEqual(store.connectionPhases[connection.recommendationID], .shown(connection))
-    // Cached: a second open does not hit the server again.
-    await store.connection(for: connection.recommendationID)
+    await store.connection(for: id)
+    guard case .shown(let first) = store.connectionPhases[id], first.state == .connected else {
+      return XCTFail("the first open shows the connected pinned proof")
+    }
+
+    // Another client suppresses the support; the server's current answer for
+    // this recommendation is the honest withdrawn record.
+    let withdrawn = makeConnection(recommendationID: id, state: .unavailable)
+    await service.setConnectionOutcome(.success(withdrawn))
+
+    await store.connection(for: id)
+    XCTAssertEqual(store.connectionPhases[id], .shown(withdrawn), "a withdrawn reason is honest unavailable, never a stale connected cache")
     let calls = await service.connectionCalls
-    XCTAssertEqual(calls, 1)
+    XCTAssertEqual(calls, 2, "re-entry revalidates with the real owner API before showing the record as current")
+  }
+
+  /// A still-valid record is re-fetched on re-entry too: the disclosure
+  /// always shows the server's current proof, never an unverified cache.
+  func testConnectionReentryKeepsAValidRecordCurrent() async {
+    let id = UUID()
+    let service = ScriptedGraphService(summary: makeSummary(owner: ownerA))
+    let first = makeConnection(recommendationID: id)
+    await service.setConnectionOutcome(.success(first))
+    let store = InterestGraphStore(service: service)
+    store.bind(account: ownerA)
+
+    await store.connection(for: id)
+    XCTAssertEqual(store.connectionPhases[id], .shown(first))
+
+    let fresh = makeConnection(recommendationID: id)
+    await service.setConnectionOutcome(.success(fresh))
+    await store.connection(for: id)
+    XCTAssertEqual(store.connectionPhases[id], .shown(fresh), "re-entry shows the revalidated current record")
+    let calls = await service.connectionCalls
+    XCTAssertEqual(calls, 2)
+  }
+
+  /// A revalidation that cannot reach the server is an honest failed state
+  /// with a retry — the previously shown record is not resurrected, because
+  /// it may be exactly the reason the server has since withdrawn.
+  func testConnectionReentryTransportFailureShowsRetryNotTheStaleRecord() async {
+    let id = UUID()
+    let service = ScriptedGraphService(summary: makeSummary(owner: ownerA))
+    await service.setConnectionOutcome(.success(makeConnection(recommendationID: id)))
+    let store = InterestGraphStore(service: service)
+    store.bind(account: ownerA)
+
+    await store.connection(for: id)
+    guard case .shown = store.connectionPhases[id] else { return XCTFail("the first open shows the record") }
+
+    await service.setConnectionOutcome(.failure(.transport("offline")))
+    await store.connection(for: id)
+    guard case .failed = store.connectionPhases[id] else {
+      return XCTFail("a failed revalidation must not re-show the unverified cached record")
+    }
+
+    // "Try again" is an ordinary re-entry: it revalidates with the server.
+    let restored = makeConnection(recommendationID: id)
+    await service.setConnectionOutcome(.success(restored))
+    await store.connection(for: id)
+    XCTAssertEqual(store.connectionPhases[id], .shown(restored))
+  }
+
+  /// One fetch is deduped while in flight: a re-entry during a pending
+  /// revalidation does not stack a second owner-API call for the same
+  /// recommendation.
+  func testConnectionDedupesAReentryFetchAlreadyInFlight() async throws {
+    let id = UUID()
+    let service = ScriptedGraphService(summary: makeSummary(owner: ownerA))
+    let store = InterestGraphStore(service: service)
+    store.bind(account: ownerA)
+
+    await service.setParkConnections(true)
+    let pending = Task { await store.connection(for: id) }
+    try await waitForParkedConnection(service)
+    XCTAssertEqual(store.connectionPhases[id], .loading)
+
+    await store.connection(for: id)
+    let inFlight = await service.connectionCalls
+    XCTAssertEqual(inFlight, 1, "an in-flight revalidation is deduped, not stacked")
+
+    let record = makeConnection(recommendationID: id)
+    await service.resumeParkedConnections(with: .success(record))
+    await pending.value
+    XCTAssertEqual(store.connectionPhases[id], .shown(record))
+  }
+
+  /// The cached reason is private per account: switching accounts clears
+  /// every phase, and a late previous-owner response is rejected on arrival
+  /// — the other account's reason never renders.
+  func testConnectionClearsOnAccountSwitchAndRejectsLatePreviousOwnerResponse() async throws {
+    let id = UUID()
+    let service = ScriptedGraphService(summary: makeSummary(owner: ownerA))
+    let record = makeConnection(recommendationID: id)
+    await service.setConnectionOutcome(.success(record))
+    let store = InterestGraphStore(service: service)
+    store.bind(account: ownerA)
+    await store.connection(for: id)
+    XCTAssertEqual(store.connectionPhases[id], .shown(record))
+
+    // A revalidation is in flight when the account switches.
+    await service.setParkConnections(true)
+    let pending = Task { await store.connection(for: id) }
+    try await waitForParkedConnection(service)
 
     store.bind(account: ownerB)
     XCTAssertTrue(store.connectionPhases.isEmpty, "reasons are private per account")
 
-    await service.setConnectionOutcome(.failure(.server(status: 404, code: "not_found", message: "", retryable: false, retryAfter: nil)))
-    await store.connection(for: connection.recommendationID)
-    XCTAssertEqual(store.connectionPhases[connection.recommendationID], .quiet)
+    // The previous owner's late record arrives after the switch: rejected.
+    await service.resumeParkedConnections(with: .success(record))
+    await pending.value
+    XCTAssertTrue(store.connectionPhases.isEmpty, "the other account's cached reason never crosses the switch")
 
-    await service.setConnectionOutcome(.failure(.transport("offline")))
-    let failedID = UUID()
-    await store.connection(for: failedID, refresh: true)
-    guard case .failed = store.connectionPhases[failedID] else {
-      return XCTFail("a transport failure offers an honest retry state")
-    }
+    // The new owner's own disclosure loads only its own truth.
+    await service.setParkConnections(false)
+    let own = makeConnection()
+    await service.setConnectionOutcome(.success(own))
+    await store.connection(for: own.recommendationID)
+    XCTAssertEqual(store.connectionPhases[own.recommendationID], .shown(own))
+  }
+
+  /// A record that is not the owner's to disclose (404/scope denial) hides
+  /// the disclosure — and a later re-entry re-checks the server rather than
+  /// trusting the quiet phase.
+  func testConnectionHidesWhenNotTheOwnersToDisclose() async {
+    let service = ScriptedGraphService(summary: makeSummary(owner: ownerA))
+    await service.setConnectionOutcome(.failure(.server(status: 404, code: "not_found", message: "", retryable: false, retryAfter: nil)))
+    let store = InterestGraphStore(service: service)
+    store.bind(account: ownerA)
+
+    let id = UUID()
+    await store.connection(for: id)
+    XCTAssertEqual(store.connectionPhases[id], .quiet)
+
+    await service.setConnectionOutcome(.failure(.server(status: 403, code: "scope_denied", message: "", retryable: false, retryAfter: nil)))
+    await store.connection(for: id)
+    XCTAssertEqual(store.connectionPhases[id], .quiet)
   }
 
   // MARK: Helpers
@@ -379,6 +505,15 @@ final class InterestGraphStoreTests: XCTestCase {
       try await Task.sleep(nanoseconds: 10_000_000)
     }
     XCTFail("the in-flight summary call never parked")
+  }
+
+  /// Waits (bounded) until the service has parked an in-flight connection call.
+  private func waitForParkedConnection(_ service: ScriptedGraphService) async throws {
+    for _ in 0..<200 {
+      if await service.parkedConnectionsCount > 0 { return }
+      try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail("the in-flight connection call never parked")
   }
 }
 
@@ -392,6 +527,7 @@ private actor ScriptedGraphService: InterestGraphService {
   private(set) var interestCalls = 0
   private(set) var connectionCalls = 0
   private(set) var parkedCount = 0
+  private(set) var parkedConnectionsCount = 0
   private(set) var lastSummaryCursors: (String?, String?) = (nil, nil)
   private(set) var lastSettingsRequest: (Int, Bool) = (0, false)
 
@@ -400,6 +536,8 @@ private actor ScriptedGraphService: InterestGraphService {
   private var summaryOutcome: Result<InterestGraphSummary, AtlasClientError>?
   private var park = false
   private var parked: [CheckedContinuation<InterestGraphSummary, Error>] = []
+  private var parkConnections = false
+  private var parkedConnections: [CheckedContinuation<RecommendationConnection, Error>] = []
   private var settingsOutcome: Result<InterestGraphSettings, AtlasClientError>?
   private var interestOutcome: Result<UpdateInterestGraphInterestResponse, AtlasClientError>?
   private var connectionOutcome: Result<RecommendationConnection, AtlasClientError>?
@@ -417,6 +555,7 @@ private actor ScriptedGraphService: InterestGraphService {
   func setInterestOutcome(_ outcome: Result<UpdateInterestGraphInterestResponse, AtlasClientError>?) { interestOutcome = outcome }
   func setConnectionOutcome(_ outcome: Result<RecommendationConnection, AtlasClientError>?) { connectionOutcome = outcome }
   func setPark(_ on: Bool) { park = on }
+  func setParkConnections(_ on: Bool) { parkConnections = on }
 
   func resumeParked(with result: Result<InterestGraphSummary, AtlasClientError>) {
     let waiters = parked
@@ -424,6 +563,17 @@ private actor ScriptedGraphService: InterestGraphService {
     for continuation in waiters {
       switch result {
       case .success(let summary): continuation.resume(returning: summary)
+      case .failure(let error): continuation.resume(throwing: error)
+      }
+    }
+  }
+
+  func resumeParkedConnections(with result: Result<RecommendationConnection, AtlasClientError>) {
+    let waiters = parkedConnections
+    parkedConnections = []
+    for continuation in waiters {
+      switch result {
+      case .success(let connection): continuation.resume(returning: connection)
       case .failure(let error): continuation.resume(throwing: error)
       }
     }
@@ -498,6 +648,13 @@ private actor ScriptedGraphService: InterestGraphService {
 
   func recommendationConnection(recommendationID: UUID) async throws -> RecommendationConnection {
     connectionCalls += 1
+    if parkConnections {
+      parkConnections = false
+      return try await withCheckedThrowingContinuation { continuation in
+        parkedConnections.append(continuation)
+        parkedConnectionsCount += 1
+      }
+    }
     if let connectionOutcome {
       switch connectionOutcome {
       case .success(let connection): return connection
