@@ -1519,6 +1519,139 @@
   }
 }
 
+/* ---- Settings → Taste · background discovery (graph) --------------------------------- */
+
+.taste-graph {
+  margin-top: var(--space-12);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-image);
+  background: var(--surface);
+  padding: var(--space-6);
+}
+
+.taste-graph__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.taste-graph__title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.taste-graph__pause {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 10px 16px;
+  font-size: 15px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.taste-graph__pause[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+.taste-graph__pause:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.taste-graph__status {
+  margin-top: var(--space-3);
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.taste-graph__lists {
+  margin-top: var(--space-6);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-8);
+}
+
+.taste-graph__list-title {
+  font-size: 17px;
+  font-weight: 400;
+}
+
+.taste-graph__items {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.taste-graph__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 44px;
+}
+
+.taste-graph__item-link {
+  font-size: 16px;
+  color: inherit;
+}
+
+.taste-graph__item--suppressed .taste-graph__item-link {
+  color: var(--muted);
+}
+
+.taste-graph__toggle {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.taste-graph__toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.taste-graph__empty {
+  margin-top: var(--space-3);
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.taste-graph__more {
+  margin-top: var(--space-3);
+  border: 0;
+  background: none;
+  padding: 8px 0;
+  font-size: 14px;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+@media (max-width: 767px) {
+  .taste-graph {
+    padding: var(--space-4);
+    margin-top: var(--space-8);
+  }
+  .taste-graph__lists {
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+}
+
 /* ---- Motion ------------------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {

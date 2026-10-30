@@ -132,6 +132,35 @@ export async function sessionOf(page: Page): Promise<{
 
 export const isGraphOn = ['true', '1'].includes(process.env.INTEREST_GRAPH_PROJECTION_ENABLED ?? '');
 
+/** The expansion/discovery flag (feed + photo graph arms and the expansion sweep). */
+export const isGraphDiscoveryOn =
+  isGraphOn && ['true', '1'].includes(process.env.INTEREST_GRAPH_DISCOVERY_ENABLED ?? '');
+
+/** Complete expansion runs the real worker published for the account. */
+export async function expansionRuns(accountId: string): Promise<number> {
+  return scalar(
+    `SELECT count(*) AS n FROM graph_runs WHERE owner_account_id = $1 AND run_kind = 'expansion' AND state = 'complete'`,
+    [accountId],
+  );
+}
+
+/** Expansion jobs the account still has queued or running. */
+export async function activeExpansionJobs(accountId: string): Promise<number> {
+  return scalar(
+    `SELECT count(*) AS n FROM jobs WHERE type = 'expand_interest_graph' AND payload->>'account_id' = $1 AND state IN ('queued','running')`,
+    [accountId],
+  );
+}
+
+/** Wait until the worker published at least `min` complete expansion runs. */
+export async function waitForExpansionRuns(accountId: string, min: number, timeoutMs = 120_000): Promise<number> {
+  let runs = 0;
+  await expect
+    .poll(async () => (runs = await expansionRuns(accountId)), { timeout: timeoutMs })
+    .toBeGreaterThanOrEqual(min);
+  return runs;
+}
+
 /** Journey screenshot; never captures a credential (the flows type passwords into masked inputs). */
 export async function shot(page: Page, info: TestInfo, name: string, fullPage = true) {
   await page.evaluate(() =>

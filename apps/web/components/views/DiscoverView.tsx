@@ -381,7 +381,7 @@ export function DiscoverView() {
                 <DiscoveryCard
                   card={card}
                   aspect="portrait"
-                  href={`/items/${card.id}?from=discover`}
+                  href={`/items/${card.id}?from=discover${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`}
                   priority
                   onSave={(c, el) => openSave(cardToTarget(c), el)}
                 />
@@ -392,7 +392,7 @@ export function DiscoverView() {
                     <li key={card.id} className="feed-fade">
                       <DiscoveryCard
                         card={card}
-                        href={`/items/${card.id}?from=discover`}
+                        href={`/items/${card.id}?from=discover${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`}
                         priority={i < 4}
                         onSave={(c, el) => openSave(cardToTarget(c), el)}
                       />

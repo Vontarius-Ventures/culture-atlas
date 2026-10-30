@@ -16,6 +16,7 @@ import { Icon } from '../Icon';
 import { useToast } from '../Toast';
 import { BackLink, Disclosure, MoreMenu, Notice, PageError, UnavailableState } from '../ui';
 import { referencePhrase } from './CaptureResultView';
+import { WhyThisConnection } from './WhyThisConnection';
 
 function relatedHref(card: Card): string {
   return `/items/${card.id}?from=item${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}`;
@@ -240,6 +241,7 @@ export function ItemView({ itemId }: { itemId: string }) {
             </p>
           )}
           <div className="disclosures">
+            {rec && <WhyThisConnection recommendationId={rec} />}
             {data.references.length > 0 && (
               <Disclosure label="Explore the references">
                 <ul className="reference-list">

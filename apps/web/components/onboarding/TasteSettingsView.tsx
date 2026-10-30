@@ -21,6 +21,7 @@ import { useToast } from '../Toast';
 import { PageError } from '../ui';
 import { COPY } from '../v2/copy';
 import { ExclusionsEditor, PickPill, SearchPicker } from './parts';
+import { TasteGraphSection } from './TasteGraphSection';
 
 type GroupKey = Category | 'other';
 const GROUPS: Array<{ key: GroupKey; label: string }> = [
@@ -416,6 +417,7 @@ export function TasteSettingsView() {
           </p>
         </aside>
       </div>
+      <TasteGraphSection />
     </div>
   );
 }
