@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_SIGNOUT_KEY } from '@/lib/client/session-sync';
 import type * as uploadStore from '../v2/upload-store';
 import { MemoryUploadStore, type UploadEntry } from '../v2/upload-store';
 
@@ -80,5 +81,16 @@ describe('sign-out with pending local uploads (SCREEN-CONTRACT Upload rule)', ()
     // Merely exposing the entry touches nothing: no sign-out, no request.
     expect(request).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy();
+  });
+
+  it('broadcasts the cross-tab sign-out so other tabs drop the account’s private surfaces', async () => {
+    window.localStorage.clear();
+    render(<AccountSection />);
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(request).toHaveBeenCalledWith('signOut', { body: {} }));
+    // The sentinel is in shared storage before this tab navigates away, so
+    // every other same-origin tab reloads and never renders the signed-out
+    // account's private Taste/feed/photos to whoever signs in next.
+    expect(window.localStorage.getItem(SESSION_SIGNOUT_KEY)).toBeTruthy();
   });
 });

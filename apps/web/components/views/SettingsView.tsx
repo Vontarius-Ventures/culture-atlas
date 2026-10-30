@@ -14,6 +14,7 @@ import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
 import { useAsyncEffect } from '@/lib/client/hooks';
 import { formatDate, hostOf, relativeTime, SCOPE_LABELS } from '@/lib/client/format';
 import { useSession } from '@/lib/client/session';
+import { broadcastSessionSignOut } from '@/lib/client/session-sync';
 import { AccountPrompt } from '../AccountPrompt';
 import { Dialog } from '../Dialog';
 import { Icon } from '../Icon';
@@ -84,6 +85,10 @@ export function AccountSection() {
     try {
       await api.request('signOut', { body: {} });
       await api.refreshSession();
+      // Revoke the account's private surfaces in every other tab of this
+      // browser before leaving: they reload and re-check the session instead
+      // of keeping (or late-applying) this account's Taste/feed/photos.
+      broadcastSessionSignOut();
       window.location.assign('/?signed_out=1');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong.');

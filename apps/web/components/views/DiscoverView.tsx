@@ -6,7 +6,6 @@ import type { DiscoveriesResponse, DiscoveryCard as Card } from '@culture-atlas/
 import { api, ApiError } from '@/lib/client/api';
 import { useAsyncEffect } from '@/lib/client/hooks';
 import { CATEGORY_LABELS, CATEGORY_ORDER } from '@/lib/client/format';
-import { ONBOARDING_PATH } from '@/lib/client/onboarding';
 import { UI_LIMITS } from '@/lib/client/limits';
 import { cardToTarget, useSave } from '@/lib/client/save';
 import { useSession } from '@/lib/client/session';
@@ -21,6 +20,7 @@ import {
 } from '@/lib/client/store';
 import { CaptureStart } from '../CaptureStart';
 import { Conveyor } from '../Conveyor';
+import { redirectToOnboarding } from '../onboarding/OnboardingGate';
 import { Icon } from '../Icon';
 import { CardGrid, DiscoveryCard, SkeletonGrid } from '../DiscoveryCard';
 import { FilterRow } from '../FilterRow';
@@ -118,8 +118,10 @@ export function DiscoverView() {
       setFeed(entry);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'onboarding_required') {
-        // The server gate (ONB-01) agrees with the shell's: finish the questionnaire first.
-        window.location.replace(ONBOARDING_PATH);
+        // The server gate (ONB-01) agrees with the shell's: finish the
+        // questionnaire first — but an open dialog (the save that created
+        // this account) finishes first, then the shell gate redirects.
+        redirectToOnboarding();
         return;
       }
       setError(err instanceof ApiError ? err.message : 'Discoveries could not be loaded.');
@@ -240,7 +242,8 @@ export function DiscoverView() {
         }
       } catch (err) {
         if (err instanceof ApiError && err.code === 'onboarding_required') {
-          window.location.replace(ONBOARDING_PATH);
+          // Same hold as the shell gate: a dialog in progress finishes first.
+          redirectToOnboarding();
           return;
         }
         // Keep the grid; say so only when the person asked, and offer to try again.

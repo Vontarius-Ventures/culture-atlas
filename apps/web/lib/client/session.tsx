@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, type ApiError, type SessionInfo } from './api';
+import { SESSION_SIGNOUT_KEY, reloadForSessionChange } from './session-sync';
 
 interface SessionContextValue {
   session: SessionInfo | null;
@@ -31,8 +32,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setError(null);
     });
     api.getSession().catch((err: ApiError) => setError(err));
+    // Another tab of this browser signed out: this tab still holds (or is
+    // waiting on) the signed-out account's private surfaces. Reload now so
+    // a late response for the old session can never render here, including
+    // after a different account signs in on the other tab (VAL-CROSS-005).
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SESSION_SIGNOUT_KEY) reloadForSessionChange();
+    };
+    window.addEventListener('storage', onStorage);
     return () => {
       off();
+      window.removeEventListener('storage', onStorage);
     };
   }, []);
 

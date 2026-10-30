@@ -2,7 +2,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useSyncExternalStore } from 'react';
-import { onboardingRedirect } from '@/lib/client/onboarding';
+import { ONBOARDING_PATH, onboardingRedirect } from '@/lib/client/onboarding';
+import { hardReplace } from '@/lib/client/navigate';
 import { useSession } from '@/lib/client/session';
 
 /** True while a dialog holds the page (Dialog makes #app-root inert). */
@@ -32,4 +33,17 @@ export function useOnboardingGate(pathname: string): boolean {
     if (target && !holding) router.replace(target);
   }, [target, holding, router]);
   return target !== null && !holding;
+}
+
+/**
+ * The feed-level onboarding gate (Discover answers onboarding_required for an
+ * account that still owes the questionnaire) navigates through here so it
+ * respects the same hold as the shell gate: a dialog in progress (e.g. the
+ * save that just created the account) finishes first, and the shell gate
+ * redirects once it closes. Navigating from mid-dialog would interrupt the
+ * intended save.
+ */
+export function redirectToOnboarding(): void {
+  if (dialogOpen()) return;
+  hardReplace(ONBOARDING_PATH);
 }
