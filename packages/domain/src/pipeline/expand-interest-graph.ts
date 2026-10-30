@@ -2,6 +2,7 @@ import { AppError } from '../errors';
 import { JobCancelledError, type JobContext, type JobHandler } from '../jobs/handler';
 import type { JobOutcome } from '../jobs/types';
 import { stillOwnsJob } from '../jobs/queue';
+import { rebuildFeedSnapshots } from '../services/discovery';
 import {
   ensureGraphWorkBudget,
   graphWorkDeadlineSignal,
@@ -91,6 +92,11 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
   if (priorRun && priorRun.state === 'complete' && priorRun.published) {
     await consumeExpansionDue(ctx.db, { accountId, dueUntil: committedRunCoverageBound(priorRun) });
     await setGraphWorkBudgetState(ctx.db, { ownerAccountId: accountId, workKey, state: 'complete' });
+    // The committed pass's feed rebuild may itself have been lost to the
+    // crash this redelivery covers: re-run it (idempotent — it just rebuilds
+    // the pool from current state), so the published cards surface on the
+    // next plain feed read even when the first attempt died before it.
+    await rebuildFeedSnapshots(ctx.db, { kind: 'account', accountId }, { config: ctx.config });
     await ctx.trace({ kind: 'note', name: 'graph_expansion_redelivery_reused', data: { runId: priorRun.id } });
     return { state: 'complete', resultType: 'graph_expansion', resultId: priorRun.id };
   }
@@ -196,11 +202,14 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
     }
   }
 
-  // The pass is COMMITTED and the worker's own bookkeeping follows: due-marker
-  // consumption, the budget close and the job completion. Telemetry marks the
-  // boundary — a worker that dies between the publication commit and this
-  // bookkeeping leaves exactly the state the redelivery path below reuses.
+  // The pass is COMMITTED and the worker's own bookkeeping follows: the feed
+  // rebuild (the legacy producers' post-publication step — the new run's cards
+  // surface on the next plain read, no refresh needed), due-marker
+  // consumption, the budget close and the job completion. Telemetry marks
+  // the boundary — a worker that dies between the publication commit and
+  // this bookkeeping leaves exactly the state the redelivery path reuses.
   await ctx.trace({ kind: 'note', name: 'graph_expansion_published', data: { runId: result.runId } });
+  await rebuildFeedSnapshots(ctx.db, { kind: 'account', accountId }, { config: ctx.config });
 
   // A completed expansion consumes the due markers its own read covered; a
   // projection that committed DURING the run stamped a newer marker (and

@@ -267,6 +267,22 @@ export async function revalidatePinnedDependencies(
 }
 
 /**
+ * Read-time justification of ONE pinned assertion, mapped into the
+ * pinned-dependency rejection space: null when the assertion is currently
+ * justified, the mapped rejection otherwise. The batched feed/page verdict
+ * engine uses this so its per-assertion decision is byte-identical to
+ * `revalidatePinnedDependencies`.
+ */
+export async function pinnedAssertionJustification(
+  db: Queryable,
+  input: { assertionId: string; at: Date },
+): Promise<PinnedDependencyRejection | null> {
+  const justification = await currentAssertionJustification(db, input);
+  if (justification.justified) return null;
+  return UNJUSTIFIED_MAP[justification.rejection ?? 'no_valid_support'] ?? 'assertion_unjustified';
+}
+
+/**
  * Read-time revalidation of one stored proof against current dependency
  * versions. The stored validity_state is the durable invalidation record;
  * this computation is the honest answer to "may this reason be shown now".

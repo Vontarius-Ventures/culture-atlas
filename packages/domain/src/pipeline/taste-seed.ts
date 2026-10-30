@@ -559,7 +559,11 @@ async function publishCategory(ctx: JobContext<'taste_seed'>, runId: string, own
     if (out.state === 'ready') {
       await tx.query('UPDATE taste_seed_runs SET first_ready_at = COALESCE(first_ready_at, now()), updated_at = now() WHERE id = $1', [runId]);
     }
-    await rebuildFeedSnapshots(tx, owner);
+    // The rebuild carries the graph arm too (config-gated), so a taste seed
+    // publishing onto an account with graph discovery live rebuilds the SAME
+    // pool its plain feed read would: legacy cards and the latest published
+    // run's cards together, never one evicting the other.
+    await rebuildFeedSnapshots(tx, owner, { config: ctx.config });
   });
 }
 

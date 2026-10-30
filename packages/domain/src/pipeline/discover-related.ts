@@ -564,8 +564,11 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
     }
     await insertRecommendations(tx, parent, recs);
     await tx.query('UPDATE discovery_jobs SET status = $2 WHERE id = $1', [discovery_job_id, state]);
-    // Music Mode suggestions float into the interest feed right away.
-    if (fromMusic && owner.kind === 'account' && recs.length) await rebuildFeedSnapshots(tx, owner);
+    // Music Mode suggestions float into the interest feed right away (the
+    // rebuild is config-gated: a graph account's rebuilt pool keeps its
+    // latest published run's cards alongside these). Scoped Discover-more
+    // results never rebuild the feed — they publish to their scoped parent.
+    if (fromMusic && owner.kind === 'account' && recs.length) await rebuildFeedSnapshots(tx, owner, { config: ctx.config });
   });
   return { state, resultType: 'discovery_job', resultId: discovery_job_id };
 };

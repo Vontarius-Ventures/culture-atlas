@@ -3,7 +3,7 @@ import { requireScopes, requireWholeLibrary } from '../authz';
 import { reciprocalRankFusion, type RankedList } from '../composer/fusion';
 import type { ServiceContext } from '../context';
 import type { Queryable } from '../db/pool';
-import { CATEGORIES, LIMITS, type Category, type ItemKind, type RecommendationOrigin } from '../enums';
+import { CATEGORIES, LIMITS, type Category, type ItemKind } from '../enums';
 import { AppError } from '../errors';
 import { sampleItemIds } from '../feed/samples';
 import { hiddenKeys } from '../library/access';
@@ -12,6 +12,15 @@ import type { DiscoveriesQuery, DiscoveriesResponse } from '../schemas/discoveri
 import { decodeCursor, encodeCursor } from '../util/cursor';
 import { addHours } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
+import {
+  feedGraphReadGate,
+  feedServingRecommendations,
+  graphRecommendationServingVerdicts,
+  poolEligibleRecommendation,
+  type FeedGraphReadGate,
+  type FeedServingRecommendation,
+} from '../interest-graph/feed-reads';
+import type { DiscoveryGateConfig } from '../interest-graph/expansion';
 import { dispatchGraphExpansion } from '../interest-graph/sweeper';
 import { enqueueInterestExpand } from './interest-expand';
 import { excludedFoodItemIds, foodExclusionsFor, isOnboardingRequired } from './onboarding';
@@ -144,8 +153,20 @@ interface PoolRow {
  * insights, never a title search or a creative idea). Agent-started runs stay on the item page. Owner-scoped: another user's private captures
  * never enter a feed. Explicit saves (preference events) leave the feed;
  * Interests auto-file does not. Hidden items stay out.
+ *
+ * (d) The account's graph arm (feature feed-proof-snapshot-integration):
+ * the cards of the LATEST successful compatible expansion run only (a newer
+ * queued/running/failed/unpublished run never replaces the last success), as
+ * one more ranked list of the same pool — a card serves only while its latest
+ * pinned proof currently holds AND its pinned private support is still live.
+ * The arm is entirely gated on the read-time graph flags: a graph-off account
+ * (rollback) gets a byte-identical legacy pool.
  */
-export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedCandidate[]> {
+export async function buildSavedPool(
+  db: Queryable,
+  owner: Owner,
+  options: { config?: DiscoveryGateConfig; at?: Date; gate?: FeedGraphReadGate | null } = {},
+): Promise<FeedCandidate[]> {
   const own = (alias: string) => ownerPredicate(owner, alias, 1).sql;
   const params = ownerPredicate(owner, '', 1).params;
   // Taste seeds are account data; anonymous sessions never have one.
@@ -196,6 +217,15 @@ export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedC
     l.push(r);
     lists.set(r.list_id, l);
   }
+  // Graph arm (d): the latest published run's personal cards that currently
+  // serve. Never touches the legacy SQL above, so a graph-off pool is
+  // byte-identical to the pre-graph pool.
+  const graphRows = await graphPoolRows(db, owner, options);
+  if (graphRows.length > 0) {
+    const l = lists.get(`graph`) ?? [];
+    l.push(...graphRows.map((r) => ({ ...r, list_id: 'graph' })));
+    lists.set('graph', l);
+  }
   const ranked: RankedList<PoolRow & { key: string }>[] = [...lists.entries()].map(([id, items]) => ({
     id,
     items: [...items].sort((a, b) => a.rank - b.rank).map((i) => ({ ...i, key: i.canonical_key })),
@@ -206,10 +236,67 @@ export async function buildSavedPool(db: Queryable, owner: Owner): Promise<FeedC
     category: f.item.category,
     kind: f.item.kind,
   }));
-  const recentIds = [...rows]
+  const recentIds = [...rows, ...graphRows]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .map((r) => r.item_id);
   return weaveRecentIntoFront(fused, recentIds).slice(0, FEED_POOL_MAX);
+}
+
+interface GraphPoolRow extends PoolRow {
+  rec_id: string;
+}
+
+/**
+ * The latest published run's PERSONAL cards that currently serve (fresh proof
+ * + live support revalidation), newest-rank first. Photo cards stay on the
+ * capture page; rows without a currently-holding proof never pool.
+ */
+async function graphPoolRows(
+  db: Queryable,
+  owner: Owner,
+  options: { config?: DiscoveryGateConfig; at?: Date; gate?: FeedGraphReadGate | null },
+): Promise<GraphPoolRow[]> {
+  if (owner.kind !== 'account' || !options.config) return [];
+  const accountId = owner.accountId;
+  const gate =
+    options.gate !== undefined && options.gate !== null
+      ? options.gate
+      : await feedGraphReadGate(db, { accountId, config: options.config });
+  if (!gate.enabled || !gate.runId) return [];
+  const { rows } = await db.query<GraphPoolRow>(
+    `SELECT r.id AS rec_id, r.discovery_item_id AS item_id, di.canonical_key, di.category, di.kind,
+            r.rank, r.created_at
+       FROM recommendations r
+       JOIN discovery_items di ON di.id = r.discovery_item_id
+       JOIN LATERAL (
+         SELECT p.id AS proof_id, p.intent AS intent, p.validity_state AS validity_state
+           FROM recommendation_graph_proofs p
+          WHERE p.recommendation_id = r.id AND p.owner_account_id = $1
+          ORDER BY p.proof_version DESC LIMIT 1
+       ) pr ON true
+      WHERE r.owner_account_id = $1 AND r.graph_run_id = $2
+        AND pr.intent = 'personal' AND pr.validity_state = 'valid'
+        AND (di.is_sample OR di.owner_account_id = $1)
+        -- The same explicit-save rule as every other pool arm.
+        AND di.id NOT IN (
+          SELECT si.discovery_item_id FROM saved_items si
+           WHERE si.owner_account_id = $1
+             AND EXISTS (
+               SELECT 1 FROM preference_events pe
+                WHERE pe.action = 'save' AND pe.target_type = 'discovery_item'
+                  AND pe.target_id = si.discovery_item_id AND pe.owner_account_id = $1
+             )
+        )
+      ORDER BY r.rank, r.created_at, r.id`,
+    [accountId, gate.runId],
+  );
+  if (rows.length === 0) return [];
+  const verdicts = await graphRecommendationServingVerdicts(db, {
+    ownerAccountId: accountId,
+    recommendationIds: rows.map((r) => r.rec_id),
+    at: options.at ?? new Date(),
+  });
+  return rows.filter((r) => verdicts.get(r.rec_id)?.serves === true);
 }
 
 async function savedItemIdSet(db: Queryable, owner: Owner): Promise<Set<string>> {
@@ -223,9 +310,12 @@ interface SnapshotRow {
   taste_revision: number;
   category: Category | null;
   ordered_item_ids: string[];
+  /** Position-aligned pin of each position's selected recommendation (null for legacy rows). */
+  pinned_recommendation_ids: (string | null)[] | null;
   is_example_feed: boolean;
   available_categories: Category[];
   expires_at: Date;
+  created_at: Date;
 }
 
 const FeedCursor = z.object({ f: z.uuid(), r: z.number().int().nonnegative(), p: z.number().int().nonnegative() });
@@ -249,13 +339,15 @@ async function picturedItemIds(db: Queryable, ids: string[]): Promise<Set<string
  * Whether new cards are on their way, for client polling: the taste seed
  * (right after onboarding, categories publish one by one and the first
  * snapshot is mostly labeled examples topping up a short pool), an
- * interest-expand wave, or Music Mode suggestions.
+ * interest-expand wave, a graph expansion dispatch (PR 8: the deduplicated
+ * due work the feed read enqueues surfaces here as background work), or
+ * Music Mode suggestions.
  */
 async function expansionState(db: Queryable, owner: Owner): Promise<DiscoveriesResponse['expansion']> {
   if (owner.kind !== 'account') return { state: 'idle', poll_after_ms: null };
   const { rows } = await db.query(
     `SELECT 1 FROM jobs WHERE owner_account_id = $1 AND state IN ('queued', 'running')
-        AND (type IN ('interest_expand', 'taste_seed')
+        AND (type IN ('interest_expand', 'taste_seed', 'expand_interest_graph')
              OR (type = 'discover_related' AND result_id IN (
                    SELECT id FROM discovery_jobs WHERE owner_account_id = $1 AND source = 'music_mode')))
       LIMIT 1`,
@@ -277,15 +369,18 @@ export function demoteIds(ordered: readonly string[], demote: readonly string[],
 
 /** Build and store a new snapshot from the EXISTING pool (no provider calls, no jobs). */
 async function createSnapshot(
-  ctx: { db: Queryable; now(): Date },
+  ctx: { db: Queryable; now(): Date; config: DiscoveryGateConfig },
   owner: Owner,
   revision: number,
   category: Category | null,
   options: { demote?: readonly string[] } = {},
 ): Promise<SnapshotRow> {
   const hidden = await hiddenKeys(ctx.db, owner);
+  // The graph read gate, computed once for the pool arm and the pinning pass.
+  const gate =
+    owner.kind === 'account' ? await feedGraphReadGate(ctx.db, { accountId: owner.accountId, config: ctx.config }) : null;
   // The pool is owner-scoped and empty without saves, a taste seed or Music Mode results.
-  let pool: FeedCandidate[] = await buildSavedPool(ctx.db, owner);
+  let pool: FeedCandidate[] = await buildSavedPool(ctx.db, owner, { config: ctx.config, at: ctx.now(), gate });
   pool = pool.filter((c) => !hidden.has(c.canonical_key));
   // Amendment 2.2 (ONB-05): the account's food exclusions filter Eat suggestions.
   // Applied to the personal pool before the picture rule below, so an excluded
@@ -323,16 +418,46 @@ async function createSnapshot(
   const filtered = category ? pool.filter((p) => p.category === category) : pool;
   const interleaved = interleaveFeed(filtered, hidden).map((c) => c.id);
   const ordered = demoteIds(interleaved, options.demote ?? [], FEED_TOP_UP_MIN);
+  // Pin the recommendation each position's card was selected from at creation
+  // (VAL-FEED-003/004): the newest currently-serving owner-context
+  // recommendation per item — capture analyses, taste seeds, discovery jobs
+  // (scoped proofs validated, not flag-gated) and, when the account's graph
+  // read is live, its latest run's proof-validated cards. A later run
+  // republishing the same item can never silently swap this snapshot's
+  // reason; read-time revalidation of the PINNED proof (not a fresh
+  // "latest reason" lookup) decides whether it still holds. Legacy rows
+  // before this column have no pinning and keep the newest-context behavior.
+  let pinned: (string | null)[] | null = null;
+  if (!isExample) {
+    const serving = await feedServingRecommendations(ctx.db, {
+      owner,
+      itemIds: ordered,
+      at: ctx.now(),
+      graphEnabled: gate?.enabled ?? false,
+    });
+    pinned = ordered.map((itemId) => serving.get(itemId)?.[0]?.id ?? null);
+  }
   const cols = ownerColumns(owner);
   const { rows } = await ctx.db.query<SnapshotRow>(
     // created_at is the wall-clock insert time, not the transaction start, so a
     // rebuild that waited for a lock (taste seed publishing) still sorts after
     // the snapshot it supersedes.
     `INSERT INTO feed_snapshots (owner_account_id, owner_session_id, taste_revision, category, ordered_item_ids,
-                                 is_example_feed, available_categories, expires_at, created_at)
-     VALUES ($1, $2, $3, $4, $5::uuid[], $6, $7::text[], $8, clock_timestamp())
-     RETURNING id, taste_revision, category, ordered_item_ids, is_example_feed, available_categories, expires_at`,
-    [cols.owner_account_id, cols.owner_session_id, revision, category, ordered, isExample, available, addHours(ctx.now(), FEED_SNAPSHOT_TTL_HOURS)],
+                                 pinned_recommendation_ids, is_example_feed, available_categories, expires_at, created_at)
+     VALUES ($1, $2, $3, $4, $5::uuid[], $6::uuid[], $7, $8::text[], $9, clock_timestamp())
+     RETURNING id, taste_revision, category, ordered_item_ids, pinned_recommendation_ids, is_example_feed,
+               available_categories, expires_at, created_at`,
+    [
+      cols.owner_account_id,
+      cols.owner_session_id,
+      revision,
+      category,
+      ordered,
+      pinned,
+      isExample,
+      available,
+      addHours(ctx.now(), FEED_SNAPSHOT_TTL_HOURS),
+    ],
   );
   return rows[0]!;
 }
@@ -349,8 +474,9 @@ async function createSnapshot(
 export async function rebuildFeedSnapshots(
   db: Queryable,
   owner: Owner,
-  now: () => Date = () => new Date(),
+  options: { now?: () => Date; config?: DiscoveryGateConfig } = {},
 ): Promise<{ feedId: string; revision: number; isExampleFeed: boolean; availableCategories: Category[]; itemCount: number }> {
+  const now = options.now ?? (() => new Date());
   const revision = await getTasteRevision(db, owner);
   const own = ownerPredicate(owner, '', 1);
   const { rows } = await db.query<{ category: Category }>(
@@ -358,7 +484,7 @@ export async function rebuildFeedSnapshots(
       WHERE ${own.sql} AND taste_revision = $2 AND category IS NOT NULL AND expires_at > $3`,
     [...own.params, revision, now()],
   );
-  const ctx = { db, now };
+  const ctx = { db, now, config: options.config ?? {} };
   const main = await createSnapshot(ctx, owner, revision, null);
   for (const r of rows) await createSnapshot(ctx, owner, revision, r.category);
   return {
@@ -382,33 +508,33 @@ async function findSnapshot(ctx: ServiceContext, owner: Owner, where: { id?: str
     conds.push(`taste_revision = $${params.length - 1}`, `category IS NOT DISTINCT FROM $${params.length}::text`);
   }
   const { rows } = await ctx.db.query<SnapshotRow>(
-    `SELECT id, taste_revision, category, ordered_item_ids, is_example_feed, available_categories, expires_at
+    `SELECT id, taste_revision, category, ordered_item_ids, pinned_recommendation_ids, is_example_feed,
+            available_categories, expires_at, created_at
        FROM feed_snapshots WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT 1`,
     params,
   );
   return rows[0] ?? null;
 }
 
-/** Latest owner-context recommendation per item, for "Why this?" and example labeling. */
-async function recommendationContexts(db: Queryable, owner: Owner, itemIds: string[]): Promise<Map<string, CardRecommendationContext>> {
-  const out = new Map<string, CardRecommendationContext>();
-  if (itemIds.length === 0) return out;
-  const own = (alias: string) => ownerPredicate(owner, alias, 2).sql;
-  const seedOwner = owner.kind === 'account' ? 'ts.owner_account_id = $2' : 'false';
-  const { rows } = await db.query<{ item_id: string; id: string; origin: RecommendationOrigin; display_reason: string | null }>(
-    `SELECT DISTINCT ON (r.discovery_item_id) r.discovery_item_id AS item_id, r.id, r.origin, r.display_reason
-       FROM recommendations r
-       LEFT JOIN analyses a ON a.id = r.analysis_id
-       LEFT JOIN captures c ON c.id = a.capture_id
-       LEFT JOIN discovery_jobs dj ON dj.id = r.discovery_job_id
-       LEFT JOIN taste_seed_runs ts ON ts.id = r.taste_seed_run_id
-      WHERE r.discovery_item_id = ANY($1::uuid[])
-        AND ((c.id IS NOT NULL AND ${own('c')} AND c.deleted_at IS NULL) OR (dj.id IS NOT NULL AND ${own('dj')})
-             OR (ts.id IS NOT NULL AND ${seedOwner}))
-      ORDER BY r.discovery_item_id, r.created_at DESC`,
-    [itemIds, ...ownerPredicate(owner, '', 2).params],
+/** The parent kind of a pinned recommendation, for read-time re-decisions. */
+async function pinnedRecommendationParents(
+  db: Queryable,
+  recIds: readonly string[],
+): Promise<Map<string, { parent: 'capture' | 'seed' | 'job' | 'graph_run' }>> {
+  const out = new Map<string, { parent: 'capture' | 'seed' | 'job' | 'graph_run' }>();
+  if (recIds.length === 0) return out;
+  const { rows } = await db.query<{ id: string; parent: 'capture' | 'seed' | 'job' | 'graph_run' }>(
+    `SELECT r.id,
+            CASE
+              WHEN r.analysis_id IS NOT NULL THEN 'capture'
+              WHEN r.taste_seed_run_id IS NOT NULL THEN 'seed'
+              WHEN r.discovery_job_id IS NOT NULL THEN 'job'
+              ELSE 'graph_run'
+            END AS parent
+       FROM recommendations r WHERE r.id = ANY($1::uuid[])`,
+    [[...new Set(recIds)]],
   );
-  for (const r of rows) out.set(r.item_id, { id: r.id, origin: r.origin, display_reason: r.display_reason });
+  for (const r of rows) out.set(r.id, { parent: r.parent });
   return out;
 }
 
@@ -478,26 +604,86 @@ export async function getDiscoveries(ctx: ServiceContext, query: DiscoveriesQuer
     }
   }
 
-  // Hide takes effect immediately, even inside an existing snapshot.
+  // Hide takes effect immediately, even inside an existing snapshot. So does
+  // current authority (VAL-FEED-004/VAL-EVID-004): every position is served
+  // against the recommendation it was pinned to — sole-source retraction,
+  // natural evidence/rights expiry, support suppression/removal and capture
+  // correction skip their cards at READ time — without reshuffling: no
+  // reordering, no newer-run insertion, no duplication. Legacy rows without
+  // pinning keep the pre-graph behavior (hidden filter only, newest serving
+  // context), and legacy positions (capture/seed/job parents) are never
+  // dropped for recommendation reasons — only their stale reason steps aside.
   const hidden = await hiddenKeys(ctx.db, owner);
   const ids = snapshot.ordered_item_ids;
+  const pinned = snapshot.pinned_recommendation_ids ?? null;
+  const graphGate =
+    owner.kind === 'account'
+      ? await feedGraphReadGate(ctx.db, { accountId: owner.accountId, config: ctx.config })
+      : null;
   const pageIds: string[] = [];
+  const contexts = new Map<string, CardRecommendationContext>();
   let next = position;
   while (next < ids.length && pageIds.length < limit) {
     const chunk = ids.slice(next, next + limit * 2);
+    const chunkStart = next;
     const keys = await ctx.db.query<{ id: string; canonical_key: string }>(
       'SELECT id, canonical_key FROM discovery_items WHERE id = ANY($1::uuid[])',
       [chunk],
     );
     const keyOf = new Map(keys.rows.map((r) => [r.id, r.canonical_key]));
-    for (const id of chunk) {
+    // Serving owner-context recommendations for this chunk, bounded to the
+    // snapshot's own creation time so a step-aside never adopts a newer run's
+    // freshly published reason. Example feeds never serve contexts.
+    const serving: Map<string, FeedServingRecommendation[]> = snapshot.is_example_feed
+      ? new Map()
+      : await feedServingRecommendations(ctx.db, {
+          owner,
+          itemIds: chunk,
+          at: ctx.now(),
+          graphEnabled: graphGate?.enabled ?? false,
+          notAfter: snapshot.created_at,
+        });
+    const chunkPins = pinned ? chunk.map((_, i) => pinned[chunkStart + i] ?? null) : null;
+    const parents = await pinnedRecommendationParents(
+      ctx.db,
+      chunkPins ? chunkPins.filter((p): p is string => p !== null) : [],
+    );
+    for (let i = 0; i < chunk.length; i++) {
       next++;
+      const id = chunk[i]!;
       const key = keyOf.get(id);
-      if (key && !hidden.has(key)) pageIds.push(id);
+      if (!key || hidden.has(key)) continue;
+      const itemServing = serving.get(id) ?? [];
+      const newest = itemServing[0];
+      let keep = true;
+      let context: CardRecommendationContext | null = newest ? { id: newest.id, origin: newest.origin, display_reason: newest.display_reason } : null;
+      if (chunkPins) {
+        const pin = chunkPins[i];
+        const pinnedParent = pin ? parents.get(pin)?.parent : undefined;
+        if (pin && pinnedParent === 'graph_run') {
+          const pinnedServing = itemServing.find((r) => r.id === pin);
+          if (pinnedServing) {
+            // The pinned recommendation still serves: its reason is the one
+            // this position was created with (never a newer run's).
+            context = { id: pin, origin: pinnedServing.origin, display_reason: pinnedServing.display_reason };
+          } else if (!itemServing.some(poolEligibleRecommendation)) {
+            // A graph position whose pinned proof no longer holds has lost
+            // its pool basis: skip the card. No reshuffling, no substitution.
+            keep = false;
+          }
+        }
+        // Every other position is never dropped for recommendation reasons:
+        // a legacy (or scoped) position's stale reason steps aside to the
+        // newest serving snapshot-bound context — or serves contextless,
+        // exactly as the pre-graph read did.
+      }
+      if (!keep) continue;
+      pageIds.push(id);
+      if (context) contexts.set(id, context);
       if (pageIds.length >= limit) break;
     }
   }
-  const recs = snapshot.is_example_feed ? new Map() : await recommendationContexts(ctx.db, owner, pageIds);
+  const recs = snapshot.is_example_feed ? new Map() : contexts;
   const items = await loadCards(ctx, pageIds, { recommendations: recs });
   return {
     items,

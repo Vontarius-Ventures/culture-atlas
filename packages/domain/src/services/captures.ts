@@ -9,6 +9,7 @@ import { AppError } from '../errors';
 import { analysisDedupeKey } from '../jobs/dedupe';
 import { isGrantLimited } from '../library/access';
 import { noteAnalysisIntent } from '../interest-graph/intent';
+import { photoGraphRecommendations } from '../interest-graph/feed-reads';
 import { cancelJobsForResult, enqueueJob } from '../jobs/queue';
 import type { JobRecord } from '../jobs/types';
 import { normalizeImage } from '../media/image';
@@ -602,9 +603,36 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
           ORDER BY r.discovery_item_id, r.rank`,
         [a.id, ownerParam],
       );
-      const ordered = [...recs].sort((x, y) => x.rank - y.rank).slice(0, LIMITS.recommendationsPerAnalysis);
-      const context = new Map<string, CardRecommendationContext>(ordered.map((r) => [r.discovery_item_id, { id: r.id, origin: r.origin, display_reason: r.display_reason }]));
-      recommendations = await loadCards(ctx, ordered.map((r) => r.discovery_item_id), { recommendations: context });
+      const merged: { id: string; discovery_item_id: string; origin: CardRecommendationContext['origin']; display_reason: string | null }[] = [
+        ...[...recs].sort((x, y) => x.rank - y.rank).slice(0, LIMITS.recommendationsPerAnalysis),
+      ];
+      // The photo read's graph rail (feature feed-proof-snapshot-integration):
+      // the account's latest published run's PHOTO cards, bound to this
+      // capture's CURRENT active analysis and revalidated at read time, so
+      // retraction, expiry, correction (a newer analysis going active) and
+      // support loss withdraw them immediately. The legacy analysis rail is
+      // untouched — graph-off accounts and graphless captures see exactly
+      // what they saw before.
+      if (owner.kind === 'account') {
+        const graphCards = await photoGraphRecommendations(ctx.db, {
+          owner,
+          captureId: capture.id,
+          activeAnalysisId: a.id,
+          config: ctx.config,
+          at: ctx.now(),
+        });
+        const seen = new Set(merged.map((r) => r.discovery_item_id));
+        for (const g of graphCards) {
+          if (seen.has(g.itemId)) continue;
+          if (merged.length >= LIMITS.recommendationsPerAnalysis) break;
+          merged.push({ id: g.recommendationId, discovery_item_id: g.itemId, origin: g.origin, display_reason: g.displayReason });
+          seen.add(g.itemId);
+        }
+      }
+      const context = new Map<string, CardRecommendationContext>(
+        merged.map((r) => [r.discovery_item_id, { id: r.id, origin: r.origin, display_reason: r.display_reason }]),
+      );
+      recommendations = await loadCards(ctx, merged.map((r) => r.discovery_item_id), { recommendations: context });
     }
   }
 

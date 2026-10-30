@@ -674,14 +674,14 @@ export async function insertRecommendationProof(
     `WITH ins AS (
        INSERT INTO recommendation_graph_proofs (owner_account_id, recommendation_id, graph_run_id, proof_version,
                                                  assertion_ids, assertion_revisions, evidence_ids, evidence_revisions,
-                                                 intent, reason_template, reason_template_version)
+                                                 intent, reason_template, reason_template_version, pinned_support_edge_ids)
        VALUES ($1, $2, $3,
                (SELECT COALESCE(MAX(proof_version), 0) + 1 FROM recommendation_graph_proofs
                  WHERE recommendation_id = $2),
-               $4, $5, $6, $7, $8, $9, $10)
+               $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id, owner_account_id, recommendation_id, graph_run_id, proof_version, assertion_ids,
                  assertion_revisions, evidence_ids, evidence_revisions, intent, reason_template,
-                 reason_template_version, validity_state, invalidated_at, created_at, updated_at
+                 reason_template_version, pinned_support_edge_ids, validity_state, invalidated_at, created_at, updated_at
      ),
      support AS (
        INSERT INTO recommendation_graph_proof_support_edges (proof_id, owner_account_id, support_edge_id)
@@ -710,7 +710,7 @@ export async function insertRecommendationProof(
       input.intent,
       input.reasonTemplate,
       input.reasonTemplateVersion ?? 'reason-1',
-      input.supportEdgeIds ?? [],
+      [...new Set(input.supportEdgeIds ?? [])],
     ],
   );
   return rows[0]!;

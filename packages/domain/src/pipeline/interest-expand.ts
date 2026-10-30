@@ -196,7 +196,11 @@ export const interestExpand: JobHandler<'interest_expand'> = async (ctx) => {
         WHERE run_id = $1 AND category = $2`,
       [runId, category, recs.length],
     );
-    await rebuildFeedSnapshots(tx, owner);
+    // Same pool rule as the taste seed: the rebuild is config-gated so an
+    // expansion wave onto a graph account rebuilds legacy and graph cards
+    // together (this handler itself completes without spending on such
+    // accounts — the graph sweep owns their refresh).
+    await rebuildFeedSnapshots(tx, owner, { config: ctx.config });
   });
 
   return { state: 'complete', ...result, resultId: runId };

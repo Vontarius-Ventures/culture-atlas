@@ -4,6 +4,7 @@ import type { ServiceContext } from '../context';
 import type { Db, Queryable } from '../db/pool';
 import { AppError, invalidInput } from '../errors';
 import { INTEREST_GRAPH_POLICY_VERSION } from '../interest-graph/schema';
+import { graphProofSupportLive } from '../interest-graph/feed-reads';
 import { lockAccountPublicationAuthority, graphDiscoveryPausedAt, applyDiscoveryPaused } from '../interest-graph/refresh';
 import { readReconciledInterestGraph } from '../interest-graph/read';
 import { revalidatePinnedDependencies } from '../interest-graph/validity';
@@ -527,7 +528,7 @@ export async function getRecommendationConnection(ctx: ServiceContext, recommend
     }>(
       `SELECT p.proof_version, p.assertion_ids, p.assertion_revisions, p.evidence_ids, p.evidence_revisions,
               p.intent, p.reason_template,
-              COALESCE(se.edges, ARRAY[]::uuid[]) AS support_edge_ids
+              COALESCE(p.pinned_support_edge_ids, se.edges, ARRAY[]::uuid[]) AS support_edge_ids
          FROM recommendation_graph_proofs p
          LEFT JOIN (SELECT proof_id, array_agg(support_edge_id ORDER BY support_edge_id) AS edges
                       FROM recommendation_graph_proof_support_edges GROUP BY proof_id) se
@@ -546,6 +547,15 @@ export async function getRecommendationConnection(ctx: ServiceContext, recommend
       at: ctx.now(),
     });
     if (!verdict.valid) return unavailable(rec, { provenance: 'graph_run', intent: proof.intent, reason: verdict.reason ?? 'invalid' });
+    // Stale-reason suppression (feature feed-proof-snapshot-integration): the
+    // private support behind the relevance half must still be live — a
+    // suppressed or removed support edge withdraws the reason — and a photo
+    // card additionally needs its capture-reference support row to still
+    // belong to the capture's CURRENT active analysis, so correction
+    // withdraws it too. A proof that pinned no support edge makes no claim.
+    if (!(await graphProofSupportLive(db, { ownerAccountId: owner.accountId, edgeIds: proof.support_edge_ids, intent: proof.intent }))) {
+      return unavailable(rec, { provenance: 'graph_run', intent: proof.intent, reason: 'support_withdrawn' });
+    }
     const [path, sources, support] = await Promise.all([
       loadConnectionEdges(db, proof.assertion_ids),
       loadConnectionSources(db, proof.evidence_ids),
