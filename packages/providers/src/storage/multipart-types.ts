@@ -61,7 +61,14 @@ export interface MultipartStorage {
     byteSize: number,
   ): Promise<void>;
   delete(key: string): Promise<void>;
-  /** Worker-only namespace cleanup, never accepts an untrusted client prefix. */
+  /**
+   * Worker-only namespace cleanup, never accepts an untrusted client prefix.
+   * Removes every object under the prefix AND the directories the prefix
+   * emptied (the requested directory itself included) without following
+   * symlinks or touching sibling/unrelated storage. Idempotent; a directory
+   * that is not empty after the object deletions is never removed, so a
+   * failed cleanup propagates and stays owed rather than claiming completion.
+   */
   deletePrefix(prefix: string): Promise<void>;
   /** Worker-only reconciliation inventory of committed objects under a trusted prefix. */
   list?(prefix: string): AsyncIterable<StoredObjectInfo>;

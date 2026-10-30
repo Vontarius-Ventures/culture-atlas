@@ -139,6 +139,13 @@ const ACCOUNT_ROW_PURGES: readonly string[] = [
   `DELETE FROM media_tracks WHERE account_id = $1`,
   `DELETE FROM recognized_recordings WHERE account_id = $1`,
   `DELETE FROM saved_moments WHERE account_id = $1`,
+  // The v1→v2 bridge links an account's capture and media asset to each
+  // other without a cascade (captures.media_asset_id → media_assets,
+  // media_assets.legacy_capture_id → captures — the legacy backfill creates
+  // this cycle on real accounts). Both sides are deleted in this same
+  // transaction, so clearing the account's own bridge link first loses
+  // nothing and lets either side go.
+  `UPDATE media_assets SET legacy_capture_id = NULL WHERE account_id = $1 AND legacy_capture_id IS NOT NULL`,
   // captures reference media_assets (media_asset_id) without a cascade.
   `DELETE FROM captures WHERE owner_account_id = $1`,
   // upload_sessions' children, then the sessions (media_assets' child).

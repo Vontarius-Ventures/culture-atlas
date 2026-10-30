@@ -154,9 +154,9 @@ function startService(service: 'worker' | 'media_worker', readyLine: string): Pr
 }
 
 /**
- * Object bytes are the storage contract. The purge must leave none under an
- * account prefix. (The local v2 driver may leave empty directory shells,
- * which carry no data; the v1 driver removes the whole tree.)
+ * Object bytes are the storage contract, and so is the namespace itself: the
+ * purge must leave neither files nor empty directory shells under an account
+ * prefix (both drivers prune the emptied tree; the shared roots stay).
  */
 function countFiles(dir: string): number {
   let entries: Dirent[];
@@ -965,9 +965,15 @@ test('settings deletion ends a live private journey: revoke at once, fence late 
       (await one<{ state: string }>(`SELECT state FROM jobs WHERE dedupe_key = 'purge_account:' || $1::text`, [accountId]))?.state,
     ).toBe('complete');
     // Both private storage namespaces are purged: no account media object
-    // bytes remain in either the v1 store or the v2 multipart store.
+    // bytes remain in either the v1 store or the v2 multipart store, and no
+    // empty account directory shell survives the purge either.
     expect(countFiles(path.join(STORAGE_DIR, 'owners', `a-${accountId}`))).toBe(0);
     expect(countFiles(path.join(STORAGE_DIR, 'capture-v2', 'objects', 'accounts', accountId))).toBe(0);
+    expect(existsSync(path.join(STORAGE_DIR, 'owners', `a-${accountId}`))).toBe(false);
+    expect(existsSync(path.join(STORAGE_DIR, 'capture-v2', 'objects', 'accounts', accountId))).toBe(false);
+    // The shared namespace roots survive for sibling accounts and sessions.
+    expect(existsSync(path.join(STORAGE_DIR, 'owners'))).toBe(true);
+    expect(existsSync(path.join(STORAGE_DIR, 'capture-v2', 'objects', 'accounts'))).toBe(true);
 
     // The reviewed shared corpus survives untouched.
     expect(

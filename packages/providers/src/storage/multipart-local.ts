@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, writeFile, stat, readdir, unlink, copyFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, readdir, unlink, rmdir, copyFile } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -237,9 +237,19 @@ export class LocalMultipartStorage implements MultipartStorage {
       }
       for (const entry of entries) {
         const child = join(path, entry.name);
+        // A symlinked directory reports as a symlink here, never as a
+        // directory: the link entry itself is removed, never followed.
         if (entry.isDirectory()) await walk(child);
         else await unlink(child);
       }
+      // Post-order prune: an emptied namespace leaves no directory shells —
+      // the requested prefix's own skeleton included. rmdir only ever removes
+      // an empty directory; anything else (a file that could not be deleted,
+      // an entry that appeared mid-walk) propagates so the caller keeps the
+      // cleanup owed instead of claiming a false completion.
+      await rmdir(path).catch((e) => {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      });
     };
     await walk(directory);
   }

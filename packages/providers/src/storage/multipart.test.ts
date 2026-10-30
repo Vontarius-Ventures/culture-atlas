@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { chmod, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -108,6 +109,62 @@ describe('durable filesystem multipart test double', () => {
       'too large',
     );
     expect(await storage.listParts(key, id)).toEqual([]);
+  });
+  it('deletePrefix leaves no empty namespace shells and never crosses the prefix', async () => {
+    const { root, storage } = await local(),
+      a = randomUUID(),
+      b = randomUUID(),
+      aKey = `accounts/${a}/media/${randomUUID()}/original`,
+      bKey = `accounts/${b}/media/${randomUUID()}/original`;
+    await storage.put(aKey, Readable.from([Buffer.from('a-bytes')]), 'image/jpeg', 7);
+    await storage.put(bKey, Readable.from([Buffer.from('b-bytes')]), 'image/jpeg', 7);
+    // A symlink inside the purged prefix that points at the sibling's bytes:
+    // the link entry goes, the target never does, and the walk never follows it.
+    await symlink(join(root, 'objects', bKey), join(root, 'objects', `accounts/${a}`, 'escape-link'));
+    // A sibling's in-flight upload: the multipart upload namespace is not the
+    // object namespace and is never touched by a prefix purge.
+    const siblingUpload = await storage.begin(`accounts/${b}/staging/${randomUUID()}/original`, 'image/jpeg');
+    await storage.writePart(siblingUpload, 1, Readable.from([Buffer.from('part')]), 4);
+
+    await storage.deletePrefix(`accounts/${a}`);
+
+    // No file and no empty directory shell remain under the purged account's
+    // prefix: the account-ID skeleton directory itself is gone.
+    expect(existsSync(join(root, 'objects', 'accounts', a))).toBe(false);
+    // The sibling account's tree, its bytes and its upload survive untouched.
+    expect(existsSync(join(root, 'objects', 'accounts', b))).toBe(true);
+    expect((await contents(storage, bKey)).toString()).toBe('b-bytes');
+    expect(existsSync(join(root, 'multipart', siblingUpload))).toBe(true);
+    // Repeating the purge changes nothing: it is idempotent on a clean namespace.
+    await storage.deletePrefix(`accounts/${a}`);
+    expect((await contents(storage, bKey)).toString()).toBe('b-bytes');
+    const listed: string[] = [];
+    for await (const info of storage.list(`accounts/${a}`)) listed.push(info.key);
+    expect(listed).toEqual([]);
+  });
+  it('a failed object deletion leaves the namespace honestly uncleaned; the retry converges', async () => {
+    const { root, storage } = await local(),
+      a = randomUUID(),
+      assetId = randomUUID(),
+      key = `accounts/${a}/media/${assetId}/original`;
+    await storage.put(key, Readable.from([Buffer.from('private')]), 'image/jpeg', 7);
+    // No write permission in the object's directory: unlink fails, so the
+    // cleanup stays owed — it must not be silently claimed as complete.
+    const objectDir = join(root, 'objects', 'accounts', a, 'media', assetId);
+    await chmod(objectDir, 0o500);
+    try {
+      await expect(storage.deletePrefix(`accounts/${a}`)).rejects.toThrow();
+      expect(existsSync(join(root, 'objects', 'accounts', a))).toBe(true);
+      expect((await contents(storage, key)).toString()).toBe('private');
+    } finally {
+      await chmod(objectDir, 0o700);
+    }
+    // The retry completes: no bytes and no empty shell remain.
+    await storage.deletePrefix(`accounts/${a}`);
+    expect(existsSync(join(root, 'objects', 'accounts', a))).toBe(false);
+    const listed: string[] = [];
+    for await (const info of storage.list(`accounts/${a}`)) listed.push(info.key);
+    expect(listed).toEqual([]);
   });
 });
 describe('private S3 multipart adapter (mock transport, no live service)', () => {

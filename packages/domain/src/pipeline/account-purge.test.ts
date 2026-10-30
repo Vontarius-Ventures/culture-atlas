@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -214,6 +215,15 @@ async function seedAccountFootprint(accountId: string): Promise<{ purgeJobId: ()
     `INSERT INTO usage_reservations (account_id, upload_id, amount, expires_at) VALUES ($1, $2, 100, now() + interval '1 day')`,
     [accountId, upload[0]!.id],
   );
+  // The v1→v2 bridge the legacy backfill creates on real accounts: the
+  // capture and the media asset reference each other without a cascade
+  // (captures.media_asset_id → media_assets, media_assets.legacy_capture_id
+  // → captures). A purge cycle the account purge must still complete through.
+  await db.query(`UPDATE captures SET media_asset_id = $2 WHERE id = $1`, [cap.captureId, assetId]);
+  await db.query(
+    `UPDATE media_assets SET legacy_capture_id = $2, legacy_imported = true WHERE account_id = $1 AND id = $3`,
+    [accountId, cap.captureId, assetId],
+  );
   const { rows: connection } = await db.query<{ id: string; authorization_version: number }>(
     `SELECT id, authorization_version FROM agent_connections WHERE owner_account_id = $1`,
     [accountId],
@@ -358,6 +368,10 @@ describe('durable account cleanup', () => {
     const survivorListed: string[] = [];
     for await (const info of multipart.list(`accounts/${survivor.accountId}`)) survivorListed.push(info.key);
     expect(survivorListed.length).toBe(1);
+    // No empty directory shell remains for the purged account (the account-ID
+    // skeleton itself is gone), and the survivor's directory is untouched.
+    expect(existsSync(path.join(root, 'objects', 'accounts', accountId))).toBe(false);
+    expect(existsSync(path.join(root, 'objects', 'accounts', survivor.accountId))).toBe(true);
 
     // The shared fact and the survivor's rows survive untouched.
     expect((await db.query(`SELECT 1 FROM cultural_references WHERE id = $1`, [sharedReference])).rows).toHaveLength(1);
@@ -429,6 +443,8 @@ describe('durable account cleanup', () => {
     expect(outcome.state).toBe('complete');
     expect((await db.query(`SELECT 1 FROM accounts WHERE id = $1`, [accountId])).rows).toEqual([]);
     expect(await remainingAccountRows(accountId)).toEqual([]);
+    // The retried purge leaves no empty directory shell behind either.
+    expect(existsSync(path.join(root, 'objects', 'accounts', accountId))).toBe(false);
     const statusAfterRetry = await getAccountDeletionStatusByToken(db, token);
     expect(statusAfterRetry!.status.state).toBe('complete');
   });
@@ -482,5 +498,6 @@ describe('durable account cleanup', () => {
     ).rows[0]!;
     expect(done.cleanup_state).toBe('complete');
     expect(done.completed_steps).toEqual([...ACCOUNT_PURGE_STEPS]);
+    expect(existsSync(path.join(root, 'objects', 'accounts', accountId))).toBe(false);
   });
 });
