@@ -141,10 +141,12 @@ test('main journey on the real stack', async ({ page }, info) => {
     const text = (await heading.textContent()) ?? '';
     if (/can’t look at this photo yet/.test(text)) {
       // Two honest unavailable states: a transient provider outage says "right
-      // now … in a little while", a server without a qualified analysis profile
-      // says reading "isn't available on this server yet". Both keep the photo
-      // and offer the same retry.
-      await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+      // now … in a little while", a server without a qualified analysis
+      // profile says reading "isn't available on this server yet". Both keep
+      // the photo — and neither offers a retry: the initial reading never
+      // produced an analysis to correct against, so a "Try again" would
+      // silently do nothing (or enqueue the unqualified paid vision role).
+      await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
     }
     await expect(page.getByText(/vlm|qloo|anthropic/i)).toHaveCount(0);
     await expectNoHorizontalScroll(page);

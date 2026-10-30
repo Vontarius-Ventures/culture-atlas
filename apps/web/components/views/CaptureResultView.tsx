@@ -64,6 +64,13 @@ export function deriveCaptureState(
   return {
     phase,
     jobActive,
+    /**
+     * A correction version exists, so retry/correction actions can actually
+     * act. A failed initial reading has no analysis (the server fails the
+     * capture only while it has none), so there is no version to re-run
+     * against and no honest retry to offer.
+     */
+    canCorrect: Boolean(capture?.analysis),
     /** Some categories could not be completed (provider unavailable / failed): one unobtrusive retry. */
     showRetry: !jobActive && unfinished.length > 0,
     /** Still publishing sections. */
@@ -326,7 +333,17 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
                   ? 'We can’t look at this photo yet'
                   : 'We couldn’t read this photo'}
               </h1>
-              <Notice tone="error" onRetry={() => void retry()} busy={retrying}>
+              <Notice
+                tone="error"
+                // A retry re-runs the reading as a correction against the
+                // active analysis version. With no analysis there is no
+                // version to correct (and re-running the initial reading
+                // would enqueue the unqualified paid vision role), so the
+                // honest state is the explanation alone — never an action
+                // that silently does nothing.
+                onRetry={state.canCorrect ? () => void retry() : undefined}
+                busy={retrying}
+              >
                 {job?.error?.message ?? 'Something went wrong while looking at this photo.'}
               </Notice>
             </>

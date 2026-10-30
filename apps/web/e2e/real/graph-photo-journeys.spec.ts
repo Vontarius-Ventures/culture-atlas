@@ -481,6 +481,11 @@ test('photo upload reaches only honestly supported outcomes', async ({
     await expect(
       page.getByText('Photo reading isn’t available on this server yet. Your photo is saved.'),
     ).toBeVisible();
+    // The failed initial reading has no analysis to correct against, so no
+    // inert "Try again" is offered: the button would silently do nothing, and
+    // re-running the initial reading would enqueue the unqualified paid
+    // vision role. The explanation alone is the honest state.
+    await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
     // Never presented as an example or a success: no reading, no references, no
     // cards. (The collapsed "More to explore" strip below may still show the
     // labeled example feed; the capture's own result surface must not.)
@@ -495,10 +500,14 @@ test('photo upload reaches only honestly supported outcomes', async ({
       [v1CaptureId],
     );
     expect(job).toMatchObject({ state: 'failed', error_code: 'provider_unavailable' });
-    const cap = await one<{ status: string }>('SELECT status FROM captures WHERE id = $1', [
-      v1CaptureId,
-    ]);
+    const cap = await one<{ status: string; active_analysis_id: string | null }>(
+      'SELECT status, active_analysis_id FROM captures WHERE id = $1',
+      [v1CaptureId],
+    );
     expect(cap?.status).toBe('failed');
+    // The server contract the UI gate rests on: a failed capture never has an
+    // active analysis, so there is no correction version to retry against.
+    expect(cap?.active_analysis_id).toBeNull();
     // The attempted-and-failed reading is recorded, never a fabricated result.
     expect(
       await scalar(
