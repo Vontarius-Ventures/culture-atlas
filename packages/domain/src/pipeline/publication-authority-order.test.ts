@@ -322,6 +322,7 @@ function registryWithDurableLedger(research: ProviderRegistry['research']): Prov
       MODEL_DAILY_SPEND_LIMIT_USD: '10',
       MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: '2',
       MODEL_MAX_UNKNOWN_SPEND_USD: '0.01',
+      MODEL_TOTAL_SPEND_LIMIT_USD: '100',
     },
     { research },
     {

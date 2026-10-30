@@ -182,7 +182,12 @@ describe('on-prem production Compose', () => {
     expect(web.QLOO_API_URL).toMatch(/hackathon\.api\.qloo\.com/);
     for (const key of ['APP_BASE_URL', 'SESSION_SECRET', 'STORAGE_SIGNING_SECRET', 'S3_ENDPOINT', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'])
       expect(web[key], key).toMatch(new RegExp(`^\\$\\{${key}:\\?`));
-    for (const key of ['MODEL_DAILY_SPEND_LIMIT_USD', 'MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD', 'MODEL_MAX_UNKNOWN_SPEND_USD'])
+    for (const key of [
+      'MODEL_DAILY_SPEND_LIMIT_USD',
+      'MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD',
+      'MODEL_MAX_UNKNOWN_SPEND_USD',
+      'MODEL_TOTAL_SPEND_LIMIT_USD',
+    ])
       expect(web[key]).toMatch(new RegExp(`^\\$\\{${key}:-\\d`));
     // storage-init and ops talk to Garage directly; the apps use the public https host.
     expect(env('storage-init').S3_ENDPOINT).toBe('http://garage:3900');

@@ -65,6 +65,7 @@ Alarms are defined in `infra/aws/culture-atlas.yaml` and fire to the
 | `OpsMetricsMissing` | The metrics job or the database is down | [queue-recovery.md](queue-recovery.md#metrics-missing) |
 | `StorageCleanup` (purge overdue or reservations unsettled) | Deleted media not purged within 24 h | [queue-recovery.md](queue-recovery.md#storage-cleanup) |
 | `ModelSpendUnknown` / provider 402 in logs | Credits exhausted or billing unreconciled | [credit-exhaustion.md](credit-exhaustion.md) |
+| Graph rollout, rollback or spend-ceiling question (PR 8) | Interest-graph flags, kills, budgets, telemetry | [graph-rollout.md](graph-rollout.md) |
 | `Http5xxRate` (> 5 % for 5 min) | Web errors | check `docker compose logs web`, then the runbook for the failing area |
 | `InstanceStatusCheck`, `CpuCreditsLow` | Host health / CPU credits exhausted | [deploy-aws.md](../deploy-aws.md#operating-the-host) |
 | `BudgetOverOneDollar` (AWS Budgets email) | The account is incurring charges | [deploy-aws.md](../deploy-aws.md#costs) |

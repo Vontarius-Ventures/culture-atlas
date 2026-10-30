@@ -124,6 +124,45 @@ describe('AI-02 durable PostgreSQL spend ledger, port 55504', () => {
     await b.resume();
     await b.reserve(await account(), profile);
   });
+  it('serializes concurrent admission at the all-time total ceiling, counting every settled day (VAL-OPS-002)', async () => {
+    // All-time ceiling 250 micros; daily caps are roomy so ONLY the total binds.
+    const cap = {
+      ...limits,
+      dailyMicros: 1_000_000,
+      accountDailyMicros: 1_000_000,
+      maxUnknownMicros: 1_000_000,
+      totalMicros: 250,
+    };
+    // Day 1: one attempt settles at its reservation (billed history), so 150
+    // micros of all-time allowance remain.
+    const first = new ModelSpendLedger(new PostgresSpendStore(db), cap);
+    const dayOne = await first.reserve(await account(), profile);
+    await first.finish(dayOne, 'complete', response);
+    await first.reconcile(dayOne, 100);
+    // Day 2 (a fresh store/ledger pair, a day later): the settled row is
+    // outside the scoped day, so the decision must come from the all-time
+    // charge, and two PARALLEL admissions through independent store instances
+    // must let exactly one of the two 100-micro reservations in (the second
+    // would push charged spend past 250).
+    const later = Date.now() + 24 * 3600 * 1000;
+    const ledgers = [
+      new ModelSpendLedger(new PostgresSpendStore(db), cap, () => later),
+      new ModelSpendLedger(new PostgresSpendStore(db), cap, () => later),
+    ];
+    const outcomes = await Promise.allSettled([
+      ledgers[0]!.reserve(await account(), profile),
+      ledgers[1]!.reserve(await account(), profile),
+    ]);
+    expect(outcomes.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(outcomes.filter((r) => r.status === 'rejected')).toHaveLength(1);
+    // Restart does not reset the allowance: a fresh instance still sees the
+    // ceiling fully consumed (100 settled + 100 reserved) and refuses the
+    // next 100-micro reservation.
+    const after = new ModelSpendLedger(new PostgresSpendStore(db), cap, () => later + 1000);
+    await expect(after.reserve(await account(), profile)).rejects.toMatchObject({
+      kind: 'budget_exhausted',
+    });
+  });
   it('rejects transaction-bound handles that could roll back after dispatch', async () => {
     await db.transaction(async (tx) => {
       expect(() => new PostgresSpendStore(tx)).toThrow('pool-level');

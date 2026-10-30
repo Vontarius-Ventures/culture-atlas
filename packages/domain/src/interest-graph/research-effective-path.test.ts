@@ -139,7 +139,7 @@ function realRegistry(input: {
   transport: StructuredTransport;
   /** Defaults to a genuinely qualified research_text role. */
   qualification?: () => 'qualified' | 'catalog-compatible' | 'configured';
-  limits?: { daily: string; account: string; unknown: string };
+  limits?: { daily: string; account: string; unknown: string; total?: string };
 }): ProviderRegistry {
   return createProviderRegistry(
     {
@@ -151,6 +151,7 @@ function realRegistry(input: {
       MODEL_DAILY_SPEND_LIMIT_USD: input.limits?.daily ?? '10',
       MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: input.limits?.account ?? '2',
       MODEL_MAX_UNKNOWN_SPEND_USD: input.limits?.unknown ?? '0.01',
+      MODEL_TOTAL_SPEND_LIMIT_USD: input.limits?.total ?? '100',
       ...input.env,
     },
     {},
@@ -179,6 +180,7 @@ function overrideRegistry(input: {
       MODEL_DAILY_SPEND_LIMIT_USD: '10',
       MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: '2',
       MODEL_MAX_UNKNOWN_SPEND_USD: '0.01',
+      MODEL_TOTAL_SPEND_LIMIT_USD: '100',
     },
     { research: input.research },
     {

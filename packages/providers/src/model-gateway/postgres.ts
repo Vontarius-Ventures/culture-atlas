@@ -151,24 +151,27 @@ export class PostgresSpendStore implements SpendStore {
         circuits: SpendControl['circuits'];
       }>('SELECT pause, circuits FROM model_gateway_control WHERE id = 1 FOR UPDATE');
       if (control.rows.length !== 1) throw new Error('Model gateway migration required');
-      const rows = scope
-        ? await tx.query<AttemptRow>(
-            `SELECT ${COLUMNS} FROM inference_attempts
-              WHERE usage_day = $1::date OR state <> 'settled' OR id = $2::uuid
-                 OR (account_id = $3::uuid AND job_id = $4 AND role = $5 AND attempt_key = $6)
-              ORDER BY started_at, id`,
-            [
-              scope.day,
-              scope.attemptId ?? null,
-              scope.identity?.accountId ?? null,
-              scope.identity?.jobId ?? null,
-              scope.identity?.role ?? null,
-              scope.identity?.attemptKey ?? null,
-            ],
-          )
-        : await tx.query<AttemptRow>(
-            `SELECT ${COLUMNS} FROM inference_attempts ORDER BY started_at, id`,
-          );
+      const rows =
+        scope && !scope.totalBound
+          ? await tx.query<AttemptRow>(
+              `SELECT ${COLUMNS} FROM inference_attempts
+                WHERE usage_day = $1::date OR state <> 'settled' OR id = $2::uuid
+                   OR (account_id = $3::uuid AND job_id = $4 AND role = $5 AND attempt_key = $6)
+                ORDER BY started_at, id`,
+              [
+                scope.day,
+                scope.attemptId ?? null,
+                scope.identity?.accountId ?? null,
+                scope.identity?.jobId ?? null,
+                scope.identity?.role ?? null,
+                scope.identity?.attemptKey ?? null,
+              ],
+            )
+          : // A total-bound decision (VAL-OPS-002) charges settled rows from
+            // EVERY day, so the full history is the decision scope.
+            await tx.query<AttemptRow>(
+              `SELECT ${COLUMNS} FROM inference_attempts ORDER BY started_at, id`,
+            );
       const state: SpendState = {
         pause: control.rows[0]!.pause,
         circuits: control.rows[0]!.circuits ?? {},

@@ -157,6 +157,14 @@ export function checkProductionEnv(env: Env): PreflightReport {
     if (raw === undefined) warnings.push(`${name} is unset: model dispatch stays fail-closed.`);
     else if (!positiveNumber(raw)) errors.push(`${name} must be a positive number.`);
   }
+  {
+    const raw = value(env, 'MODEL_TOTAL_SPEND_LIMIT_USD');
+    if (raw === undefined)
+      warnings.push(
+        'MODEL_TOTAL_SPEND_LIMIT_USD is unset: cumulative paid spend is unbounded and paid graph research stays fail-closed (VAL-OPS-002).',
+      );
+    else if (!positiveNumber(raw)) errors.push('MODEL_TOTAL_SPEND_LIMIT_USD must be a positive number.');
+  }
   if (!has('QLOO_API_KEY')) warnings.push('QLOO_API_KEY is unset: every Qloo capability reports unavailable.');
   if (value(env, 'QLOO_REPLAY_FIXTURES') === 'true')
     errors.push('QLOO_REPLAY_FIXTURES must not be true in production (recorded results are examples, not live data).');

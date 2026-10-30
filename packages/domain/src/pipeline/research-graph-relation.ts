@@ -392,6 +392,26 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
           if ((await graphDiscoveryPausedAt(tx, accountId)) != null) {
             throw new AppError('conflict', { message: 'Discovery is paused; research cannot publish.', retryable: false });
           }
+          // The ROLLBACK gate re-runs at publication (VAL-OPS-001): a flag
+          // kill — global or account-scoped — that landed while the paid
+          // extraction ran still publishes nothing. The durable kill state is
+          // re-read inside this publication transaction (READ COMMITTED: a
+          // kill that committed mid-extraction is visible here), never cached
+          // from dispatch or entry. The paid provider query stays accounted;
+          // the work is discarded; the job fails non-retryably with the
+          // disabled rule.
+          const rollback = await researchDispatchGate(tx, {
+            accountId,
+            config: ctx.config,
+            providers: ctx.providers,
+          });
+          if (!rollback.allowed) {
+            throw new AppError('service_unavailable', {
+              message: 'Relation research is not available on this server.',
+              retryable: false,
+              details: { rule: 'disabled' },
+            });
+          }
           // The extraction ran under the ORIGINAL input versions (DISC-SCR-011):
           // a taste change (a save/removal), a projection pass or an advanced
           // deletion generation since means this delayed work is stale against
@@ -466,6 +486,12 @@ export const researchGraphRelation: JobHandler<'research_graph_relation'> = asyn
     // no later redelivery can re-open the spent window (VAL-DISC-006).
     await setGraphRunState(ctx.db, { runId: run.id, ownerAccountId: accountId, state: 'failed' }).catch(() => undefined);
     await stopGraphWorkBudgetIfExpired(ctx.db, { ownerAccountId: accountId, workKey }).catch(() => undefined);
+    // The rollback gate's refusal is a first-class telemetry event (VAL-OPS-003):
+    // a kill that stopped publication after the paid call is visible as
+    // graph_research_disabled alongside the accounted provider query.
+    if (err instanceof AppError && (err.details as { rule?: unknown } | undefined)?.rule === 'disabled') {
+      await ctx.trace({ kind: 'note', name: 'graph_research_disabled', data: { rule: 'disabled' } });
+    }
     // DISC-SCR-026: classify a provider abort CAUSED by the expired durable
     // window as the typed logical-deadline outcome. The combined window signal
     // aborts on its own exactly when the anchored deadline passes (the

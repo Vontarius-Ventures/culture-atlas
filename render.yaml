@@ -48,6 +48,8 @@ envVarGroups:
         sync: false
       - key: MODEL_MAX_UNKNOWN_SPEND_USD
         sync: false
+      - key: MODEL_TOTAL_SPEND_LIMIT_USD
+        sync: false
       # Explicit rollback only (set LLM_PROVIDER=featherless); never an automatic
       # fallback. rc_ keys belong here, not as a Render API key.
       - key: FEATHERLESS_API_KEY

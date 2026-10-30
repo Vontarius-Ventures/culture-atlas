@@ -52,11 +52,15 @@ export interface SpendControl {
  * Rows a decision needs. Stores may load only these (plus the control row);
  * the in-memory store ignores it. Every attempt that can influence a decision
  * is included: the day's attempts, every unsettled attempt, and the target.
+ * `totalBound` marks a decision that enforces the ALL-TIME total ceiling
+ * (VAL-OPS-002): settled rows from prior days now matter, so the store must
+ * read the FULL history, not the day's slice.
  */
 export interface SpendScope {
   day: string;
   attemptId?: string;
   identity?: { accountId: string; jobId: string; role: ModelRole; attemptKey: string };
+  totalBound?: boolean;
 }
 /** Must serialize transactions across ALL workers and persist before returning. Never auto-release unknown/stale reservations. */
 export interface SpendStore {
@@ -91,6 +95,15 @@ export interface SpendLimits {
   accountDailyMicros: number;
   maxUnknownMicros: number;
   accountDailyAnalyses: number;
+  /**
+   * The ALL-TIME cumulative charge ceiling (VAL-OPS-002): every settled cost
+   * and every not-yet-settled reservation from EVERY day counts against it,
+   * so a restart or a midnight rollover can never reopen an exhausted
+   * allowance. Optional for backward compatibility — a ledger configured
+   * without it keeps its daily-only semantics — but paid graph admission
+   * (the research gate) requires it: an unbounded total is not a budget.
+   */
+  totalMicros?: number;
 }
 export interface FinishDetails {
   pause?: SpendPause;
@@ -109,7 +122,8 @@ export class ModelSpendLedger {
     readonly now = Date.now,
   ) {
     for (const value of Object.values(limits))
-      if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid spend limits');
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0))
+        throw new Error('Invalid spend limits');
   }
   private async control(): Promise<SpendControl> {
     if (this.store.readControl) return this.store.readControl();
@@ -143,7 +157,14 @@ export class ModelSpendLedger {
         .filter((a) => a.day === day && a.identity.accountId === identity.accountId)
         .map((a) => a.identity.jobId),
     );
+    // The all-time cumulative charge (VAL-OPS-002): every attempt's settled
+    // cost or outstanding reservation, from every day, plus this one. The
+    // ceiling is a hard bound on cumulative spend, so it can never be reopened
+    // by a restart or a day rollover.
+    const totalExceeded =
+      this.limits.totalMicros !== undefined && sum(s.attempts) + micros > this.limits.totalMicros;
     return !(
+      totalExceeded ||
       sum(counted) + micros > this.limits.dailyMicros ||
       sum(owned) + micros > this.limits.accountDailyMicros ||
       sum(outstanding) + micros > this.limits.maxUnknownMicros ||
@@ -177,7 +198,7 @@ export class ModelSpendLedger {
           profiles.reduce((n, p) => n + p.reservationMicros, 0),
         );
       },
-      { day },
+      { day, totalBound: this.limits.totalMicros !== undefined },
     );
   }
 
@@ -261,6 +282,7 @@ export class ModelSpendLedger {
       },
       {
         day,
+        totalBound: this.limits.totalMicros !== undefined,
         identity: {
           accountId: identity.accountId,
           jobId: identity.jobId,

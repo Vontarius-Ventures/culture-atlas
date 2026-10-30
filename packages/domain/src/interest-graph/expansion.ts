@@ -295,7 +295,9 @@ export interface ExpansionCounts {
 }
 
 /**
- * Why an expansion did not publish. 'disabled' comes from the discovery gate;
+ * Why an expansion did not publish. 'disabled' comes from the discovery gate —
+ * at dispatch, inside the pass's transaction, or at the publication fence
+ * (VAL-OPS-001: a rollback kill that lands mid-pass still commits nothing);
  * 'lease_lost' from the caller's fence hook; 'deadline_expired' from the
  * logical window of the durable work budget (VAL-DISC-006: the anchored
  * 45-second deadline governs the whole pass, not just handler entry — bounded
@@ -319,7 +321,7 @@ export type ExpansionRejectionReason =
 
 /** Thrown inside the publication transaction to reject the whole pass; the wrapper converts it to a rejection result. */
 export class GraphFenceError extends Error {
-  constructor(readonly code: Exclude<ExpansionRejectionReason, 'disabled'>) {
+  constructor(readonly code: ExpansionRejectionReason) {
     super(`graph expansion fenced: ${code}`);
     this.name = 'GraphFenceError';
   }
@@ -479,7 +481,14 @@ export async function expandAccountInterestGraph(db: Db, input: ExpandAccountInt
       if (!(await discoveryEnabledForAccount(tx, { accountId: input.accountId, config: input.config }))) {
         return disabledResult();
       }
-      return runExpansion(tx, { accountId: input.accountId, jobId: input.jobId, at, fence: input.fence, deadline: input.deadline });
+      return runExpansion(tx, {
+        accountId: input.accountId,
+        jobId: input.jobId,
+        at,
+        config: input.config,
+        fence: input.fence,
+        deadline: input.deadline,
+      });
     });
   } catch (err) {
     // A fence violation rejects the whole pass: the transaction above rolled
@@ -768,7 +777,14 @@ async function liveRetainedRootAuthority(
 
 async function runExpansion(
   tx: Queryable,
-  input: { accountId: string; jobId?: string; at: Date; fence?: (tx: Queryable) => Promise<void>; deadline?: ExpansionDeadlineInput },
+  input: {
+    accountId: string;
+    jobId?: string;
+    at: Date;
+    config: ExpandAccountInterestGraphInput['config'];
+    fence?: (tx: Queryable) => Promise<void>;
+    deadline?: ExpansionDeadlineInput;
+  },
 ): Promise<ExpansionResult> {
   const { accountId, at } = input;
   const counts = emptyCounts();
@@ -1370,7 +1386,16 @@ async function runExpansion(
   // is the last word before the run is marked complete. This final stage
   // check also re-tightens the SQL bound to the CURRENT remainder, so the
   // fence's own lock waits end at the anchored deadline (DISC-SCR-018).
+  //
+  // The ROLLBACK gate is part of that last word (VAL-OPS-001): a flag kill or
+  // an account-scoped kill that landed while this pass walked still commits
+  // nothing — the whole pass rolls back and the next window rebuilds from
+  // current (re-enabled) authority. The kill is durable and shared, so it is
+  // re-read here inside the publication transaction, never cached.
   await enforceDeadline();
+  if (!(await discoveryEnabledForAccount(tx, { accountId, config: input.config }))) {
+    throw new GraphFenceError('disabled');
+  }
   const violation = await checkGraphPublicationFence(tx, {
     accountId,
     start: {

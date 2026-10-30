@@ -183,8 +183,10 @@ export const expandInterestGraph: JobHandler<'expand_interest_graph'> = async (c
         throw new JobCancelledError('worker stopped the pass before publication');
       }
       case 'disabled':
-        // The flag (or a kill) halted publication. Nothing this job can do;
-        // the due marker stays until the operator re-enables discovery.
+        // The flag (or a kill) halted publication — possibly after the paid
+        // walk, at the publication fence (VAL-OPS-001). Nothing this job can
+        // do; the due marker stays until the operator re-enables discovery.
+        await ctx.trace({ kind: 'note', name: 'graph_expansion_disabled', data: { reason } });
         throw new AppError('service_unavailable', {
           message: 'Interest-graph discovery is disabled for this account.',
           retryable: false,

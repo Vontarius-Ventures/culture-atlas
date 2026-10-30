@@ -11,6 +11,7 @@ import {
   type StructuredTransport,
 } from '@culture-atlas/providers';
 import type { Db, PoolDb, TransactionOptions } from '../db/pool';
+import { liftFeatureKill, setFeatureKill } from '../flags/feature-flags';
 import { accountCtx, runJob } from '../test-support/library';
 import { closeTestDb, getTestDb, insertAccount, testConfig, testProviders } from '../testing';
 import { upsertGraphIdentity } from './evidence';
@@ -151,6 +152,8 @@ function registryWithDurableLedger(research: ProviderRegistry['research']): Prov
       MODEL_DAILY_SPEND_LIMIT_USD: '10',
       MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: '2',
       MODEL_MAX_UNKNOWN_SPEND_USD: '0.01',
+      // VAL-OPS-002: the all-time total ceiling completes the durable budget.
+      MODEL_TOTAL_SPEND_LIMIT_USD: '100',
     },
     { research },
     {
@@ -159,6 +162,33 @@ function registryWithDurableLedger(research: ProviderRegistry['research']): Prov
       qualification: () => 'qualified',
       // The deterministic research override serves the claims calls; the
       // gateway transport must never be reached in this suite.
+      transport: neverTransport,
+    },
+  );
+}
+
+/**
+ * The same shape WITHOUT the all-time total ceiling: durable DAILY limits
+ * only. Paid graph research must refuse on this configuration (VAL-OPS-002:
+ * the total ceiling is part of "durable budgets enforce the total").
+ */
+function registryWithDailyLimitsOnly(research: ProviderRegistry['research']): ProviderRegistry {
+  return createProviderRegistry(
+    {
+      STORAGE_DRIVER: 'memory',
+      LLM_PROVIDER: 'concentrate',
+      CONCENTRATE_API_KEY: 'test-concentrate-key',
+      CONCENTRATE_REQUIRE_ZDR: 'true',
+      CONCENTRATE_ALLOW_CONTENT_LOGGING: 'false',
+      MODEL_DAILY_SPEND_LIMIT_USD: '10',
+      MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: '2',
+      MODEL_MAX_UNKNOWN_SPEND_USD: '0.01',
+    },
+    { research },
+    {
+      db: getTestDb(),
+      profiles: { research_text: qualifiedResearchTextProfile },
+      qualification: () => 'qualified',
       transport: neverTransport,
     },
   );
@@ -364,6 +394,28 @@ describe('the paid research dispatch gate (VAL-DISC-005)', () => {
     expect(research.calls.extractClaims).toBe(0);
   });
 
+  it('daily limits without an all-time total ceiling refuse: paid generation needs the TOTAL bounded (VAL-OPS-002)', async () => {
+    const accountId = (await insertAccount(db)).accountId;
+    const research = countingResearch(
+      (name) => [sourceDoc(name, `https://en.wikipedia.org/wiki/${encodeURIComponent(name)}`)],
+      extraction,
+    );
+
+    // A durable ledger configured with account/global DAILY limits but no
+    // MODEL_TOTAL_SPEND_LIMIT_USD: the cumulative ceiling that bounds the
+    // mission's shared allowance is not configured, so paid research fails
+    // closed before any call.
+    const noTotal = await researchDispatchGate(db, {
+      accountId,
+      config: researchOn,
+      providers: registryWithDailyLimitsOnly(research.provider),
+    });
+    expect(noTotal).toEqual({ allowed: false, reason: 'limits_not_configured' });
+    expect(await jobsOfKind(accountId, 'research_graph_relation')).toHaveLength(0);
+    expect(research.calls.findSources).toBe(0);
+    expect(research.calls.extractClaims).toBe(0);
+  });
+
   it('with the opt-in, a qualified role and durable limits, dispatch is bounded and coalesced', async () => {
     const accountId = (await insertAccount(db)).accountId;
     const { subjectNodeId, objectNodeId } = await nodePair();
@@ -486,6 +538,82 @@ describe('the relation-research handler (VAL-DISC-005)', () => {
       [accountId],
     );
     expect(Number(runs[0]!.n)).toBe(0);
+  });
+
+  it('a rollback kill that lands after the paid call stops publication: nothing proposes, the spend stays accounted (VAL-OPS-001)', async () => {
+    const { principal } = await accountCtx({});
+    const accountId = principal.accountId;
+    const { subjectNodeId, objectNodeId } = await nodePair();
+    const url = `https://en.wikipedia.org/wiki/${encodeURIComponent('Rollback Drill')}`;
+    // The deterministic adapter inserts the operator's rollback kill MID-FLIGHT:
+    // the paid extraction has run, and the storage pass has not begun.
+    const calls = { findSources: 0, extractClaims: 0 };
+    const available = { status: 'available' as const, provider: 'fake' };
+    const midFlightKillResearch = {
+      id: 'research:fake',
+      capability: () => ({ sources: available, claims: available }),
+      findSources: async (query: { name: string }) => {
+        calls.findSources++;
+        return [sourceDoc(query.name, url)];
+      },
+      extractClaims: async (input: { name: string; sources: ResearchSourceDoc[] }) => {
+        calls.extractClaims++;
+        await setFeatureKill(db, {
+          flag: 'interest_graph_research_enabled',
+          accountId,
+          reason: 'rollback drill',
+          actor: 'operator',
+        });
+        return extraction(input.name, input.sources[0]!.url);
+      },
+    } as unknown as ProviderRegistry['research'];
+    const providers = registryWithDurableLedger(midFlightKillResearch);
+
+    const dispatched = await dispatchGraphResearch(db, {
+      accountId,
+      config: researchOn,
+      providers,
+      subjectNodeId,
+      objectNodeId,
+      predicate: 'CREATED_BY',
+    });
+    expect(dispatched.dispatched).toBe(true);
+
+    // The paid call happened exactly once and stays accounted; the publication
+    // is refused non-retryably with the rollback rule. The kill lifts in a
+    // finally because this database is SHARED across the whole suite.
+    try {
+      await expect(runJob(dispatched.jobId!, { providers, config: researchOn })).rejects.toMatchObject({
+        details: { rule: 'disabled' },
+      });
+      expect(calls.extractClaims).toBe(1);
+      const { rows: queries } = await db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM provider_queries WHERE owner_account_id = $1 AND provider = 'research' AND operation = 'extract_claims'`,
+        [accountId],
+      );
+      expect(Number(queries[0]!.n)).toBe(1);
+      // Nothing committed: no source revision, no proposed assertion, no evidence.
+      const { rows: sources } = await db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM graph_source_revisions WHERE source_family_key = $1`,
+        [`research:${url}`],
+      );
+      expect(Number(sources[0]!.n)).toBe(0);
+      const { rows: assertions } = await db.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM graph_assertions WHERE subject_node_id = $1 AND object_node_id = $2`,
+        [subjectNodeId, objectNodeId],
+      );
+      expect(Number(assertions[0]!.n)).toBe(0);
+      // The job failed honestly, non-retryably.
+      const { rows: failedJob } = await db.query<{ state: string; error_code: string; error_retryable: boolean }>(
+        `SELECT state, error_code, error_retryable FROM jobs WHERE id = $1`,
+        [dispatched.jobId!],
+      );
+      expect(failedJob[0]!.state).toBe('failed');
+      expect(failedJob[0]!.error_code).toBe('service_unavailable');
+      expect(failedJob[0]!.error_retryable).toBe(false);
+    } finally {
+      await liftFeatureKill(db, { flag: 'interest_graph_research_enabled', accountId });
+    }
   });
 
   it('publishes one UNREVIEWED proposed assertion from citing factual claims only — never passive confirmation', async () => {

@@ -28,9 +28,12 @@ import { graphDiscoveryPausedAt } from './refresh';
  *    (constructor overrides the registry cannot analyze) may serve fault
  *    tests, but the deployment invariants — a genuinely qualified non-demo
  *    research_text role and durable limits — still bind them;
- *  - durable account/global daily spend limits are configured: the model
- *    gateway's spend ledger must exist with a durable store. The ledger is
- *    what every paid call reserves against; without it there is no bound.
+ *  - durable account/global daily spend limits AND the all-time total
+ *    ceiling are configured: the model gateway's spend ledger must exist with
+ *    a durable store and a totalMicros bound. The ledger is what every paid
+ *    call reserves against; daily limits alone reopen on every restart and
+ *    midnight rollover, so without the total there is no bound on cumulative
+ *    spend at all.
  *
  * The handler re-checks the same gate before its paid call, so a gate that
  * closes between dispatch and run refuses honestly without spending.
@@ -47,7 +50,17 @@ export interface ResearchGateProviders {
   research: { capability(): { claims: CapabilityEntry } };
   /** The registry-declared effective claims chain paid research binds to (DISC-SCR-010). */
   researchClaimsPath: ResearchClaimsPath;
-  modelGateway?: { ledger?: { store: { durable: boolean } } };
+  /**
+   * The gateway's durable spend ledger. `limits` is the ledger's configured
+   * SpendLimits: paid admission requires the ALL-TIME total ceiling too, not
+   * just daily bounds (VAL-OPS-002).
+   */
+  modelGateway?: {
+    ledger?: {
+      store: { durable: boolean };
+      limits: { totalMicros?: number };
+    };
+  };
 }
 
 export type ResearchDispatchRejection =
@@ -91,7 +104,12 @@ export async function researchDispatchGate(
   const claims = input.providers.research.capability().claims;
   if (claims.status === 'unavailable') return { allowed: false, reason: 'role_not_qualified' };
   const ledger = input.providers.modelGateway?.ledger;
-  if (!ledger || !ledger.store.durable) return { allowed: false, reason: 'limits_not_configured' };
+  // Durable budgets enforce the TOTAL (VAL-OPS-002): the durable ledger must
+  // exist AND be configured with the all-time cumulative ceiling. Daily
+  // limits alone reopen on every restart and every midnight rollover, so a
+  // ledger without a total ceiling is not a bound on paid admission at all.
+  if (!ledger || !ledger.store.durable || !ledger.limits.totalMicros)
+    return { allowed: false, reason: 'limits_not_configured' };
   // DISC-SCR-010: bind paid research to the declared effective claims path.
   // The registry must describe the chain it constructed; an undeclared path is
   // unverifiable and fails closed.

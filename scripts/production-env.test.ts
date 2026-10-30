@@ -28,6 +28,7 @@ function good(): Record<string, string> {
     MODEL_DAILY_SPEND_LIMIT_USD: '5',
     MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: '1',
     MODEL_MAX_UNKNOWN_SPEND_USD: '1',
+    MODEL_TOTAL_SPEND_LIMIT_USD: '100',
     QLOO_API_KEY: 'fake',
     ELEVENLABS_API_KEY: 'fake',
     WIKIMEDIA_USER_AGENT: 'culture-atlas/1.0 (ops@example.org)',
@@ -94,6 +95,15 @@ describe('production preflight (on-prem Compose)', () => {
     expect(report.warnings.join('\n')).toMatch(/ELEVENLABS_API_KEY/);
     expect(report.warnings.join('\n')).toMatch(/CONCENTRATE_API_KEY/);
     expect(errorsFor({ MODEL_DAILY_SPEND_LIMIT_USD: '0' })).toMatch(/positive number/);
+  });
+
+  it('warns honestly when the all-time total spend ceiling is unset (VAL-OPS-002)', () => {
+    const report = checkProductionEnv({ ...good(), MODEL_TOTAL_SPEND_LIMIT_USD: '' });
+    expect(report.errors).toEqual([]);
+    expect(report.warnings.join('\n')).toMatch(
+      /MODEL_TOTAL_SPEND_LIMIT_USD is unset: cumulative paid spend is unbounded/,
+    );
+    expect(errorsFor({ MODEL_TOTAL_SPEND_LIMIT_USD: '0' })).toMatch(/MODEL_TOTAL_SPEND_LIMIT_USD must be a positive number/);
   });
 
   it('needs the credential key when live push is on', () => {

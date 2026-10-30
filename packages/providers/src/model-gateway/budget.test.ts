@@ -101,6 +101,55 @@ describe('AI-02 budget accounting, no inference', () => {
   });
 });
 
+describe('the all-time total ceiling (VAL-OPS-002: durable budgets enforce the total)', () => {
+  it('counts settled, unknown and reserved spend from EVERY day against the total ceiling, across restarts', async () => {
+    let now = Date.parse('2026-10-15T10:00:00Z');
+    const store = new MemorySpendStore();
+    // Ceiling 250 micros all-time; daily limits stay roomy so ONLY the total binds.
+    const capped = { ...limits, dailyMicros: 1_000_000, accountDailyMicros: 1_000_000, maxUnknownMicros: 1_000_000, totalMicros: 250 };
+    let ledger = new ModelSpendLedger(store, capped, () => now);
+
+    // Day 1: one attempt settles at 100 (billed).
+    const a = await ledger.reserve(identity, profile);
+    await ledger.finish(a, 'complete', response);
+    await ledger.reconcile(a, 100);
+
+    // Day 2 (a restart reconstructs the ledger over the same store): one
+    // attempt stays unknown — it counts at its reserved amount.
+    now += 24 * 3600 * 1000;
+    ledger = new ModelSpendLedger(store, capped, () => now);
+    const b = await ledger.reserve({ ...identity, attemptKey: 'day2' }, profile);
+    await ledger.finish(b, 'timeout');
+
+    // Day 3: the ceiling has 50 micros left, so a 100-micro reservation is
+    // refused honestly — the all-time spend never exceeds the ceiling.
+    now += 24 * 3600 * 1000;
+    ledger = new ModelSpendLedger(store, capped, () => now);
+    await expect(
+      ledger.reserve({ ...identity, attemptKey: 'over-ceiling' }, profile),
+    ).rejects.toMatchObject({ kind: 'budget_exhausted' });
+    // A smaller reservation still fits inside what is left.
+    const small = { ...profile, reservationMicros: 50 };
+    const c = await ledger.reserve({ ...identity, attemptKey: 'fits' }, small);
+    expect(c).toBeDefined();
+  });
+
+  it('without a configured total ceiling the ledger keeps its daily-only semantics', async () => {
+    let now = Date.parse('2026-10-16T10:00:00Z');
+    const store = new MemorySpendStore();
+    let ledger = new ModelSpendLedger(store, { ...limits, dailyMicros: 150, accountDailyMicros: 600, maxUnknownMicros: 500 }, () => now);
+    const first = await ledger.reserve(identity, profile);
+    await ledger.finish(first, 'complete', response);
+    await ledger.reconcile(first, 100);
+    now += 24 * 3600 * 1000;
+    ledger = new ModelSpendLedger(store, { ...limits, dailyMicros: 150, accountDailyMicros: 600, maxUnknownMicros: 500 }, () => now);
+    // All-time spend (100 settled) equals two-thirds of one day's allowance
+    // but nothing binds cumulative spend when no total is configured: the
+    // next day starts fresh and the reservation fits.
+    await ledger.reserve({ ...identity, attemptKey: 'next-day' }, profile);
+  });
+});
+
 describe('two-stage reservation pre-check (amendment 2.2)', () => {
   const quick = { ...profile, role: 'vision_photo' as const, reservationMicros: 100 };
   const enrich = { ...profile, role: 'vision_photo_enrich' as const, reservationMicros: 200 };

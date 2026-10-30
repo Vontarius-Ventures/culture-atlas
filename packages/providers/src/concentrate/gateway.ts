@@ -84,16 +84,26 @@ export interface ModelGateway {
 }
 
 function spendLimits(config: ProviderConfig): SpendLimits | undefined {
-  return config.MODEL_DAILY_SPEND_LIMIT_USD &&
-    config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD &&
-    config.MODEL_MAX_UNKNOWN_SPEND_USD
-    ? {
-        dailyMicros: Math.floor(config.MODEL_DAILY_SPEND_LIMIT_USD * 1_000_000),
-        accountDailyMicros: Math.floor(config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD * 1_000_000),
-        maxUnknownMicros: Math.floor(config.MODEL_MAX_UNKNOWN_SPEND_USD * 1_000_000),
-        accountDailyAnalyses: config.ACCOUNT_DAILY_MEDIA_ANALYSES,
-      }
-    : undefined;
+  // The three daily/unknown bounds construct the durable budget. The
+  // ALL-TIME total ceiling (VAL-OPS-002) completes it when configured: daily
+  // limits alone reopen on every restart and midnight rollover, so paths that
+  // need cumulative spend bounded (paid graph research, enforced by the
+  // research gate) refuse without it.
+  if (
+    !config.MODEL_DAILY_SPEND_LIMIT_USD ||
+    !config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD ||
+    !config.MODEL_MAX_UNKNOWN_SPEND_USD
+  )
+    return undefined;
+  return {
+    dailyMicros: Math.floor(config.MODEL_DAILY_SPEND_LIMIT_USD * 1_000_000),
+    accountDailyMicros: Math.floor(config.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD * 1_000_000),
+    maxUnknownMicros: Math.floor(config.MODEL_MAX_UNKNOWN_SPEND_USD * 1_000_000),
+    accountDailyAnalyses: config.ACCOUNT_DAILY_MEDIA_ANALYSES,
+    totalMicros: config.MODEL_TOTAL_SPEND_LIMIT_USD
+      ? Math.floor(config.MODEL_TOTAL_SPEND_LIMIT_USD * 1_000_000)
+      : undefined,
+  };
 }
 
 /**

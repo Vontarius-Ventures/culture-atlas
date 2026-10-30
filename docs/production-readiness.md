@@ -75,7 +75,7 @@ refuses the second):
 | --- | --- |
 | Compose-required | `APP_BASE_URL`, `APP_HOST`, `MEDIA_HOST`, `ACME_EMAIL`, `POSTGRES_PASSWORD`, `SESSION_SECRET`, `STORAGE_SIGNING_SECRET`, `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN` |
 | Preflight-required | `IDENTITY_MAIL_FROM`, `RESEND_API_KEY` (`IDENTITY_MAIL_DRIVER` defaults to `resend` in Compose) |
-| Live features (missing = that capability honestly `unavailable`) | `CONCENTRATE_API_KEY`, `QLOO_API_KEY`, `ELEVENLABS_API_KEY`, `WIKIMEDIA_USER_AGENT`, `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD` (Compose defaults 5 / 1 / 1) |
+| Live features (missing = that capability honestly `unavailable`) | `CONCENTRATE_API_KEY`, `QLOO_API_KEY`, `ELEVENLABS_API_KEY`, `WIKIMEDIA_USER_AGENT`, `MODEL_DAILY_SPEND_LIMIT_USD`, `MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD`, `MODEL_MAX_UNKNOWN_SPEND_USD`, `MODEL_TOTAL_SPEND_LIMIT_USD` (Compose defaults 5 / 1 / 1 / 100; a missing total keeps paid graph research off and cumulative spend unbounded) |
 | Native app links | `APPLE_TEAM_ID`, `ANDROID_ASSETLINKS_SHA256` |
 | Push (when `PUSH_DRIVER=live`) | `PUSH_APNS_TEAM_ID`, `PUSH_APNS_KEY_ID`, `PUSH_APNS_PRIVATE_KEY`, `PUSH_APNS_TOPIC`, `PUSH_FCM_PROJECT_ID`, `PUSH_FCM_CLIENT_EMAIL`, `PUSH_FCM_PRIVATE_KEY`, `CREDENTIAL_ENCRYPTION_KEY` |
 | Optional | `COMPOSE_PROFILES` (keep `edge`), `TRUSTED_PROXY_HOPS`, `CLIENT_IP_HEADER`, `CONCENTRATE_CONFIG_DIR`, `BACKUP_DIR`, `BACKUP_KEEP_DAYS`, `BACKUP_OFFSITE_RSYNC`, `ATLAS_RELEASE`, quotas and feature switches from `.env.example` |

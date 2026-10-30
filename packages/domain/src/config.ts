@@ -112,6 +112,14 @@ export const DomainConfigSchema = z.object({
    * spend limits (the model gateway's ledger) before any paid call.
    */
   INTEREST_GRAPH_RESEARCH_ENABLED: z.string().optional(),
+  /**
+   * PR 8 interest graph: the operator opt-in for the framework shadow pass.
+   * Default off. Shadow only observes and records never-live framework
+   * output for offline comparison — it never changes a live feed, ranking or
+   * reason, and never buys research. The kill switch
+   * interest_graph_framework_shadow_enabled turns it off.
+   */
+  INTEREST_GRAPH_FRAMEWORK_SHADOW_ENABLED: z.string().optional(),
   FEATURE_KILL_SWITCHES: z.string().optional(),
   DEMO_INSPECTOR_ACCOUNT_IDS: z
     .string()

@@ -72,6 +72,15 @@ const BaseProviderConfigSchema = z.object({
   MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_MAX_UNKNOWN_SPEND_USD: z.coerce.number().positive().optional(),
+  /**
+   * The ALL-TIME cumulative paid-spend ceiling in USD (VAL-OPS-002). Daily
+   * limits alone can never bound a deployment's total spend — a restart or a
+   * day rollover reopens them — so the durable ledger also enforces this
+   * bound against every settled cost and outstanding reservation from every
+   * day. The full set of four spend limits is what constructs a ledger; a
+   * configuration missing any one of them has NO durable budget at all.
+   */
+  MODEL_TOTAL_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   ACCOUNT_DAILY_MEDIA_ANALYSES: z.coerce.number().int().positive().default(50),
   FEATHERLESS_API_KEY: optional,
   FEATHERLESS_BASE_URL: z.string().default('https://api.featherless.ai/v1'),
