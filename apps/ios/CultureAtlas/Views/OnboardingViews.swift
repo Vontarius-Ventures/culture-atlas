@@ -583,6 +583,7 @@ private struct BuildingRow: View {
 
 struct TasteSettingsView: View {
   @EnvironmentObject private var onboarding: OnboardingController
+  @EnvironmentObject private var graphStore: InterestGraphStore
   @State private var addingMore = false
   @State private var other = ""
 
@@ -609,11 +610,17 @@ struct TasteSettingsView: View {
         ExclusionEditor(other: $other)
         Button(OnboardingCopy.tasteSave) { Task { _ = await onboarding.saveExclusions() } }
       }
+      // Background discovery: the typed graph summary and its controls
+      // (server truth only; the picks and exclusions above stay as they are).
+      TasteGraphSection()
     }
     .atlasListSurface()
     .navigationTitle(OnboardingCopy.tasteTitle)
     .task { await onboarding.loadTaste() }
-    .refreshable { await onboarding.loadTaste() }
+    .refreshable {
+      await onboarding.loadTaste()
+      await graphStore.reload()
+    }
     .sheet(isPresented: $addingMore, onDismiss: { Task { await onboarding.loadTaste() } }) {
       NavigationStack {
         ScrollView {

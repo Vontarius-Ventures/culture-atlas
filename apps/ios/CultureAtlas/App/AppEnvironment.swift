@@ -23,6 +23,7 @@ final class AppEnvironment {
   let wearables: WearablesAdapter
   let controller: CaptureController
   let onboarding: OnboardingController
+  let graphStore: InterestGraphStore
   let notices: ReadyNoticeCenter
 
   private init() {
@@ -54,6 +55,7 @@ final class AppEnvironment {
       api: api, accounts: accounts, sessions: sessions, identities: identities, drafts: drafts, uploads: uploads,
       transfer: transfer, receipts: receipts, wearables: wearables)
     onboarding = OnboardingController(api: api)
+    graphStore = InterestGraphStore(service: api)
     notices = ReadyNoticeCenter(
       api: api, sessions: sessions, directory: drafts.root.appendingPathComponent("ready", isDirectory: true))
     // Stop wake-ups for this phone before its session ends.

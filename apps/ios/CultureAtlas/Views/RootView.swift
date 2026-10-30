@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
   @EnvironmentObject private var controller: CaptureController
   @EnvironmentObject private var onboarding: OnboardingController
+  @EnvironmentObject private var graphStore: InterestGraphStore
   @EnvironmentObject private var notices: ReadyNoticeCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -57,6 +58,10 @@ struct RootView: View {
       } else {
         onboarding.reset()
       }
+      // The graph store follows the signed-in account: signing out or
+      // switching clears its private summary and reasons and rejects any
+      // in-flight previous-owner response (VAL-NATIVE-001).
+      graphStore.bind(account: controller.signedInAccount)
     }
     .onChange(of: onboarding.sessionEnded) { _, ended in
       if ended { Task { await controller.signOut(drafts: .keep) } }

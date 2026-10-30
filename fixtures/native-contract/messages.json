@@ -1463,6 +1463,356 @@
         ],
         "job_id": null
       }
+    },
+    "interest_graph_summary_response": {
+      "direction": "response",
+      "route": "GET /v2/me/interest-graph",
+      "schema": "schemas.InterestGraphSummaryResponse",
+      "body": {
+        "owner_account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5e",
+        "settings": {
+          "revision": 3,
+          "discovery_paused": false,
+          "paused_at": null
+        },
+        "projection": {
+          "state": "ready",
+          "support_version": 7,
+          "target_taste_revision": 7,
+          "applied_taste_revision": 7,
+          "current_taste_revision": 7,
+          "lagging": false,
+          "pending_events": 0,
+          "last_projected_at": "2026-10-29T12:00:00Z"
+        },
+        "counts": {
+          "confirmed": 1,
+          "tentative": 1,
+          "suppressed": 1
+        },
+        "interests": {
+          "items": [
+            {
+              "edge_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f01",
+              "item_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f02",
+              "canonical_key": "play/nina-simone",
+              "kind": "artist",
+              "title": "Nina Simone",
+              "origin": "explicit",
+              "state": "confirmed",
+              "saved_item_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f03",
+              "pick_ids": [
+                "7c2a1d3b-4e5f-4a61-8b72-8c9d0e1f2a31"
+              ],
+              "capture_id": null,
+              "analysis_id": null
+            }
+          ],
+          "next_cursor": "eyJ2IjoxLCJvIjoyNSwib3duZXIiOiJhMWIyYzNkNC1lNWY2LTRhN2ItOGM5ZC0wZTFmMmEzYjRjNWUiLCJhdCI6MTc3MjI0MzIwMDAwMH0"
+        },
+        "tentative": {
+          "items": [
+            {
+              "edge_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f11",
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f12",
+              "name": "Auguste Rodin",
+              "relation": "depicted",
+              "resolution_status": "resolved",
+              "is_anchor": true,
+              "origin": "derived",
+              "state": "tentative",
+              "capture_id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+              "analysis_id": null,
+              "analysis_version": null,
+              "capture_reference_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f15",
+              "reference_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f16"
+            },
+            {
+              "edge_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f13",
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f14",
+              "name": "Mid-century modern",
+              "relation": "resembles",
+              "resolution_status": "user_confirmed",
+              "is_anchor": false,
+              "origin": "derived",
+              "state": "suppressed",
+              "capture_id": "c6d7e8f9-0a1b-4c2d-9e3f-405162738495",
+              "analysis_id": "e8f90a1b-2c3d-4e4f-9051-627384950617",
+              "analysis_version": 2,
+              "capture_reference_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f15",
+              "reference_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f16"
+            }
+          ],
+          "next_cursor": null
+        }
+      }
+    },
+    "interest_graph_summary_empty_response": {
+      "direction": "response",
+      "route": "GET /v2/me/interest-graph",
+      "schema": "schemas.InterestGraphSummaryResponse",
+      "body": {
+        "owner_account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5e",
+        "settings": {
+          "revision": 0,
+          "discovery_paused": false,
+          "paused_at": null
+        },
+        "projection": {
+          "state": "never_projected",
+          "support_version": 0,
+          "target_taste_revision": 0,
+          "applied_taste_revision": 0,
+          "current_taste_revision": 0,
+          "lagging": false,
+          "pending_events": 0,
+          "last_projected_at": null
+        },
+        "counts": {
+          "confirmed": 0,
+          "tentative": 0,
+          "suppressed": 0
+        },
+        "interests": {
+          "items": [],
+          "next_cursor": null
+        },
+        "tentative": {
+          "items": [],
+          "next_cursor": null
+        }
+      }
+    },
+    "interest_graph_summary_failed_response": {
+      "direction": "response",
+      "route": "GET /v2/me/interest-graph",
+      "schema": "schemas.InterestGraphSummaryResponse",
+      "body": {
+        "owner_account_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5e",
+        "settings": {
+          "revision": 1,
+          "discovery_paused": false,
+          "paused_at": null
+        },
+        "projection": {
+          "state": "failed",
+          "support_version": 3,
+          "target_taste_revision": 5,
+          "applied_taste_revision": 4,
+          "current_taste_revision": 5,
+          "lagging": true,
+          "pending_events": 2,
+          "last_projected_at": "2026-10-29T11:00:00Z"
+        },
+        "counts": {
+          "confirmed": 0,
+          "tentative": 0,
+          "suppressed": 0
+        },
+        "interests": {
+          "items": [],
+          "next_cursor": null
+        },
+        "tentative": {
+          "items": [],
+          "next_cursor": null
+        }
+      }
+    },
+    "interest_graph_settings_request": {
+      "direction": "request",
+      "route": "PATCH /v2/me/interest-graph/settings",
+      "schema": "schemas.UpdateInterestGraphSettingsRequest",
+      "body": {
+        "expected_revision": 3,
+        "discovery_paused": true
+      }
+    },
+    "interest_graph_settings_response": {
+      "direction": "response",
+      "route": "PATCH /v2/me/interest-graph/settings",
+      "schema": "schemas.UpdateInterestGraphSettingsResponse",
+      "body": {
+        "settings": {
+          "revision": 4,
+          "discovery_paused": true,
+          "paused_at": "2026-10-29T12:30:00Z"
+        }
+      }
+    },
+    "interest_graph_interest_request": {
+      "direction": "request",
+      "route": "PATCH /v2/me/interest-graph/interests/{id}",
+      "schema": "schemas.UpdateInterestGraphInterestRequest",
+      "body": {
+        "expected_revision": 4,
+        "state": "suppressed"
+      }
+    },
+    "interest_graph_interest_response": {
+      "direction": "response",
+      "route": "PATCH /v2/me/interest-graph/interests/{id}",
+      "schema": "schemas.UpdateInterestGraphInterestResponse",
+      "body": {
+        "edge_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f11",
+        "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f12",
+        "state": "suppressed",
+        "settings": {
+          "revision": 5,
+          "discovery_paused": true,
+          "paused_at": "2026-10-29T12:30:00Z"
+        }
+      }
+    },
+    "revision_conflict_error": {
+      "direction": "response",
+      "route": "PATCH /v2/me/interest-graph/*",
+      "schema": "schemas.CaptureV2Error",
+      "body": {
+        "error": {
+          "code": "revision_conflict",
+          "message": "This collection changed. Review the latest version and try again.",
+          "retryable": false,
+          "request_id": "2e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b",
+          "details": {
+            "current_revision": 7
+          }
+        }
+      }
+    },
+    "recommendation_connection_response": {
+      "direction": "response",
+      "route": "GET /v2/me/recommendations/{id}/connection",
+      "schema": "schemas.RecommendationConnectionResponse",
+      "body": {
+        "recommendation_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+        "origin": "research",
+        "provenance": "graph_run",
+        "state": "connected",
+        "intent": "personal",
+        "graph_run_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f21",
+        "reason": {
+          "text": "Also work on display at Art Institute of Chicago.",
+          "template": null
+        },
+        "path": [
+          {
+            "subject": {
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f24",
+              "name": "The Thinker"
+            },
+            "predicate": "CREATED_BY",
+            "object": {
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f12",
+              "name": "Auguste Rodin"
+            },
+            "association_subtype": null
+          },
+          {
+            "subject": {
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f24",
+              "name": "The Thinker"
+            },
+            "predicate": "DOCUMENTED_ASSOCIATION",
+            "object": {
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f25",
+              "name": "Art Institute of Chicago"
+            },
+            "association_subtype": "work_on_display_at"
+          }
+        ],
+        "sources": [
+          {
+            "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f26",
+            "url": "https://www.artic.edu/artworks/130575/the-thinker",
+            "title": "The Thinker",
+            "publisher": "Art Institute of Chicago",
+            "locator": "Collections, object data",
+            "excerpt": "Bronze sculpture cast by Alexis Rudier in 1904.",
+            "retrieved_at": "2026-10-01T09:00:00Z"
+          }
+        ],
+        "support": {
+          "roots": [
+            {
+              "edge_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f22",
+              "origin": "explicit_save",
+              "label": "Auguste Rodin"
+            },
+            {
+              "edge_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f23",
+              "origin": "pick_group",
+              "label": "Impressionism"
+            }
+          ]
+        },
+        "unavailable_reason": null
+      }
+    },
+    "recommendation_connection_scoped_response": {
+      "direction": "response",
+      "route": "GET /v2/me/recommendations/{id}/connection",
+      "schema": "schemas.RecommendationConnectionResponse",
+      "body": {
+        "recommendation_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+        "origin": "research",
+        "provenance": "scoped_discovery",
+        "state": "connected",
+        "intent": "photo",
+        "graph_run_id": null,
+        "reason": {
+          "text": "Shares a documented studio with a work in this collection.",
+          "template": null
+        },
+        "path": [
+          {
+            "subject": {
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f24",
+              "name": "The Thinker"
+            },
+            "predicate": "DOCUMENTED_ASSOCIATION",
+            "object": {
+              "node_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f25",
+              "name": "Art Institute of Chicago"
+            },
+            "association_subtype": "work_on_display_at"
+          }
+        ],
+        "sources": [
+          {
+            "id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f26",
+            "url": "https://www.artic.edu/artworks/130575/the-thinker",
+            "title": "The Thinker",
+            "publisher": "Art Institute of Chicago",
+            "locator": null,
+            "excerpt": null,
+            "retrieved_at": "2026-10-01T09:00:00Z"
+          }
+        ],
+        "support": null,
+        "unavailable_reason": null
+      }
+    },
+    "recommendation_connection_unavailable_response": {
+      "direction": "response",
+      "route": "GET /v2/me/recommendations/{id}/connection",
+      "schema": "schemas.RecommendationConnectionResponse",
+      "body": {
+        "recommendation_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f20",
+        "origin": "research",
+        "provenance": "graph_run",
+        "state": "unavailable",
+        "intent": null,
+        "graph_run_id": "6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f21",
+        "reason": {
+          "text": null,
+          "template": null
+        },
+        "path": null,
+        "sources": [],
+        "support": null,
+        "unavailable_reason": "support_withdrawn"
+      }
     }
   }
 }

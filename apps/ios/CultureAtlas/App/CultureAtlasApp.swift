@@ -43,6 +43,7 @@ struct CultureAtlasApp: App {
   @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @StateObject private var controller = AppEnvironment.shared.controller
   @StateObject private var onboarding = AppEnvironment.shared.onboarding
+  @StateObject private var graphStore = AppEnvironment.shared.graphStore
   @StateObject private var notices = AppEnvironment.shared.notices
   @Environment(\.scenePhase) private var scenePhase
 
@@ -51,6 +52,7 @@ struct CultureAtlasApp: App {
       RootView()
         .environmentObject(controller)
         .environmentObject(onboarding)
+        .environmentObject(graphStore)
         .environmentObject(notices)
         // Designed on warm paper only (Android uses lightColorScheme too):
         // pinning light keeps ink text on ivory in system dark mode.

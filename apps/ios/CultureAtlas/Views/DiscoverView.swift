@@ -461,6 +461,11 @@ struct FeedCardDetail: View {
             if let reason = detail?.reason ?? detail?.whyThis?.text {
               WhyThisCard(text: reason)
             }
+            // The typed Why-this disclosure for the recommendation this card
+            // displayed (pinned proof, honest unavailable state).
+            if let recommendationID = card.recommendationID {
+              WhyThisConnection(recommendationID: recommendationID)
+            }
             if let description = detail?.description {
               Text(description)
                 .font(.body)

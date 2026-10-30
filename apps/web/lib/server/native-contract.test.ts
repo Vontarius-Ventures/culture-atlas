@@ -43,6 +43,7 @@ import {
   setDbForTesting,
   setDomainConfigForTesting,
   NATIVE_OWNER_OPERATIONS,
+  NATIVE_OWNER_V2_GRAPH_OPERATIONS,
   toErrorBody,
   type CaptureIdentityAdapter,
   type CaptureLimits,
@@ -1390,6 +1391,35 @@ describe('native taste onboarding fixtures (amendment 2.2)', () => {
       const schema = message.direction === 'request' ? route!.body : route!.response;
       expect((schema as z.ZodType).safeParse(message.body).success, name).toBe(true);
     }
+  });
+
+  it('every typed graph wire example names its route and parses with the route schema', () => {
+    const byRoute = new Map(
+      Object.values(schemas.ROUTES).map((r) => [
+        `${r.method} ${r.path}`,
+        r as schemas.RouteContract,
+      ]),
+    );
+    const graphMessages = Object.entries(messages).filter(([, m]) => / \/v2\/me\//.test(m.route));
+    expect(graphMessages.length).toBeGreaterThanOrEqual(10);
+    for (const [name, message] of graphMessages) {
+      if (name === 'revision_conflict_error') {
+        // The shared typed rejection: v2 error body naming revision_conflict.
+        expect(schemas.CaptureV2Error.safeParse(message.body).success, name).toBe(true);
+        expect((message.body as { error: { code: string } }).error.code).toBe('revision_conflict');
+        continue;
+      }
+      const route = byRoute.get(message.route);
+      expect(route, name).toBeDefined();
+      const schema = message.direction === 'request' ? route!.body : route!.response;
+      expect((schema as z.ZodType).safeParse(message.body).success, name).toBe(true);
+    }
+    // The graph routes a native phone reaches are exactly the four bridged v2
+    // graph operations of the native owner bridge (VAL-API-003).
+    const graphRoutes = new Set(
+      graphMessages.filter(([name]) => name !== 'revision_conflict_error').map(([, m]) => m.route),
+    );
+    expect(graphRoutes).toEqual(new Set(NATIVE_OWNER_V2_GRAPH_OPERATIONS));
   });
 
   it('copy matches the design copy file exactly', () => {
