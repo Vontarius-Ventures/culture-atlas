@@ -6,6 +6,7 @@ import {
   readStoredAccountDeletion,
   storeAccountDeletion,
 } from '@/lib/client/account-deletion';
+import { SESSION_SIGNOUT_KEY } from '@/lib/client/session-sync';
 import { AccountDeletionView } from './AccountDeletionView';
 
 /**
@@ -148,6 +149,20 @@ describe('Settings account deletion entry (VAL-DELETE-001)', () => {
     expect(screen.getByText(DISCLOSURE.immediate[0]!)).toBeTruthy();
     expect(screen.getByText(DISCLOSURE.cleanup_steps[0]!)).toBeTruthy();
     expect(screen.getByText(/still removing your private data/i)).toBeTruthy();
+  });
+
+  it('acceptance broadcasts the cross-tab sign-out so other tabs drop the deleted account private surfaces', async () => {
+    window.localStorage.clear();
+    sessionMock = accountSession('acc-1');
+    render(<AccountDeletionView />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete my account' }));
+    await screen.findByRole('heading', { name: 'Your account is being deleted' });
+    // Acceptance revokes the browser's whole session authority, not just this
+    // tab's: the same sentinel an explicit sign-out writes must land in shared
+    // storage, so every other same-origin tab reloads and never keeps rendering
+    // the deleted account's private Taste/feed/photos (or applies a late
+    // private response) for whoever uses this browser next.
+    expect(window.localStorage.getItem(SESSION_SIGNOUT_KEY)).toBeTruthy();
   });
 
   it('a failed request shows an error and never an accepted deletion', async () => {

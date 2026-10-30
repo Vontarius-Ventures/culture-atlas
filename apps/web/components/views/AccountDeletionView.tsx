@@ -15,6 +15,7 @@ import {
   type StoredAccountDeletion,
 } from '@/lib/client/account-deletion';
 import { useSession } from '@/lib/client/session';
+import { broadcastSessionSignOut } from '@/lib/client/session-sync';
 import { BackLink, Notice } from '../ui';
 
 /**
@@ -104,6 +105,13 @@ export function AccountDeletionView({ pollMs = 5_000 }: { pollMs?: number }) {
       setDisclosure(response.disclosure);
       setDeletionStatus(response.status);
       setMode('accepted');
+      // Acceptance revokes the whole browser session authority, not just this
+      // tab's: write the same sentinel an explicit sign-out writes so every
+      // other same-origin tab reloads now, while this tab still holds its
+      // status view — a stale tab must not keep rendering the deleted
+      // account's private surfaces (or apply a late private response) for
+      // whoever uses this browser next.
+      broadcastSessionSignOut();
       await api.refreshSession().catch(() => undefined);
     } catch (err) {
       setError(
