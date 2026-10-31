@@ -74,14 +74,10 @@ export function SourceView() {
                 <Link href="/identity" className="button button--primary button--small">
                   Sign in
                 </Link>
-                <Link href="/capture/photo" className="button button--outline button--small">
-                  Discover from one photo
-                </Link>
               </>
             }
           >
-            Sign in to keep photos and videos in your private library. You can still discover from
-            one photo without an account.
+            Sign in to read your photos and keep them in your private library.
           </V2Notice>
         </div>
       )}

@@ -549,7 +549,7 @@ test('seed the library through the real stack', async ({ browser }) => {
   await page.goto('/identity');
   await page.getByLabel('Email').fill(email);
   const started = Date.now();
-  await page.getByRole('button', { name: 'Email verification link' }).click();
+  await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
   await page.goto(await mailFor(email, started));
   await expect(page).toHaveURL(/\/library$/, { timeout: 30_000 });
   const cookies = await context.cookies();

@@ -132,6 +132,7 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
 }
 
 function OwnedCaptureResult({ captureId }: { captureId: string }) {
+  const { isAccount } = useSession();
   const router = useRouter();
   const search = useSearchParams();
   const toast = useToast();
@@ -552,6 +553,14 @@ function OwnedCaptureResult({ captureId }: { captureId: string }) {
                 <ClockIcon />
                 {COPY['while_we_look.status']}
               </p>
+            </>
+          ) : state.phase === 'failed' && !isAccount && job?.error?.code === 'provider_unavailable' ? (
+            <>
+              <h1 className="display display--medium">Sign in to read your photo</h1>
+              <p className="lede">Reading your own photos needs a free account. It only takes an email.</p>
+              <Link href="/identity" className="button button--primary">
+                Sign in
+              </Link>
             </>
           ) : state.phase === 'failed' ? (
             <>

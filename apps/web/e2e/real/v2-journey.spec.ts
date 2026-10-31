@@ -283,7 +283,7 @@ test('capture platform v2 journey on the real stack', async ({ page, browser, ba
     await expect(page).toHaveURL(/\/identity$/);
     await page.getByLabel('Email').fill(email);
     const started = Date.now();
-    await page.getByRole('button', { name: 'Email verification link' }).click();
+    await page.getByRole('button', { name: 'Email me a sign-in link' }).click();
     await expect(page.locator('#main').getByRole('status')).toContainText(
       'If eligible, your email has a verification link',
     );
