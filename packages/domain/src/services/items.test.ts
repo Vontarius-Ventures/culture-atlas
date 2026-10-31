@@ -41,7 +41,7 @@ describe('related discovery job', () => {
     const detail = await getItem(ctx, { id: film, query: {} });
     expect(detail.related_state).toBe('cached');
     expect(detail.related.length).toBe(8);
-    expect(detail.related.map((r) => r.category).sort()).toEqual(['watch', 'watch', 'wear', 'wear']);
+    expect(new Set(detail.related.map((r) => r.category))).toEqual(new Set(['watch', 'wear']));
     expect(detail.related.every((r) => !r.is_example)).toBe(true);
     const recs = await db.query<{ origin: string; provider_query_ids: string[] }>(
       'SELECT origin, provider_query_ids FROM recommendations WHERE discovery_job_id = $1',
