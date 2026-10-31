@@ -4,6 +4,10 @@
 owner's own hardware.** This is THE production path. The go-live checklist,
 with every owner action, is [production-readiness.md](production-readiness.md).
 
+For a Mac without router forwarding, use the isolated
+[Tailscale Funnel edge](deploy-funnel.md). It leaves existing Mac Funnels
+untouched and publishes no app/database/storage host ports.
+
 - **Not Render.** `render.yaml` stays unapplied: Render background workers have
   no free plan and there is no Render API key in this repository (`rc_` keys
   are Featherless, `FEATHERLESS_API_KEY`).

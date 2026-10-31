@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { AnalysisSection, CaptureSource, CaptureStatus, Category, ReferenceType, SectionStatus } from '../enums';
 import { DiscoveryCard, Focus, Image, ReferenceSummary, Timestamp, Uuid } from './common';
 import { AnalysisExperimental, RailDto, StyleReadingDto } from './style';
+import { DiscoveryIntentsSchema } from './discovery-intents';
+export * from './discovery-intents';
 export * from './style';
 
 /**
@@ -110,6 +112,7 @@ export const CaptureResponse = z.object({
   style_reading: StyleReadingDto.nullable().optional(),
   /** Style design §E.2: rails in display order (More like this per subject, then cross-domain). */
   rails: z.array(RailDto).optional(),
+  discovery_intents: DiscoveryIntentsSchema.optional(),
 });
 export type CaptureResponse = z.infer<typeof CaptureResponse>;
 

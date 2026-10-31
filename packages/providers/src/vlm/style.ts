@@ -25,8 +25,8 @@ export const STYLE_READING_SCHEMA = 'atlas_style_reading_v1';
 // The public/normalized reading remains v1; only the model wire protocol changes.
 export const STYLE_WIRE_SCHEMA = 'atlas_style_observation_v2';
 export const STYLE_PROMPT_VERSION = 'vlm-style-v4';
-/** Evidence-linked claims, guarded observation text and conservative text mismatch handling. */
-export const STYLE_GUARD_VERSION = 'guard-v19';
+/** Evidence-linked claims and object-scoped figurative-art form descriptions. */
+export const STYLE_GUARD_VERSION = 'guard-v20';
 /** §B.2: the style call reads a larger image than stage 1 (fine material and construction). */
 export const STYLE_MAX_DIMENSION = 1024;
 /**
@@ -457,7 +457,7 @@ export interface VlmStyleReader {
   readStyle(input: VlmStyleInput, options?: CallOptions): Promise<VlmStyleResult>;
 }
 
-// ---- guard (guard-v19, §A.5) -----------------------------------------------
+// ---- guard (guard-v20, §A.5) -----------------------------------------------
 
 export type StyleGuardRule =
   | 'G-STYLE-PERSON'
@@ -577,6 +577,20 @@ function foldedWithout(text: string, phrases: readonly string[]): string {
 
 const NOT_PERSON_COMPOUNDS = new Set(['ottoman', 'ottomans', 'german', 'germans', 'roman', 'romans', 'norman', 'talisman', 'talismans', 'cayman', 'caiman', 'amen', 'omen', 'omens', 'semen', 'specimen', 'specimens', 'stamen', 'hymen', 'abdomen', 'regimen']);
 
+// Only modeled structure, never identity, age, complexion, hair or expression.
+const FIGURATIVE_FORM_RE = /\b(?:face|facial|eyes|mouth|lips|teeth|body)\b/gi;
+
+function figurativeObjectLabel(text: string): boolean {
+  const explicitArt = /\b(?:sculptur(?:e|es|al)|statues?|statuettes?|figurines?|effig(?:y|ies)|carvings?|paintings?|illustrations?)\b/i.test(text);
+  const materialObject = /\b(?:vessels?|masks?|busts?|heads?)\b/i.test(text) &&
+    /\b(?:terracotta|terra cotta|clay|ceramic|porcelain|marble|bronze|plaster|stone|wooden)\b/i.test(text);
+  return (explicitArt || materialObject) && !styleTextAboutPerson(text.replace(FIGURATIVE_FORM_RE, ' '));
+}
+
+function objectTextAboutPerson(text: string, figurativeObject: boolean): boolean {
+  return styleTextAboutPerson(figurativeObject ? text.replace(FIGURATIVE_FORM_RE, ' ') : text);
+}
+
 /** The text refers to a person, body, age, gender, role, occupation or group (G-STYLE-PERSON). */
 export function styleTextAboutPerson(text: string): boolean {
   const t = foldedWithout(text, GARMENT_COMPOUND_ALLOW);
@@ -618,6 +632,7 @@ export function cultureCoded(name: string): boolean {
  * then dropped).
  */
 export function thingLabel(label: string): string | null {
+  if (figurativeObjectLabel(label)) return label;
   if (!styleTextAboutPerson(label)) return label;
   const words = label.split(/\s+/).filter((w) => !styleTextAboutPerson(w.replace(/['’]s$/i, '')) && !/^(?:on|of|by|for|a|an|the|with|worn)$/i.test(w));
   const rest = words.join(' ').replace(/^[\s,–-]+|[\s,–-]+$/g, '');
@@ -670,7 +685,7 @@ function textReadIn(read: string, texts: readonly string[]): boolean {
 }
 
 /**
- * guard-v19: the style reading's own guard. Pure and deterministic. Existing
+ * guard-v20: the style reading's own guard. Pure and deterministic. Existing
  * regexes are reused (PERSON_OBS_RE, PEOPLE_RE, ROLE_RE, STYLE_OF_RE); stage-1
  * and stage-2 rules are unchanged.
  */
@@ -684,10 +699,11 @@ export function guardStyleReading(input: VlmStyleReading, ctx: StyleGuardContext
   }
   const people = ctx.stage1?.peopleShown === true;
   const visibleText = ctx.stage1?.visibleText ?? [];
-  const summary = styleTextAboutPerson(input.summary) ? '' : input.summary;
+  const summary = objectTextAboutPerson(input.summary, figurativeObjectLabel(input.summary)) ? '' : input.summary;
   if (!summary && input.summary) dropped.push({ path: 'summary', rule: 'G-STYLE-PERSON' });
   const subjects: GuardedStyleSubject[] = [];
   input.subjects.forEach((s) => {
+    const figurativeObject = s.category !== 'fashion' && s.category !== 'food' && figurativeObjectLabel(s.label);
     const label = thingLabel(s.label);
     const sp = `subjects[${subjects.length}]`;
     if (!label) {
@@ -701,7 +717,7 @@ export function guardStyleReading(input: VlmStyleReading, ctx: StyleGuardContext
         region.y + region.h <= s.region.y + s.region.h + 1e-6);
       const ok = /^o[1-6]$/.test(o.id) && all.filter((x) => x.id === o.id).length === 1 &&
         o.certainty >= STYLE_CERTAINTY_FLOOR && !!o.text.trim() &&
-        !styleTextAboutPerson(o.text) && !/\b(?:skin|hair|flesh|complexion)\b/i.test(o.text) && contained &&
+        !objectTextAboutPerson(o.text, figurativeObject) && !/\b(?:skin|hair|flesh|complexion)\b/i.test(o.text) && contained &&
         (o.kind !== 'text' || textReadIn(o.text, visibleText));
       if (!ok) dropped.push({ path: `${sp}.observations[${i}]`, rule: 'G-STYLE-EVIDENCE' });
       return ok;
@@ -729,7 +745,7 @@ export function guardStyleReading(input: VlmStyleReading, ctx: StyleGuardContext
       // feature list. Repeating two feature strings against one observation cannot
       // manufacture the two independent features needed for assertion.
       const visibleFeatures = s.observations === undefined
-        ? uniqueStyleFeatures(a.defining_features.filter((f) => !styleTextAboutPerson(f)))
+        ? uniqueStyleFeatures(a.defining_features.filter((f) => !objectTextAboutPerson(f, figurativeObject)))
         : uniqueStyleFeatures((observations ?? [])
           .filter((o) => o.kind !== 'text' && a.evidence_ids?.includes(o.id))
           .map((o) => clip(o.text, STYLE_LIMITS.nameChars))).slice(0, STYLE_LIMITS.definingFeatures);
@@ -790,7 +806,7 @@ export function guardStyleReading(input: VlmStyleReading, ctx: StyleGuardContext
       .map((c) => ({ ...c, basis: basis(c.basis) }));
     const details = s.details
       .filter((d, i) => supports(d, d.evidence.basis, `${sp}.details[${i}]`))
-      .filter((d, i) => (styleTextAboutPerson(d.text) ? (dropped.push({ path: `${sp}.details[${i}]`, rule: 'G-STYLE-PERSON' }), false) : true))
+      .filter((d, i) => (objectTextAboutPerson(d.text, figurativeObject) ? (dropped.push({ path: `${sp}.details[${i}]`, rule: 'G-STYLE-PERSON' }), false) : true))
       .map((d) => ({ ...d, evidence: { ...d.evidence, basis: basis(d.evidence.basis, d.text) } }));
     const mood = s.mood.filter((m, i) => {
       if (!supports(m, 'visible', `${sp}.mood[${i}]`)) return false;

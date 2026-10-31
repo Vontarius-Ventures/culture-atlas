@@ -6,7 +6,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { Category } from '@culture-atlas/domain';
 import type { CaptureResponse, Focus, ReferenceSummary } from '@culture-atlas/domain/schemas';
 import { api, ApiError, newIdempotencyKey } from '@/lib/client/api';
-import { useAsyncEffect } from '@/lib/client/hooks';
+import { useSession } from '@/lib/client/session';
+import { DISCOVERY_POLL_DEADLINE_MS, useDiscoveryPoll } from '@/lib/client/discovery-poll';
 import { CATEGORY_LABELS, CATEGORY_ORDER } from '@/lib/client/format';
 import { isTerminal, useJob } from '@/lib/client/jobs';
 import { UI_LIMITS } from '@/lib/client/limits';
@@ -25,6 +26,7 @@ import { CitySheet } from '../style/CitySheet';
 import { RegionHighlight, type ActiveRegion } from '../style/RegionHighlight';
 import { StyleRail } from '../style/StyleRail';
 import { StyleReadingCard } from '../style/StyleReadingCard';
+import { DiscoveryModes } from '../style/DiscoveryModes';
 import {
   isActiveStatus,
   needsCity,
@@ -34,6 +36,7 @@ import {
   styleCardState,
   StyledCaptureResponse,
   styleWorkPending,
+  visualWorkPending,
   type StyledCapture,
   type StyleRegion,
 } from '@/lib/client/style';
@@ -50,7 +53,12 @@ export const STYLE_POLL_MAX = 60;
 
 /** Pure view-state derivation (unit-tested). */
 export function deriveCaptureState(
-  capture: (CaptureResponse & { style?: { rails: Array<{ cards: unknown[] }> | null } | null }) | null,
+  capture:
+    | (Pick<
+        CaptureResponse,
+        'analysis' | 'status' | 'job_id' | 'recommendations' | 'references'
+      > & { style?: { rails: Array<{ cards: unknown[] }> | null } | null })
+    | null,
   job: { state: string } | null,
   jobError: boolean,
 ) {
@@ -96,7 +104,8 @@ export function deriveCaptureState(
 }
 
 export function referencePhrase(
-  ref: Pick<ReferenceSummary, 'name' | 'qualified' | 'relation'> & Pick<Partial<ReferenceSummary>, 'read_text'>,
+  ref: Pick<ReferenceSummary, 'name' | 'qualified' | 'relation'> &
+    Pick<Partial<ReferenceSummary>, 'read_text'>,
 ): string {
   // A text-only reference is a name read in the photo, not a match or a resemblance.
   if (ref.read_text) return ref.name;
@@ -105,11 +114,24 @@ export function referencePhrase(
 }
 
 /** Attribution line for a text-only reference: the words it was read from, quoted as written. */
-export function readTextAttribution(ref: Pick<Partial<ReferenceSummary>, 'read_text'>): string | null {
+export function readTextAttribution(
+  ref: Pick<Partial<ReferenceSummary>, 'read_text'>,
+): string | null {
   return ref.read_text ? `Read in the photo: “${ref.read_text}”` : null;
 }
 
 export function CaptureResultView({ captureId }: { captureId: string }) {
+  const { session } = useSession();
+  const principal = session?.principal;
+  // Remount all result state on navigation or identity change. A previous
+  // account's late response must never populate the next account's page.
+  const owner = principal
+    ? `${principal.kind}:${principal.account_id ?? principal.session_id}`
+    : 'loading-session';
+  return <OwnedCaptureResult key={`${owner}:${captureId}`} captureId={captureId} />;
+}
+
+function OwnedCaptureResult({ captureId }: { captureId: string }) {
   const router = useRouter();
   const search = useSearchParams();
   const toast = useToast();
@@ -122,35 +144,82 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
   const [showAll, setShowAll] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [correcting, setCorrecting] = useState(false);
+  const [discoveryMode, setDiscoveryMode] = useState<'connections' | 'visual'>('connections');
   const preview = getCapturePreview(captureId);
+  const lifecycle = useRef({ active: false, blocked: false, sequence: 0 });
+  const requests = useRef(new Set<AbortController>());
+  const [styleGuardVersion, setStyleGuardVersion] = useState(0);
+  const refreshedStyleGuardVersion = useRef(0);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.requestAs('getCapture', StyledCaptureResponse, {
-        params: { id: captureId },
-      });
-      setCapture((prev) => {
-        if (prev && prev.recommendations.length === 0 && res.recommendations.length > 0)
-          toast.announce(`${res.recommendations.length} discoveries found`);
-        return res;
-      });
-      if (res.job_id) setJobId((j) => j ?? res.job_id);
-      setLoadError(null);
-    } catch (err) {
-      setLoadError(
-        err instanceof ApiError
-          ? err
-          : new ApiError(0, {
-              code: 'internal',
-              message: 'Something went wrong.',
-              retryable: true,
-              request_id: 'client',
-            }),
-      );
-    }
-  }, [captureId, toast]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      const life = lifecycle.current;
+      if (!life.active || life.blocked || signal?.aborted) return;
+      const sequence = ++life.sequence;
+      const controller = new AbortController();
+      requests.current.add(controller);
+      const abort = () => controller.abort();
+      signal?.addEventListener('abort', abort, { once: true });
+      const current = () =>
+        life.active && !life.blocked && sequence === life.sequence && !controller.signal.aborted;
+      try {
+        const res = await api.requestAs('getCapture', StyledCaptureResponse, {
+          params: { id: captureId },
+          signal: controller.signal,
+        });
+        if (!current()) return;
+        // Job updates can deliver running and ready in one React batch. Record
+        // accepted pending reads here, not only the states committed to the UI.
+        if (styleWorkPending(res.style)) setStyleGuardVersion((version) => version + 1);
+        setCapture((prev) => {
+          if (prev && prev.recommendations.length === 0 && res.recommendations.length > 0)
+            toast.announce(`${res.recommendations.length} discoveries found`);
+          return res;
+        });
+        if (res.job_id) setJobId((j) => j ?? res.job_id);
+        setLoadError(null);
+      } catch (err) {
+        if (!current()) return;
+        if (err instanceof ApiError && [401, 403, 404].includes(err.status)) {
+          life.blocked = true;
+          requests.current.forEach((request) => request.abort());
+          setCapture(null);
+          setJobId(null);
+        }
+        setLoadError(
+          err instanceof ApiError
+            ? err
+            : new ApiError(0, {
+                code: 'internal',
+                message: 'Something went wrong.',
+                retryable: true,
+                request_id: 'client',
+              }),
+        );
+      } finally {
+        requests.current.delete(controller);
+        signal?.removeEventListener('abort', abort);
+      }
+    },
+    [captureId, toast],
+  );
 
-  useAsyncEffect(load, [load]);
+  useEffect(() => {
+    const life = lifecycle.current;
+    const activeRequests = requests.current;
+    let disposed = false;
+    life.active = true;
+    void Promise.resolve().then(() => {
+      if (!disposed) void load();
+    });
+    return () => {
+      disposed = true;
+      life.active = false;
+      life.sequence += 1;
+      activeRequests.forEach((request) => request.abort());
+      activeRequests.clear();
+    };
+  }, [load]);
 
   const { job, error: jobError } = useJob(jobId, () => {
     void load();
@@ -175,7 +244,8 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
     setViewingResult(watchKey);
     return () => setViewingResult(null);
   }, [watchKey]);
-  const watchJob = state.jobActive && capture && !capture.is_example ? (jobId ?? capture.job_id) : null;
+  const watchJob =
+    state.jobActive && capture && !capture.is_example ? (jobId ?? capture.job_id) : null;
   const thumb = capture?.image?.url ?? preview ?? null;
   useEffect(() => {
     if (!watchJob) return;
@@ -256,21 +326,34 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
 
   // Style work can outlive the job (a style retry, a late rail): keep re-reading
   // the capture every 1.5 s until every section and rail is terminal (R-16c).
-  const stylePending = Boolean(capture) && !state.jobActive && styleWorkPending(style);
-  const stylePolls = useRef(0);
+  const visualPending = visualWorkPending(capture?.discovery_intents);
+  const hasCapture = Boolean(capture);
+  const stylePending = hasCapture && !state.jobActive && styleWorkPending(style);
+  const discoveryTimedOut = useDiscoveryPoll(stylePending || visualPending, load);
   useEffect(() => {
-    if (!stylePending) {
-      stylePolls.current = 0;
+    if (
+      !hasCapture ||
+      styleGuardVersion === refreshedStyleGuardVersion.current ||
+      stylePending ||
+      state.jobActive
+    )
       return;
-    }
-    if (stylePolls.current >= STYLE_POLL_MAX) return;
-    const t = window.setTimeout(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-      stylePolls.current += 1;
-      void load();
+    // A late guard veto can follow the first terminal legacy style read.
+    // Refresh once, without keeping terminal visual results polling forever.
+    const controller = new AbortController();
+    let deadline: number | undefined;
+    const timer = window.setTimeout(() => {
+      refreshedStyleGuardVersion.current = styleGuardVersion;
+      if (document.visibilityState === 'hidden') return;
+      deadline = window.setTimeout(() => controller.abort(), DISCOVERY_POLL_DEADLINE_MS);
+      void load(controller.signal).finally(() => window.clearTimeout(deadline));
     }, STYLE_POLL_MS);
-    return () => window.clearTimeout(t);
-  }, [stylePending, capture, load]);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearTimeout(deadline);
+      controller.abort();
+    };
+  }, [hasCapture, styleGuardVersion, stylePending, state.jobActive, load]);
 
   const retryStyle = async () => {
     setStyleRetrying(true);
@@ -344,7 +427,10 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
   );
   const crossRunning = crossDomain.some((r) => isActiveStatus(r.status));
   const crossMessages = crossDomain
-    .map((r) => ({ rail: r, message: railEmptyMessage({ ...r, cards: railCards.get(r.key) ?? [] }) }))
+    .map((r) => ({
+      rail: r,
+      message: railEmptyMessage({ ...r, cards: railCards.get(r.key) ?? [] }),
+    }))
     .filter((x): x is { rail: typeof x.rail; message: string } => Boolean(x.message));
   const available = CATEGORY_ORDER.filter((c) => capture?.available_categories.includes(c));
   const filtered = category ? cards.filter((c) => c.category === category) : cards;
@@ -505,7 +591,7 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
                 onHighlight={setRegion}
                 onFlashSubject={flashSubject}
                 onMoreLikeThis={showMoreLikeThis}
-                railSubjects={railSubjects}
+                railSubjects={discoveryMode === 'connections' ? railSubjects : new Set()}
                 onRetry={() => void retryStyle()}
                 retrying={styleRetrying}
                 retryUsed={styleRetryUsed}
@@ -533,9 +619,7 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
               Updating your discoveries…
             </p>
           )}
-          {sawProcessing && (
-            <WhileWeLook collapsed={!processingNow} from="discover" />
-          )}
+          {sawProcessing && <WhileWeLook collapsed={!processingNow} from="discover" />}
         </div>
       </div>
 
@@ -543,156 +627,165 @@ export function CaptureResultView({ captureId }: { captureId: string }) {
         {politeMessage}
       </p>
 
-      {moreLikeThis.map((rail, i) => (
-        <StyleRail
-          key={rail.key}
-          ref={(el) => {
-            if (el) railRefs.current.set(rail.key, el);
-            else railRefs.current.delete(rail.key);
-          }}
-          rail={rail}
-          cards={railCards.get(rail.key) ?? []}
-          captureId={captureId}
-          caption={i === 0 && experimental ? STYLE_COPY['experimental.rail_caption'] : null}
-          pulse={pulseRail === rail.key}
-          onSave={(c, el) => openSave(cardToTarget(c), el)}
-          onAddCity={() => setCityOpen(true)}
-        />
-      ))}
-
-      <section className="result-grid" aria-labelledby="discoveries-heading">
-        <h2 id="discoveries-heading" className="section-title">
-          Discoveries
-        </h2>
-        {rails && experimental && crossDomain.length > 0 && (
-          <p className="style-rail__caption">{STYLE_COPY['experimental.rail_caption']}</p>
-        )}
-        {available.length > 0 && (
-          <FilterRow
-            label="Filter discoveries"
-            options={available.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))}
-            value={category}
-            onChange={setCategory}
+      <DiscoveryModes
+        visual={capture?.discovery_intents?.visual ?? null}
+        timedOut={discoveryTimedOut}
+        pollingError={Boolean(loadError)}
+        onModeChange={setDiscoveryMode}
+      >
+        {moreLikeThis.map((rail, i) => (
+          <StyleRail
+            key={rail.key}
+            ref={(el) => {
+              if (el) railRefs.current.set(rail.key, el);
+              else railRefs.current.delete(rail.key);
+            }}
+            rail={rail}
+            cards={railCards.get(rail.key) ?? []}
+            captureId={captureId}
+            caption={i === 0 && experimental ? STYLE_COPY['experimental.rail_caption'] : null}
+            pulse={pulseRail === rail.key}
+            onSave={(c, el) => openSave(cardToTarget(c), el)}
+            onAddCity={() => setCityOpen(true)}
           />
-        )}
-        {visible.length > 0 && (
-          <CardGrid label="Discoveries from your photo">
-            {visible.map((card) => (
-              <li key={card.id}>
-                <DiscoveryCard
-                  card={card}
-                  reason={card.reason ?? undefined}
-                  href={`/items/${card.id}?from=capture&capture=${captureId}${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}${via}`}
-                  onSave={(c, el) => openSave(cardToTarget(c), el)}
-                />
-              </li>
-            ))}
-          </CardGrid>
-        )}
-        {(processing ||
-          state.stillLoading ||
-          (rails !== null && crossRunning && visible.length === 0)) && (
-          <SkeletonGrid count={processing ? 4 : 2} />
-        )}
-        {!processing &&
-          crossMessages.map(({ rail, message }) => (
-            <div key={rail.key} className="style-rail__empty" role="status">
-              <p>
-                <span className="style-rail__empty-label">{rail.title}: </span>
-                {message}
-              </p>
-              {needsCity(message) && (
-                <button
-                  type="button"
-                  className="button button--outline button--small"
-                  onClick={() => setCityOpen(true)}
-                >
-                  {STYLE_COPY['style.add_city']}
-                </button>
-              )}
-            </div>
-          ))}
-        {nothingFound && (
-          <div className="empty-state empty-state--inline" role="status">
-            <p className="empty-state__title">Nothing strong enough to suggest from this photo.</p>
-            <p className="muted">
-              We only suggest what the taste graph actually links to what we saw, and this time
-              nothing passed. Try a photo with one clear subject, look through the references, or
-              head back to your feed.
-            </p>
-            <div className="empty-state__actions">
-              <Link href="/capture" className="button button--primary">
-                Try another photo
-              </Link>
-              <Link href="/" className="button button--outline">
-                See your feed
-              </Link>
-            </div>
-          </div>
-        )}
-        {!showAll && !category && filtered.length > UI_LIMITS.initialRenderedRecommendations && (
-          <div className="load-more">
-            <button
-              type="button"
-              className="button button--outline"
-              onClick={() => setShowAll(true)}
-            >
-              Load more
-            </button>
-          </div>
-        )}
-        {state.showRetry && (
-          <Notice onRetry={() => void retry()} busy={retrying}>
-            Related discoveries are taking longer.
-          </Notice>
-        )}
-      </section>
+        ))}
 
-      {capture && capture.references.length > 0 && (
-        <Disclosure label="Explore the references">
-          <ul className="reference-list">
-            {capture.references.map((ref) => (
-              <li key={ref.id}>
-                {ref.has_page ? (
-                  <Link
-                    href={`/references/${ref.id}?capture=${captureId}`}
-                    className="reference-link"
-                  >
-                    <span>{referencePhrase(ref)}</span>
-                    <Icon name="arrowRight" size={16} />
-                  </Link>
-                ) : (
-                  <span className="reference-plain">
-                    {referencePhrase(ref)}
-                    {readTextAttribution(ref) ? (
-                      <span className="reference-source">{readTextAttribution(ref)}</span>
-                    ) : null}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-          {!correcting ? (
-            <button
-              type="button"
-              className="button button--text"
-              onClick={() => setCorrecting(true)}
-            >
-              Something else?
-            </button>
-          ) : (
-            <Correction
-              references={capture.references}
-              onCancel={() => setCorrecting(false)}
-              onSubmit={async (body) => {
-                await correct(body);
-                setCorrecting(false);
-                toast.show({ message: 'Thanks. Updating your discoveries.' });
-              }}
+        <section className="result-grid" aria-labelledby="discoveries-heading">
+          <h2 id="discoveries-heading" className="section-title">
+            Discoveries
+          </h2>
+          {rails && experimental && crossDomain.length > 0 && (
+            <p className="style-rail__caption">{STYLE_COPY['experimental.rail_caption']}</p>
+          )}
+          {available.length > 0 && (
+            <FilterRow
+              label="Filter discoveries"
+              options={available.map((c) => ({ value: c, label: CATEGORY_LABELS[c] }))}
+              value={category}
+              onChange={setCategory}
             />
           )}
-        </Disclosure>
-      )}
+          {visible.length > 0 && (
+            <CardGrid label="Discoveries from your photo">
+              {visible.map((card) => (
+                <li key={card.id}>
+                  <DiscoveryCard
+                    card={card}
+                    reason={card.reason ?? undefined}
+                    href={`/items/${card.id}?from=capture&capture=${captureId}${card.recommendation_id ? `&rec=${card.recommendation_id}` : ''}${via}`}
+                    onSave={(c, el) => openSave(cardToTarget(c), el)}
+                  />
+                </li>
+              ))}
+            </CardGrid>
+          )}
+          {(processing ||
+            state.stillLoading ||
+            (rails !== null && crossRunning && visible.length === 0)) && (
+            <SkeletonGrid count={processing ? 4 : 2} />
+          )}
+          {!processing &&
+            crossMessages.map(({ rail, message }) => (
+              <div key={rail.key} className="style-rail__empty" role="status">
+                <p>
+                  <span className="style-rail__empty-label">{rail.title}: </span>
+                  {message}
+                </p>
+                {needsCity(message) && (
+                  <button
+                    type="button"
+                    className="button button--outline button--small"
+                    onClick={() => setCityOpen(true)}
+                  >
+                    {STYLE_COPY['style.add_city']}
+                  </button>
+                )}
+              </div>
+            ))}
+          {nothingFound && (
+            <div className="empty-state empty-state--inline" role="status">
+              <p className="empty-state__title">
+                Nothing strong enough to suggest from this photo.
+              </p>
+              <p className="muted">
+                We only suggest what the taste graph actually links to what we saw, and this time
+                nothing passed. Try a photo with one clear subject, look through the references, or
+                head back to your feed.
+              </p>
+              <div className="empty-state__actions">
+                <Link href="/capture" className="button button--primary">
+                  Try another photo
+                </Link>
+                <Link href="/" className="button button--outline">
+                  See your feed
+                </Link>
+              </div>
+            </div>
+          )}
+          {!showAll && !category && filtered.length > UI_LIMITS.initialRenderedRecommendations && (
+            <div className="load-more">
+              <button
+                type="button"
+                className="button button--outline"
+                onClick={() => setShowAll(true)}
+              >
+                Load more
+              </button>
+            </div>
+          )}
+          {state.showRetry && (
+            <Notice onRetry={() => void retry()} busy={retrying}>
+              Related discoveries are taking longer.
+            </Notice>
+          )}
+        </section>
+
+        {capture && capture.references.length > 0 && (
+          <Disclosure label="Explore the references">
+            <ul className="reference-list">
+              {capture.references.map((ref) => (
+                <li key={ref.id}>
+                  {ref.has_page ? (
+                    <Link
+                      href={`/references/${ref.id}?capture=${captureId}`}
+                      className="reference-link"
+                    >
+                      <span>{referencePhrase(ref)}</span>
+                      <Icon name="arrowRight" size={16} />
+                    </Link>
+                  ) : (
+                    <span className="reference-plain">
+                      {referencePhrase(ref)}
+                      {readTextAttribution(ref) ? (
+                        <span className="reference-source">{readTextAttribution(ref)}</span>
+                      ) : null}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+            {!correcting ? (
+              <button
+                type="button"
+                className="button button--text"
+                onClick={() => setCorrecting(true)}
+              >
+                Something else?
+              </button>
+            ) : (
+              <Correction
+                references={capture.references}
+                onCancel={() => setCorrecting(false)}
+                onSubmit={async (body) => {
+                  await correct(body);
+                  setCorrecting(false);
+                  toast.show({ message: 'Thanks. Updating your discoveries.' });
+                }}
+              />
+            )}
+          </Disclosure>
+        )}
+      </DiscoveryModes>
       <CitySheet
         open={cityOpen}
         onClose={() => setCityOpen(false)}

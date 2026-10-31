@@ -1,0 +1,38 @@
+# Tailscale terminates TLS on the dedicated node, not the Mac's existing node.
+# Both listeners are loopback-only in the namespace shared with tailscale.
+{
+	auto_https off
+	servers {
+		trusted_proxies static 127.0.0.1/32 ::1/128
+		trusted_proxies_strict
+	}
+}
+
+http://:3100 {
+	bind 127.0.0.1
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	request_body {
+		max_size 20MB
+	}
+	reverse_proxy web:3000 {
+		flush_interval -1
+	}
+}
+
+http://:3901 {
+	bind 127.0.0.1
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	request_body {
+		max_size 32MB
+	}
+	# Preserve Host and path for S3 presigned-request signature checks.
+	reverse_proxy garage:3900
+}

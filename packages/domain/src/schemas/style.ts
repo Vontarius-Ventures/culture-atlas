@@ -83,7 +83,7 @@ export const RailDto = z.object({
   subtitle: z.string().nullable(),
   subject_id: z.string().nullable(),
   status: RailStatus,
-  /** e.g. "Add a city to see places with this style." */
+  /** e.g. "Add a city to explore places." */
   empty_message: z.string().nullable(),
   /** The first More-like-this rail and the cross-domain group carry the experimental caption (R-17). */
   caption: z.string().nullable().optional(),
@@ -97,7 +97,7 @@ export const AnalysisExperimental = z.object({ label: z.string(), note: z.string
 export const STYLE_COPY = {
   experimental: {
     badge: 'Experimental',
-    note: 'Photo and video readings are experimental. They can miss or misread details.',
+    note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
     rail_caption: 'From an experimental reading',
     why_line: 'Suggested from an experimental reading of your photo.',
   },
@@ -106,10 +106,11 @@ export const STYLE_COPY = {
     limit: "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow.",
     failed: "We couldn't read the style of this one.",
     empty: 'No clear style to read here.',
-    no_city: 'Add a city to see places with this style.',
-    rail_empty: 'Qloo found nothing close to this style yet.',
+    no_city: 'Add a city to explore places.',
+    rail_empty: 'No supported Qloo connection was found for this reading on this route.',
+    unsupported: 'No supported connection was found for this reading on this route. Explore Qloo brands, media and places, not matching products or art objects.',
     reading: 'Reading the style…',
-    rail_running: 'Finding things with this style…',
+    rail_running: 'Exploring Qloo connections…',
     updated: 'Style reading updated',
     try_again: 'Try again',
     add_city: 'Add city',

@@ -17,6 +17,10 @@ import { UnavailableMusicRecognition, UnavailableVlmEnricher, UnavailableVlmStyl
 import type { VlmStyleReader } from './vlm/style';
 import type { VlmEnricher, VlmProvider } from './vlm/types';
 import type { VlmVerifier } from './vlm/verify';
+import type { ConnectionAssetProvider } from './connection-asset/types';
+import { UnavailableConnectionAsset } from './connection-asset/provider';
+import type { VisualSimilarityProvider } from './visual-similarity/types';
+import { UnavailableVisualSimilarity } from './visual-similarity/provider';
 
 /** Every provider the domain uses, selected from environment configuration. */
 export interface ProviderRegistry {
@@ -38,6 +42,10 @@ export interface ProviderRegistry {
    * ANALYSIS_EXPERIMENTAL_ROLES); there is no fallback model.
    */
   readonly vlmStyle: VlmStyleReader;
+  /** Bounded pictured-object comparison; independent vision_similarity role, no fallback. */
+  readonly visualSimilarity: VisualSimilarityProvider;
+  /** Public candidate image identity/availability only; default off, no source photos. */
+  readonly connectionAsset: ConnectionAssetProvider;
   /** Claim extraction / research model (RESEARCH_MODEL). */
   readonly text: TextModelProvider;
   /** Plan composer model (COMPOSER_MODEL, defaults to RESEARCH_MODEL). */
@@ -91,6 +99,9 @@ export function createProviderRegistry(
     overrides.vlmVerify ?? modelGateway?.vlmVerify ?? new UnavailableVlmVerifier('not_configured');
   const vlmStyle =
     overrides.vlmStyle ?? modelGateway?.vlmStyle ?? new UnavailableVlmStyleReader('not_configured');
+  const visualSimilarity =
+    overrides.visualSimilarity ?? modelGateway?.visualSimilarity ?? new UnavailableVisualSimilarity();
+  const connectionAsset = overrides.connectionAsset ?? modelGateway?.connectionAsset ?? new UnavailableConnectionAsset();
   const text = overrides.text ?? fallback.text;
   const composer = overrides.composer ?? fallback.composer;
   const fallbackVlm = elorianEnabled(config) ? createElorianVlm(config) : undefined;
@@ -105,6 +116,8 @@ export function createProviderRegistry(
     vlmEnrich,
     vlmVerify,
     vlmStyle,
+    visualSimilarity,
+    connectionAsset,
     text,
     composer,
     research,
@@ -119,6 +132,12 @@ export function createProviderRegistry(
       const s = storage.capability();
       const matrix: CapabilityMatrix = {
         'vlm.analyze_image': vlm.capability(),
+        'vlm.visual_similarity': visualSimilarity.isConfigured()
+          ? { status: 'unverified', reason: 'probe_pending' }
+          : { status: 'unavailable', reason: 'not_configured' },
+        'vlm.connection_asset': connectionAsset.isConfigured()
+          ? { status: 'unverified', reason: 'probe_pending' }
+          : { status: 'unavailable', reason: 'not_configured' },
         'text.generate': text.capability(),
         'research.sources': r.sources,
         'research.claims': r.claims,

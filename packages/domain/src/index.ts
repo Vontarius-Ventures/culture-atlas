@@ -25,3 +25,6 @@ export * from './ops/metrics';
 export { clampShareRange, segmentByteLimit, SHARE_SEGMENT_SECONDS, SHARE_SEGMENT_MAX_BYTES } from './sharing/projection';
 export { isEatReference } from './compiler/analyze';
 export { prereadStyle, type StyleCallOutput } from './compiler/style-stage';
+export * from './style/visual-catalog';
+export { getVisualReferenceImage } from './style/visual-reference-image';
+export * from './schemas/discovery-intents';

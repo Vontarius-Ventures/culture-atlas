@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { analyses, captures, getJobById, references, type ServiceContext } from '@culture-atlas/domain';
-import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
+import { closeTestDb, getTestDb } from '@culture-atlas/domain/testing';
 import { ProviderError, UnavailableVlm, type VlmProvider } from '@culture-atlas/providers';
-import { FakeTextModel } from '@culture-atlas/providers/testing';
-import { anonCtx, accountCtx, runJobs, testJpeg, vlmFixture, world } from './test-world';
+import { FakeQloo, FakeTextModel } from '@culture-atlas/providers/testing';
+import { CATALOG, legacyAnonCtx as anonCtx, legacyAccountCtx as accountCtx, legacyTestConfig as testConfig, runJobs, testJpeg, vlmFixture, world } from './test-world';
 
 const db = getTestDb();
 afterAll(closeTestDb);
@@ -226,7 +226,17 @@ describe('cultural compilation pipeline (worker + fakes)', () => {
   });
 
   it('competing subjects produce one optional "What caught your eye?" question', async () => {
-    const { providers } = world({ vlm: vlmFixture('ambiguous-room.json') });
+    const qloo = new FakeQloo({
+      search: () => [],
+      tags: (query) => CATALOG.tags[query.toLowerCase()] ?? [],
+      insights: (req) => ({
+        entities: req.filterType === 'urn:entity:movie' ? [{
+          entity_id: 'FIXTURE-MOVIE-MCM', name: 'Fixture Mid-Century Film', types: ['urn:entity:movie'], properties: {},
+          tags: [{ id: CATALOG.tags['mid-century modern']![0]!.id, name: 'Mid-Century Modern' }],
+        }] : [], tags: [],
+      }),
+    }, { live: true });
+    const { providers } = world({ vlm: vlmFixture('ambiguous-room.json'), overrides: { qloo } });
     const ctx = await anonCtx(providers);
     const { capture_id, job_id } = await submit(ctx);
     await runJobs(ctx, [job_id]);

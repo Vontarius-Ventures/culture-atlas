@@ -1,4 +1,8 @@
 export * from './capabilities';
+export * from './visual-similarity/types';
+export * from './visual-similarity/schema';
+export * from './visual-similarity/provider';
+export * from './visual-similarity/contact-sheet';
 export * from './errors';
 export * from './config';
 export * from './unavailable';
@@ -69,6 +73,12 @@ export * from './model-gateway/types';
 export * from './model-gateway/budget';
 export * from './model-gateway/postgres';
 export * from './model-gateway/runner';
+export { getStructuredResponseFailureReason, type StructuredResponseFailureReason } from './model-gateway/diagnostics';
+export {
+  getStructuredResponseShapeIssues, STRUCTURED_RESPONSE_SHAPE_DIAGNOSTIC_LIMIT,
+  type StructuredResponseShapeIssue, type StructuredResponseShapeField,
+  type StructuredResponseShapeRule, type StructuredResponseShapeIssueClass,
+} from './model-gateway/diagnostics';
 export * from './model-gateway/schema';
 export * from './model-gateway/identity';
 export * from './concentrate/gateway';
@@ -79,3 +89,9 @@ export * from './concentrate/image';
 export * from './concentrate/catalog';
 export * from './mail/identity-mail';
 export * from './push/push';
+
+export * from './connection-asset/schema';
+export * from './connection-asset/types';
+export * from './connection-asset/provider';
+export { prepareConnectionAssetImage, safeConnectionAssetUrl } from './connection-asset/image';
+export { assertConnectionAssetCheckActive } from './connection-asset/store';

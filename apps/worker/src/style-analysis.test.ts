@@ -23,7 +23,7 @@ import {
   type VlmStyleResult,
 } from '@culture-atlas/providers';
 import { FakeQloo } from '@culture-atlas/providers/testing';
-import { CATALOG, accountCtx, runJobs, testJpeg, world } from './test-world';
+import { CATALOG, legacyAccountCtx as accountCtx, runJobs, testJpeg, world } from './test-world';
 
 /**
  * The style stage end to end (prp/2026-10-23-style-analysis §H.2) on a real
@@ -151,17 +151,18 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     expect(a.section_statuses['more_like_this:s1']).toBe('ready');
     expect(Object.values(a.section_statuses)).not.toContain('running');
     expect(a.style_reading_version).toBe('atlas_style_reading_v1');
-    expect(a.style_reading).toMatchObject({ schema: 'atlas_style_reading_v1', wording_version: 'sw-2', guard_version: 'guard-v19', vocab_version: 'svocab-1', model: { role: 'vision_style', model: 'fake-style', experimental: false } });
+    expect(a.style_reading).toMatchObject({ schema: 'atlas_style_reading_v1', wording_version: 'sw-2', guard_version: 'guard-v20', vocab_version: 'svocab-1', model: { role: 'vision_style', model: 'fake-style', experimental: false } });
 
     const { rows: rail } = await db.query<{ title: string; rail: string; subject_id: string; display_reason: string | null; style_match: { claims: { name: string; tag_id: string }[] }; provider_query_ids: string[] }>(
       `SELECT title, rail, subject_id, display_reason, style_match, provider_query_ids FROM recommendations WHERE analysis_id = $1 AND rail = 'more_like_this' ORDER BY rank`,
       [a.id],
     );
-    // smatch-1: on-style brands only, ranked by their own Qloo tags; the off-style and the eyewear house are left out.
+    // Commercial scope alone no longer bypasses relevance. Keep the supported
+    // workwear brands, not an off-style apparel brand or wrong-scope eyewear.
     expect(rail.map((r) => r.title)).toEqual(['Fixture Work Co', 'Fixture Duck Goods']);
-    expect(rail[0]).toMatchObject({ subject_id: 's1', display_reason: 'Known for workwear, like your photo' });
+    expect(rail[0]).toMatchObject({ subject_id: 's1', display_reason: 'A brand tagged Workwear; connected to Workwear in your photo' });
     expect(rail[0]!.display_reason).not.toMatch(/palette|tobacco/);
-    expect(rail[0]!.style_match.claims.map((c) => c.tag_id)).toEqual([WORKWEAR, CANVAS]);
+    expect(rail[0]!.style_match.claims.map((c) => c.tag_id)).toEqual([WORKWEAR]);
     for (const r of rail) expect(r.provider_query_ids.length).toBeGreaterThan(0);
     // The taste call is signalled by real catalogue brands (never invented ids) and filtered to fashion brands;
     // the pool call asks Qloo to rank catalogue brands.
@@ -180,10 +181,10 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     expect(subject.era).toEqual({ name: '1950s–1970s American', display: 'Suggests the 1950s–1970s American', wording: 'resembles' });
     expect(JSON.stringify(view.style_reading)).not.toContain('certainty');
     const mlt = view.rails!.find((r) => r.key === 'more_like_this:s1')!;
-    expect(mlt).toMatchObject({ kind: 'more_like_this', title: 'More like this', subtitle: 'Workwear · Canvas', status: 'ready' });
+    expect(mlt).toMatchObject({ kind: 'more_like_this', title: 'Brands to explore', subtitle: 'Workwear · Canvas', status: 'ready' });
     expect(mlt.cards.map((c) => [c.title, c.style_match?.attributes])).toEqual([
-      ['Fixture Work Co', ['Workwear', 'Canvas']],
-      ['Fixture Duck Goods', ['Workwear']],
+      ['Fixture Work Co', []],
+      ['Fixture Duck Goods', []],
     ]);
     // Old clients: `recommendations` stays the cross-domain list.
     expect(view.recommendations.some((c) => c.title === 'Fixture Work Co')).toBe(false);
@@ -231,7 +232,7 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     expect(a.section_statuses.observations).toBe('complete');
     expect(a.experimental).toBe(true);
     const view = await captures.getCapture(ctx, { id: capture_id });
-    expect(view.analysis!.experimental).toEqual({ label: 'Experimental', note: 'Photo and video readings are experimental. They can miss or misread details.' });
+    expect(view.analysis!.experimental).toEqual({ label: 'Experimental', note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.' });
   });
 
   it('food and places use only the user\'s own city (C.6); without one the rail is an honest no_city', async () => {
@@ -272,7 +273,7 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     await runJobs(ctx, [first.job_id]);
     const view = await captures.getCapture(ctx, { id: first.capture_id });
     expect(view.analysis!.sections.style, JSON.stringify(view.analysis!.sections)).toBe('ready');
-    expect(view.rails!.find((r) => r.key === 'more_like_this:s1')).toMatchObject({ status: 'empty', empty_message: 'Add a city to see places with this style.', cards: [] });
+    expect(view.rails!.find((r) => r.key === 'more_like_this:s1')).toMatchObject({ status: 'empty', empty_message: 'Add a city to explore places.', cards: [] });
     expect(qloo.calls.some((c) => c.op === 'insights' && (c.req as { filterType: string }).filterType === 'urn:entity:place')).toBe(false);
 
     await style.setCity(ctx, { body: { city: 'Los Angeles, CA' } });
@@ -281,8 +282,9 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     const placeCall = qloo.calls.find((c) => c.op === 'insights' && (c.req as { filterType: string }).filterType === 'urn:entity:place')!;
     expect(placeCall.req).toMatchObject({ filterTags: ['urn:tag:genre:place:restaurant:ramen'], filterLocationQuery: 'Los Angeles, CA' });
     const after = await captures.getCapture(ctx, { id: second.capture_id });
-    // The San Francisco result is outside the requested city: dropped (C.3 hygiene 3).
-    expect(after.rails!.find((r) => r.key === 'more_like_this:s1')!.cards.map((c) => c.title)).toEqual(['Fixture Ramen LA']);
+    // A city/catalogue constraint alone is not meaningful Connections evidence.
+    // Neither the local scope-only result nor the out-of-city result fills the rail.
+    expect(after.rails!.find((r) => r.key === 'more_like_this:s1')!.cards).toEqual([]);
     await style.setCity(ctx, { body: { city: null } });
     const { rows } = await db.query<{ p: Record<string, unknown> }>('SELECT preferences AS p FROM accounts WHERE id = $1', [(ctx.principal as { accountId: string }).accountId]);
     expect(rows[0]!.p.city).toBeUndefined();
@@ -337,8 +339,8 @@ class EmptyQuickVlm implements VlmProvider {
   }
 }
 
-describe('TOPIC-1: a room with nothing else to signal gets films Qloo tags with its topic', () => {
-  it('fills Watch from theme-tagged films that share the reading, with a topic reason', async () => {
+describe('source-bound room content', () => {
+  it('requires candidate-owned content rather than broad theme/style tags', async () => {
     const room = (): VlmStyleReading => ({
       ...jacketReading(),
       subjects: [
@@ -353,17 +355,20 @@ describe('TOPIC-1: a room with nothing else to signal gets films Qloo tags with 
         },
       ],
     });
+    const architecture = { id: 'urn:tag:theme:qloo:architecture', name: 'Architecture', type: 'urn:tag:theme:qloo', parents: ['urn:entity:movie'] };
+    const documentary = { id: 'urn:tag:genre:media:documentary', name: 'Documentary', type: 'urn:tag:genre:media', parents: ['urn:entity:movie'] };
     const film = (id: string, name: string, tags: { id: string; name: string }[]): QlooEntity => ({ entity_id: id, name, types: ['urn:entity:movie'], properties: {}, tags });
     const qloo = new FakeQloo(
       {
         search: () => [],
-        tags: () => [],
+        tags: (query) => query === 'architecture' ? [architecture] : query === 'documentary' ? [documentary] : [],
         insights: (req) =>
-          req.filterType === 'urn:entity:movie' && req.filterTags?.includes('urn:tag:theme:qloo:design')
+          req.filterType === 'urn:entity:movie' && req.filterTags?.includes(architecture.id)
             ? {
                 entities: [
                   film('FIXTURE-FILM-0101', 'Fixture Car Design Story', [{ id: 'urn:tag:theme:qloo:design', name: 'Design' }]),
-                  film('FIXTURE-FILM-0102', 'Fixture Modern House', [{ id: 'urn:tag:theme:qloo:architecture', name: 'Architecture' }, { id: 'urn:tag:keyword:qloo:fixture_midcentury', name: 'Midcentury modern' }]),
+                  film('FIXTURE-FILM-0102', 'Fixture Modern House', [architecture, documentary, { id: 'urn:tag:keyword:qloo:fixture_midcentury', name: 'Midcentury modern' }]),
+                  { ...film('FIXTURE-FILM-0103', 'Fixture Architecture Process', [architecture, documentary]), properties: { description: 'The film explores architecture through interviews with architects.' } },
                 ],
                 tags: [],
               }
@@ -377,16 +382,15 @@ describe('TOPIC-1: a room with nothing else to signal gets films Qloo tags with 
     await runJobs(ctx, [job_id]);
     const view = await captures.getCapture(ctx, { id: capture_id });
     const call = qloo.calls.find((c) => c.op === 'insights' && (c.req as { filterType: string }).filterType === 'urn:entity:movie')!;
-    expect((call.req as { filterTags: string[] }).filterTags).toEqual(['urn:tag:theme:qloo:design', 'urn:tag:theme:qloo:architecture']);
+    expect(call.req).toMatchObject({ filterTags: [architecture.id, documentary.id], filterTagsOperator: 'intersection', take: 20 });
     const watch = view.rails!.find((r) => r.key === 'watch')!;
-    // Only a film whose own tags echo the reading ("Midcentury modern") is shown; a film that shares only
-    // the topic ("Design") is not a match. The reason names the film's own theme.
-    expect(watch.cards.map((c) => [c.title, c.reason])).toEqual([['Fixture Modern House', 'A film tagged Architecture; exploring a topic connected to Teak sideboard room']]);
+    // Neither "Design" nor a literal style tag substitutes for substantive content.
+    expect(watch.cards.map((c) => [c.title, c.reason])).toEqual([['Fixture Architecture Process', 'Documentary on architecture; prompted by architectural space your photo may suggest']]);
     const a = await analysisRow(capture_id);
     const { rows: proofs } = await db.query<{ style_match: { discovery_proof: { subjectId: string; relation: string; candidateTags: { id: string; label: string }[] } }; contributing_reference_ids: string[] }>(
       `SELECT style_match, contributing_reference_ids FROM recommendations WHERE analysis_id = $1 AND category = 'watch'`, [a.id],
     );
-    expect(proofs[0]!.style_match.discovery_proof).toMatchObject({ subjectId: 's1', relation: 'about_subject', candidateTags: [{ id: 'urn:tag:theme:qloo:architecture', label: 'Architecture' }] });
+    expect(proofs[0]!.style_match.discovery_proof).toMatchObject({ subjectId: 's1', relation: 'about_subject', candidateTags: [{ id: architecture.id, label: 'Architecture' }, { id: documentary.id, label: 'Documentary' }] });
     expect(proofs[0]!.contributing_reference_ids).toEqual([]);
     // A decor style tag is never a Wear card.
     expect(view.recommendations.filter((r) => r.category === 'wear')).toEqual([]);

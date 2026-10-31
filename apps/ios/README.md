@@ -66,6 +66,38 @@ target only. Copy `Config/Signing.xcconfig.example` to the gitignored
 
 `AtlasCaptureTests` reads `fixtures/native-contract` from the test bundle.
 
+## Isolated simulator UI regressions
+
+`CultureAtlasUITests` includes four deterministic fixture tests: floating-feed
+identity/motion/non-overlap, camera-unavailable fallback, missing-session
+sign-in, and incomplete-onboarding gating. They launch the **normal app shell**
+with `-AtlasNativeUITestFixture` (Debug simulator builds only). Setup seeds a
+synthetic session in a separate Keychain service, uses fresh temporary drafts
+and separate transfer identifiers, and disables APNs registration. A private
+ephemeral `URLSession` intercepts every API request; only known authenticated
+fixture GETs succeed and all other requests fail without network fallback.
+Cards are explicitly example results, not live Qloo/provider output.
+
+`-AtlasNativeUITestSignedOut` omits that session;
+`-AtlasNativeUITestOnboardingRequired` returns incomplete onboarding. Neither
+can reach the real tabs. The fixture does not set the controller phase or
+onboarding gate directly, and is compiled out of Release and device builds.
+These tests need no API, mailbox, provider credentials or camera output. They
+do **not** validate email proof, installation enrollment, uploads or production
+recommendations.
+
+The original live feed and physical-camera tests remain separate. Both still
+skip without a signed-in account with finished onboarding; the camera test
+has not reached its hardware check in that state. For integrated validation,
+provide an explicitly isolated API/database/storage environment, use its
+development file mailbox (`IDENTITY_MAIL_DRIVER=file`,
+`IDENTITY_MAIL_FILE_DIR`), and sign in through the app's email/PKCE callback and
+enrollment flow. Complete the real taste questionnaire and obtain feed cards.
+Do not reuse fixture credentials or bypass onboarding. The iOS simulator can
+then test a live feed, but actual Take photo → Keep needs a camera-capable,
+signed phone and upload/commit evidence. No API runtime was started for the
+fixture tests.
+
 ## Style reading (experimental)
 
 Photo results show the server's **style reading** (aesthetic chips, measured
@@ -143,7 +175,7 @@ AUD01–AUD13, privacy labels).
 | Gate | State |
 | --- | --- |
 | Apple Development Team / device signing | Untracked `Signing.xcconfig`; may be absent |
-| Simulator compile of `CultureAtlas` | Verified on this machine: `xcodegen generate` then `xcodebuild -scheme CultureAtlas -destination 'platform=iOS Simulator,name=iPhone 17' test` → **TEST SUCCEEDED**, 57 tests, 0 failures. Automatic signing, no `DEVELOPMENT_TEAM` in the repo. |
+| Simulator build/tests of `CultureAtlas` | Xcode MCP, iPhone 17 / iOS 27: **120 passed, 2 skipped, 0 failed / 122** (116 unit + 4 fixture UI passes). Both original live UI tests skipped for missing signed-in/completed-onboarding state, not hardware. No store/device qualification. |
 | Physical phone mic, interruptions, route loss | Not qualified |
 | Verified glasses microphone route (not DAT camera) | Not qualified; public build has no Meta SDK |
 | App Store / TestFlight submission | Has not happened |

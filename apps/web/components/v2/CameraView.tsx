@@ -20,7 +20,10 @@ import { loadCapabilities, limitsFrom, useUploads } from './uploads-client';
 import { V2Icon } from './V2Icon';
 
 type Phase = 'idle' | 'starting' | 'live' | 'recording' | 'finalizing' | 'review' | 'problem';
-type Mic = 'off' | 'requesting' | 'on' | 'denied' | 'unavailable';
+type Mic = 'off' | 'requesting' | 'on' | 'denied' | 'unavailable' | 'timed-out';
+
+// Browsers can leave getUserMedia pending forever when a prompt is ignored.
+const MIC_PERMISSION_WAIT_MS = 8000;
 
 interface Draft {
   blob: Blob;
@@ -75,6 +78,10 @@ export function CameraView() {
   const videoEl = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const audio = useRef<MediaStream | null>(null);
+  const mounted = useRef(true);
+  const cameraRequest = useRef(0);
+  const micRequest = useRef(0);
+  const micDeadline = useRef<number | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const startedAt = useRef(0);
@@ -94,14 +101,28 @@ export function CameraView() {
       .catch(() => setCaps(null));
   }, [isAccount]);
 
-  const stopTracks = useCallback(() => {
-    stream.current?.getTracks().forEach((t) => t.stop());
-    audio.current?.getTracks().forEach((t) => t.stop());
-    stream.current = null;
-    audio.current = null;
+  const cancelMicRequest = useCallback(() => {
+    micRequest.current += 1;
+    if (micDeadline.current !== null) window.clearTimeout(micDeadline.current);
+    micDeadline.current = null;
   }, []);
 
+  const stopMicrophone = useCallback(() => {
+    cancelMicRequest();
+    audio.current?.getTracks().forEach((t) => t.stop());
+    audio.current = null;
+  }, [cancelMicRequest]);
+
+  const stopTracks = useCallback(() => {
+    cameraRequest.current += 1;
+    stream.current?.getTracks().forEach((t) => t.stop());
+    stream.current = null;
+    stopMicrophone();
+  }, [stopMicrophone]);
+
   const start = async (which: 'environment' | 'user' = facing) => {
+    if (!mounted.current) return;
+    const request = ++cameraRequest.current;
     setNotice(null);
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setProblem(window.isSecureContext === false ? 'insecure' : 'unavailable');
@@ -115,12 +136,18 @@ export function CameraView() {
         video: { facingMode: { ideal: which }, width: { ideal: 1920 }, height: { ideal: 1440 } },
         audio: false,
       });
+      if (request !== cameraRequest.current) {
+        s.getTracks().forEach((t) => t.stop());
+        return;
+      }
       stream.current = s;
       if (videoEl.current) {
         videoEl.current.srcObject = s;
         await videoEl.current.play().catch(() => undefined);
       }
+      if (request !== cameraRequest.current) return;
       s.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (request !== cameraRequest.current) return;
         if (recorder.current?.state === 'recording') {
           interrupted.current = true;
           recorder.current.stop();
@@ -128,10 +155,12 @@ export function CameraView() {
         setNotice('The camera stopped. Any recording so far is kept for review.');
       });
       const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      if (request !== cameraRequest.current) return;
       setCanFlip(devices.filter((d) => d.kind === 'videoinput').length > 1);
       setProblem(null);
       setPhase('live');
     } catch (err) {
+      if (request !== cameraRequest.current) return;
       setProblem(cameraProblem(err));
       setPhase('problem');
     }
@@ -147,7 +176,13 @@ export function CameraView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params]);
 
-  useEffect(() => () => stopTracks(), [stopTracks]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      stopTracks();
+    };
+  }, [stopTracks]);
 
   const finishRecording = () => {
     if (timer.current) window.clearInterval(timer.current);
@@ -172,20 +207,36 @@ export function CameraView() {
 
   const toggleMic = async () => {
     if (mic === 'on') {
-      audio.current?.getTracks().forEach((t) => t.stop());
-      audio.current = null;
+      stopMicrophone();
       setMic('off');
       return;
     }
+    if (mic === 'requesting') return;
     if (!navigator.mediaDevices?.getUserMedia) {
       setMic('unavailable');
       return;
     }
+    cancelMicRequest();
+    const request = micRequest.current;
     setMic('requesting');
+    micDeadline.current = window.setTimeout(() => {
+      cancelMicRequest();
+      setMic('timed-out');
+    }, MIC_PERMISSION_WAIT_MS);
     try {
-      audio.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const acquired = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      // getUserMedia cannot be aborted. Dispose grants arriving after timeout,
+      // navigation, a mode change or a silent recording; never attach them later.
+      if (request !== micRequest.current) {
+        acquired.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      cancelMicRequest();
+      audio.current = acquired;
       setMic('on');
     } catch (err) {
+      if (request !== micRequest.current) return;
+      cancelMicRequest();
       setMic(cameraProblem(err) === 'denied' ? 'denied' : 'unavailable');
     }
   };
@@ -222,6 +273,10 @@ export function CameraView() {
     if (!type) {
       setNotice('This browser cannot record video. Take a photo or upload a video file instead.');
       return;
+    }
+    if (mic === 'requesting') {
+      cancelMicRequest();
+      setMic('off');
     }
     const tracks = [
       ...s.getVideoTracks(),
@@ -338,6 +393,8 @@ export function CameraView() {
 
   const onPickedFile = (file: File | undefined) => {
     if (!file) return;
+    stopMicrophone();
+    setMic('off');
     const kind = file.type.startsWith('video/') ? 'video' : 'photo';
     setDraft({
       blob: file,
@@ -568,13 +625,22 @@ export function CameraView() {
           {mode === 'video' && (mic === 'denied' || mic === 'unavailable') && (
             <p className="camera__status muted">Videos record without sound.</p>
           )}
+          {mode === 'video' && mic === 'timed-out' && (
+            <p className="camera__status muted" role="status">
+              Microphone access is taking longer than expected. Try again, or record without sound.
+            </p>
+          )}
           <div className="camera__modes" role="group" aria-label="Capture mode">
             <button
               type="button"
               className="camera__mode"
               aria-pressed={mode === 'photo'}
               disabled={recording}
-              onClick={() => setMode('photo')}
+              onClick={() => {
+                stopMicrophone();
+                setMic('off');
+                setMode('photo');
+              }}
             >
               Photo
             </button>

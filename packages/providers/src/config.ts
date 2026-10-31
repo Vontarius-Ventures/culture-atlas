@@ -98,6 +98,8 @@ const BaseProviderConfigSchema = z.object({
    * is $0.056798, so a lower value silently removes the style role.
    */
   STYLE_MAX_CALL_USD: z.coerce.number().positive().default(0.06),
+  /** Independent candidate-image identity/availability slots, not visual comparisons. */
+  CONNECTION_MAX_ASSET_CHECKS_PER_CAPTURE: z.coerce.number().int().min(0).max(3).default(0),
   NODE_ENV: optional,
   MODEL_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),
   MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD: z.coerce.number().positive().optional(),

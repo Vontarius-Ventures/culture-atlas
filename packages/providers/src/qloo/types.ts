@@ -36,6 +36,8 @@ export const QLOO_ENTITY_TYPES = [
 ] as const;
 export type QlooEntityType = (typeof QLOO_ENTITY_TYPES)[number];
 
+export type QlooTagOperator = 'union' | 'intersection';
+
 export interface QlooTagRef {
   id: string;
   name: string;
@@ -109,9 +111,19 @@ export interface QlooTagsRequest {
 }
 
 export interface QlooInsightsRequest {
+  /**
+   * Legacy-compatible surface. Search-only actor/album/author/director/locality
+   * values are not verified Insights targets; acceptance here is not entitlement.
+   */
   filterType: QlooEntityType | 'urn:tag' | 'urn:demographics';
   signalEntities?: string[];
-  signalTags?: { id: string; weight?: number }[];
+  signalTags?: {
+    id: string;
+    /** @deprecated Per-tag weights require POST; defined weights are rejected by this GET adapter. */
+    weight?: number;
+  }[];
+  /** operator.signal.interests.tags. Omitted stays omitted (documented default: intersection). */
+  signalTagsOperator?: QlooTagOperator;
   signalLocationQuery?: string;
   /** filter.location.query: restrict places to this locality (style rails, design §C.3). */
   filterLocationQuery?: string;
@@ -120,6 +132,8 @@ export interface QlooInsightsRequest {
   /** filter.results.entities: restrict scored candidates. */
   filterResultsEntities?: string[];
   filterTags?: string[];
+  /** operator.filter.tags. Omitted stays omitted (documented default: union). */
+  filterTagsOperator?: QlooTagOperator;
   /**
    * filter.tag.types: with filterType 'urn:tag', restrict returned tags to
    * these tag-type URNs (e.g. 'urn:tag:cuisine:qloo').
@@ -135,6 +149,10 @@ export interface QlooInsightsRequest {
 export interface QlooInsightsResult {
   entities: QlooEntity[];
   tags: QlooTag[];
+  diagnostics?: {
+    /** Provider warning about unavailable influence metadata, not candidate content evidence. */
+    explainabilityWarning?: string;
+  };
 }
 
 export interface QlooTrendingRequest {

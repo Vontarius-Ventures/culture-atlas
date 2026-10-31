@@ -11,6 +11,8 @@ import {
   type ModelProfile,
 } from './profiles';
 import { profile, visionProfile } from './test-fixtures';
+import { VISUAL_SIMILARITY_PROMPT_VERSION, VISUAL_SIMILARITY_SCHEMA_VERSION } from '../visual-similarity/schema';
+import { CONNECTION_ASSET_PROMPT_VERSION, CONNECTION_ASSET_SCHEMA_VERSION } from '../connection-asset/schema';
 
 const enrichProfile: ModelProfile = {
   ...visionProfile,
@@ -54,9 +56,15 @@ describe('model profile amendment 2.2 contract', () => {
     expect([...MODEL_ROLES].sort()).toEqual([...MODEL_ROLE_VALUES].sort());
   });
 
-  it('parses one profile per role, at most five', () => {
+  it('parses one profile per role, at most the known role count', () => {
     const five = MODEL_ROLE_VALUES.map((role) =>
-      role.startsWith('vision_') ? { ...visionProfile, role } : { ...profile, role },
+      role === 'vision_connection_asset'
+        ? { ...visionProfile, role, promptVersion: CONNECTION_ASSET_PROMPT_VERSION, schemaVersion: CONNECTION_ASSET_SCHEMA_VERSION,
+            maxOutputTokens: 400, timeoutMs: 15_000, image: { maxCount: 1, maxDimension: 512, maxPixels: 262144, maxBytes: 200_000 } }
+        : role === 'vision_similarity'
+        ? { ...visionProfile, role, promptVersion: VISUAL_SIMILARITY_PROMPT_VERSION, schemaVersion: VISUAL_SIMILARITY_SCHEMA_VERSION,
+            image: { maxCount: 1, maxDimension: 1024, maxPixels: 1024 * 544, maxBytes: 200_000 } }
+        : role.startsWith('vision_') ? { ...visionProfile, role } : { ...profile, role },
     );
     expect(Object.keys(parseModelProfiles(five)).sort()).toEqual([...MODEL_ROLE_VALUES].sort());
     expect(() => parseModelProfiles([...five, profile])).toThrow();

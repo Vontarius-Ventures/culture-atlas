@@ -1,4 +1,5 @@
 import type { StoredClaim, StoredSubject } from './types';
+import { observationDiscoveryClaims } from './source-feature-plan';
 
 /** One guard for every consumer of a reading. Hidden evidence cannot widen retrieval. */
 export function activeClaim<T extends Pick<StoredClaim, 'held' | 'retracted'>>(claim: T | null | undefined): claim is T {
@@ -31,6 +32,8 @@ export function discoveryClaims(subject: StoredSubject): DiscoveryClaim[] {
   for (const slot of ['aesthetics', 'lineage', 'materials', 'construction'] as const)
     for (const c of s[slot]) out.push({ slot, name: c.name, wording: c.wording });
   if (s.era) out.push({ slot: 'era', name: s.era.name, wording: s.era.wording });
+  for (const claim of observationDiscoveryClaims(s))
+    if (!out.some((c) => c.slot === claim.slot && c.name === claim.name && c.wording === claim.wording)) out.push(claim);
   out.push({ slot: 'label', name: s.label, wording: 'asserted' });
   return out;
 }
@@ -71,11 +74,31 @@ const ABOUT_RELATIONS: readonly { source: RegExp; topic: RegExp; categories: rea
     topic: /\b(?:architectur\w*|architects?|urbanism|interior design)\b/i, categories: ['interior', 'place'] },
   { source: /\b(?:food|ramen|noodles?|espresso|coffee|cafes?|cafe|cooking|cuisine|dishes?|meals?)\b/i,
     topic: /\b(?:food|cooking|culinary|cuisine|ramen|noodles?|espresso|coffee|cafes?)\b/i, categories: ['food'] },
-  { source: /\b(?:ceramics?|pottery|porcelain|slipware|lustreware|lusterware|earthenware|stoneware)\b/i,
+  { source: /\b(?:ceramics?|pottery|porcelain|slipware|lustreware|lusterware|earthenware|stoneware|terracotta)\b/i,
     topic: /\b(?:ceramics?|pottery|porcelain|crafts?|artisans?)\b/i, categories: ['interior', 'place', 'media'] },
-  { source: /\b(?:paintings?|portraits?|portraiture|illustrations?|artworks?|sculptures?|oil paint)\b/i,
-    topic: /\b(?:painting|painter|portraiture|artist|artwork|sculptor|museum|gallery)s?\b/i, categories: ['interior', 'place', 'media', 'fashion'] },
+  { source: /\b(?:paintings?|portraits?|portraiture|illustrations?|artworks?|sculptures?|statues?|busts?|oil paint)\b/i,
+    topic: /\b(?:painting|painter|portraiture|artist|artwork|sculpture|sculptor|museum|gallery)s?\b/i, categories: ['interior', 'place', 'media', 'fashion'] },
+  { source: /\b(?:cafes?|coffeehouses?)\b/i,
+    topic: /\b(?:cafes?|coffee|coffeehouses?)\b/i, categories: ['interior', 'place', 'media'] },
+  { source: /\b(?:furniture|beds?|sofas?|chairs?|cabinets?)\b/i,
+    topic: /\b(?:furniture|interior design)\b/i, categories: ['interior'] },
 ];
+
+/** Search terms, never fabricated tag IDs or claims about the object's origin. */
+export function subjectTopicQueries(subject: StoredSubject): string[] {
+  const claims = discoveryClaims(subject);
+  const supports = (name: string) => ABOUT_RELATIONS.some((relation) =>
+    relation.categories.includes(subject.category) && relation.topic.test(name) &&
+    claims.some((claim) => relation.source.test(claim.name)));
+  if (claims.some((c) => /\b(?:sculptures?|statues?|busts?)\b/i.test(c.name)) && supports('Sculpture')) return ['sculpture', 'museum'];
+  if (supports('Pottery')) return ['pottery', 'ceramics'];
+  if (claims.some((c) => /\b(?:coffee|espresso|cafes?|coffeehouses?)\b/i.test(c.name)) && supports('Coffee')) return ['coffee', 'cafe'];
+  if (supports('Architecture')) return ['architecture', 'interior design'];
+  if (supports('Furniture')) return ['interior design', 'furniture'];
+  if (supports('Painting')) return ['painting', 'artist'];
+  if (supports('Cooking')) return ['cooking', 'food'];
+  return [];
+}
 
 export function aboutSubject(subject: StoredSubject, tag: { id: string; name: string }): DiscoveryClaim | null {
   // A plot keyword is not evidence that the work is ABOUT this domain.
@@ -98,6 +121,9 @@ export function topicClaim(subject: StoredSubject, tag: { id: string; name: stri
   }
   if (target !== 'urn:entity:movie' && target !== 'urn:entity:tv_show') return null;
   if (/^urn:tag:genre:music(?::|$)/.test(tag.id)) return null;
+  const filmSubject = subject.category === 'media' && /\b(?:films?|movies?|cinema|television|dvd|tv)\b/i.test(subject.label);
+  // Qloo's visual style is not a narrative topic for a sculpture, illustration or room.
+  if (/^urn:tag:style(?::|$)/.test(tag.id) && !filmSubject) return null;
   if (!/^urn:tag:(?:genre|subgenre|theme|keyword|style)(?::|$)/.test(tag.id)) return null;
   return claims.find((c) => {
     if (c.slot === 'era' && subject.category !== 'media') return false;

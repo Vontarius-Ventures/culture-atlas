@@ -6,6 +6,7 @@ import { sharedLimiter, type ConcurrencyLimiter } from '../http/concurrency';
 import { attemptSignal, CircuitBreaker, parseRetryAfter, retriesFor, withRetries, type Sleep } from '../http/resilience';
 import { resolveFromWorkspace } from '../paths';
 import { UnavailableQloo } from '../unavailable';
+import { insightsQuery } from './insights-request';
 import { parseEntityTrends, parseInsights, parseSearch, parseTags, parseTrending, QlooShapeError } from './parse';
 import { createReplayQloo } from './replay';
 import type {
@@ -224,7 +225,7 @@ export class QlooHttpProvider implements QlooProvider {
           throw err;
         }
         this.observe(op, 'available', undefined, isEmpty(data) ? 'last call returned no results' : undefined);
-        if (op === 'insights' && query['feature.explainability'] === true) {
+        if (op === 'insights' && query['feature.explainability'] === 'true') {
           const hasExplain = (data as unknown as QlooInsightsResult).entities.some((e) => e.query?.explainability?.length);
           if (hasExplain) this.observed.set('explainability', { status: 'available', checked_at: this.now().toISOString(), provider: 'qloo' });
         }
@@ -295,32 +296,10 @@ export class QlooHttpProvider implements QlooProvider {
   }
 
   async insights(req: QlooInsightsRequest, options?: CallOptions): Promise<QlooResponse<QlooInsightsResult>> {
-    if (!req.signalEntities?.length && !req.signalTags?.length && !req.signalLocationQuery && !req.filterTags?.length && !req.filterLocationQuery) {
-      throw new ProviderError('qloo', 'bad_request', 'insights requires at least one signal');
-    }
-    const weighted = req.signalTags?.some((t) => t.weight !== undefined);
     return this.request(
       'insights',
       '/v2/insights',
-      {
-        'filter.type': req.filterType,
-        'signal.interests.entities': req.signalEntities,
-        // GET supports comma-separated tag ids; weights are only documented for POST,
-        // so weighted tags are sent unweighted (order preserved by weight).
-        'signal.interests.tags': weighted
-          ? [...(req.signalTags ?? [])].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).map((t) => t.id)
-          : req.signalTags?.map((t) => t.id),
-        'signal.location.query': req.signalLocationQuery,
-        'filter.location.query': req.filterLocationQuery,
-        'filter.popularity.min': req.filterPopularityMin,
-        'filter.results.entities': req.filterResultsEntities,
-        'filter.tags': req.filterTags,
-        'filter.tag.types': req.filterTagTypes,
-        'bias.trends': req.biasTrends,
-        'feature.explainability': req.explainability ? true : undefined,
-        take: Math.min(req.take ?? 10, 50),
-        page: req.page,
-      },
+      insightsQuery(req),
       parseInsights,
       options,
       (d) => d.entities.length === 0 && d.tags.length === 0,

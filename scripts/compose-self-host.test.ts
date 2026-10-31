@@ -257,6 +257,11 @@ describe('on-prem production Compose', () => {
     const dockerfile = read('Dockerfile');
     expect(dockerfile).toMatch(/FROM base AS runtime[\s\S]*apt-get install -y --no-install-recommends ffmpeg/);
     expect(read('.dockerignore')).toMatch(/^\.env$/m);
+    const ignored = read('.dockerignore').split('\n');
+    expect(ignored).toEqual(expect.arrayContaining([
+      '**/.env', '**/.env.*', 'apps/ios/', 'apps/android/', 'prp/',
+      'specs/**', '!specs/capture-platform-v2/design/copy.json',
+    ]));
   });
 
   it('documents every name Compose reads in .env.example', () => {

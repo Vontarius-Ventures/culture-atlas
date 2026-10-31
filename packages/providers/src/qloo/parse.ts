@@ -59,8 +59,13 @@ const KEPT_PROPERTIES = [
   'release_date',
   'description',
   'short_description',
+  'short_descriptions',
   'image',
   'website',
+  'websites',
+  'filming_location',
+  'production_companies',
+  'release_country',
   'external',
   'akas',
   'content_rating',
@@ -184,11 +189,15 @@ export function parseTags(body: unknown): QlooTag[] {
 
 export function parseInsights(body: unknown): QlooInsightsResult {
   const { array, object } = resultsOf(body);
-  if (array) return { entities: mapDefined(array, normalizeEntity), tags: [] };
+  const query = record(body).query;
+  const explainability = query && typeof query === 'object' ? (query as Record<string, unknown>).explainability : undefined;
+  const warning = explainability && typeof explainability === 'object' ? (explainability as Record<string, unknown>).warning : undefined;
+  const diagnostics = typeof warning === 'string' ? { diagnostics: { explainabilityWarning: warning } } : {};
+  if (array) return { entities: mapDefined(array, normalizeEntity), tags: [], ...diagnostics };
   const entities = Array.isArray(object?.entities) ? mapDefined(object!.entities as unknown[], normalizeEntity) : [];
   const tags = Array.isArray(object?.tags) ? mapDefined(object!.tags as unknown[], normalizeTag) : [];
   if (!Array.isArray(object?.entities) && !Array.isArray(object?.tags)) throw new QlooShapeError('insights results have no entities or tags');
-  return { entities, tags };
+  return { entities, tags, ...diagnostics };
 }
 
 function normalizePoint(value: unknown): QlooTrendPoint | null {

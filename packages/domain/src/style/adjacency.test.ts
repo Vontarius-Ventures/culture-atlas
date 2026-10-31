@@ -31,6 +31,21 @@ const film = (name: string, tagNames: readonly string[] = []): QlooEntity => ({
 });
 
 describe('artwork detection (eval r3, relevance cause 3)', () => {
+  it.each(['Canopy four-poster bed', 'Four poster bed', 'Painted wooden chair', 'Hand-painted ceramic bowl'])(
+    'keeps the functional object %s out of artwork classification',
+    (label) => {
+      const subject = storedSubject({ category: 'interior', label });
+      expect(isArtworkSubject(subject)).toBe(false);
+      expect(isFineArtSubject(subject)).toBe(false);
+      expect(suppressWearForArtwork([subject])).toBe(false);
+    },
+  );
+
+  it.each(['Terracotta head vessel', 'Ceramic face vessel', 'Painted portrait', 'Wall-mounted sculpture'])(
+    'keeps the explicit art form %s classified as artwork',
+    (label) => expect(isArtworkSubject(storedSubject({ category: 'interior', label }))).toBe(true),
+  );
+
   it('hidden/retracted art and era claims do not change subject classification or adjacency', () => {
     const subject = storedSubject({
       category: 'interior', label: 'Furnished room',
@@ -71,6 +86,15 @@ describe('artwork detection (eval r3, relevance cause 3)', () => {
 });
 
 describe('cross-domain bridge adjacency (eval r3, relevance cause 1)', () => {
+  it('keeps sculpture topics but rejects incidental sculpture plot keywords and artifact shopping', () => {
+    const subject = storedSubject({ category: 'media', label: 'Carved marble sculpture', aesthetics: [] });
+    const evidence = artworkEvidence([subject])!;
+    const candidate = film('Sculpture study');
+    expect(entityAdjacency({ ...candidate, tags: [{ id: 'urn:tag:theme:qloo:sculpture', name: 'Sculpture' }] }, evidence)).toBe(true);
+    expect(entityAdjacency({ ...candidate, tags: [{ id: 'urn:tag:keyword:qloo:sculpture', name: 'Sculpture' }] }, evidence)).toBe(false);
+    expect(suppressWearForArtwork([storedSubject({ category: 'interior', label: 'Terracotta face vessel fragment', aesthetics: [] })])).toBe(true);
+  });
+
   it('interior, craft, food and place rails bridge nowhere; fashion bridges everywhere it scored well; media bridges to watch', () => {
     expect(bridgeTargets('interior')).toEqual([]);
     expect(bridgeTargets('food')).toEqual([]);

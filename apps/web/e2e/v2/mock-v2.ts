@@ -294,7 +294,7 @@ export class MockV2 {
       Object.assign(caps.availability.analysis, {
         experimental: true,
         label: 'Experimental',
-        note: 'Photo and video readings are experimental. They can miss or misread details.',
+        note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
         reason: 'experimental_production',
       });
     return caps;

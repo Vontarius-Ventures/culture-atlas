@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { resolveFromWorkspace } from '@culture-atlas/providers';
 import { describe, expect, it } from 'vitest';
-import { CaptureResponse } from '@culture-atlas/domain/schemas';
+import { CaptureResponse, STYLE_COPY as SERVER_COPY } from '@culture-atlas/domain/schemas';
 import { styleMatchFor, MORE_LIKE_THIS_SEEDS, styleReading } from '../../e2e/mock/style';
 import {
   analysisExperimental,
@@ -9,6 +11,7 @@ import {
   moodLine,
   needsCity,
   qlooLinksLine,
+  Rail as RailSchema,
   railEmptyMessage,
   regionQuadrant,
   regionToRect,
@@ -75,6 +78,28 @@ function capture(over: Record<string, unknown> = {}, analysisOver: Record<string
 }
 
 describe('StyledCaptureResponse (E.2 additive fields)', () => {
+  it('preserves server titles and the full public reason length, including legacy rail labels', () => {
+    const reason = 'A catalogue connection to explore. '.repeat(5);
+    for (const title of [
+      'Brands to explore',
+      'Films to explore',
+      'Qloo connections',
+      'More like this',
+    ]) {
+      const parsed = RailSchema.parse({
+        key: 'more_like_this:s1',
+        kind: 'more_like_this',
+        title,
+        subtitle: 'Reading context',
+        status: 'ready',
+        empty_message: null,
+        cards: [card(20, { reason })],
+      });
+      expect(parsed.title).toBe(title);
+      expect(parsed.cards[0]!.reason).toBe(reason.trim());
+    }
+  });
+
   it('an older analysis parses exactly as the base contract, with no style', () => {
     const raw = capture();
     const parsed = StyledCaptureResponse.parse(raw);
@@ -115,7 +140,7 @@ describe('StyledCaptureResponse (E.2 additive fields)', () => {
         sections: { observations: 'complete', style: 'ready', wear: 'ready', eat: 'empty' },
         experimental: {
           label: 'Experimental',
-          note: 'Photo and video readings are experimental. They can miss or misread details.',
+          note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
         },
       },
     );
@@ -289,16 +314,26 @@ describe('states and polling', () => {
     expect(railEmptyMessage({ ...rail('empty'), empty_message: STYLE_COPY['style.no_city'] })).toBe(
       STYLE_COPY['style.no_city'],
     );
-    expect(needsCity('Add a city to see places with this style.')).toBe(true);
+    expect(needsCity('Add a city to explore places.')).toBe(true);
     expect(needsCity(STYLE_COPY['style.rail_empty'])).toBe(false);
   });
 });
 
 describe('copy (D.4, verbatim)', () => {
+  it('every shared key matches the complete design and server copy', () => {
+    const design = JSON.parse(readFileSync(resolveFromWorkspace('design/copy.json'), 'utf8'));
+    expect(SERVER_COPY).toEqual(design);
+    for (const [group, entries] of Object.entries(SERVER_COPY)) {
+      for (const [key, value] of Object.entries(entries)) {
+        expect(STYLE_COPY[`${group}.${key}` as keyof typeof STYLE_COPY]).toBe(value);
+      }
+    }
+  });
+
   it('matches the design table', () => {
     expect(STYLE_COPY['experimental.badge']).toBe('Experimental');
     expect(STYLE_COPY['experimental.note']).toBe(
-      'Photo and video readings are experimental. They can miss or misread details.',
+      'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
     );
     expect(STYLE_COPY['experimental.why_line']).toBe(
       'Suggested from an experimental reading of your photo.',

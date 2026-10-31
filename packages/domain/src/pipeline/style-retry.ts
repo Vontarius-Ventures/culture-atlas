@@ -5,6 +5,7 @@ import { loadCapture, loadExcludedKeys, ownerFromRow } from '../compiler/store';
 import { AppError } from '../errors';
 import type { JobHandler } from '../jobs/handler';
 import { normalizeStyleName } from '../style/vocabulary';
+import { enqueueVisualReferences } from '../style/visual-references';
 
 /** R-11: the style retry's own budget: at most 6 Qloo requests and one vision call. */
 export const STYLE_RETRY_QLOO_REQUESTS = 6;
@@ -96,5 +97,6 @@ export const styleRetry: JobHandler<'style_retry'> = async (ctx) => {
       .map((a) => ({ referenceId: a.reference_id, name: a.name, entityId: a.external_ids.qloo!, types: a.external_ids.qloo_types ?? [], boxes: a.evidence_region?.boxes ?? [], tags: [] })),
   );
   const status = await stage.run();
+  if (status === 'ready') await enqueueVisualReferences(ctx, capture.id, analysis.id);
   return { state: status === 'ready' ? 'complete' : 'partial', resultType: 'capture', resultId: capture.id };
 };

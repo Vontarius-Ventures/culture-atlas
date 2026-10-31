@@ -1,0 +1,45 @@
+# Optional, isolated Tailscale edge. Existing Mac Funnels remain untouched.
+# Bootstrap: docker compose -f docker-compose.funnel.yml up -d
+# Production also merges docker-compose.funnel-private.yml last (no host ports).
+# Keep COMPOSE_PROFILES empty to disable the public Caddy edge in the base file.
+name: culture-atlas
+
+services:
+  funnel-proxy:
+    image: caddy:2.10.2
+    restart: unless-stopped
+    command: ['caddy', 'run', '--config', '/etc/culture-atlas/Caddyfile.funnel', '--adapter', 'caddyfile']
+    volumes:
+      - ./infra/onprem:/etc/culture-atlas:ro
+    logging: &funnel-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  tailscale:
+    image: tailscale/tailscale:v1.102.3
+    restart: unless-stopped
+    network_mode: service:funnel-proxy
+    depends_on:
+      funnel-proxy:
+        condition: service_healthy
+    environment:
+      TS_HOSTNAME: culture-atlas
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: 'true'
+      TS_AUTH_ONCE: 'true'
+      TS_EXTRA_ARGS: --accept-dns=false --accept-routes=false
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    logging: *funnel-logging
+
+volumes:
+  tailscale-state:

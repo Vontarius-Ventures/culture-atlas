@@ -187,6 +187,10 @@ export class ConcentrateVlm implements VlmProvider {
     readonly runner: StructuredResponseRunner,
     options: { reading?: 'full' | 'quick' } = {},
   ) {
+    if (runner.profile.role === 'vision_similarity')
+      throw new Error('The visual similarity role is served by ConcentrateVisualSimilarity');
+    if (runner.profile.role === 'vision_connection_asset')
+      throw new Error('The connection asset role is served only by ConcentrateConnectionAsset');
     this.id = `vlm:concentrate:${runner.profile.model}`;
     const fromProfile = readingForProfile(runner.profile);
     if (fromProfile === 'enrich')
@@ -414,6 +418,10 @@ export class ConcentrateVlmVerifier implements VlmVerifier {
 export class ConcentrateTextModel implements TextModelProvider {
   readonly id: string;
   constructor(readonly runner: StructuredResponseRunner) {
+    if (runner.profile.role === 'vision_similarity')
+      throw new Error('The visual similarity role is served by ConcentrateVisualSimilarity');
+    if (runner.profile.role === 'vision_connection_asset')
+      throw new Error('The connection asset role is served only by ConcentrateConnectionAsset');
     this.id = `text:concentrate:${runner.profile.model}`;
   }
   capability(): CapabilityEntry {

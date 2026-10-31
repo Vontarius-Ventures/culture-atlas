@@ -9,9 +9,52 @@ import {
 import { computeSwatches, deltaE, paletteDecision, rgbToLab } from '../style/palette';
 import { closedVocabularyLists } from '../style/vocabulary';
 import { NO_CORROBORATION, wordSubject } from '../style/wording';
-import { prereadStyle, publicSwatches, stylePixels, styleRailCardKind } from './style-stage';
+import { prereadStyle, publicSwatches, selectConnectionConcepts, StyleStage, stylePixels, styleRailCardKind, type StyleHost } from './style-stage';
+import type { CandidateProof } from '../style/discovery-evidence';
 
 describe('style-stage observation metadata flow, offline', () => {
+  it('resolves two source plans single-flight rather than memoizing the first subject or a not-yet-ready reader', async () => {
+    const stage = new StyleStage({} as StyleHost);
+    expect(await stage.documentaryPlansFor()).toEqual([]);
+    const source = (id: string, category: string, label: string) => ({
+      id, category, label, aesthetics: [], materials: [], construction: [], details: [], mood: [], lineage: [], era: null,
+    });
+    const tags = new Map([
+      ['sculpture', [{ id: 'urn:tag:keyword:qloo:sculpture', name: 'Sculpture', type: 'urn:tag:keyword:qloo', parents: ['urn:entity:movie'] }]],
+      ['coffee', [{ id: 'urn:tag:keyword:qloo:coffee', name: 'Coffee', type: 'urn:tag:keyword:qloo', parents: ['urn:entity:movie'] }]],
+      ['documentary', [{ id: 'urn:tag:genre:media:documentary', name: 'Documentary', type: 'urn:tag:genre:media', parents: ['urn:entity:movie'] }]],
+    ]);
+    const lookupTags = vi.fn(async () => tags);
+    // Only the guarded subjects and lookup seam are needed for this unit test;
+    // the full worker/DB test exercises their real publication and provider paths.
+    Object.assign(stage, { stored: { subjects: [source('s1', 'other', 'Stone sculpture'), source('s2', 'food', 'Espresso coffee drink')] }, lookupTags });
+    const first = stage.documentaryPlansFor();
+    const second = stage.documentaryPlansFor();
+    expect(first).toBe(second);
+    const plans = await first;
+    expect(lookupTags).toHaveBeenCalledTimes(1);
+    expect(lookupTags).toHaveBeenCalledWith(['sculpture', 'coffee', 'documentary'], true);
+    expect(plans.map((p) => [p.plan.subjectId, p.plan.key, p.topic.tagId])).toEqual([
+      ['s1', 'sculpture', 'urn:tag:keyword:qloo:sculpture'], ['s2', 'coffee', 'urn:tag:keyword:qloo:coffee'],
+    ]);
+    expect(stage.connectionRequestHeadroom).toBe(2);
+    stage.completeConnectionPlan('sculpture');
+    stage.completeConnectionPlan('coffee');
+    expect(stage.connectionRequestHeadroom).toBe(0);
+  });
+
+  it('diversifies actual proof subjects/concepts with deterministic provider-ranked ties and no fabricated origin references', () => {
+    const candidate = (id: string, subjectId: string, concept: string) => {
+      const claim = { slot: 'label' as const, name: concept, wording: 'asserted' as const };
+      const proof: CandidateProof = { subjectId, candidateId: id, relation: 'about_subject', origin: 'topic', claim, candidateTags: [],
+        contentEvidence: { topic: concept, claim, field: 'description', excerpt: 'Fixture substantive content.', topicPlanKey: concept } };
+      return { id, proof };
+    };
+    const pool = [candidate('a1', 's1', 'sculpture'), candidate('a2', 's1', 'sculpture'), candidate('b1', 's2', 'coffee'), candidate('c1', 's1', 'pottery')];
+    expect(selectConnectionConcepts(pool, 4, (c) => c.proof).map((c) => c.id)).toEqual(['a1', 'b1', 'c1', 'a2']);
+    expect(selectConnectionConcepts(pool.slice(1), 2, (c) => c.proof, [pool[0]!]).map((c) => c.id)).toEqual(['b1', 'c1']);
+  });
+
   it('projects all uniform claim slots into the existing stored/public shape without manufacturing independent evidence', () => {
     const local = { x: 0.1, y: 0.1, w: 0.2, h: 0.2 };
     const claim = (slot: VlmStyleObservationWire['claims'][number]['slot'], name: string, evidence = 'o1') =>

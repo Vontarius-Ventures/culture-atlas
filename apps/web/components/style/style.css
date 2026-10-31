@@ -309,7 +309,7 @@ button.style-chip__label:focus-visible,
 
 .style-palette__name {
   font-size: 13px;
-  color: var(--muted);
+  color: var(--ink);
 }
 
 /* Details: first three rows, then "Show all details". */

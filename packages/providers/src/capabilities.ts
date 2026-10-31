@@ -8,6 +8,8 @@
  */
 export const CAPABILITY_NAMES = [
   'vlm.analyze_image',
+  'vlm.visual_similarity',
+  'vlm.connection_asset',
   'text.generate',
   'research.sources',
   'research.claims',

@@ -7,7 +7,7 @@
     "title": "Canvas work jacket",
     "interpretation": null,
     "sections": { "observations": "ready", "references": "running", "style": "running", "wear": "pending", "play": "pending", "watch": "pending", "eat": "pending" },
-    "experimental": { "label": "Experimental", "note": "Photo and video readings are experimental. They can miss or misread details." }
+    "experimental": { "label": "Experimental", "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches." }
   },
   "style_reading": null,
   "rails": [

@@ -72,7 +72,14 @@ struct CultureAtlasApp: App {
       // Designed on warm paper only (Android uses lightColorScheme too):
       // pinning light keeps ink text on ivory in system dark mode.
       .preferredColorScheme(.light)
-      .task { await controller.launch() }
+      .task {
+        do {
+          try await AppEnvironment.shared.prepareUITestSession()
+          await controller.launch()
+        } catch {
+          controller.message = "Native UI fixture setup failed: \(error.localizedDescription)"
+        }
+      }
       // Email sign-in callback and Meta AI registration return both arrive here.
       .onOpenURL { url in Task { await controller.handle(url: url) } }
       .onChange(of: scenePhase) { _, phase in

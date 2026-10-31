@@ -14,6 +14,8 @@ import type {
 import type { VlmVerifier, VlmVerifyInput, VlmVerifyResult } from '../vlm/verify';
 import type { VlmStyleInput, VlmStyleReader, VlmStyleResult } from '../vlm/style';
 import type { ModelIdentity } from './types';
+import type { VisualSimilarityProvider, VisualSimilarityRequest, VisualSimilarityResult } from '../visual-similarity/types';
+import type { GatewayOptions } from './types';
 
 /**
  * Supplies a fresh, verified identity per model call: the budgeted gateway
@@ -130,6 +132,14 @@ class BoundText implements TextModelProvider {
   }
 }
 
+class BoundVisualSimilarity implements VisualSimilarityProvider {
+  constructor(private readonly inner: VisualSimilarityProvider, private readonly next: NextIdentity) {}
+  isConfigured(): boolean { return this.inner.isConfigured(); }
+  compare(input: VisualSimilarityRequest, options: GatewayOptions): Promise<VisualSimilarityResult> {
+    return this.inner.compare(input, withIdentity(options, this.next, 'vision_similarity'));
+  }
+}
+
 /**
  * Per-job view of the registry whose model adapters attach server-owned job
  * identity when the caller did not. Providers that ignore identity
@@ -153,6 +163,7 @@ export function bindModelIdentity(
     vlmEnrich: new BoundVlmEnricher(registry.vlmEnrich, next),
     vlmVerify: new BoundVlmVerifier(registry.vlmVerify, next),
     vlmStyle: new BoundVlmStyleReader(registry.vlmStyle, next),
+    visualSimilarity: new BoundVisualSimilarity(registry.visualSimilarity, next),
     text: new BoundText(registry.text, next),
     composer: new BoundText(registry.composer, next),
     research,

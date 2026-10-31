@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ProviderError } from '../errors';
 import { identity, limits, profile, request, response } from '../concentrate/test-fixtures';
 import { ModelSpendLedger, MemorySpendStore } from './budget';
+import { getStructuredResponseFailureReason, getStructuredResponseShapeIssues } from './diagnostics';
 import { StructuredResponseRunner } from './runner';
 import type { StructuredTransport } from './types';
 
@@ -55,15 +56,53 @@ describe('AI-01 structured runner, fake transports only', () => {
     expect(identity.assetId).toBe('asset-1'); // gateway holds metadata only, has no storage/delete capability
   });
   it('rejects semantic cross-references before publication', async () => {
-    const { runner } = setup();
-    await expect(
-      runner.run({
-        ...request,
-        validate: () => {
-          throw new Error('Invalid cross-reference');
-        },
-      }),
-    ).rejects.toMatchObject({ kind: 'invalid_response' });
+    const { runner, store } = setup();
+    const onAttempt = vi.fn();
+    const error: unknown = await runner.run({
+      ...request,
+      validate: () => {
+        throw new Error('SYNTHETIC_PRIVATE_VALIDATION_MESSAGE', {
+          cause: 'SYNTHETIC_PRIVATE_VALIDATION_CAUSE',
+        });
+      },
+    }, { onAttempt }).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(ProviderError);
+    expect(error).toMatchObject({ kind: 'invalid_response', message: 'Model output failed validation', cause: undefined });
+    expect(getStructuredResponseFailureReason(error)).toBe('semantic_consistency');
+    expect(JSON.stringify({ error, state: await store.read(), events: onAttempt.mock.calls })).not.toContain('SYNTHETIC_PRIVATE');
+  });
+  it('does not invent structured-response reasons for transport or pre-dispatch failures', async () => {
+    const transport = vi.fn(async () => { throw new Error('SYNTHETIC_PRIVATE_TRANSPORT_MESSAGE'); });
+    const { runner } = setup(transport);
+    const transportError: unknown = await runner.run(request, { maxRetries: 0 }).catch((error: unknown) => error);
+    expect(transportError).toMatchObject({ kind: 'server' });
+    expect(getStructuredResponseFailureReason(transportError)).toBeUndefined();
+    expect(JSON.stringify(transportError)).not.toContain('SYNTHETIC_PRIVATE');
+    const inputError: unknown = await runner.run({ ...request, schemaName: 'invalid-name!' }).catch((error: unknown) => error);
+    expect(inputError).toMatchObject({ kind: 'bad_request' });
+    expect(getStructuredResponseFailureReason(inputError)).toBeUndefined();
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('does not let a throwing diagnostic replace the original failure or retain its message/cause', async () => {
+    const { runner, store, transport } = setup(vi.fn(async () => ({ ...response, text: '{}' })));
+    const error: unknown = await runner.run({
+      ...request, diagnoseShape: () => { throw new Error('SYNTHETIC_PRIVATE_DIAGNOSTIC'); },
+    }).catch((error: unknown) => error);
+    expect(error).toMatchObject({ kind: 'invalid_response', message: 'Model output failed validation', cause: undefined });
+    expect(getStructuredResponseFailureReason(error)).toBe('schema_shape');
+    expect(getStructuredResponseShapeIssues(error)).toBeUndefined();
+    expect(JSON.stringify({ error, state: await store.read() })).not.toContain('SYNTHETIC_PRIVATE');
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('invokes the opt-in shape diagnostic only on shape failure, never on success or semantic failure', async () => {
+    const diagnoseShape = vi.fn(() => []);
+    await setup().runner.run({ ...request, diagnoseShape });
+    const error: unknown = await setup().runner.run({
+      ...request, diagnoseShape, validate: () => { throw new Error('semantic'); },
+    }).catch((error: unknown) => error);
+    expect(getStructuredResponseFailureReason(error)).toBe('semantic_consistency');
+    expect(getStructuredResponseShapeIssues(error)).toBeUndefined();
+    expect(diagnoseShape).not.toHaveBeenCalled();
   });
   it('enforces timeout even if a transport ignores AbortSignal, with uncertain charge and no retry', async () => {
     const transport = vi.fn(() => new Promise<never>(() => {}));

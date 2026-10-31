@@ -3,8 +3,8 @@ import XCTest
 /// The feed floats: tiles are keyed by card id, drift upward over time, and
 /// two visible tiles never intersect at any sampled moment.
 ///
-/// Needs a signed-in simulator with onboarding done (for example against the
-/// local stack); otherwise it is skipped rather than failing.
+/// The live test requires a signed-in account with completed onboarding.
+/// Separate simulator fixtures cover the normal shell without server authority.
 final class FeedFloatTests: XCTestCase {
   private struct Tile {
     let id: String
@@ -41,7 +41,55 @@ final class FeedFloatTests: XCTestCase {
     let firstCard = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'feed.card.'")).firstMatch
     XCTAssertTrue(firstCard.waitForExistence(timeout: 30), "feed should show cards")
 
-    var history: [String: [CGFloat]] = [:]
+    try assertFloatingCards(in: app)
+  }
+
+  /// Deterministic UI coverage through the normal session/onboarding/feed path.
+  /// Synthetic owner data only; this does not qualify live authentication.
+  func testFixtureFeedCardsFloatByIdentityAndNeverOverlap() throws {
+    #if targetEnvironment(simulator)
+    let app = XCUIApplication()
+    app.launchArguments = ["-AtlasNativeUITestFixture"]
+    app.launch()
+    let feedTab = app.tabBars.buttons["Feed"]
+    XCTAssertTrue(feedTab.waitForExistence(timeout: 15), "Fixture session and completed onboarding must reach the real tabs")
+    feedTab.tap()
+    XCTAssertTrue(app.staticTexts["Example results until your personal feed is ready."].waitForExistence(timeout: 10))
+    let conveyor = app.descendants(matching: .any)["feed.conveyor"]
+    XCTAssertTrue(conveyor.waitForExistence(timeout: 10), "Motion must be enabled for the floating-feed test")
+    try assertFloatingCards(in: app)
+    #else
+    throw XCTSkip("The isolated native UI fixture is simulator-only; use the live test on devices")
+    #endif
+  }
+
+  func testFixtureWithoutSessionStillRequiresSignIn() throws {
+    #if targetEnvironment(simulator)
+    let app = XCUIApplication()
+    app.launchArguments = ["-AtlasNativeUITestFixture", "-AtlasNativeUITestSignedOut"]
+    app.launch()
+    XCTAssertTrue(app.buttons["Email me a sign-in link"].waitForExistence(timeout: 10))
+    XCTAssertFalse(app.tabBars.buttons["Feed"].exists)
+    XCTAssertFalse(app.tabBars.buttons["Capture"].exists)
+    #else
+    throw XCTSkip("The isolated native UI fixture is simulator-only")
+    #endif
+  }
+
+  func testFixtureWithIncompleteOnboardingCannotReachTabs() throws {
+    #if targetEnvironment(simulator)
+    let app = XCUIApplication()
+    app.launchArguments = ["-AtlasNativeUITestFixture", "-AtlasNativeUITestOnboardingRequired"]
+    app.launch()
+    XCTAssertTrue(app.staticTexts["Pick what catches your eye."].waitForExistence(timeout: 15))
+    XCTAssertFalse(app.tabBars.buttons["Feed"].exists)
+    XCTAssertFalse(app.tabBars.buttons["Capture"].exists)
+    #else
+    throw XCTSkip("The isolated native UI fixture is simulator-only")
+    #endif
+  }
+
+  private func assertFloatingCards(in app: XCUIApplication) throws {    var history: [String: [CGFloat]] = [:]
     var everSeen = Set<String>()
     let samples = 16
     for sample in 0..<samples {

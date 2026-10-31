@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { CATEGORIES, captures, LIMITS, setFeatureKill, type ServiceContext } from '@culture-atlas/domain';
-import { closeTestDb, getTestDb, testConfig } from '@culture-atlas/domain/testing';
+import { closeTestDb, getTestDb } from '@culture-atlas/domain/testing';
 import {
   ProviderError,
   VlmEnrichment,
@@ -19,7 +19,7 @@ import {
   type VlmStyleResult,
 } from '@culture-atlas/providers';
 import { FakeQloo } from '@culture-atlas/providers/testing';
-import { CATALOG, accountCtx, anonCtx, fakeQloo, runJobs, testJpeg, vlmFixture, world } from './test-world';
+import { CATALOG, legacyAccountCtx as accountCtx, legacyAnonCtx as anonCtx, legacyTestConfig as testConfig, fakeQloo, runJobs, testJpeg, vlmFixture, world } from './test-world';
 
 /**
  * Two-stage photo reading in the compiler (amendment 2.2, FAST-02) on a real
@@ -153,7 +153,7 @@ function qlooWithEnrichmentFilm(): FakeQloo {
         if (req.filterType === 'urn:entity:movie' && (req.signalTags ?? []).some((t) => t.id === MCM_TAG))
           return {
             entities: [
-              { entity_id: 'FIXTURE-MOVIE-0003', name: 'Fixture Film Three', types: ['urn:entity:movie'], properties: { release_year: 1958 }, tags: [] },
+              { entity_id: 'FIXTURE-MOVIE-0003', name: 'Fixture Film Three', types: ['urn:entity:movie'], properties: { release_year: 1958 }, tags: [{ id: MCM_TAG, name: 'Mid-Century Modern' }] },
               ...(CATALOG.insights['urn:entity:movie'] ?? []),
             ],
             tags: [],
@@ -318,6 +318,15 @@ describe('two-stage photo reading (FAST-02)', () => {
     expect(names.slice(0, beforeRefs.length)).toEqual(beforeRefs);
     expect(names.slice(beforeRefs.length)).toEqual(expect.arrayContaining(['Fixture Denim Co', 'Mid-Century Modern']));
     expect(view.references.find((r) => r.name === 'Vintage Racing')!.qualified).toBe(true);
+    const brandReference = view.references.find((r) => r.name === 'Fixture Denim Co')!;
+    const { rows: seedCards } = await db.query<{ contributing_reference_ids: string[]; style_match: { discovery_proof: { subjectId: null; referenceId: string; relation: string } } }>(
+      `SELECT r.contributing_reference_ids, r.style_match FROM recommendations r JOIN captures c ON c.active_analysis_id = r.analysis_id WHERE c.id = $1 AND r.category = 'wear'`, [capture_id],
+    );
+    expect(seedCards.length).toBeGreaterThan(0);
+    for (const card of seedCards) {
+      expect(card.contributing_reference_ids).toEqual([brandReference.id]);
+      expect(card.style_match.discovery_proof).toMatchObject({ subjectId: null, referenceId: brandReference.id, relation: 'qloo_taste' });
+    }
     const { rows: refs } = await db.query<{ name: string; certainty: number; advisory_veto: boolean; is_anchor: boolean; evidence_region: { boxes: unknown[] } }>(
       `SELECT r.canonical_name AS name, cr.certainty, cr.advisory_veto, cr.is_anchor, cr.evidence_region
          FROM capture_references cr JOIN cultural_references r ON r.id = cr.reference_id

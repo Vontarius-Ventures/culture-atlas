@@ -32,6 +32,9 @@ test.describe('Style reading', () => {
     await expect(
       card.getByText('A cream nylon jacket with racing stripes and a sporty, vintage look.'),
     ).toBeVisible({ timeout: 15_000 });
+    const captureReads = () =>
+      api.log.filter((r) => r.method === 'GET' && /^\/v1\/captures\/[^/]+$/.test(r.path));
+    const readsAtFirstTerminalStyle = captureReads().length;
     const chips = card.getByRole('list', { name: 'Style' });
     await expect(chips.getByRole('button', { name: 'Sportswear, clear' })).toBeVisible();
     await expect(
@@ -74,13 +77,15 @@ test.describe('Style reading', () => {
     await badge.click();
     await expect(
       card.getByText(
-        'Photo and video readings are experimental. They can miss or misread details.',
+        'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
       ),
     ).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(badge).toHaveAttribute('aria-expanded', 'false');
 
     // Style-only work kept re-reading the capture after the job finished, then stopped.
+    // One final read checks for a late guard veto after the first terminal style.
+    await expect.poll(() => captureReads().length).toBe(readsAtFirstTerminalStyle + 1);
     const reads = api.log.filter(
       (r) => r.method === 'GET' && /^\/v1\/captures\/[^/]+$/.test(r.path),
     );
@@ -97,7 +102,7 @@ test.describe('Style reading', () => {
     page,
   }) => {
     await openOutfit(page, { style: 'ready' });
-    const rail = page.getByRole('region', { name: 'More like this' }).first();
+    const rail = page.getByRole('region', { name: 'Brands to explore' }).first();
     await expect(rail.getByText('Sportswear · nylon shell')).toBeVisible({ timeout: 15_000 });
     const cards = rail.getByRole('listitem');
     await expect(cards).toHaveCount(6);
@@ -120,8 +125,8 @@ test.describe('Style reading', () => {
     ).toBeVisible();
 
     // The second subject has an honest empty rail asking for a city.
-    const second = page.getByRole('region', { name: 'More like this' }).nth(1);
-    await expect(second.getByText('Add a city to see places with this style.')).toBeVisible();
+    const second = page.getByRole('region', { name: 'Qloo connections' }).first();
+    await expect(second.getByText('Add a city to explore places.')).toBeVisible();
 
     // Card detail: Why this? shows the style attributes and the why line.
     await cards.first().getByRole('link').click();
@@ -135,7 +140,7 @@ test.describe('Style reading', () => {
     ).toBeVisible();
   });
 
-  test('subject tabs flash the subject; "Show more like this style" jumps to the rail; Add city', async ({
+  test('subject tabs flash the subject; "Explore Qloo connections" jumps to the rail; Add city', async ({
     page,
   }) => {
     const api = await openOutfit(page, { style: 'ready' });
@@ -155,8 +160,8 @@ test.describe('Style reading', () => {
 
     await tabs.getByRole('button', { name: 'Cream racing jacket' }).click();
     await card.getByRole('button', { name: 'More for Sportswear' }).click();
-    await page.getByRole('button', { name: 'Show more like this style' }).click();
-    const rail = page.getByRole('region', { name: 'More like this' }).first();
+    await page.getByRole('button', { name: 'Explore Qloo connections' }).click();
+    const rail = page.getByRole('region', { name: 'Brands to explore' }).first();
     await expect(rail).toBeFocused();
     await expect(rail).toBeInViewport();
 
@@ -217,7 +222,7 @@ test.describe('Style reading', () => {
       timeout: 10_000,
     });
     await expect(page.getByText('Style reading updated')).toBeAttached();
-    const rail = page.getByRole('region', { name: 'More like this' }).first();
+    const rail = page.getByRole('region', { name: 'Brands to explore' }).first();
     await expect(
       rail.getByText('For the vintage motorsport look your photo resembles'),
     ).toHaveCount(0);
@@ -255,7 +260,7 @@ test.describe('Style reading', () => {
       page.getByRole('list', { name: 'Discoveries from your photo' }).getByRole('listitem'),
     ).toHaveCount(6, { timeout: 15_000 });
     await expect(page.getByRole('heading', { name: 'Style reading' })).toHaveCount(0);
-    await expect(page.getByRole('region', { name: 'More like this' })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Brands to explore' })).toHaveCount(0);
     await expect(page.getByText('From an experimental reading')).toHaveCount(0);
   });
 
@@ -311,7 +316,7 @@ test.describe('Experimental label on media detail', () => {
     await badge.click();
     await expect(
       page.getByText(
-        'Photo and video readings are experimental. They can miss or misread details.',
+        'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
       ),
     ).toBeVisible();
   });

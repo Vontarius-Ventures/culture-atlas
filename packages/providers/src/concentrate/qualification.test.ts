@@ -204,6 +204,20 @@ describe('readiness without paid probes: configured -> catalog-compatible -> qua
         reason: 'not_configured',
         access: 'not_configured',
       },
+      vision_similarity: {
+        role: 'vision_similarity',
+        model: null,
+        state: 'unavailable',
+        reason: 'not_configured',
+        access: 'not_configured',
+      },
+      vision_connection_asset: {
+        role: 'vision_connection_asset',
+        model: null,
+        state: 'unavailable',
+        reason: 'not_configured',
+        access: 'not_configured',
+      },
     });
     expect(transport).not.toHaveBeenCalled();
   });

@@ -240,7 +240,7 @@ class StyleReaderTest {
             json.decodeFromString(
                 Capabilities.serializer(),
                 """{"contract_version":"2","flags":{},"limits":{},"availability":{"analysis":{"available":true,"experimental":true,
-                   "label":"Experimental","note":"Photo and video readings are experimental. They can miss or misread details.",
+                   "label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.",
                    "reason":"experimental_production"}}}""",
             ),
         )

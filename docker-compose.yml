@@ -95,6 +95,11 @@ x-base-env: &base-env
   # Home-brand "More like this" rails (interior objects, rooms, coffee; O-1 harvested).
   STYLE_SHOW_CLAIM_REGIONS: ${STYLE_SHOW_CLAIM_REGIONS:-}
   STYLE_INTERIOR_BRANDS: ${STYLE_INTERIOR_BRANDS:-true}
+  # Optional public-domain museum catalog; comparison remains off by default.
+  VISUAL_REFERENCE_CATALOG_FILE: ${VISUAL_REFERENCE_CATALOG_FILE:-}
+  VISUAL_MAX_COMPARISONS_PER_CAPTURE: ${VISUAL_MAX_COMPARISONS_PER_CAPTURE:-0}
+  # Separate candidate-only identity/availability checks, not visual comparisons.
+  CONNECTION_MAX_ASSET_CHECKS_PER_CAPTURE: ${CONNECTION_MAX_ASSET_CHECKS_PER_CAPTURE:-0}
   META_GLASSES_QUALIFIED_BUILDS: ${META_GLASSES_QUALIFIED_BUILDS:-}
   META_GLASSES_ENTITLED_PLATFORMS: ${META_GLASSES_ENTITLED_PLATFORMS:-}
   META_GLASSES_ROLLOUT: ${META_GLASSES_ROLLOUT:-}

@@ -1,0 +1,15 @@
+@media (max-width: 359px) {
+  /* Keep every anonymous header action (including Settings) inside the
+     viewport. The signed-in header alone did not expose this min-content fit. */
+  .inner:global(.header__inner) {
+    gap: var(--space-2);
+  }
+
+  .inner :global(.wordmark) {
+    font-size: 22px;
+  }
+
+  .inner :global(.header__signin) {
+    padding-inline: var(--space-1);
+  }
+}

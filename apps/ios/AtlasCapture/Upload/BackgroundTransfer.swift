@@ -41,12 +41,17 @@ public final class BackgroundTransfer: NSObject, URLSessionDataDelegate, @unchec
   private var wifiSession: URLSession!
   private var anySession: URLSession!
 
-  public override init() {
+  public override convenience init() {
+    self.init(namespace: "com.cultureatlas.app.uploads")
+  }
+
+  /// A separate namespace keeps test-owned transfers away from user tasks.
+  public init(namespace: String) {
     super.init()
     queue.maxConcurrentOperationCount = 1
     queue.name = "com.cultureatlas.app.uploads"
-    wifiSession = makeSession(identifier: Self.wifiIdentifier, cellular: false)
-    anySession = makeSession(identifier: Self.anyNetworkIdentifier, cellular: true)
+    wifiSession = makeSession(identifier: namespace + ".wifi", cellular: false)
+    anySession = makeSession(identifier: namespace + ".any", cellular: true)
   }
 
   private func makeSession(identifier: String, cellular: Bool) -> URLSession {

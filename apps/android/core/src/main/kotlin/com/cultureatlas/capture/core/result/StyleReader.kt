@@ -260,7 +260,7 @@ object StyleReader {
                 subjectId = r.subjectId,
                 state = state,
                 message = message,
-                offerCity = message == StyleCopy.NO_CITY,
+                offerCity = message == StyleCopy.NO_CITY || message == "Add a city to see places with this style.",
                 cards = r.cards,
                 caption = caption,
             )
@@ -415,23 +415,23 @@ data class StylePreviewPresentation(
 object StyleCopy {
     const val TITLE = "Style reading"
     const val BADGE = "Experimental"
-    const val NOTE = "Photo and video readings are experimental. They can miss or misread details."
+    const val NOTE = "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
     const val RAIL_CAPTION = "From an experimental reading"
     const val WHY_LINE = "Suggested from an experimental reading of your photo."
     const val PAUSED = "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back."
     const val LIMIT = "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow."
     const val FAILED = "We couldn't read the style of this one."
     const val EMPTY = "No clear style to read here."
-    const val NO_CITY = "Add a city to see places with this style."
-    const val RAIL_EMPTY = "Qloo found nothing close to this style yet."
+    const val NO_CITY = "Add a city to explore places."
+    const val RAIL_EMPTY = "No supported Qloo connection was found for this reading on this route."
     const val READING = "Reading the style…"
-    const val RAIL_RUNNING = "Finding things with this style…"
+    const val RAIL_RUNNING = "Exploring Qloo connections…"
     const val UPDATED = "Style reading updated"
     const val TRY_AGAIN = "Try again"
     const val ADD_CITY = "Add city"
     const val SHOW_DETAILS = "Show all details"
-    const val MORE_LIKE_THIS = "More like this"
-    const val SHOW_MORE_LIKE_THIS_STYLE = "Show more like this style"
+    const val MORE_LIKE_THIS = "Qloo connections"
+    const val SHOW_MORE_LIKE_THIS_STYLE = "Explore Qloo connections"
 
     /** Not in D.4: a failed rail is not "nothing found", so it says so plainly. */
     const val RAIL_FAILED = "We couldn't load these suggestions."

@@ -42,7 +42,7 @@ export const STRICT_FILL_TO = 4;
 export function rankAffinity(
   q: SubjectProfile,
   lists: readonly AffinityList[],
-  options: { exclude?: ReadonlySet<string>; entityLinked?: boolean; signalNames?: ReadonlyMap<string, string>; fashion?: boolean; v?: StyleVocabulary; echoNames?: ReadonlySet<string> } = {},
+  options: { exclude?: ReadonlySet<string>; entityLinked?: boolean; signalNames?: ReadonlyMap<string, string>; fashion?: boolean; v?: StyleVocabulary; echoNames?: ReadonlySet<string>; admit?: (entity: QlooEntity) => boolean; match?: (entity: QlooEntity) => StyleMatchResult } = {},
 ): { candidates: AffinityCandidate[]; gated: Record<string, number> } {
   const byId = new Map<string, { entity: QlooEntity; prior: number; fromEntity: boolean }>();
   for (const l of lists)
@@ -59,7 +59,13 @@ export function rankAffinity(
   const gated: Record<string, number> = {};
   const scored: { entity: QlooEntity; prior: number; fromEntity: boolean; match: StyleMatchResult }[] = [];
   for (const x of byId.values()) {
-    const match = scoreMatch(q, entityProfile(x.entity.tags ?? []), { fashion: options.fashion ?? true, v: options.v });
+    // Provenance and relevance are separate requirements. Rejected retrievals
+    // must not affect the reference scores of eligible candidates either.
+    if (options.admit && !options.admit(x.entity)) {
+      gated.admission = (gated.admission ?? 0) + 1;
+      continue;
+    }
+    const match = options.match?.(x.entity) ?? scoreMatch(q, entityProfile(x.entity.tags ?? []), { fashion: options.fashion ?? true, v: options.v });
     if (match.gate) {
       gated[match.gate] = (gated[match.gate] ?? 0) + 1;
       continue;

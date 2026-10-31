@@ -56,16 +56,21 @@ describe('when a cross-domain card needs its own style evidence (eval r3, audien
   });
 });
 
-describe('TOPIC-1 films: only films whose own tags share a style claim (honest empty otherwise)', () => {
+describe('TOPIC-1 films: candidate-owned content, not broad topic tags (honest empty otherwise)', () => {
   it('also keeps an explicit about-subject relation without pretending it is a style match', () => {
     const interior = storedSubject({ category: 'interior', label: 'A furnished room' });
-    const architecture = film('A', 'Fixture Architecture Film', [{ id: 'urn:tag:theme:qloo:architecture', name: 'Architecture' }]);
+    const tagged = film('A', 'Fixture Architecture Film', [{ id: 'urn:tag:theme:qloo:architecture', name: 'Architecture' }]);
+    expect(topicFilms([interior], [tagged])).toEqual([]);
+    const architecture = { ...tagged, properties: { description: 'The documentary explores architecture and interior design through the work of architects.' },
+      tags: [...tagged.tags, { id: 'urn:tag:genre:media:documentary', name: 'Documentary' }] };
     const comedy = film('B', 'Fixture Comedy', [{ id: 'urn:tag:genre:media:comedy', name: 'Comedy' }]);
     expect(topicFilms([interior], [comedy, architecture])).toEqual([architecture]);
     expect(rerankCrossDomain([interior], [comedy, architecture], 0.5, { dropStyleless: true })).toEqual([architecture]);
   });
-  it('keeps the style-overlapping film and drops the popular film about something else', () => {
-    const onStyle = film('A', 'Fixture Decay Film', [{ id: 'urn:tag:theme:qloo:decay', name: 'Decay' }, { id: 'urn:tag:genre:media:documentary', name: 'Documentary' }]);
+  it('requires substantive source-specific content in addition to lexical style overlap', () => {
+    const tagged = film('A', 'Fixture Decay Film', [{ id: 'urn:tag:theme:qloo:decay', name: 'Decay' }, { id: 'urn:tag:genre:media:documentary', name: 'Documentary' }]);
+    expect(topicFilms([room], [tagged])).toEqual([]);
+    const onStyle = { ...tagged, properties: { description: 'The documentary explores abandoned buildings and ruined motels.' } };
     const offStyle = film('B', 'Fixture Blockbuster', [{ id: 'urn:tag:genre:media:action', name: 'Action' }]);
     const scored = crossDomainScores([room], [onStyle, offStyle]);
     expect(scored.find((x) => x.e.entity_id === 'A')!.styleHit).toBe(true);
@@ -117,7 +122,7 @@ describe('a genre or period word is not fashion style evidence (eval r4, h71)', 
     expect(rerankCrossDomain([punk], [band], 0.5, { dropStyleless: true }).map((e) => e.entity_id)).toEqual(['A']);
   });
 
-  it('keeps the genuine style words of a card that also carries a period word', () => {
+  it('retains lexical style signal but does not admit a film without substantive content', () => {
     const mixed = film('A', 'Fixture Floral Film', [
       { id: 'urn:tag:subgenre:qloo:romantic_drama', name: 'Romantic drama' },
       { id: 'urn:tag:theme:qloo:ditsy_floral', name: 'Ditsy Floral' },
@@ -125,7 +130,10 @@ describe('a genre or period word is not fashion style evidence (eval r4, h71)', 
     const out = crossDomainScores([dress], [mixed], { periodGuard: true })[0]!;
     expect(out.styleHit).toBe(true);
     expect(out.style).toBeGreaterThan(0);
-    expect(rerankCrossDomain([dress], [mixed], 0.5, { dropStyleless: true }).map((e) => e.entity_id)).toEqual(['A']);
+    expect(rerankCrossDomain([dress], [mixed], 0.5, { dropStyleless: true })).toEqual([]);
+    const focused = { ...mixed, properties: { description: 'The documentary profiles fashion designers and explores couture garment making.' },
+      tags: [...mixed.tags, { id: 'urn:tag:genre:media:documentary', name: 'Documentary' }] };
+    expect(rerankCrossDomain([dress], [focused], 0.5, { dropStyleless: true }).map((e) => e.entity_id)).toEqual(['A']);
   });
 
   it('a non-garment reading keeps a period word: the guard is scoped to fashion subjects', () => {
@@ -199,13 +207,19 @@ describe('a film or music keyword in another sense is not garment style evidence
     expect(kept(tee, [film('B', 'Fixture Crime Film', [{ id: 'urn:tag:keyword:qloo:new_jersey', name: 'New jersey' }])])).toEqual([]);
   });
 
-  it('keeps a card whose own tag writes a style, lineage or material word of the reading', () => {
+  it('requires content for generic garment/activity tags while retaining distinctive cultural evidence', () => {
     const skate = film('A', 'Fixture Skate Film', [{ id: 'urn:tag:keyword:qloo:sneakers', name: 'Sneakers' }]);
     const sport = film('B', 'Fixture Sports Film', [{ id: 'urn:tag:keyword:qloo:athletic_training', name: 'Athletic training' }]);
     const campus = film('C', 'Fixture Campus Film', [{ id: 'urn:tag:theme:qloo:varsity', name: 'Varsity' }]);
-    expect(kept(sneaker, [skate])).toEqual(['A']);
-    expect(kept(tennis, [sport])).toEqual(['B']);
+    expect(kept(sneaker, [skate])).toEqual([]);
+    expect(kept(tennis, [sport])).toEqual([]);
     expect(kept(jacket, [campus])).toEqual(['C']);
+    const sneakerDocumentary = { ...skate, properties: { description: 'The documentary follows sneaker collectors and explores the history of sneaker culture.' },
+      tags: [...skate.tags, { id: 'urn:tag:genre:media:documentary', name: 'Documentary' }] };
+    const tennisFilm = { ...sport, properties: { description: 'The film follows two tennis players through training and their careers.' },
+      tags: [...sport.tags, { id: 'urn:tag:keyword:qloo:tennis', name: 'Tennis' }] };
+    expect(kept(sneaker, [sneakerDocumentary])).toEqual(['A']);
+    expect(kept(tennis, [tennisFilm])).toEqual(['B']);
   });
 
   it('is scoped to cross-domain cards: a wear rail\'s brand tags still match by these words', () => {

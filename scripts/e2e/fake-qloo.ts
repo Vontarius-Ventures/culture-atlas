@@ -15,6 +15,7 @@
  * and the peak number of requests in flight; POST /__fake/reset clears them.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { pathToFileURL } from 'node:url';
 
 const port = Number(process.argv[process.argv.indexOf('--port') + 1] || process.env.FAKE_QLOO_PORT || 4410);
 const latencyMs = Number(process.env.FAKE_QLOO_LATENCY_MS ?? 120);
@@ -30,7 +31,9 @@ const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(
 const title = (s: string) => s.trim().replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 /** Insights results per filter type: fictional fixtures, labeled as such. */
-const INSIGHTS: Record<string, Array<{ name: string; year?: number; description: string }>> = {
+interface FixtureEntity { name: string; year?: number; description: string; tags?: Array<{ id: string; name: string }> }
+
+const INSIGHTS: Record<string, FixtureEntity[]> = {
   'urn:entity:brand': [
     { name: 'Fixture Linen Atelier', description: 'Fixture brand for browser tests' },
     { name: 'Fixture Racing Outfitters', description: 'Fixture brand for browser tests' },
@@ -44,6 +47,16 @@ const INSIGHTS: Record<string, Array<{ name: string; year?: number; description:
     { name: 'Fixture Sunday Records', description: 'Fixture artist for browser tests' },
   ],
   'urn:entity:movie': [
+    {
+      name: 'Fixture Noodle Makers',
+      year: 2026,
+      description: 'The documentary follows cooks preparing noodles and explores the craft of cooking.',
+      tags: [
+        { id: 'urn:tag:genre:media:documentary', name: 'Documentary' },
+        { id: 'urn:tag:theme:qloo:fixture_cooking', name: 'Cooking' },
+        { id: 'urn:tag:theme:qloo:fixture_noodles', name: 'Noodles' },
+      ],
+    },
     { name: 'Fixture Night Street', year: 1958, description: 'Fixture film for browser tests' },
     { name: 'Fixture Marquee', year: 1949, description: 'Fixture film for browser tests' },
     { name: 'Fixture Rain on Glass', year: 1997, description: 'Fixture film for browser tests' },
@@ -59,7 +72,7 @@ const INSIGHTS: Record<string, Array<{ name: string; year?: number; description:
 };
 const CUISINE_TAGS = ['Fixture Sichuan', 'Fixture Izakaya', 'Fixture Mezze', 'Fixture Tea Snacks'];
 
-function entity(type: string, e: { name: string; year?: number; description: string }, i: number) {
+function entity(type: string, e: FixtureEntity, i: number) {
   return {
     entity_id: `FIXTURE-${type.split(':').pop()!.toUpperCase()}-${String(i + 1).padStart(4, '0')}`,
     name: e.name,
@@ -67,7 +80,7 @@ function entity(type: string, e: { name: string; year?: number; description: str
     popularity: 0.9 - i * 0.05,
     properties: { short_description: e.description, ...(e.year ? { release_year: e.year } : {}) },
     query: { affinity: 0.9 - i * 0.1 },
-    tags: [],
+    tags: e.tags ?? [],
   };
 }
 
@@ -82,7 +95,7 @@ async function readBody(req: IncomingMessage): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function route(url: URL): { status: number; body: unknown } {
+export function fixtureQlooRoute(url: URL): { status: number; body: unknown } {
   const q = url.searchParams;
   if (url.pathname === '/search') {
     const query = (q.get('query') ?? '').trim();
@@ -99,6 +112,26 @@ function route(url: URL): { status: number; body: unknown } {
     const query = (q.get('filter.query') ?? '').trim();
     const type = (q.get('filter.tag.types') ?? 'urn:tag:style:qloo').split(',')[0]!;
     if (!query) return { status: 200, body: { success: true, results: { tags: [] } } };
+    // Fixed fixture catalogue metadata, not arbitrary query-derived evidence.
+    // The unrelated films below remain untagged and must fail admission.
+    if (query.toLowerCase() === 'noodles' && /genre|theme|keyword/.test(type)) {
+      return { status: 200, body: { success: true, results: { tags: [{
+        id: 'urn:tag:theme:qloo:fixture_noodles', name: 'Noodles', type: 'urn:tag:theme',
+        parents: ['urn:entity:movie'],
+      }] } } };
+    }
+    if (['cooking', 'food'].includes(query.toLowerCase()) && /genre|theme|keyword/.test(type)) {
+      return { status: 200, body: { success: true, results: { tags: [{
+        id: 'urn:tag:theme:qloo:fixture_cooking', name: 'Cooking', type: 'urn:tag:theme',
+        parents: ['urn:entity:movie'],
+      }] } } };
+    }
+    if (query.toLowerCase() === 'documentary' && /genre/.test(type)) {
+      return { status: 200, body: { success: true, results: { tags: [{
+        id: 'urn:tag:genre:media:documentary', name: 'Documentary', type: 'urn:tag:genre',
+        parents: ['urn:entity:movie'],
+      }] } } };
+    }
     return {
       status: 200,
       body: { success: true, results: { tags: [{ id: `${type}:fixture_${slug(query)}`, name: title(query), type }] } },
@@ -118,28 +151,33 @@ function route(url: URL): { status: number; body: unknown } {
   return { status: 404, body: { error: 'not found' } };
 }
 
-createServer(async (req, res) => {
-  const url = new URL(req.url ?? '/', 'http://localhost');
-  if (url.pathname === '/__fake/mode' && req.method === 'POST') {
-    const body = JSON.parse((await readBody(req)) || '{}') as { mode?: string };
-    mode = body.mode === 'down' ? 'down' : 'up';
-    return send(res, 200, { mode });
-  }
-  if (url.pathname === '/__fake/stats') return send(res, 200, { mode, counts, peak_in_flight: peak, in_flight: inFlight });
-  if (url.pathname === '/__fake/reset' && req.method === 'POST') {
-    for (const k of Object.keys(counts)) delete counts[k];
-    peak = inFlight;
-    return send(res, 200, { ok: true });
-  }
-  inFlight += 1;
-  peak = Math.max(peak, inFlight);
-  counts[url.pathname] = (counts[url.pathname] ?? 0) + 1;
-  try {
-    await new Promise((r) => setTimeout(r, latencyMs));
-    if (mode === 'down') return send(res, 503, { error: 'fixture outage' }, { 'retry-after': String(retryAfterS) });
-    const out = route(url);
-    send(res, out.status, out.body);
-  } finally {
-    inFlight -= 1;
-  }
-}).listen(port, '127.0.0.1', () => console.log(`[fake-qloo] listening on http://127.0.0.1:${port}`));
+export function startFakeQloo() {
+  if (process.env.NODE_ENV === 'production') throw new Error('fake-qloo is for browser tests only');
+  return createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname === '/__fake/mode' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}') as { mode?: string };
+      mode = body.mode === 'down' ? 'down' : 'up';
+      return send(res, 200, { mode });
+    }
+    if (url.pathname === '/__fake/stats') return send(res, 200, { mode, counts, peak_in_flight: peak, in_flight: inFlight });
+    if (url.pathname === '/__fake/reset' && req.method === 'POST') {
+      for (const k of Object.keys(counts)) delete counts[k];
+      peak = inFlight;
+      return send(res, 200, { ok: true });
+    }
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    counts[url.pathname] = (counts[url.pathname] ?? 0) + 1;
+    try {
+      await new Promise((r) => setTimeout(r, latencyMs));
+      if (mode === 'down') return send(res, 503, { error: 'fixture outage' }, { 'retry-after': String(retryAfterS) });
+      const out = fixtureQlooRoute(url);
+      send(res, out.status, out.body);
+    } finally {
+      inFlight -= 1;
+    }
+  }).listen(port, '127.0.0.1', () => console.log(`[fake-qloo] listening on http://127.0.0.1:${port}`));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) startFakeQloo();

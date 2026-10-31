@@ -30,6 +30,7 @@ import type {
 import { iso } from '../util/time';
 import { loadCards, type CardRecommendationContext } from './cards';
 import { clipText, preferPicturedCards, readDisplayMetadata } from './display';
+import { discoveryCardStyle, type CardStyleContext } from './discovery-card-style';
 import { getTasteRevision } from './taste';
 
 /**
@@ -61,7 +62,7 @@ interface RecRow {
   source_ids: string[];
   destination_url: string | null;
   /** Style design §E.2: the style overlap behind a capture-rail card, and whether its analysis was experimental. */
-  style_match: { subject_id: string | null; claims: { name: string }[]; palette: string[]; via_entity: string | null } | null;
+  style_match: CardStyleContext | null;
   experimental: boolean | null;
 }
 
@@ -311,17 +312,7 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
     related_job_id: relatedJobId,
     collection_ids: collectionIds,
     capture_id: item.capture_id,
-    // Style design §E.2 / §D.4: "Why this?" shows the shared style attributes and, for a card from an
-    // experimental reading, the experimental line.
-    style_match: rec?.style_match
-      ? {
-          subject_id: rec.style_match.subject_id ?? null,
-          attributes: [...new Set(rec.style_match.claims.map((c) => c.name))],
-          palette: rec.style_match.palette ?? [],
-          via: rec.style_match.via_entity ?? null,
-          experimental: rec.experimental === true,
-        }
-      : null,
+    style_match: discoveryCardStyle(rec?.style_match, rec?.experimental === true),
     experimental_line: rec?.experimental ? STYLE_COPY.experimental.why_line : null,
   };
 }

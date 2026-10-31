@@ -1,0 +1,8 @@
+# Merge last for Funnel deployments: no app, database, or object-store port
+# should be reachable through the Mac's network interfaces.
+# Requires Docker Compose 2.24+ (!reset).
+services:
+  web:
+    ports: !reset []
+  garage:
+    ports: !reset []

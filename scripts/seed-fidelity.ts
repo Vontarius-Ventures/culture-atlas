@@ -25,6 +25,10 @@
  *    the UI labels it "Example result" wherever it appears;
  *  - recommendations use origin 'sample' (never 'qloo'), no provider_queries
  *    rows are written, and plan picks are stored with origin 'sample';
+ *  - Discover is a curated, explicitly example feed snapshot, NOT a personal
+ *    recommendation pool. It expires after 24 hours; reseed before captures.
+ *    Fixture sign-in must use `claim_session: false`: claiming even an empty
+ *    anonymous session advances taste revision and invalidates this snapshot.
  *  - images are the project-original illustrations in apps/web/public/samples
  *    (fixtures/images/LICENSES.md). Films and artists get no stand-in picture.
  * Titles and short descriptions are the mockups' illustrative fixtures.
@@ -34,6 +38,7 @@
 import { writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import {
   agentPlatform,
   auth,
@@ -43,16 +48,21 @@ import {
   loadRootEnv,
   preferences,
   type Principal,
+  type ServiceContext,
 } from '../packages/domain/src/index';
 import { hashPassword } from '../packages/domain/src/services/passwords';
+import type { PoolDb } from '../packages/domain/src/db/pool';
+import { FEED_SNAPSHOT_TTL_HOURS } from '../packages/domain/src/services/discovery';
+import { getTasteRevision } from '../packages/domain/src/services/taste';
 
 const root = new URL('..', import.meta.url).pathname;
-loadRootEnv(root);
 
 export const FIXTURE_EMAIL = 'fidelity@example.com';
 export const FIXTURE_ACCOUNT_EMAIL = 'fidelity-account@example.com';
 /** Local fixture password (not a secret: the account exists only in a development database). */
 export const FIXTURE_PASSWORD = 'fidelity-fixture-password';
+/** Rendering fixtures have no anonymous history to merge into their curated taste. */
+export const FIDELITY_SIGN_IN = { claim_session: false } as const;
 
 const img = (path: string, alt: string) => ({ url: path, alt, width: 1000, height: 1250, license: 'project-original' });
 
@@ -68,9 +78,8 @@ interface Fixture {
   image?: ReturnType<typeof img>;
 }
 
-// Discover (mockups 01 and 04), in mockup order. Kinds and categories are
-// chosen so the feed's category interleaving keeps exactly this order.
-const FEED: Fixture[] = [
+// Discover (mockups 01 and 04), in curated example-snapshot order.
+export const FIDELITY_FEED: readonly Fixture[] = [
   { key: 'feed:vintage-racing', kind: 'style', category: 'wear', title: 'Vintage racing', description: 'A few motorsport references stood out.', image: img('/samples/outfit.jpg', 'A cream racing-style jacket with red and navy stripes on a wooden chair') },
   { key: 'feed:quiet-corners', kind: 'reference', category: null, title: 'Quiet corners', description: 'Soft light, low furniture and room to breathe.', image: img('/samples/room.jpg', 'A paned window with afternoon light over a low wooden table') },
   { key: 'feed:sunday-listening', kind: 'reference', category: 'play', title: 'Sunday listening', description: 'Records to spend a little time with.', image: img('/samples/feed/sunday-listening.jpg', 'A record player with records and a lamp') },
@@ -132,11 +141,12 @@ function displayOf(f: Fixture) {
   };
 }
 
-async function main() {
+/** Test-only seed; injecting the context keeps integration tests off live providers. */
+export async function seedFidelity(
+  db: PoolDb,
+  context: (principal: Principal) => ServiceContext = (principal) => createServiceContext(principal, { db, surface: 'web' }),
+) {
   if (process.env.NODE_ENV === 'production') throw new Error('Refusing to seed fixture data with NODE_ENV=production.');
-  const outIdx = process.argv.indexOf('--out');
-  const outFile = outIdx > 0 ? process.argv[outIdx + 1] : undefined;
-  const db = getDb();
 
   // Replace earlier fixture accounts.
   await db.query(
@@ -163,7 +173,7 @@ async function main() {
       [id],
     );
     const principal: Principal = { kind: 'account', accountId: id, sessionId: null, isDemoOwner: false };
-    return { id, ctx: createServiceContext(principal, { surface: 'web' }) };
+    return { id, ctx: context(principal) };
   };
   const library = await makeAccount(FIXTURE_EMAIL);
   const settings = await makeAccount(FIXTURE_ACCOUNT_EMAIL);
@@ -191,7 +201,7 @@ async function main() {
     ids.set(f.key, r.rows[0]!.id);
     return r.rows[0]!.id;
   };
-  for (const f of [...FEED, ...RELATED, ...SAVED, ...PLAN_ITEMS]) await insertItem(f);
+  for (const f of [...FIDELITY_FEED, ...RELATED, ...SAVED, ...PLAN_ITEMS]) await insertItem(f);
   for (const f of QUIET_WEEKENDS) await insertItem(f, settings.id);
   const id = (key: string) => {
     const v = ids.get(key);
@@ -235,21 +245,24 @@ async function main() {
     await db.query(`UPDATE collections SET updated_at = now() - make_interval(mins => $2) WHERE id = $1`, [colId, i * 10]);
   }
 
-  // Discover: each card is a related-discovery result of a saved item (origin
-  // 'sample' → "Example result"). One completed discovery job per card keeps
-  // the mockup order through rank fusion; newest first.
-  const origin = id('saved:vintage-racing');
-  for (const [i, f] of FEED.entries()) {
-    const dj = await db.query<{ id: string }>(
-      `INSERT INTO discovery_jobs (owner_account_id, origin_item_id, origin_collection_id, category, status, created_at)
-       VALUES ($1, $2, $3, $4, 'complete', now() - make_interval(secs => $5)) RETURNING id`,
-      [accountId, origin, slowSunday, f.category, 600 + i],
+  // These illustrative cards are not taste-derived Qloo results. Do not
+  // manufacture discovery-job provenance (or relabel samples as replays) to
+  // sneak them through buildSavedPool. Fidelity renders the real snapshot/card
+  // contract with an explicitly curated example feed, scoped to this account
+  // and its current taste revision. Refresh/expiry returns to the normal feed.
+  const revision = await getTasteRevision(db, { kind: 'account', accountId });
+  const categories = ['wear', 'play', 'watch', 'eat'] as const;
+  let feedId = '';
+  for (const category of [null, ...categories]) {
+    const entries = FIDELITY_FEED.filter((f) => category === null || f.category === category);
+    const snapshot = await db.query<{ id: string }>(
+      `INSERT INTO feed_snapshots
+         (owner_account_id, taste_revision, category, ordered_item_ids, is_example_feed, available_categories, expires_at)
+       VALUES ($1, $2, $3, $4::uuid[], true, $5::text[], now() + make_interval(hours => $6))
+       RETURNING id`,
+      [accountId, revision, category, entries.map((f) => id(f.key)), categories, FEED_SNAPSHOT_TTL_HOURS],
     );
-    await db.query(
-      `INSERT INTO recommendations (discovery_job_id, discovery_item_id, category, rank, title, display_reason, origin, created_at)
-       VALUES ($1, $2, $3, 1, $4, $5, 'sample', now() - make_interval(secs => $6))`,
-      [dj.rows[0]!.id, id(f.key), f.category, f.title, f.description ?? null, 600 + i],
-    );
+    if (category === null) feedId = snapshot.rows[0]!.id;
   }
   // Related to the Vintage racing card (mockup 06).
   const relJob = await db.query<{ id: string }>(
@@ -314,7 +327,7 @@ async function main() {
   });
   const agent = await auth.resolvePrincipal(db, { authorization: `Bearer ${conn.credential}` });
   if (!agent) throw new Error('agent credential did not resolve');
-  const agentCtx = createServiceContext(agent, { surface: 'rest' });
+  const agentCtx = context(agent);
   await agentPlatform.getPreferences(agentCtx);
   await collections.getCollection(agentCtx, { id: quietWeekends, query: {} });
 
@@ -324,17 +337,33 @@ async function main() {
     settings_account_id: settings.id,
     settings_email: FIXTURE_ACCOUNT_EMAIL,
     password: FIXTURE_PASSWORD,
+    sign_in: FIDELITY_SIGN_IN,
     collections: { slow_sunday: slowSunday, after_dark: afterDark, everyday_favorites: everyday, quiet_weekends: quietWeekends },
     items: { vintage_racing: id('feed:vintage-racing'), saved_vintage_racing: id('saved:vintage-racing'), sunday_listening: id('saved:sunday-listening'), late_night_cinema: id('saved:late-night-cinema') },
     plan_id: plan.rows[0]!.id,
     agent_connection_id: conn.connection.id,
+    feed_id: feedId,
   };
-  if (outFile) writeFileSync(outFile, JSON.stringify(result, null, 2));
-  console.log(JSON.stringify({ ...result, password: '(see FIXTURE_PASSWORD)' }, null, 2));
-  await db.end();
+  return result;
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exitCode = 1;
-});
+async function main() {
+  loadRootEnv(root);
+  const outIdx = process.argv.indexOf('--out');
+  const outFile = outIdx > 0 ? process.argv[outIdx + 1] : undefined;
+  const db = getDb();
+  try {
+    const result = await seedFidelity(db);
+    if (outFile) writeFileSync(outFile, JSON.stringify(result, null, 2));
+    console.log(JSON.stringify({ ...result, password: '(see FIXTURE_PASSWORD)' }, null, 2));
+  } finally {
+    await db.end();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
+}

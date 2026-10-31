@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { CapabilityEntry } from '../capabilities';
 import { ProviderError, type CallOptions } from '../errors';
+import { insightsQuery } from './insights-request';
 import { parseEntityTrends, parseInsights, parseSearch, parseTags, parseTrending } from './parse';
 import type {
   QlooCapabilities,
@@ -80,13 +81,7 @@ export class ReplayQloo implements QlooProvider {
     return this.serve(
       'insights',
       '/v2/insights',
-      {
-        'filter.type': req.filterType,
-        'signal.interests.entities': req.signalEntities,
-        'signal.interests.tags': req.signalTags?.map((t) => t.id),
-        'feature.explainability': req.explainability ? 'true' : undefined,
-        take: String(Math.min(req.take ?? 10, 50)),
-      },
+      insightsQuery(req),
       parseInsights,
     );
   }

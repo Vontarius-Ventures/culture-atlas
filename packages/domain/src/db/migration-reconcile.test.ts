@@ -27,10 +27,13 @@ async function freshDatabase(): Promise<string> {
   const base = new URL(inject('databaseUrl'));
   const name = `${base.pathname.slice(1)}_r${randomBytes(3).toString('hex')}`;
   const admin = new pg.Client({ connectionString: base.toString() });
-  await admin.connect();
-  await admin.query(`CREATE DATABASE ${name}`);
-  await admin.end();
-  created.push(name);
+  try {
+    await admin.connect();
+    await admin.query(`CREATE DATABASE ${name}`);
+    created.push(name);
+  } finally {
+    await admin.end();
+  }
   base.pathname = `/${name}`;
   return base.toString();
 }
@@ -77,10 +80,27 @@ async function agentFenceShape(url: string) {
 
 afterAll(async () => {
   const admin = new pg.Client({ connectionString: inject('databaseUrl') });
-  await admin.connect();
-  for (const name of created) await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-  await admin.end();
-  for (const d of tempDirs) await rm(d, { recursive: true, force: true });
+  const errors: unknown[] = [];
+  try {
+    await admin.connect();
+    for (const name of created) {
+      try {
+        await admin.query(`DROP DATABASE IF EXISTS ${name}`);
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+  } finally {
+    await admin.end();
+    for (const d of tempDirs) {
+      try {
+        await rm(d, { recursive: true, force: true });
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+  }
+  if (errors.length) throw new AggregateError(errors, 'Migration test cleanup failed');
 });
 
 describe('merged capture-v2 migrations', () => {

@@ -24,9 +24,9 @@ enum StyleFixture {
      "image":{"url":"/fixture/outfit.jpg","width":1000,"height":1250,"alt":"Cream zip jacket on a chair"},
      "analysis":{"id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f30","version":1,"title":"Cream zip jacket",
        "interpretation":null,"sections":{"observations":"ready","references":"ready","style":"running","wear":"pending"},
-       "experimental":{"label":"Experimental","note":"Photo and video readings are experimental. They can miss or misread details."}},
+       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."}},
      "style_reading":null,
-     "rails":[{"key":"more_like_this:s1","kind":"more_like_this","title":"More like this","subtitle":null,
+     "rails":[{"key":"more_like_this:s1","kind":"more_like_this","title":"Qloo connections","subtitle":null,
        "subject_id":"s1","status":"running","empty_message":null,"cards":[]}],
      "recommendations":[],"job_id":null}
     """
@@ -36,7 +36,7 @@ enum StyleFixture {
      "image":{"url":"/fixture/outfit.jpg","width":1000,"height":1250,"alt":"Cream zip jacket on a chair"},
      "analysis":{"id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f30","version":1,"title":"Cream zip jacket",
        "interpretation":null,"sections":{"observations":"ready","references":"ready","style":"ready","wear":"ready","eat":"empty"},
-       "experimental":{"label":"Experimental","note":"Photo and video readings are experimental. They can miss or misread details."}},
+       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."}},
      "style_reading":{
        "version":"atlas_style_reading_v1",
        "summary":"A cream zip jacket with red and slate racing stripes and a round target badge.",
@@ -68,7 +68,7 @@ enum StyleFixture {
          "rail":"more_like_this:s1"}],
        "retracted":[]},
      "rails":[
-       {"key":"more_like_this:s1","kind":"more_like_this","title":"More like this","subtitle":"Retro sportswear · mod",
+       {"key":"more_like_this:s1","kind":"more_like_this","title":"Brands to explore","subtitle":"Retro sportswear · mod",
         "subject_id":"s1","status":"ready","empty_message":null,"cards":[
           {"id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f41","kind":"brand","category":"wear","title":"Fixture brand one","subtitle":null,"image":null,
            "is_example":true,"saved":false,"saved_item_id":null,"recommendation_id":null,"evidence_available":true,
@@ -94,7 +94,7 @@ enum StyleFixture {
            "is_example":true,"saved":false,"saved_item_id":null,"recommendation_id":null,"evidence_available":true,
            "reason":null,"style_match":null}]},
        {"key":"eat","kind":"cross_domain","title":"Eat","subtitle":null,"subject_id":null,"status":"empty",
-        "empty_message":"Add a city to see places with this style.","cards":[]}],
+        "empty_message":"Add a city to explore places.","cards":[]}],
      "recommendations":[],"job_id":null}
     """
 }

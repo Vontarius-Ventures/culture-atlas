@@ -38,8 +38,11 @@ export default async function setup(project: TestProject) {
       { cause: err },
     );
   }
-  await admin.query(`CREATE DATABASE ${name}`);
-  await admin.end();
+  try {
+    await admin.query(`CREATE DATABASE ${name}`);
+  } finally {
+    await admin.end();
+  }
 
   const url = withDatabase(BASE_URL, name);
   await runMigrations(url);
@@ -47,8 +50,11 @@ export default async function setup(project: TestProject) {
 
   return async () => {
     const c = new pg.Client({ connectionString: BASE_URL });
-    await c.connect();
-    await c.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-    await c.end();
+    try {
+      await c.connect();
+      await c.query(`DROP DATABASE IF EXISTS ${name}`);
+    } finally {
+      await c.end();
+    }
   };
 }

@@ -42,6 +42,7 @@ import { selectPinnedConcentrateRoutes } from '../packages/providers/src/concent
 import { loadModelProfiles } from '../packages/providers/src/concentrate/profiles';
 import { runtimeTextScorer } from './eval/golden-photos';
 import { runtimeGuardedPipeline } from './eval/pipeline';
+import { checkVisualSimilarityContract } from '../packages/providers/src/testing/visual-similarity';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -49,6 +50,18 @@ function arg(name: string): string | undefined {
 }
 const flag = (name: string) => process.argv.includes(`--${name}`);
 const log = (line: string) => console.log(`[qualify-concentrate] ${line}`);
+
+// Never route a new visual pair task through another role's fixture runner or
+// reuse its qualification ID. This task has no bound independent pair scorer yet.
+if (arg('role') === 'vision_similarity' && !flag('catalog')) {
+  if (flag('self-test') && !flag('confirm-paid-requests')) {
+    log(`SYNTHETIC OFFLINE CONTRACT CHECK ONLY: ${JSON.stringify(await checkVisualSimilarityContract())}`);
+    log('No requests, spend, model judgment or qualification artifact. Independent visual pair evaluation is not yet bound.');
+    process.exit(0);
+  }
+  console.error('vision_similarity qualification is unavailable until an independent frozen pair set/scorer is bound. Use --role vision_similarity --self-test for the deterministic OFFLINE contract check; an operator-permitted experimental trial is not qualification.');
+  process.exit(2);
+}
 
 const outDir = arg('out-dir');
 if (!outDir) {

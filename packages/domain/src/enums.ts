@@ -56,6 +56,7 @@ export const JOB_TYPES = [
   'analyze_audio',
   /** Style design §D.2: "Try again" re-runs only the style reading and its rails (once per analysis). */
   'style_retry',
+  'visual_reference_discovery',
 ] as const;
 export const JobType = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobType>;

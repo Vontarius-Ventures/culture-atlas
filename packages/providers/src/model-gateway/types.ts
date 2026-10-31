@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { CallOptions } from '../errors';
+import type { StructuredResponseShapeIssue } from './diagnostics';
 
 export type ModelRole =
   | 'vision_photo'
@@ -11,7 +12,11 @@ export type ModelRole =
   /** Independent background verifier after stage 2 (docs/requalification-plan.md); off by default. */
   | 'vision_verify'
   /** Style reading (prp/2026-10-23-style-analysis §B.2), parallel to stage 1. */
-  | 'vision_style';
+  | 'vision_style'
+  /** Independent bounded source/candidate contact-sheet comparison; no fallback. */
+  | 'vision_similarity'
+  /** Single public candidate image identity/availability; never source similarity. */
+  | 'vision_connection_asset';
 export interface ModelIdentity {
   accountId: string;
   jobId: string;
@@ -73,8 +78,12 @@ export interface GatewayCall<T extends z.ZodType> {
   schema: T;
   maxOutputTokens?: number;
   validate?: (data: z.infer<T>) => void;
+  /** Local failure-only, content-free diagnostic. Never sent to the transport. */
+  diagnoseShape?: (value: unknown) => readonly StructuredResponseShapeIssue[];
 }
 export interface GatewayOptions extends CallOptions {
+  /** Server-owned last-moment lease/owner/cancellation fence, after durable reservation. */
+  beforeDispatch?: () => Promise<void>;
   /** Verified server-owned identity, never derived from model output. */
   modelIdentity?: ModelIdentity;
 }

@@ -11,12 +11,15 @@
  */
 import {
   configureProviderRuntime,
+  STYLE_MAX_OUTPUT_TOKENS,
+  STYLE_PROMPT_VERSION,
+  STYLE_WIRE_SCHEMA,
   VLM_READING_VERSIONS,
+  type CatalogSnapshot,
   type ModelProfile,
   type StructuredTransport,
 } from '@culture-atlas/providers';
-
-if (process.env.NODE_ENV === 'production') throw new Error('e2e-fake-models is for browser tests only');
+import { pathToFileURL } from 'node:url';
 
 const quickDelayMs = Number(process.env.E2E_FAKE_QUICK_MS ?? 6000);
 const enrichDelayMs = Number(process.env.E2E_FAKE_ENRICH_MS ?? 2500);
@@ -40,7 +43,21 @@ const base: Omit<ModelProfile, 'role' | 'version' | 'promptVersion' | 'schemaVer
   reservationMicros: 5_000,
 };
 
-const profiles: Record<'vision_photo' | 'vision_photo_enrich', ModelProfile> = {
+/** Synthetic price metadata for the in-process fixture, never a live catalogue. */
+export const E2E_MODEL_CATALOG: CatalogSnapshot = {
+  kind: 'concentrate-catalog-snapshot',
+  fetched_at: '2026-10-18T00:00:00Z',
+  pages: 1,
+  models: [{
+    id: 'fixture/e2e-vision',
+    providers: { fixture: { pricing: [{ tokens: {
+      input: { price: { USD: 0.1 }, units: 1_000_000 },
+      output: { price: { USD: 0.1 }, units: 1_000_000 },
+    } }] } },
+  }],
+};
+
+export const E2E_MODEL_PROFILES: Record<'vision_photo' | 'vision_photo_enrich' | 'vision_style', ModelProfile> = {
   vision_photo: {
     ...base,
     role: 'vision_photo',
@@ -61,6 +78,19 @@ const profiles: Record<'vision_photo' | 'vision_photo_enrich', ModelProfile> = {
     image: { maxBytes: 250_000, maxPixels: 589_824, maxDimension: 768, maxCount: 1 },
     timeoutMs: 20_000,
   },
+  // The compiler now requires an independently read subject before it can
+  // admit recommendations. This is a synthetic qualified route only inside
+  // the test transport, not a production qualification or gate override.
+  vision_style: {
+    ...base,
+    role: 'vision_style',
+    version: 'e2e-style-1',
+    promptVersion: STYLE_PROMPT_VERSION,
+    schemaVersion: STYLE_WIRE_SCHEMA,
+    maxOutputTokens: STYLE_MAX_OUTPUT_TOKENS,
+    image: { maxBytes: 350_000, maxPixels: 1_048_576, maxDimension: 1024, maxCount: 1 },
+    timeoutMs: 18_000,
+  },
 };
 
 const QUICK = {
@@ -68,29 +98,38 @@ const QUICK = {
   interpretation: 'A bowl of noodles that resembles a Sichuan street-food supper.',
   candidates: [
     { name: 'Dan dan noodles', type: 'cuisine', relation: 'resembles', certainty: 0.85, categories: ['eat'], tag_query: 'Sichuan cuisine' },
-    { name: 'Wabi-sabi', type: 'style', relation: 'resembles', certainty: 0.55, categories: ['wear'], tag_query: 'wabi sabi' },
-    { name: 'Film noir', type: 'style', relation: 'resembles', certainty: 0.4, categories: ['watch'], tag_query: 'film noir' },
-    { name: 'Bossa nova', type: 'style', relation: 'resembles', certainty: 0.35, categories: ['play'], tag_query: 'bossa nova' },
   ],
   quality: { usable: true, issue: null },
 };
 
 const ENRICHMENT = {
   observations: [
-    { text: 'Chili oil pooled around hand-pulled noodles', kind: 'food' },
+    { text: 'Red oil around noodles topped with sliced scallions', kind: 'food' },
     { text: 'Rough stoneware bowl on a dark wooden table', kind: 'object' },
   ],
   visible_text: [],
   confirmed: [
-    { name: 'Dan dan noodles', rationale: 'Minced pork, chili oil and scallions on noodles', keep: true },
-    { name: 'Wabi-sabi', rationale: 'Hand-thrown bowl with an uneven glaze', keep: true },
+    { name: 'Dan dan noodles', rationale: 'Crumbled topping, red oil and scallions on noodles', keep: true },
   ],
-  additional_candidates: [
-    { name: 'Izakaya', type: 'tradition', relation: 'resembles', certainty: 0.4, categories: ['eat'], tag_query: 'izakaya', rationale: 'Late-night bar food setting' },
-  ],
+  additional_candidates: [],
   regions: [],
   uncertainty: { overall: 'low', notes: [] },
   competing_subjects: [],
+};
+
+/** Describes noodles.jpg without inventing fashion, music or a venue location. */
+export const E2E_STYLE_READING = {
+  schema: STYLE_WIRE_SCHEMA,
+  usable: true,
+  unusable_reason: 'none',
+  subjects: [{ id: 's1', category: 'food', label: 'Bowl of noodles', box: [0.02, 0.1, 0.95, 0.78], brand_name: '', brand_text: '' }],
+  observations: [
+    { subject: 's1', id: 'o1', kind: 'form', text: 'Long noodles piled in a round bowl', box: [], certainty: 0.95 },
+    { subject: 's1', id: 'o2', kind: 'surface', text: 'Red oil and green sliced scallions on the noodles', box: [], certainty: 0.9 },
+  ],
+  claims: [],
+  palette: [],
+  summary: 'Noodles with red oil and sliced scallions in a ceramic bowl.',
 };
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -103,29 +142,42 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-const transport: StructuredTransport = async (request, { signal }) => {
-  const quick = request.schemaName === VLM_READING_VERSIONS.quick.schema;
-  const enrich = request.schemaName === VLM_READING_VERSIONS.enrich.schema;
-  await sleep(quick ? quickDelayMs : enrichDelayMs, signal);
-  if (!quick && !enrich) return { id: null, model: request.model, actualProvider: 'fixture', text: '', outcome: 'error', usage: null };
-  return {
-    id: `resp_e2e_${Date.now()}`,
-    requestId: `req_e2e_${Date.now()}`,
-    model: request.model,
-    actualProvider: 'fixture',
-    text: JSON.stringify(quick ? QUICK : ENRICHMENT),
-    outcome: 'complete',
-    usage: { inputTokens: 1200, outputTokens: quick ? 320 : 640 },
+export function createE2EModelTransport(delay: { quick?: number; enrich?: number; style?: number } = {}): StructuredTransport {
+  return async (request, { signal }) => {
+    const quick = request.schemaName === VLM_READING_VERSIONS.quick.schema;
+    const enrich = request.schemaName === VLM_READING_VERSIONS.enrich.schema;
+    const style = request.schemaName === STYLE_WIRE_SCHEMA;
+    await sleep(quick ? delay.quick ?? quickDelayMs : style ? delay.style ?? 500 : delay.enrich ?? enrichDelayMs, signal);
+    if (!quick && !enrich && !style) return { id: null, model: request.model, actualProvider: 'fixture', text: '', outcome: 'error', usage: null };
+    return {
+      id: `resp_e2e_${Date.now()}`,
+      requestId: `req_e2e_${Date.now()}`,
+      model: request.model,
+      actualProvider: 'fixture',
+      text: JSON.stringify(quick ? QUICK : style ? E2E_STYLE_READING : ENRICHMENT),
+      outcome: 'complete',
+      usage: { inputTokens: 1200, outputTokens: quick ? 320 : 640 },
+    };
   };
-};
+}
 
-// The gateway needs a key to exist; the injected transport never sends it anywhere.
-process.env.CONCENTRATE_API_KEY ||= 'e2e-fake-transport-no-network';
-// The fixture route has no price, so every call settles as unknown spend: leave room for many test runs.
-process.env.MODEL_DAILY_SPEND_LIMIT_USD ||= '10';
-process.env.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD ||= '1';
-process.env.MODEL_MAX_UNKNOWN_SPEND_USD ||= '5';
+export async function startE2EModelWorker() {
+  if (process.env.NODE_ENV === 'production') throw new Error('e2e-fake-models is for browser tests only');
+  // The gateway needs a key to exist; the injected transport never sends it anywhere.
+  process.env.CONCENTRATE_API_KEY ||= 'e2e-fake-transport-no-network';
+  // Leave room for many fixture runs in their isolated database's spend ledger.
+  process.env.MODEL_DAILY_SPEND_LIMIT_USD ||= '10';
+  process.env.MODEL_ACCOUNT_DAILY_SPEND_LIMIT_USD ||= '1';
+  process.env.MODEL_MAX_UNKNOWN_SPEND_USD ||= '5';
 
-configureProviderRuntime({ gateway: { profiles, transport, qualification: () => 'qualified' } });
-console.log('[worker] e2e: fake model transport (no network), roles vision_photo + vision_photo_enrich');
-await import('./main');
+  configureProviderRuntime({ gateway: {
+    profiles: E2E_MODEL_PROFILES,
+    catalog: E2E_MODEL_CATALOG,
+    transport: createE2EModelTransport(),
+    qualification: () => 'qualified',
+  } });
+  console.log('[worker] e2e: fake model transport (no network), roles vision_photo + vision_photo_enrich + vision_style');
+  await import('./main');
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await startE2EModelWorker();

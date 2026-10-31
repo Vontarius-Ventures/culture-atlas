@@ -12,6 +12,7 @@ import {
 import { hashToken, randomToken, resolvePrincipal } from './auth';
 import {
   androidIdentityCallback,
+  iosIdentityCallback,
   completeEmail,
   DevIdentityOutbox,
   EmailStart,
@@ -97,6 +98,34 @@ describe('Android identity callback host', () => {
     expect(androidIdentityCallback('https://example.trycloudflare.com')).toBe(
       'https://example.trycloudflare.com/identity/callback',
     );
+  });
+});
+
+describe('iOS email handoff', () => {
+  it('uses a clickable HTTPS link on the configured host, not an app-only mail anchor', () => {
+    expect(iosIdentityCallback('https://culture-atlas.example.ts.net')).toBe(
+      'https://culture-atlas.example.ts.net/identity/callback?destination=ios',
+    );
+    for (const local of ['http://localhost:3000', 'https://localhost', 'https://127.0.0.1', 'invalid']) {
+      expect(iosIdentityCallback(local)).toBe('cultureatlas://identity/callback');
+    }
+  });
+
+  it('keeps proof in the fragment and still requires the initiating phone PKCE verifier', async () => {
+    const ctx = testContext(systemPrincipal('test-ios-handoff'), {
+      now: () => now,
+      config: testConfig({ APP_BASE_URL: 'https://culture-atlas.example.ts.net' }),
+    });
+    const request = await begin(ctx);
+    const callback = new URL(request.callback!);
+    expect(callback.protocol).toBe('https:');
+    expect(callback.search).toBe('?destination=ios');
+    expect(callback.search).not.toContain(request.proof.token);
+    expect(new URLSearchParams(callback.hash.slice(1)).get('token')).toBe(request.proof.token);
+    await expect(completeEmail(ctx, { ...request.proof, code_verifier: randomToken() }))
+      .rejects.toMatchObject({ code: 'unauthenticated' });
+    const completed = await completeEmail(ctx, request.proof);
+    expect(completed).toHaveProperty('enrollment_grant');
   });
 });
 

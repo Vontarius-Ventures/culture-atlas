@@ -27,11 +27,15 @@ import type { UploadResponse } from '../schemas/uploads';
 import { iso } from '../util/time';
 import { loadCards, mayViewCaptureImage, resolveImage, type CardRecommendationContext } from './cards';
 import { buildRails, styleReadingDto } from './style-dto';
+import { discoveryCardStyle } from './discovery-card-style';
 import { STYLE_COPY } from '../schemas/style';
 import type { StyleMatch } from '../style/reasons';
 import type { StoredStyleReading } from '../style/types';
 import type { DiscoveryCard } from '../schemas/common';
 import { bumpTasteRevision, rebuildTasteProfile } from './taste';
+import { loadVisualReferenceState } from '../style/visual-references';
+import { hasDiscoveryIntents, isFeatureBoundConnectionsCompilerVersion } from '../style/intent-version';
+import { validatedConnectionRows } from './connection-projection';
 
 /**
  * Capture Intake module.
@@ -306,6 +310,7 @@ export async function createCapture(ctx: ServiceContext, input: CreateCaptureInp
     const { rows } = await ctx.db.query<{ capture_id: string | null; job_id: string | null }>(
       `SELECT si.capture_id,
               (SELECT j.id FROM jobs j WHERE j.result_type = 'capture' AND j.result_id = si.capture_id
+                AND j.type <> 'visual_reference_discovery'
                 ORDER BY j.created_at DESC LIMIT 1) AS job_id
          FROM sensor_imports si WHERE si.sensor_connection_id = $1 AND si.asset_id = $2`,
       [resolved.sensor.connection_id, resolved.sensor.asset_id],
@@ -483,6 +488,7 @@ export async function loadAccessibleCapture(ctx: ServiceContext, id: string, opt
 
 interface AnalysisRow {
   id: string;
+  compiler_version: string;
   version: number;
   title: string | null;
   interpretation: string | null;
@@ -504,15 +510,7 @@ export const EXPERIMENTAL_LABEL = { label: STYLE_COPY.experimental.badge, note: 
 function cardStyle(display_reason: string | null, match: StyleMatch | null, experimental: boolean): Pick<DiscoveryCard, 'reason' | 'style_match'> {
   return {
     reason: display_reason,
-    style_match: match
-      ? {
-          subject_id: match.subject_id ?? null,
-          attributes: [...new Set(match.claims.map((c) => c.name))],
-          palette: match.palette,
-          via: match.via_entity ?? null,
-          experimental,
-        }
-      : null,
+    style_match: discoveryCardStyle(match, experimental),
   };
 }
 
@@ -590,6 +588,7 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
     ),
     ctx.db.query<{ id: string }>(
       `SELECT id FROM jobs WHERE result_type = 'capture' AND result_id = $1 AND state IN ('queued', 'running')
+        AND type <> 'visual_reference_discovery'
         ORDER BY created_at DESC LIMIT 1`,
       [capture.id],
     ),
@@ -600,9 +599,10 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
   let recommendations: CaptureResponse['recommendations'] = [];
   let styleReading: CaptureResponse['style_reading'] = null;
   let rails: CaptureResponse['rails'];
+  let intents: CaptureResponse['discovery_intents'];
   if (capture.active_analysis_id) {
     const { rows } = await ctx.db.query<AnalysisRow>(
-      `SELECT id, version, title, interpretation, section_statuses, clarifying_question, warnings, created_at,
+      `SELECT id, compiler_version, version, title, interpretation, section_statuses, clarifying_question, warnings, created_at,
               style_reading, experimental
          FROM analyses WHERE id = $1`,
       [capture.active_analysis_id],
@@ -623,6 +623,7 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
         experimental: a.experimental ? { ...EXPERIMENTAL_LABEL } : null,
       };
       references = await loadAnalysisReferences(ctx.db, a.id);
+      const strictConnections = isFeatureBoundConnectionsCompilerVersion(a.compiler_version);
       const ownerParam = owner.kind === 'account' ? owner.accountId : owner.sessionId;
       const { rows: recs } = await ctx.db.query<{
         id: string;
@@ -633,28 +634,39 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
         rail: 'more_like_this' | 'cross_domain' | null;
         subject_id: string | null;
         style_match: StyleMatch | null;
+        external_ids: Record<string, unknown> | null;
       }>(
-        `SELECT DISTINCT ON (r.discovery_item_id) r.id, r.discovery_item_id, r.origin, r.display_reason, r.rank,
-                r.rail, r.subject_id, r.style_match
+        `SELECT ${strictConnections ? '' : 'DISTINCT ON (r.discovery_item_id)'} r.id, r.discovery_item_id, r.origin, r.display_reason, r.rank,
+                r.rail, r.subject_id, r.style_match, di.external_ids
            FROM recommendations r JOIN discovery_items di ON di.id = r.discovery_item_id
           WHERE r.analysis_id = $1 AND r.hidden_at IS NULL AND ${exclusionFilterSql(owner, 'di', 2)}
-          ORDER BY r.discovery_item_id, (r.rail = 'more_like_this') DESC, r.rank`,
+          ORDER BY ${strictConnections ? 'r.rank, r.id' : "r.discovery_item_id, (r.rail = 'more_like_this') DESC, r.rank"}`,
         [a.id, ownerParam],
       );
       const sorted = [...recs].sort((x, y) => x.rank - y.rank);
+      const stored = a.style_reading && a.section_statuses?.style === 'ready' ? a.style_reading : null;
       // Old clients: `recommendations` stays cross-domain only (<= 12); the style rails are additive.
-      const crossDomain = sorted.filter((r) => r.rail !== 'more_like_this').slice(0, LIMITS.crossDomainRecommendationsMax);
-      const mlt = sorted.filter((r) => r.rail === 'more_like_this');
+      let crossDomain = sorted.filter((r) => r.rail !== 'more_like_this').slice(0, LIMITS.crossDomainRecommendationsMax);
+      let mlt = sorted.filter((r) => r.rail === 'more_like_this');
       const context = new Map<string, CardRecommendationContext>(sorted.map((r) => [r.discovery_item_id, { id: r.id, origin: r.origin, display_reason: r.display_reason }]));
-      const cards = await loadCards(ctx, [...crossDomain, ...mlt].map((r) => r.discovery_item_id), { recommendations: context });
+      const cards = await loadCards(ctx, [...new Set((strictConnections ? sorted : [...crossDomain, ...mlt]).map(r => r.discovery_item_id))], { recommendations: context });
       const cardById = new Map(cards.map((c) => [c.id, c]));
+      if (strictConnections) {
+        const validated = validatedConnectionRows(sorted, cardById, stored);
+        crossDomain = validated.filter(r => r.rail !== 'more_like_this').slice(0, LIMITS.crossDomainRecommendationsMax);
+        mlt = validated.filter(r => r.rail === 'more_like_this');
+      }
       const withStyle = (r: (typeof sorted)[number]): DiscoveryCard | null => {
         const card = cardById.get(r.discovery_item_id);
-        return card ? { ...card, ...cardStyle(r.display_reason, r.style_match, a.experimental) } : null;
+        return card ? { ...card, ...cardStyle(r.display_reason, r.style_match, a.experimental),
+          ...(strictConnections ? { recommendation_id: r.id, evidence_available: true } : {}) } : null;
       };
       recommendations = crossDomain.map(withStyle).filter((c): c is DiscoveryCard => !!c);
-      const stored = a.style_reading && a.section_statuses?.style === 'ready' ? a.style_reading : null;
-      styleReading = stored ? styleReadingDto(stored, { showClaimRegions: ctx.config.STYLE_SHOW_CLAIM_REGIONS === true }) : null;
+      styleReading = stored ? styleReadingDto(stored, { showClaimRegions: ctx.config.STYLE_SHOW_CLAIM_REGIONS === true, safeSubjectLabels: strictConnections }) : null;
+      if (strictConnections && analysis) {
+        analysis.title = styleReading?.summary || 'Exploring your photo';
+        analysis.interpretation = styleReading?.summary || null;
+      }
       const bySubject = new Map<string, DiscoveryCard[]>();
       for (const r of mlt) {
         const c = withStyle(r);
@@ -666,7 +678,29 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
       // An analysis made before the style stage existed has no `style` section: no rails, so
       // clients keep rendering `recommendations` (and never poll sections that will not arrive).
       const styleEra = a.section_statuses?.style !== undefined || mlt.length > 0;
-      if (styleEra) rails = buildRails({ stored, sections: a.section_statuses ?? {}, moreLikeThis: bySubject, crossDomain: byCategory, experimental: a.experimental });
+      if (styleEra) rails = buildRails({ stored, sections: a.section_statuses ?? {}, moreLikeThis: bySubject, crossDomain: byCategory, experimental: a.experimental, validatedConnections: strictConnections });
+      const visual = hasDiscoveryIntents(a.compiler_version) ? await loadVisualReferenceState(ctx, capture.id, a.id) : null;
+      if (strictConnections) {
+        // Reanalysis/retraction can race card loading. Never project an obsolete proof snapshot.
+        const { rows: current } = await ctx.db.query<{ active_analysis_id: string | null; reading_matches: boolean | null; style_section: string | null }>(
+          `SELECT c.active_analysis_id, an.style_reading = $2::jsonb AS reading_matches, an.section_statuses->>'style' AS style_section
+             FROM captures c LEFT JOIN analyses an ON an.id = c.active_analysis_id
+            WHERE c.id = $1 AND c.deleted_at IS NULL`, [capture.id, stored ? JSON.stringify(stored) : null],
+        );
+        if (!current[0]) throw new AppError('not_found');
+        if (current[0].active_analysis_id !== a.id || (stored !== null && current[0].reading_matches !== true) ||
+          (stored !== null && current[0].style_section !== 'ready')) {
+          recommendations = [];
+          rails = [];
+          styleReading = null;
+          if (analysis) { analysis.title = 'Exploring your photo'; analysis.interpretation = null; }
+        }
+      }
+      if (visual) intents = {
+        version: 'atlas_discovery_intents_v1', default_intent: 'connections',
+        visual,
+        connections: { rails: rails ?? [] },
+      };
     }
   }
 
@@ -692,6 +726,7 @@ export async function getCapture(ctx: ServiceContext, input: { id: string }): Pr
     job_id: jobRes.rows[0]?.id ?? null,
     style_reading: styleReading,
     ...(rails ? { rails } : {}),
+    ...(intents ? { discovery_intents: intents } : {}),
   };
 }
 
@@ -856,6 +891,10 @@ async function deleteCaptureTx(ctx: ServiceContext, tx: Db, owner: Owner, captur
   }
 
   // Analyses cascade to capture_references, provider_queries and recommendations.
+  // Candidate asset evidence is private capture context, not a public catalog.
+  // A privacy-deleted capture cannot be reanalyzed, so removing its slots does
+  // not replenish any live capture's allowance.
+  await tx.query('DELETE FROM connection_asset_checks WHERE capture_id = $1', [capture.id]);
   await tx.query('UPDATE captures SET active_analysis_id = NULL WHERE id = $1', [capture.id]);
   await tx.query('DELETE FROM analyses WHERE capture_id = $1', [capture.id]);
   await tx.query(

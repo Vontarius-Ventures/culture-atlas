@@ -33,7 +33,13 @@ import {
 } from './style';
 import { OnboardingMock, type OnboardingMockOptions } from './onboarding';
 
+import { discoveryIntentsFixture, type VisualFixtureMode } from './discovery-intents';
+
 export interface MockOptions {
+  /** Optional, synthetic additive intent data; omitted preserves older API fixtures. */
+  visual?: VisualFixtureMode;
+  /** Keep visual work running for this many capture reads after parent readiness. */
+  visualPollsToReady?: number;
   /** Start signed in (account) instead of as an anonymous visitor. */
   account?: boolean;
   /** Seed three collections plus unfiled saves (requires account). */
@@ -551,7 +557,7 @@ export class MockApi {
               {
                 key: 'more_like_this:s1',
                 kind: 'more_like_this',
-                title: 'More like this',
+                title: status === 'ready' ? 'Brands to explore' : 'Qloo connections',
                 subtitle: 'Sportswear · nylon shell',
                 subject_id: 's1',
                 status: railStatus,
@@ -561,12 +567,12 @@ export class MockApi {
               {
                 key: 'more_like_this:s2',
                 kind: 'more_like_this',
-                title: 'More like this',
+                title: 'Qloo connections',
                 subtitle: 'Resembles mid-century modern',
                 subject_id: 's2',
                 status: status === 'ready' ? 'empty' : 'running',
                 empty_message:
-                  status === 'ready' && !this.city ? 'Add a city to see places with this style.' : null,
+                  status === 'ready' && !this.city ? 'Add a city to explore places.' : null,
                 cards: [],
               },
               ...cross,
@@ -1143,7 +1149,16 @@ export class MockApi {
       case 'getCapture': {
         const c = this.captures.get(params.id!);
         if (!c) return { error: 'not_found', status: 404, message: 'Not found.' };
-        const json = this.styledCaptureDto(c);
+        const dto = this.styledCaptureDto(c);
+        const mode = this.opts.visual;
+        const json = mode && c.ready
+          ? {
+              ...dto,
+              discovery_intents: discoveryIntentsFixture(
+                c.reads < (this.opts.visualPollsToReady ?? 0) ? 'running' : mode,
+              ),
+            }
+          : dto;
         if (c.ready) c.reads += 1;
         return { json };
       }

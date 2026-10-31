@@ -190,6 +190,15 @@ describe('bounded product and reason evidence', () => {
 });
 
 describe('smatch-1 rail assembly', () => {
+  it('valid retrieval provenance does not waive relevance, and invalid provenance cannot pass on style alone', () => {
+    const q = subjectProfile(tennis);
+    const good = ent('good', 'Fixture Court', [tag(G('casual'), 'Casual'), tag('urn:tag:cultural_relevance:qloo:tennis_culture', 'Tennis Culture')]);
+    const unrelated = ent('unrelated', 'Fixture Unrelated', [tag(G('casual'), 'Casual'), tag('urn:tag:personal_style:qloo:unrelated', 'Unrelated')]);
+    const list = [{ list: [good, unrelated], prior: true, fromEntity: false }];
+    expect(rankAffinity(q, list, { admit: () => true }).candidates.map((c) => c.entity.entity_id)).toEqual(['good']);
+    expect(rankAffinity(q, list, { admit: () => false }).candidates).toEqual([]);
+  });
+
   it('gates other products, drops weak matches and duplicate names, ranks style first', () => {
     const q = subjectProfile(tennis);
     const tennisTag = tag('urn:tag:cultural_relevance:qloo:tennis_culture', 'Tennis Culture');

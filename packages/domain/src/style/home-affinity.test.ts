@@ -3,6 +3,7 @@ import {
   homeKindOf,
   drinkKindOf,
   homeKindOfReading,
+  homeMatch,
   HOME_INDUSTRY,
   HOME_RAIL_INDUSTRIES,
   homeEvidence,
@@ -76,7 +77,9 @@ describe('home kind from the reading words (R-9)', () => {
     expect(homeKindOf(storedSubject({ category: 'interior', label: 'Cast iron skillet' }))).toBe('kitchenware');
     expect(homeKindOf(storedSubject({ category: 'interior', label: 'Walnut credenza' }))).toBe('furniture');
     expect(homeKindOf(storedSubject({ category: 'interior', label: 'Sunroom dining nook' }))).toBe('interior');
-    expect(homeKindOf(storedSubject({ category: 'interior', label: 'Terracotta figure' }))).toBe('ceramics');
+    expect(homeKindOf(storedSubject({ category: 'interior', label: 'Terracotta figure' }))).toBeNull();
+    expect(homeKindOf(storedSubject({ category: 'interior', label: 'Terracotta head vessel' }))).toBeNull();
+    expect(homeKindOf(storedSubject({ category: 'interior', label: 'Ceramic face vessel' }))).toBeNull();
     expect(homeKindOf(storedSubject({ category: 'interior', label: 'Studio floor lamp' }))).toBe('decor');
     expect(homeKindOf(storedSubject({ category: 'interior', label: 'Something plain' }))).toBeNull();
   });
@@ -144,6 +147,24 @@ describe('home kind from the reading words (R-9)', () => {
 });
 
 describe('home-brand exemplars (smatch-1 over the home catalogue)', () => {
+  it('does not seed a side chair from side-table or generic chair tags alone', () => {
+    setHomeBrandsForTesting(population([
+      brand({ id: 'SIDE', style_tags: [{ id: 'urn:tag:signature_product:qloo:side_tables', name: 'Side Tables' }] }),
+      brand({ id: 'CHAIR', name: 'Fixture Chairs', style_tags: [{ id: 'urn:tag:signature_product:qloo:chairs', name: 'Chairs' }] }),
+    ]));
+    const chair = storedSubject({ category: 'interior', label: 'Spindle-back side chair', aesthetics: [storedAesthetic('Regency', { defining_features: ['Carved open splat back'] })] });
+    expect(rankHomeCatalogue(chair, 'furniture')).toEqual([]);
+  });
+
+  it('does not seed a speckled mug from fine-dining or generic mug tags alone', () => {
+    setHomeBrandsForTesting(population([
+      brand({ id: 'DINING', industry_ids: [HOME_INDUSTRY.tableware], style_tags: [{ id: 'urn:tag:keyword:qloo:fine_dining', name: 'Fine Dining' }] }),
+      brand({ id: 'MUG', name: 'Fixture Mugs', industry_ids: [HOME_INDUSTRY.tableware], style_tags: [{ id: 'urn:tag:signature_product:qloo:mugs', name: 'Mugs' }] }),
+    ]));
+    const mug = storedSubject({ category: 'interior', label: 'Speckled mug', aesthetics: [storedAesthetic('Rustic modern', { defining_features: ['Fine speckles'] })] });
+    expect(rankHomeCatalogue(mug, 'tableware')).toEqual([]);
+  });
+
   it('ranks only brands of the subject industry that share a style claim with the reading', () => {
     const flatpack = brand({
       id: 'B-3',
@@ -225,6 +246,44 @@ describe('home rail candidate gates (eval r3, home-rail precision)', () => {
   const qloo = (name: string, tags: readonly { id: string; name: string }[], id = 'E-1'): QlooEntity => ({ entity_id: id, name, types: ['urn:entity:brand'], properties: {}, tags: [...tags] });
   const evidenceOf = (e: QlooEntity, subject: StoredSubject) => homeEvidence(scoreMatch(subjectProfile(subject), entityProfile(e.tags ?? []), { fashion: false, v: homeVocabulary() }), e);
   const carried = (list: readonly QlooEntity[], subject: StoredSubject, kind: HomeKind) => homeRailCarry(list, subjectProfile(subject), kind);
+
+  it('rejects unrelated meanings of back and fine while keeping their actual phrases', () => {
+    const chair = storedSubject({ category: 'interior', label: 'Spindle-back side chair', aesthetics: [storedAesthetic('Regency', { defining_features: ['Carved open splat back'] })] });
+    const mattress = qloo('Fixture Mattress', [
+      { id: HOME_INDUSTRY.furniture, name: 'Furniture' },
+      { id: 'urn:tag:keyword:qloo:back_pain_relief', name: 'Back Pain Relief' },
+    ]);
+    expect(carried([mattress], chair, 'furniture').list).toEqual([]);
+    const mug = storedSubject({ category: 'interior', label: 'Speckled mug', aesthetics: [storedAesthetic('Rustic modern', { defining_features: ['Fine speckles'] })] });
+    const dining = qloo('Fixture Dining', [
+      { id: HOME_INDUSTRY.tableware, name: 'Tableware' },
+      { id: 'urn:tag:keyword:qloo:fine_dining', name: 'Fine Dining' },
+    ]);
+    expect(carried([dining], mug, 'tableware').list).toEqual([]);
+    const fineDining = storedSubject({ category: 'interior', label: 'Dining room', aesthetics: [storedAesthetic('Fine dining', { defining_features: [] })] });
+    expect(carried([dining], fineDining, 'tableware').list).toHaveLength(1);
+  });
+
+  it('generic product nouns alone cannot carry a home recommendation', () => {
+    const chair = storedSubject({ category: 'interior', label: 'Carved side chair' });
+    const generic = qloo('Fixture Chairs', [
+      { id: HOME_INDUSTRY.furniture, name: 'Furniture' },
+      { id: 'urn:tag:signature_product:qloo:chairs', name: 'Chairs' },
+    ]);
+    expect(carried([generic], chair, 'furniture').list).toEqual([]);
+  });
+
+  it('keeps the actual feature phrase and can choose a valid alternative tag for an ambiguous word', () => {
+    const subject = storedSubject({ category: 'interior', label: 'Ceramic bowl', aesthetics: [storedAesthetic('Handcrafted', { defining_features: ['Fine speckles'] })] });
+    const entity = qloo('Fixture Maker', [
+      { id: HOME_INDUSTRY.tableware, name: 'Tableware' },
+      { id: 'urn:tag:signature_product:qloo:fine_dining', name: 'Fine Dining' },
+      { id: 'urn:tag:keyword:qloo:fine_speckles', name: 'Fine Speckles' },
+    ]);
+    const match = homeMatch(subjectProfile(subject), entity);
+    expect(match.hits.find((h) => h.token === 'fine')).toMatchObject({ source: 'Fine speckles', label: 'Fine Speckles' });
+    expect(match.hits.some((h) => h.label === 'Fine Dining')).toBe(false);
+  });
 
   it('a fashion house is never a home rail card or signal, even when Qloo also tags it the depicted industry', () => {
     // The bridal-gown house the live ceramics rail returned: its own tags say tableware too.

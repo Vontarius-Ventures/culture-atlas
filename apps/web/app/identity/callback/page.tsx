@@ -1,15 +1,32 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { iosHandoffLink } from './native-link';
+import styles from './page.module.css';
 
 export default function IdentityCallback() {
   const started = useRef(false);
   const [message, setMessage] = useState('Verifying email…');
+  const [native, setNative] = useState(false);
+  const [appLink, setAppLink] = useState<string>();
   useEffect(() => {
     if (started.current) return;
     started.current = true;
     const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const destination = new URLSearchParams(window.location.search).get('destination');
     window.history.replaceState(null, '', '/identity/callback');
+    if (destination === 'ios') {
+      const link = iosHandoffLink(fragment);
+      queueMicrotask(() => {
+        setNative(true);
+        setAppLink(link);
+        setMessage(link
+          ? 'Open culture atlas on the iPhone where you requested this link to finish signing in.'
+          : 'This link is incomplete. Return to the app and request a new sign-in email.');
+      });
+      // Never exchange a phone proof in the browser. The app holds its PKCE verifier.
+      return;
+    }
     async function complete() {
       const stored = sessionStorage.getItem('ca_identity_pending');
       if (!stored) throw new Error('Return to the browser where you started sign-in.');
@@ -40,10 +57,20 @@ export default function IdentityCallback() {
     void complete().catch((error: Error) => setMessage(error.message));
   }, []);
   return (
-    <main>
-      <h1>Account verification</h1>
+    <main className={styles.page}>
+      <p className={styles.brand}>culture atlas</p>
+      <h1 className={styles.title}>{native ? 'Finish signing in' : 'Account verification'}</h1>
       <p role="status">{message}</p>
-      <a href="/identity">Start again</a>
+      {appLink && <a className={styles.open} href={appLink}>Open culture atlas</a>}
+      {appLink && (
+        <p className={styles.help}>
+          If your email app blocks opening the app, open this email link in Safari on the same iPhone,
+          then tap the button. Links expire after 15 minutes and work once.
+        </p>
+      )}
+      <a className={styles.retry} href={native ? 'cultureatlas://identity' : '/identity'}>
+        {native ? 'Return to the app to request a new link' : 'Start again'}
+      </a>
     </main>
   );
 }

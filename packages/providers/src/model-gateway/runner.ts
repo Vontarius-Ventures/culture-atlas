@@ -4,6 +4,7 @@ import { ModelProfileSchema, type ModelProfile } from '../concentrate/profiles';
 import { ProviderError } from '../errors';
 import { attemptSignal, backoffDelay, sleep, type Sleep } from '../http/resilience';
 import type { FinishDetails, ModelSpendLedger, RoleCircuit } from './budget';
+import { attachStructuredResponseShapeIssues, structuredResponseFailure } from './diagnostics';
 import { structuredOutputContract } from './schema';
 import type {
   GatewayCall,
@@ -214,19 +215,20 @@ export class StructuredResponseRunner {
       const t0 = this.now();
       let onAbort: (() => void) | undefined;
       try {
-        response = await Promise.race([
-          this.transport(
+        const dispatch = async () => {
+          await options.beforeDispatch?.();
+          if (options.signal?.aborted || sig.signal.aborted)
+            throw new ProviderError('model-gateway', options.signal?.aborted ? 'aborted' : 'timeout', 'Model request ended');
+          return this.transport(
             {
-              model: profile.model,
-              system: request.system,
-              content: request.content,
-              schemaName: request.schemaName,
-              jsonSchema,
-              maxOutputTokens,
+              model: profile.model, system: request.system, content: request.content,
+              schemaName: request.schemaName, jsonSchema, maxOutputTokens,
               ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}),
-            },
-            { signal: sig.signal },
-          ),
+            }, { signal: sig.signal },
+          );
+        };
+        response = await Promise.race([
+          dispatch(),
           new Promise<never>((_, reject) => {
             onAbort = () => reject(new Error('Request ended'));
             if (sig.signal.aborted) onAbort();
@@ -238,43 +240,44 @@ export class StructuredResponseRunner {
         if (sig.timedOut())
           throw new ProviderError('model-gateway', 'timeout', 'Analysis timed out');
         if (response.outcome === 'refusal')
-          throw new ProviderError('model-gateway', 'content_rejected', 'Model declined analysis');
+          throw structuredResponseFailure('provider_refusal');
         if (response.outcome === 'incomplete')
-          throw new ProviderError(
-            'model-gateway',
-            'incomplete_response',
-            'Model output incomplete',
-          );
+          throw structuredResponseFailure('provider_incomplete');
         if (response.outcome === 'error')
-          throw new ProviderError(
-            'model-gateway',
-            'invalid_response',
-            'Model response reported an error',
-          );
+          throw structuredResponseFailure('provider_error');
         if (
           response.model !== profile.model ||
           (response.actualProvider !== null && response.actualProvider !== profile.provider)
         ) {
           this.disabled = true;
           throw Object.assign(
-            new ProviderError(
-              'model-gateway',
-              'invalid_response',
-              'Returned route does not match qualified profile',
-            ),
+            structuredResponseFailure('route_mismatch'),
             { routeMismatch: true },
           );
         }
+        let parsed: unknown;
         try {
-          const candidate = contract.decode(JSON.parse(response.text));
+          parsed = JSON.parse(response.text);
+        } catch {
+          throw structuredResponseFailure('json_parse');
+        }
+        try {
+          const candidate = contract.decode(parsed);
           result = request.schema.parse(candidate);
+        } catch {
+          const failure = structuredResponseFailure('schema_shape');
+          try {
+            if (request.diagnoseShape)
+              attachStructuredResponseShapeIssues(failure, request.diagnoseShape(parsed));
+          } catch {
+            // Diagnostics must never replace the original failure or retain a cause.
+          }
+          throw failure;
+        }
+        try {
           request.validate?.(result);
         } catch {
-          throw new ProviderError(
-            'model-gateway',
-            'invalid_response',
-            'Model output failed validation',
-          );
+          throw structuredResponseFailure('semantic_consistency');
         }
         outcome = 'complete';
       } catch (error) {

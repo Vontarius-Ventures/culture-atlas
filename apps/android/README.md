@@ -12,7 +12,7 @@ Product name is **culture atlas**. Application id `com.cultureatlas.app`
 | Module | State |
 | --- | --- |
 | `core/` | Pure Kotlin/JVM. `./gradlew :core:test` runs on a plain JDK 17+ with no Android SDK. Reads `fixtures/native-contract`. |
-| `app/` store flavor | Source complete for camera, Music Mode, uploads, onboarding, ready notices. **Not assembled in this environment:** no `ANDROID_HOME` / Android SDK 35 and Google Maven is required for AGP, AndroidX, CameraX, WorkManager and Firebase. |
+| `app/` store flavor | Local validation: **118 unit tests passed** (102 core, 16 app/Robolectric), and the store-debug APK assembled. This is not physical-device, live-auth, provider, or release qualification. |
 | `app/` experimental flavor | Meta Wearables DAT binding in `app/src/experimental/…/MetaDatBinding.kt` is **unverified** against the SDK. Do not treat it as qualified. |
 
 Music Mode (amendment 2.3) is audio-only. Capture → Music opens a recorder that
@@ -27,8 +27,13 @@ provider exists.
 
 ## Build and test
 
-JDK 17+ is required. This machine had no Android SDK; OpenJDK 17 is enough for
-core tests.
+JDK 17+ is required; core tests do not need the Android SDK. The local
+validation environment has JDK 17 and SDK 35:
+
+```sh
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+```
 
 ```sh
 cd apps/android
@@ -59,6 +64,10 @@ API host: `-PatlasApiHost=…` (default `app.cultureatlas.com` in
 `gradle.properties`). No secrets belong in the APK; FCM options are empty unless
 CI passes `-PatlasFcm*`. Experimental Meta app id / client token come from
 `META_APP_ID` / `META_CLIENT_TOKEN` environment variables, never from source.
+The gitignored `local.properties` `atlasApiHost` takes precedence over the
+Gradle property. A real native sign-in run needs a reachable HTTPS API and the
+matching callback/App Link host; localhost HTTP is not an Android store-build
+substitute. No API runtime or signed-in device is supplied by unit tests.
 
 ## Music Mode entry points
 

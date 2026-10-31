@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
-import { expectNoHorizontalScroll, open } from './helpers';
+import { expectNoHorizontalScroll, open, waitForSettledSurface } from './helpers';
 
 // These journeys click feed and related cards; Reduce Motion keeps them still
 // (the floating feed itself is covered in feed-float.spec.ts).
@@ -123,8 +123,22 @@ test.describe('Accessibility', () => {
     test(`no serious axe violations: ${name}`, async ({ page }) => {
       const api = await open(page, '/capture', opts);
       await page.goto(path(api));
-      await page.waitForLoadState('networkidle');
-      await expect(page.getByRole('main')).toBeVisible();
+      const main = page.getByRole('main');
+      await expect(main).toBeVisible();
+      await expect(main.getByRole('heading', { level: 1 })).toBeVisible();
+      await expect(main.locator('[aria-busy="true"]')).toHaveCount(0);
+      if (name === 'discover') {
+        const list = main.getByRole('list', { name: 'Discoveries', exact: true });
+        await expect(list).toBeVisible();
+        // The shallow mock pool auto-loads its next page after 1.2 s. Seeing
+        // the first page is not readiness: cards 13–17 can fade in during Axe.
+        await expect(list.getByRole('listitem')).toHaveCount(api.feedIds.length);
+        for (const item of await list.getByRole('listitem').all())
+          await expect(item).toHaveCSS('opacity', '1');
+      }
+      if (name === 'item')
+        await expect(main.getByRole('list', { name: 'Related discoveries' })).toBeVisible();
+      await waitForSettledSurface(main);
       const results = await new AxeBuilder({ page }).exclude('nextjs-portal').analyze();
       const serious = results.violations.filter(
         (v) => v.impact === 'serious' || v.impact === 'critical',
@@ -140,6 +154,7 @@ test.describe('Accessibility', () => {
     await open(page, '/', { account: true, seedCollections: true });
     await page.getByRole('button', { name: 'Save Around the table' }).click();
     await expect(page.getByRole('radio', { name: 'Slow Sunday' })).toBeChecked();
+    await waitForSettledSurface(page.getByRole('dialog'));
     const results = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
     expect(
       results.violations

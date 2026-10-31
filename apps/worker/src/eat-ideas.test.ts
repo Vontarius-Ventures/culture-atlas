@@ -3,7 +3,7 @@ import { captures, isEatReference, type ServiceContext } from '@culture-atlas/do
 import { closeTestDb, getTestDb } from '@culture-atlas/domain/testing';
 import { VlmAnalysis, type QlooEntity, type QlooTag } from '@culture-atlas/providers';
 import { FakeQloo } from '@culture-atlas/providers/testing';
-import { anonCtx, runJobs, testJpeg, world } from './test-world';
+import { legacyAnonCtx as anonCtx, runJobs, testJpeg, world } from './test-world';
 
 /**
  * Eat dish ideas come only from references G-CATEGORY placed in Eat

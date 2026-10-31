@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { expect, type Page, type TestInfo } from '@playwright/test';
+import { expect, type Locator, type Page, type TestInfo } from '@playwright/test';
 import { installMockApi, type MockApi, type MockOptions } from './mock/api';
 
 export const SCREENSHOT_DIR = path.join(import.meta.dirname, 'screenshots');
@@ -17,6 +17,36 @@ export async function expectNoHorizontalScroll(page: Page) {
     () => document.documentElement.scrollWidth - window.innerWidth,
   );
   expect(overflow, 'page must not scroll horizontally').toBeLessThanOrEqual(0);
+}
+
+/** Call after data readiness: audit final colors without cancelling app motion.
+ * Re-enumerate finite animations each time; a one-off snapshot misses animations
+ * created by later React commits. Infinite decorative motion is not a readiness
+ * signal, and no Axe rule or node is excluded by this helper.
+ */
+export async function waitForSettledSurface(surface: Locator) {
+  await surface.evaluate(async () => {
+    await document.fonts.ready;
+  });
+  await expect
+    .poll(
+      () =>
+        surface.evaluate((element) =>
+          element
+            .getAnimations({ subtree: true })
+            .filter(
+              (animation) =>
+                animation.effect?.getComputedTiming().iterations !== Infinity &&
+                (animation.pending || !['finished', 'idle'].includes(animation.playState)),
+            )
+            .map((animation) => ({
+              name: (animation as CSSAnimation).animationName ?? animation.id,
+              state: animation.playState,
+            })),
+        ),
+      { message: 'finite surface animations must finish before auditing final colors' },
+    )
+    .toEqual([]);
 }
 
 /** Wait until images in the viewport have decoded pixels (stable screenshots). */

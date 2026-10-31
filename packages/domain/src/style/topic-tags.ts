@@ -2,8 +2,8 @@ import type { QlooTag } from '@culture-atlas/providers';
 import { isFineArtSubject } from './adjacency';
 import { lowerFirst } from './text';
 import type { StoredSubject } from './types';
-import { activeSubject, isMusicSubject, sharedCulture } from './discovery-concepts';
-import { admitDiscovery } from './discovery-evidence';
+import { activeSubject, isMusicSubject, sharedCulture, subjectTopicQueries } from './discovery-concepts';
+import { topicTagRelation } from './discovery-evidence';
 
 /**
  * TOPIC-1 rail fill (eval r3, thin rails): the reading's OWN words — an
@@ -133,7 +133,7 @@ function readingWords(s: StoredSubject): readonly string[] {
  * region into an artist's origin or a visual adjective into a sound. A fine-art subject asks for art itself first. Never the
  * label or the mood: those name the thing and the feeling, not what to watch or hear.
  */
-export function topicTagPlan(subjects: readonly StoredSubject[], max = TOPIC_TAG_QUERIES_MAX): readonly TopicQuery[] {
+export function topicTagPlan(subjects: readonly StoredSubject[], max = TOPIC_TAG_QUERIES_MAX, targetType?: string): readonly TopicQuery[] {
   const out: TopicQuery[] = [];
   const seen = new Set<string>();
   subjects = subjects.map(activeSubject);
@@ -147,6 +147,13 @@ export function topicTagPlan(subjects: readonly StoredSubject[], max = TOPIC_TAG
   };
   const words = (text: string, subject: StoredSubject): string[] =>
     textWords(text, 4).filter((w) => !TOPIC_STOP.has(w) && (isFineArtSubject(subject) || subject.category === 'media' || !AMBIGUOUS_TOPIC_TERMS.has(w)));
+  // An object's topic must remain discoverable even when its style adjectives
+  // are absent or held. These queries widen retrieval, not admission.
+  if (targetType === 'urn:entity:movie' || targetType === 'urn:entity:tv_show') {
+    for (const subject of subjects)
+      for (const query of subjectTopicQueries(subject)) add(query, subject);
+    if (out.length >= max) return out.slice(0, max);
+  }
   if (primary && isFineArtSubject(primary)) for (const q of ART_TOPIC_QUERIES) add(q, primary);
   const claims = (s: StoredSubject): readonly { name: string }[] => [
     ...s.aesthetics.filter((c) => !c.held && !c.retracted),
@@ -239,7 +246,7 @@ export function resolveTopicTags(
       // The tag's own name: a bare domain or medium noun says nothing, and a word the reading
       // never used is Qloo's sense of the word, not the photo's (a stop word adds no topic).
       const name = textWords(tag.name, 1);
-      const proof = subject ? admitDiscovery([subject], { entity_id: 'topic-resolution', tags: [tag] }, targetType, { origin: 'topic' }) : null;
+      const proof = subject ? topicTagRelation(subject, tag, targetType) : null;
       if (subject && !proof) continue;
       // An explicit directional relation may widen retrieval (ceramics -> pottery films),
       // never the interpretation of the photo. Legacy plans retain exact-word acceptance.

@@ -5,23 +5,23 @@ import Foundation
 /// every platform; keep in sync with web and Android.
 public enum StyleCopy {
   public static let experimentalBadge = "Experimental"
-  public static let experimentalNote = "Photo and video readings are experimental. They can miss or misread details."
+  public static let experimentalNote = "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
   public static let railCaption = "From an experimental reading"
   public static let whyLine = "Suggested from an experimental reading of your photo."
   public static let paused = "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back."
   public static let limit = "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow."
   public static let failed = "We couldn't read the style of this one."
   public static let empty = "No clear style to read here."
-  public static let noCity = "Add a city to see places with this style."
-  public static let railEmpty = "Qloo found nothing close to this style yet."
+  public static let noCity = "Add a city to explore places."
+  public static let railEmpty = "No supported Qloo connection was found for this reading on this route."
   public static let reading = "Reading the style…"
-  public static let railRunning = "Finding things with this style…"
+  public static let railRunning = "Exploring Qloo connections…"
   public static let updated = "Style reading updated"
   public static let tryAgain = "Try again"
   public static let addCity = "Add city"
   public static let showDetails = "Show all details"
   public static let header = "Style reading"
-  public static let moreLikeThisStyle = "Show more like this style"
+  public static let moreLikeThisStyle = "Explore Qloo connections"
 
   /// `style.qloo_links`: "Qloo also links: {names}".
   public static func qlooLinks(_ names: [String]) -> String? {
@@ -205,7 +205,9 @@ public enum StylePresentation {
     public var showsEmpty: Bool { !isRunning && rail.cards.isEmpty }
     public var emptyText: String { rail.emptyMessage ?? StyleCopy.railEmpty }
     /// The empty message asks for a city: offer "Add city".
-    public var offersAddCity: Bool { showsEmpty && rail.emptyMessage == StyleCopy.noCity }
+    public var offersAddCity: Bool {
+      showsEmpty && (rail.emptyMessage == StyleCopy.noCity || rail.emptyMessage == "Add a city to see places with this style.")
+    }
   }
 
   /// Rails in server order. The experimental caption appears on the first

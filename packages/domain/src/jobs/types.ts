@@ -82,6 +82,12 @@ export const JobPayloads = {
     capture_id: Uuid,
     analysis_id: Uuid,
   }),
+  visual_reference_discovery: z.object({
+    capture_id: Uuid,
+    analysis_id: Uuid,
+    catalog_hash: z.string().regex(/^[a-f0-9]{64}$/),
+    reading_hash: z.string().regex(/^[a-f0-9]{64}$/),
+  }),
 } as const satisfies Record<JobType, z.ZodType>;
 
 export type JobPayload<T extends JobType> = z.infer<(typeof JobPayloads)[T]>;

@@ -4,10 +4,11 @@ import { RRF_K } from './fusion';
 import { echoKey, ECHO_CAP, fashionProductEligible } from '../style/affinity';
 import { isArtworkSubject } from '../style/adjacency';
 import type { AcceptedTag } from '../style/map-tags';
-import { mediaKind, tagNamespace } from '../style/map-tags';
+import { tagNamespace } from '../style/map-tags';
 import type { Exemplar } from '../style/exemplars';
 import { HOME_INDUSTRY } from '../style/home-affinity';
 import type { HomeKind } from '../style/home-affinity';
+import { isMusicSubject } from '../style/discovery-concepts';
 import type { StoredSubject } from '../style/types';
 
 /**
@@ -89,15 +90,15 @@ function firstTag(accepted: readonly AcceptedTag[], namespaces: readonly string[
   return null;
 }
 
-/** Signal tags with their weights (only filter/signal-use primary tags; never reason-only or alternates). */
-function signalTags(accepted: readonly AcceptedTag[], namespaces?: readonly string[]): { id: string; weight: number }[] {
+/** Deliberately unweighted GET IDs; local ranking weights never become API weights. */
+function signalTags(accepted: readonly AcceptedTag[], namespaces?: readonly string[]): { id: string }[] {
   const seen = new Set<string>();
-  const out: { id: string; weight: number }[] = [];
+  const out: { id: string }[] = [];
   for (const a of accepted) {
     if (!a.primary || a.use === 'reason' || seen.has(a.id)) continue;
     if (namespaces && !namespaces.includes(tagNamespace(a.id) ?? '')) continue;
     seen.add(a.id);
-    out.push({ id: a.id, weight: a.slot === 'aesthetics' ? (a.wording === 'asserted' ? 1 : 0.5) : a.slot === 'materials' ? 0.5 : 0.3 });
+    out.push({ id: a.id });
   }
   return out.slice(0, 4);
 }
@@ -118,24 +119,24 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
       if (entity && entity.types.includes('urn:entity:brand')) {
         const primary: QlooInsightsRequest = {
           ...base('urn:entity:brand'),
-          filterTags: [F ?? FASHION_BRAND_TAG],
+          filterTagsOperator: 'union', filterTags: [F ?? FASHION_BRAND_TAG],
           signalEntities: [entity.id],
-          ...(personal ? { signalTags: [{ id: personal, weight: 0.5 }] } : {}),
+          ...(personal ? { signalTagsOperator: 'union', signalTags: [{ id: personal }] } : {}),
         };
-        const secondary: QlooInsightsRequest | null = F ? { ...primary, filterTags: [FASHION_BRAND_TAG] } : null;
+        const secondary: QlooInsightsRequest | null = F ? { ...primary, filterTagsOperator: 'union', filterTags: [FASHION_BRAND_TAG] } : null;
         return { recipe: 'fashion_entity', primary, secondary, tagOnly: false, bridgeable: true, emptyReason: null, entity: e };
       }
       const exemplars = input.exemplars.map((x) => x.id);
       if (exemplars.length >= 2) {
-        const primary: QlooInsightsRequest = { ...base('urn:entity:brand'), filterTags: [F ?? FASHION_BRAND_TAG], signalEntities: exemplars };
-        const secondary: QlooInsightsRequest | null = F ? { ...primary, filterTags: [FASHION_BRAND_TAG] } : null;
+        const primary: QlooInsightsRequest = { ...base('urn:entity:brand'), filterTagsOperator: 'union', filterTags: [F ?? FASHION_BRAND_TAG], signalEntities: exemplars };
+        const secondary: QlooInsightsRequest | null = F ? { ...primary, filterTagsOperator: 'union', filterTags: [FASHION_BRAND_TAG] } : null;
         return { recipe: 'fashion_exemplar', primary, secondary, tagOnly: false, bridgeable: true, emptyReason: null, entity: null };
       }
       const tags = signalTags(accepted, ['fashion_segment', 'personal_style', 'aesthetic_property', 'material', 'design_inspiration']);
       if (!tags.length) return empty('no_signal');
       return {
         recipe: 'fashion_tag_only',
-        primary: { ...base('urn:entity:brand'), filterTags: [F ?? FASHION_BRAND_TAG], signalTags: tags, filterPopularityMin: 0.7 },
+        primary: { ...base('urn:entity:brand'), filterTagsOperator: 'union', filterTags: [F ?? FASHION_BRAND_TAG], signalTagsOperator: 'union', signalTags: tags, filterPopularityMin: 0.7 },
         secondary: null,
         tagOnly: true,
         bridgeable: false,
@@ -151,7 +152,7 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
       const kind = input.homeKind ?? null;
       const objectLike = kind !== null && kind !== 'interior';
       if (!objectLike && city && decor)
-        return { recipe: 'interior_city', primary: { ...base('urn:entity:place'), filterTags: [decor], filterLocationQuery: city }, secondary: null, tagOnly: false, bridgeable: true, emptyReason: null, entity: null };
+        return { recipe: 'interior_city', primary: { ...base('urn:entity:place'), filterTagsOperator: 'union', filterTags: [decor], filterLocationQuery: city }, secondary: null, tagOnly: false, bridgeable: true, emptyReason: null, entity: null };
       if (entity && (entity.types.includes('urn:entity:place') || entity.types.includes('urn:entity:brand'))) {
         const type: QlooEntityType = entity.types.includes('urn:entity:place') ? 'urn:entity:place' : 'urn:entity:brand';
         if (type === 'urn:entity:place' && !city) return empty('no_city');
@@ -172,7 +173,7 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
         if (kind && signals.length)
           return {
             recipe: 'interior_brand',
-            primary: { ...base('urn:entity:brand'), filterTags: [HOME_INDUSTRY[kind]], signalEntities: signals },
+            primary: { ...base('urn:entity:brand'), filterTagsOperator: 'union', filterTags: [HOME_INDUSTRY[kind]], signalEntities: signals },
             secondary: null,
             tagOnly: false,
             bridgeable: true,
@@ -197,7 +198,7 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
           if (signals.length)
             return {
               recipe: 'coffee_brand',
-              primary: { ...base('urn:entity:brand'), filterTags: [HOME_INDUSTRY.coffee], signalEntities: signals },
+              primary: { ...base('urn:entity:brand'), filterTagsOperator: 'union', filterTags: [HOME_INDUSTRY.coffee], signalEntities: signals },
               secondary: null,
               tagOnly: false,
               bridgeable: true,
@@ -215,7 +216,7 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
         recipe: 'food_city',
         // filter.location.query, not signal.location.query: measured 0.4-0.6 s (probe i08/i18) vs 2.2-6.2 s
         // for the signal form (probe i20, first live check), and it keeps results inside the city.
-        primary: { ...base('urn:entity:place'), ...(genre ? { filterTags: [genre] } : {}), filterLocationQuery: city, ...(placeE ? { signalEntities: [placeE.id] } : {}) },
+        primary: { ...base('urn:entity:place'), ...(genre ? { filterTagsOperator: 'union', filterTags: [genre] } : {}), filterLocationQuery: city, ...(placeE ? { signalEntities: [placeE.id] } : {}) },
         secondary: null,
         tagOnly: false,
         bridgeable: true,
@@ -229,31 +230,32 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
       if (city && (tag || placeE))
         return {
           recipe: 'place_city',
-          primary: { ...base('urn:entity:place'), ...(tag ? { filterTags: [tag] } : {}), filterLocationQuery: city, ...(placeE ? { signalEntities: [placeE.id] } : {}) },
+          primary: { ...base('urn:entity:place'), ...(tag ? { filterTagsOperator: 'union', filterTags: [tag] } : {}), filterLocationQuery: city, ...(placeE ? { signalEntities: [placeE.id] } : {}) },
           secondary: null,
           tagOnly: false,
           bridgeable: true,
           emptyReason: null,
           entity: placeE ? { id: placeE.id, name: placeE.name } : null,
         };
-      // Destinations only through an entity signal (tag-only destinations are junk, probe i16).
-      if (placeE)
-        return { recipe: 'place_entity', primary: { ...base('urn:entity:destination'), signalEntities: [placeE.id] }, secondary: null, tagOnly: false, bridgeable: true, emptyReason: null, entity: { id: placeE.id, name: placeE.name } };
+      // Place exploration uses only an explicit user city, never an inferred photo location.
       return empty('no_city');
     }
     case 'media': {
-      const music = mediaKind(subject) === 'music';
+      const music = isMusicSubject(subject);
+      const film = /\b(?:films?|movies?|cinema|television|dvd|tv)\b/i.test(subject.label);
+      if (isArtworkSubject(subject) && !music && !film) return empty('unsupported');
+      if (!music && !film) return empty('unsupported');
       if (entity) {
-        const type: QlooEntityType | null = entity.types.some((t) => t === 'urn:entity:movie' || t === 'urn:entity:tv_show')
+        const type: QlooEntityType | null = film && entity.types.some((t) => t === 'urn:entity:movie' || t === 'urn:entity:tv_show')
           ? 'urn:entity:movie'
-          : entity.types.some((t) => t === 'urn:entity:artist' || t === 'urn:entity:album')
+          : music && entity.types.some((t) => t === 'urn:entity:artist' || t === 'urn:entity:album')
             ? 'urn:entity:artist'
             : null;
         if (type) {
           const style = firstTag(accepted, type === 'urn:entity:movie' ? ['style'] : ['genre:music']);
           return {
             recipe: 'media_entity',
-            primary: { ...base(type), signalEntities: [entity.id], ...(style ? { signalTags: [{ id: style, weight: 0.5 }] } : {}) },
+            primary: { ...base(type), signalEntities: [entity.id], ...(style ? { signalTagsOperator: 'union', signalTags: [{ id: style }] } : {}) },
             secondary: null,
             tagOnly: false,
             bridgeable: true,
@@ -265,11 +267,11 @@ export function planMoreLikeThis(input: PlanInput): RailPlan {
       if (music) {
         const genre = firstTag(accepted, ['genre:music'], ['filter', 'signal']);
         if (!genre) return empty('no_signal');
-        return { recipe: 'music_tag', primary: { ...base('urn:entity:artist'), filterTags: [genre], filterPopularityMin: 0.9 }, secondary: null, tagOnly: true, bridgeable: false, emptyReason: null, entity: null };
+        return { recipe: 'music_tag', primary: { ...base('urn:entity:artist'), filterTagsOperator: 'union', filterTags: [genre], filterPopularityMin: 0.9 }, secondary: null, tagOnly: true, bridgeable: false, emptyReason: null, entity: null };
       }
       const style = firstTag(accepted, ['style', 'subgenre'], ['filter', 'signal']);
       if (!style) return empty('no_signal');
-      return { recipe: 'media_tag', primary: { ...base('urn:entity:movie'), filterTags: [style], filterPopularityMin: 0.9 }, secondary: null, tagOnly: true, bridgeable: false, emptyReason: null, entity: null };
+      return { recipe: 'media_tag', primary: { ...base('urn:entity:movie'), filterTagsOperator: 'union', filterTags: [style], filterPopularityMin: 0.9 }, secondary: null, tagOnly: true, bridgeable: false, emptyReason: null, entity: null };
     }
     default:
       return empty('unsupported');
@@ -373,14 +375,19 @@ export function priceLevel(entity: Pick<QlooEntity, 'tags'>): string | null {
  * remain. Echo (eval r3, cause 4): at most `cap` cards may repeat an anchor brand already
  * surfaced in the analysis — the best echo can still show, repeats beyond the cap are cut.
  */
-export function selectRail(candidates: readonly RailCandidate[], slots: number, echo?: { names: ReadonlySet<string>; cap?: number }): RailCandidate[] {
+export function selectRail(candidates: readonly RailCandidate[], slots: number, echo?: { names: ReadonlySet<string>; cap?: number }, previous: readonly RailCandidate[] = []): RailCandidate[] {
+  if (slots <= 0) return [];
   const echoCap = echo?.cap ?? ECHO_CAP;
   const hasEcho = !!echo?.names.size && candidates.some((c) => echo!.names.has(echoKey(c.entity.name)));
   if (!hasEcho && candidates.length <= slots) return [...candidates];
   const picked: RailCandidate[] = [];
   const perLevel = new Map<string, number>();
   const deferred: RailCandidate[] = [];
-  let echoes = 0;
+  for (const c of previous) {
+    const level = priceLevel(c.entity);
+    if (level) perLevel.set(level, (perLevel.get(level) ?? 0) + 1);
+  }
+  let echoes = echo ? previous.filter((c) => echo.names.has(echoKey(c.entity.name))).length : 0;
   for (const c of candidates) {
     if (picked.length >= slots) break;
     if (hasEcho && echo!.names.has(echoKey(c.entity.name))) {

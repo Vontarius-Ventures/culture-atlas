@@ -9,6 +9,7 @@ import { V2Icon, type V2IconName } from './v2/V2Icon';
 import { UploadStatusBar } from './v2/UploadStatusBar';
 import { useOnboardingGate } from './onboarding/OnboardingGate';
 import { useSession } from '@/lib/client/session';
+import styles from './AppShell.module.css';
 
 type Section = 'discover' | 'library' | 'collections' | 'plans' | null;
 
@@ -145,7 +146,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
       <header className="header">
-        <div className="header__inner">
+        <div className={`header__inner ${styles.inner}`}>
           <Link href="/" className="wordmark">
             culture atlas
           </Link>

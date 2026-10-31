@@ -2,10 +2,19 @@
 .env
 .env.*
 !.env.example
+**/.env
+**/.env.*
+!**/.env.example
 .data/
 .git/
 .github/
 .claude/
+.factory/
+
+# Native signing, device captures, and private evaluation artifacts are not server assets.
+apps/ios/
+apps/android/
+prp/
 
 # Build output and dependencies are rebuilt inside the image.
 **/node_modules/
@@ -16,7 +25,10 @@ coverage/
 test-results/
 playwright-report/
 
-# Not needed at runtime (design references, research notes and the spec stay in the repo).
+# Design and research stay out, except the copy fixture needed by the web typecheck.
 design/
 research/
-specs/
+specs/**
+!specs/capture-platform-v2/
+!specs/capture-platform-v2/design/
+!specs/capture-platform-v2/design/copy.json

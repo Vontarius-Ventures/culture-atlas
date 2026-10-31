@@ -23,6 +23,7 @@ import {
   CaptureResponse,
   DiscoveryCard,
   ItemDetailResponse,
+  VisualReferenceCardSchema,
 } from '@culture-atlas/domain/schemas';
 
 // ---- copy (design/copy.json `experimental.*` and `style.*`, verbatim; D.4) ----------
@@ -30,7 +31,7 @@ import {
 export const STYLE_COPY = {
   'experimental.badge': 'Experimental',
   'experimental.note':
-    'Photo and video readings are experimental. They can miss or misread details.',
+    'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
   'experimental.rail_caption': 'From an experimental reading',
   'experimental.why_line': 'Suggested from an experimental reading of your photo.',
   'style.paused':
@@ -39,10 +40,12 @@ export const STYLE_COPY = {
     "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow.",
   'style.failed': "We couldn't read the style of this one.",
   'style.empty': 'No clear style to read here.',
-  'style.no_city': 'Add a city to see places with this style.',
-  'style.rail_empty': 'Qloo found nothing close to this style yet.',
+  'style.no_city': 'Add a city to explore places.',
+  'style.rail_empty': 'No supported Qloo connection was found for this reading on this route.',
+  'style.unsupported':
+    'No supported connection was found for this reading on this route. Explore Qloo brands, media and places, not matching products or art objects.',
   'style.reading': 'Reading the style…',
-  'style.rail_running': 'Finding things with this style…',
+  'style.rail_running': 'Exploring Qloo connections…',
   'style.updated': 'Style reading updated',
   'style.try_again': 'Try again',
   'style.add_city': 'Add city',
@@ -50,7 +53,7 @@ export const STYLE_COPY = {
   'style.show_details': 'Show all details',
   // Web-only supporting copy (not part of the D.4 table).
   'style.title': 'Style reading',
-  'style.more_like_this_style': 'Show more like this style',
+  'style.more_like_this_style': 'Explore Qloo connections',
 } as const;
 
 /** Normalizes apostrophes so server copy compares equal to the D.4 table. */
@@ -190,19 +193,17 @@ const StyleMatchLenient = z.object({
 });
 /** Card style match, normalized to the shared contract's shape (every field present). */
 export type StyleMatch = NonNullable<DiscoveryCard['style_match']>;
-export const StyleMatch = StyleMatchLenient.transform(
-  (m): StyleMatch => ({
-    subject_id: m.subject_id ?? null,
-    attributes: m.attributes,
-    palette: m.palette,
-    via: m.via ?? null,
-    experimental: m.experimental ?? false,
-  }),
-);
+export const StyleMatch = StyleMatchLenient.transform((m): StyleMatch => ({
+  subject_id: m.subject_id ?? null,
+  attributes: m.attributes,
+  palette: m.palette,
+  via: m.via ?? null,
+  experimental: m.experimental ?? false,
+}));
 
 /** DiscoveryCard plus the two optional E.2 fields, typed as the shared DiscoveryCard. */
 export const StyledCard = DiscoveryCard.extend({
-  reason: z.string().trim().min(1).max(140).nullable().optional().catch(null),
+  reason: z.string().trim().min(1).max(200).nullable().optional().catch(null),
   style_match: lenientObject(StyleMatch).optional(),
 }).transform((c): DiscoveryCard => c);
 export type StyledCard = DiscoveryCard;
@@ -225,6 +226,55 @@ export const ExperimentalLabel = z.object({
 });
 export type ExperimentalLabel = z.infer<typeof ExperimentalLabel>;
 
+// Visual discovery is deliberately independent of legacy recommendations/rails.
+// Missing or invalid additive data must never promote a contextual card.
+const visualText = (max: number) => z.string().trim().min(1).max(max);
+// Share namespace/ID binding and credit validation with the public contract.
+// Display text is stricter here; a malformed card is still dropped individually.
+export const VisualReferenceCard = VisualReferenceCardSchema.safeExtend({
+  id: visualText(200),
+  title: visualText(300),
+  object_type: visualText(300),
+  institution: visualText(300),
+  image: VisualReferenceCardSchema.shape.image.extend({
+    // Keep the shared owned-route validator, requiring nonempty display text.
+    alt: visualText(300),
+  }),
+  explanation: visualText(400),
+  limitations: visualText(500),
+});
+export type VisualReferenceCard = z.infer<typeof VisualReferenceCard>;
+
+export const DiscoveryIntents = z.object({
+  version: z.literal('atlas_discovery_intents_v1'),
+  default_intent: z.literal('connections'),
+  visual: z.object({
+    status: z.enum(['unavailable', 'pending', 'running', 'ready', 'empty', 'failed']),
+    reason: z.string().regex(/^[a-z][a-z0-9_]{0,79}$/).nullable(),
+    cards: z.array(z.unknown()).max(2).transform((cards) =>
+      cards.flatMap((card) => {
+        const parsed = VisualReferenceCard.safeParse(card);
+        return parsed.success ? [parsed.data] : [];
+      }),
+    ),
+  }).transform((visual) => ({
+    ...visual,
+    // Never show cards attached to a pending, failed, or unavailable result.
+    cards: visual.status === 'ready' ? visual.cards : [],
+  })),
+  connections: z.object({ rails: z.array(Rail).max(12) }),
+});
+export type DiscoveryIntents = z.infer<typeof DiscoveryIntents>;
+
+export function parseDiscoveryIntents(raw: unknown): DiscoveryIntents | null {
+  const parsed = DiscoveryIntents.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+export function visualWorkPending(intents: DiscoveryIntents | null | undefined): boolean {
+  return isActiveStatus(intents?.visual.status);
+}
+
 // ---- capture response ---------------------------------------------------------------
 
 export interface StyleExtras {
@@ -238,9 +288,10 @@ export interface StyleExtras {
   waitingReason: string | null;
 }
 
-export type StyledCapture = Omit<CaptureResponse, 'recommendations'> & {
+export type StyledCapture = Omit<CaptureResponse, 'recommendations' | 'discovery_intents'> & {
   recommendations: StyledCard[];
   style: StyleExtras;
+  discovery_intents: DiscoveryIntents | null;
 };
 
 // Section names and statuses the shared contract accepts today (read from the schema itself,
@@ -274,6 +325,7 @@ export function splitStyledCapture(raw: unknown): { base: unknown; extras: Style
   delete base.style_reading;
   delete base.rails;
   delete base.waiting_reason;
+  delete base.discovery_intents;
   if (isObj(raw.analysis)) {
     const analysis: Json = { ...raw.analysis };
     const sections = isObj(analysis.sections) ? analysis.sections : {};
@@ -321,7 +373,8 @@ export const StyledCaptureResponse = z.unknown().transform((raw, ctx): StyledCap
       ? { ...card, reason: extra.data.reason, style_match: extra.data.style_match }
       : card;
   });
-  return { ...parsed.data, recommendations, style: extras };
+  const intents = isObj(raw) ? parseDiscoveryIntents(raw.discovery_intents) : null;
+  return { ...parsed.data, recommendations, style: extras, discovery_intents: intents };
 });
 
 /** GET /v1/items/{id} plus the "Why this?" style fields (E.2 last note). */
@@ -580,7 +633,10 @@ export function railEmptyMessage(rail: Rail): string | null {
 }
 
 export function needsCity(message: string | null | undefined): boolean {
-  return asciiCopy(message ?? '') === asciiCopy(STYLE_COPY['style.no_city']);
+  const text = asciiCopy(message ?? '');
+  return (
+    text === STYLE_COPY['style.no_city'] || text === 'Add a city to see places with this style.'
+  );
 }
 
 /**

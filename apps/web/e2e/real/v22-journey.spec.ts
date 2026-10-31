@@ -26,6 +26,8 @@ const SECOND_PHOTO = path.resolve(import.meta.dirname, '../../public/samples/onb
 const FAKE_QLOO = process.env.FAKE_QLOO_URL ?? 'http://127.0.0.1:4410';
 const DATABASE_URL = process.env.E2E_DATABASE_URL;
 
+test.use({ actionTimeout: 30_000 });
+
 const counter = (page: Page) => page.locator('.pick-counter');
 const build = (page: Page) => page.getByRole('button', { name: 'Build my feed' });
 const desktopLayout = (info: TestInfo) => info.project.name === 'desktop';
@@ -187,8 +189,43 @@ test('taste onboarding, personal feed and fast analysis on the real stack', asyn
     await expect(page.getByRole('heading', { name: 'Sesame noodle supper' })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole('button', { name: /More to explore/ })).toBeVisible();
     await expect(strip).toBeHidden();
-    await expect(page.getByRole('list', { name: 'Discoveries from your photo' }).getByRole('listitem').first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/vlm|qloo|concentrate|anthropic/i)).toHaveCount(0);
+    // This list is still the rendered contract, not a stale selector. The old
+    // two-role model fake supplied no independent subject, while its untagged
+    // Qloo results had no admissible evidence. Assert useful API data first so
+    // an empty terminal capture fails clearly rather than becoming a UI skip.
+    const captureApi = `/v1${new URL(page.url()).pathname}`;
+    await expect.poll(async () => {
+      const response = await page.request.get(captureApi);
+      expect(response.ok()).toBe(true);
+      const result = await response.json() as {
+        recommendations: Array<{ title: string }>;
+        style_reading: { subjects: Array<{ label: string }> } | null;
+      };
+      return {
+        subject: result.style_reading?.subjects[0]?.label,
+        titles: result.recommendations.map((card) => card.title),
+      };
+    }, { timeout: 60_000, message: 'the fixture must publish a subject-supported useful discovery, not only feed suggestions' })
+      .toEqual({ subject: 'Bowl of noodles', titles: ['Fixture Noodle Makers'] });
+    const discoveries = page.getByRole('list', { name: 'Discoveries from your photo' });
+    await expect(discoveries.getByRole('listitem').first()).toBeVisible({ timeout: 60_000 });
+    await expect(discoveries.getByRole('link', { name: 'Fixture Noodle Makers', exact: true })).toBeVisible();
+    await expect(page.getByText(/vlm|concentrate|anthropic/i)).toHaveCount(0);
+    // Qloo attribution is intentional consumer copy, not a raw provider error.
+    // Keep its entity-connection limitation visible instead of removing it to
+    // satisfy the older blanket provider-name assertion.
+    const allowedQlooCopy = new Set([
+      'Qloo connections',
+      'Explore Qloo connections',
+      'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
+      'No supported Qloo connection was found for this reading on this route.',
+      'Wear: No supported Qloo connection was found for this reading on this route.',
+      'Play: No supported Qloo connection was found for this reading on this route.',
+      'No supported connection was found for this reading on this route. Explore Qloo brands, media and places, not matching products or art objects.',
+      'Exploring Qloo connections…',
+    ]);
+    for (const copy of await page.getByText(/qloo/i).allTextContents())
+      expect(allowedQlooCopy.has(copy.replace(/\s+/g, ' ').trim()), `unexpected provider copy: ${copy}`).toBe(true);
     await expectNoHorizontalScroll(page);
     await shot(page, info, '07-result');
   });
@@ -215,7 +252,7 @@ test('taste onboarding, personal feed and fast analysis on the real stack', asyn
 
   await test.step('Settings -> Taste: remove a pick and add one', async () => {
     await page.goto('/settings');
-    await page.getByRole('link', { name: /Edit your taste/ }).click();
+    await page.getByRole('link', { name: 'Edit your interests', exact: true }).click();
     await expect(page).toHaveURL(/\/settings\/taste$/);
     await expect(page.getByRole('heading', { name: 'Interests', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Remove Japandi' })).toBeVisible();

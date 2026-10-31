@@ -22,12 +22,21 @@ import { PINNED_CONCENTRATE_ROUTES } from './catalog';
 import type { VlmEnricher, VlmProvider } from '../vlm/types';
 import { STYLE_MAX_OUTPUT_TOKENS, type VlmStyleReader } from '../vlm/style';
 import { ConcentrateVlmStyleReader } from './style-provider';
+import { CONNECTION_ASSET_MAX_OUTPUT_TOKENS } from '../connection-asset/schema';
+import type { ConnectionAssetProvider } from '../connection-asset/types';
+import { ConcentrateConnectionAsset, UnavailableConnectionAsset } from '../connection-asset/provider';
+import type { VisualSimilarityProvider } from '../visual-similarity/types';
+import { ConcentrateVisualSimilarity, UnavailableVisualSimilarity } from '../visual-similarity/provider';
+import { VISUAL_SIMILARITY_MAX_OUTPUT_TOKENS } from '../visual-similarity/schema';
 import type { VlmVerifier } from '../vlm/verify';
 import type { TextModelProvider } from '../text/types';
 import {
   CATALOG_SNAPSHOT_FILE,
   CatalogSnapshotSchema,
   catalogEntry,
+  catalogCompatible,
+  catalogZdrListed,
+  evalGateFailure,
   loadModelProfiles,
   parseModelProfiles,
   qualificationState,
@@ -47,6 +56,8 @@ export const MODEL_ROLES = [
   'vision_photo_enrich',
   'vision_verify',
   'vision_style',
+  'vision_similarity',
+  'vision_connection_asset',
 ] as const satisfies readonly ModelRole[];
 
 export interface ModelGatewayOptions {
@@ -103,6 +114,8 @@ export interface ModelGateway {
   vlmVerify: VlmVerifier;
   /** Style reading (vision_style); qualified, or experimental under ANALYSIS_EXPERIMENTAL_ROLES. */
   vlmStyle: VlmStyleReader;
+  visualSimilarity: VisualSimilarityProvider;
+  connectionAsset: ConnectionAssetProvider;
   /** Roles whose runner dispatches unqualified (experimental production mode or the demo override). */
   experimentalRoles: ReadonlySet<ModelRole>;
   videoFrames: VlmProvider;
@@ -190,6 +203,33 @@ export function catalogReservationMicros(profile: ModelProfile, snapshot: Catalo
   return Math.ceil(usd * 1_000_000);
 }
 
+/** New role requires genuine local catalog/privacy/price evidence, even in experimental mode. */
+function boundedVisionReservationMicros(profile: ModelProfile, snapshot: CatalogSnapshot | null, outputTokens: number): number | null {
+  if (!snapshot || !catalogCompatible(profile, snapshot) || !catalogZdrListed(profile, snapshot) ||
+      Date.parse(profile.privacyVerifiedAt) > Date.now() || !profile.pricingSnapshotVersion.trim()) return null;
+  const entry = catalogEntry(profile, snapshot) as { providers?: Record<string, { pricing?: unknown }> } | undefined;
+  const prices = entry?.providers?.[profile.provider]?.pricing;
+  if (!Array.isArray(prices)) return null;
+  const tier = prices.find((p) => p && typeof p === 'object' && !p.condition);
+  for (const name of ['input', 'output']) {
+    const token = tier?.tokens?.[name];
+    if (!Number.isFinite(token?.price?.USD) || token.price.USD < 0 ||
+        !Number.isFinite(token?.units) || token.units <= 0) return null;
+  }
+  const computed = catalogReservationMicros(profile, snapshot, outputTokens);
+  if (!Number.isSafeInteger(computed) || computed === null || computed < 0) return null;
+  // Conservative hard ceiling, not an increased global/account allowance.
+  const reservation = Math.max(profile.reservationMicros, computed);
+  return reservation <= 100_000 ? reservation : null;
+}
+
+export function visualSimilarityReservationMicros(profile: ModelProfile, snapshot: CatalogSnapshot | null): number | null {
+  return boundedVisionReservationMicros(profile, snapshot, VISUAL_SIMILARITY_MAX_OUTPUT_TOKENS);
+}
+export function connectionAssetReservationMicros(profile: ModelProfile, snapshot: CatalogSnapshot | null): number | null {
+  return boundedVisionReservationMicros(profile, snapshot, CONNECTION_ASSET_MAX_OUTPUT_TOKENS);
+}
+
 function readSnapshot(dir: string | undefined): CatalogSnapshot | null {
   if (!dir) return null;
   try {
@@ -231,6 +271,8 @@ export function createModelGateway(
     vlmEnrich: new UnavailableVlmEnricher('not_configured'),
     vlmVerify: new UnavailableVlmVerifier('not_configured'),
     vlmStyle: new UnavailableVlmStyleReader('not_configured'),
+    visualSimilarity: new UnavailableVisualSimilarity(),
+    connectionAsset: new UnavailableConnectionAsset(),
     experimentalRoles: new Set(),
     videoFrames: new UnavailableVlm('not_configured'),
     text: new UnavailableTextModel('not_configured'),
@@ -276,6 +318,8 @@ export function createModelGateway(
     vision_verify: undefined,
     // The style reading pins its own (most accurate in-budget) model in its profile (style design §B.2).
     vision_style: undefined,
+    vision_similarity: undefined,
+    vision_connection_asset: undefined,
   } satisfies Record<ModelRole, string | undefined>;
   const transport = canDispatch
     ? (options.transport ??
@@ -295,6 +339,10 @@ export function createModelGateway(
       continue;
     }
     states[role] = qualify(profile);
+    // This task has no bound independent evaluation yet. Neither a synthetic
+    // artifact nor an injected generic qualification callback can qualify it.
+    if (role === 'vision_connection_asset' && states[role] === 'qualified' && evalGateFailure(role, undefined) !== null)
+      states[role] = catalog() && catalogCompatible(profile, catalog()!) ? 'catalog-compatible' : 'configured';
     // Only a qualified profile may dispatch. Lower states are reported, not used,
     // except a catalog-compatible role the operator named in the demo override
     // (never production) or in ANALYSIS_EXPERIMENTAL_ROLES (any environment).
@@ -311,6 +359,17 @@ export function createModelGateway(
       options.onExperimental?.({ role, access: 'paused' });
     }
     const runsExperimental = (prod && experimentalOn) || demo;
+    if (role === 'vision_connection_asset' && config.CONNECTION_MAX_ASSET_CHECKS_PER_CAPTURE === 0) continue;
+    if ((role === 'vision_similarity' || role === 'vision_connection_asset') && (states[role] === 'qualified' || runsExperimental)) {
+      const micros = role === 'vision_connection_asset'
+        ? connectionAssetReservationMicros(profile, catalog()) : visualSimilarityReservationMicros(profile, catalog());
+      if (micros === null) {
+        access[role] = 'spend_cap';
+        options.onExperimental?.({ role, access: 'spend_cap' });
+        continue;
+      }
+      profile = { ...profile, reservationMicros: micros };
+    }
     if (role === 'vision_style' && (states[role] === 'qualified' || runsExperimental)) {
       // R-12: the reservation is computed from catalog prices, never hardcoded; capped per call.
       const micros = catalogReservationMicros(profile, catalog(), STYLE_MAX_OUTPUT_TOKENS);
@@ -357,6 +416,12 @@ export function createModelGateway(
     vlmStyle: runners.vision_style
       ? new ConcentrateVlmStyleReader(runners.vision_style)
       : new UnavailableVlmStyleReader('not_configured'),
+    visualSimilarity: runners.vision_similarity
+      ? new ConcentrateVisualSimilarity(runners.vision_similarity, experimental.has('vision_similarity'))
+      : new UnavailableVisualSimilarity(),
+    connectionAsset: runners.vision_connection_asset
+      ? new ConcentrateConnectionAsset(runners.vision_connection_asset, config.CONNECTION_MAX_ASSET_CHECKS_PER_CAPTURE)
+      : new UnavailableConnectionAsset(),
     experimentalRoles: experimental,
     videoFrames: runners.vision_video_frame
       ? new ConcentrateVlm(runners.vision_video_frame)

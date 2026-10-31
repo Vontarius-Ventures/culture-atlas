@@ -184,7 +184,8 @@ const KIND_WORDS: readonly [ProductKind, RegExp][] = [
 /** The product a subject is, from its label (the thing noun) and its construction names. */
 export function productKind(subject: Pick<StoredSubject, 'label' | 'construction'>): ProductKind {
   // The label's head noun decides first ("Tan crossbody bag", "Black suit with champagne tie").
-  const label = subject.label;
+  // "Dress sneakers" / "dress shoes" use dress as an adjective, not a gown noun.
+  const label = subject.label.replace(/\bdress(?=\s+(?:sneakers?|shoes?|boots?))/gi, 'formal');
   let best: { kind: ProductKind; at: number } | null = null;
   for (const [kind, re] of KIND_WORDS) {
     const m = re.exec(label);
@@ -317,6 +318,8 @@ interface QueryToken {
   slot: MatchSlot;
   /** The claim's own name (as shown in the reading), or the label. */
   claim: string;
+  /** Actual phrase that supplied the token, including a defining feature's own words. */
+  source?: string;
   wording: 'asserted' | 'resembles';
   /** Weight of the source the word is credited to (a claim outranks the label; a stronger claim outranks a weaker one). */
   creditWeight: number;
@@ -367,7 +370,7 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
       if (productNoun) level = 'feature';
       const prev = tokens.get(t);
       if (!prev) {
-        tokens.set(t, { weight: w, slot, claim, wording, creditWeight: w, level });
+        tokens.set(t, { weight: w, slot, claim, source: text, wording, creditWeight: w, level });
         continue;
       }
       // The word keeps its highest weight; it is credited to a shown claim rather than to the label
@@ -376,7 +379,7 @@ export function subjectProfile(subject: StoredSubject, entityTags: readonly Pick
       const takesCredit = slot !== 'label' && (prev.slot === 'label' || w > prev.creditWeight);
       // A word that some claim NAMES counts at name level, whichever source gets the credit.
       const named = (level === 'name' && slot !== 'label') || (prev.level === 'name' && prev.slot !== 'label');
-      const next = takesCredit ? { slot, claim, wording, creditWeight: w } : { slot: prev.slot, claim: prev.claim, wording: prev.wording, creditWeight: prev.creditWeight };
+      const next = takesCredit ? { slot, claim, source: text, wording, creditWeight: w } : { slot: prev.slot, claim: prev.claim, source: prev.source, wording: prev.wording, creditWeight: prev.creditWeight };
       tokens.set(t, { ...next, weight: Math.max(prev.weight, w), level: named || next.slot === 'label' ? 'name' : 'feature' });
     }
   };
@@ -594,6 +597,7 @@ export interface MatchHit {
   token: string;
   slot: MatchSlot;
   claim: string;
+  source?: string;
   wording: 'asserted' | 'resembles';
   /** The entity's own tag label and id that carried the word. */
   label: string;
@@ -626,7 +630,7 @@ const SUIT_WORDS = ['suit', 'tuxedo', 'blazer'];
 export const STRICT_KINDS: readonly ProductKind[] = ['footwear', 'bag', 'jewelry', 'eyewear', 'watch', 'swimwear', 'lingerie'];
 const PRICE_ORDER = ['$', '$$', '$$$', '$$$$'];
 
-export function scoreMatch(q: SubjectProfile, e: EntityProfile, options: { fashion?: boolean; v?: StyleVocabulary } = {}): StyleMatchResult {
+export function scoreMatch(q: SubjectProfile, e: EntityProfile, options: { fashion?: boolean; v?: StyleVocabulary; acceptHit?: (hit: MatchHit) => boolean } = {}): StyleMatchResult {
   const hits: MatchHit[] = [];
   let raw = 0;
   for (const [tok, qt] of q.tokens) {
@@ -639,6 +643,9 @@ export function scoreMatch(q: SubjectProfile, e: EntityProfile, options: { fashi
     let coverage = 0;
     for (const x of list) {
       const covered = x.words.filter((w) => q.tokens.has(w)).length / Math.max(1, x.words.length);
+      // Filter before choosing the best tag, so an invalid high-weight tag does
+      // not hide a lower-weight, genuinely shared phrase for the same token.
+      if (options.acceptHit && !options.acceptHit({ token: tok, slot: qt.slot, claim: qt.claim, source: qt.source, wording: qt.wording, label: x.label, tagId: x.tagId, contribution: 0, coverage: covered, level: qt.level })) continue;
       const v = x.weight * Math.sqrt(covered);
       if (v > best) {
         best = v;
@@ -646,9 +653,10 @@ export function scoreMatch(q: SubjectProfile, e: EntityProfile, options: { fashi
         coverage = covered;
       }
     }
+    if (best < 0) continue;
     const c = qt.weight * best * wordWeight(tok, options.v);
     raw += c;
-    hits.push({ token: tok, slot: qt.slot, claim: qt.claim, wording: qt.wording, label: et.label, tagId: et.tagId, contribution: c, coverage, level: qt.level });
+    hits.push({ token: tok, slot: qt.slot, claim: qt.claim, source: qt.source, wording: qt.wording, label: et.label, tagId: et.tagId, contribution: c, coverage, level: qt.level });
   }
   hits.sort((a, b) => b.contribution - a.contribution);
   // Mild length normalization: a brand with 60 tags should not win only by having more words.

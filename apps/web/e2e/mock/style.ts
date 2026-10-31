@@ -13,7 +13,7 @@ export type StyleMode = 'ready' | 'failed' | 'empty' | 'limit' | 'paused' | 'ret
 
 export const EXPERIMENTAL = {
   label: 'Experimental',
-  note: 'Photo and video readings are experimental. They can miss or misread details.',
+  note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
 } as const;
 
 export const WHY_LINE = 'Suggested from an experimental reading of your photo.';

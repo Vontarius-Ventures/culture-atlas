@@ -22,7 +22,12 @@ export const DomainConfigSchema = z.object({
   SESSION_SECRET: z.string().default('dev-only-session-secret-change-me'),
   /** 32-byte key (base64) for encrypting sensor viewer credentials at rest. */
   CREDENTIAL_ENCRYPTION_KEY: z.string().optional(),
-  COMPILER_VERSION: z.string().default('compiler-2026-10-13'),
+  COMPILER_VERSION: z.string().default('compiler-2026-10-27-intent-quality-v10'),
+  /** Opt-in local licensed visual catalog. Absence never triggers additional model work. */
+  VISUAL_REFERENCE_CATALOG_FILE: z.string().max(2000).optional(),
+  /** Candidate-only identity/availability allocation, independent of the lifetime-two visual role. */
+  CONNECTION_MAX_ASSET_CHECKS_PER_CAPTURE: z.coerce.number().int().min(0).max(3).default(0),
+  VISUAL_MAX_COMPARISONS_PER_CAPTURE: z.coerce.number().int().min(0).max(2).default(0),
   ANON_SESSION_TTL_HOURS: int(LIMITS.anonymousTtlHours),
   ACCOUNT_SESSION_TTL_DAYS: int(30),
   AGENT_TOKEN_DEFAULT_TTL_DAYS: int(30),
@@ -38,7 +43,7 @@ export const DomainConfigSchema = z.object({
   ANALYSIS_DEADLINE_MS: int(LIMITS.analysisDeadlineMs),
   JOB_MAX_QLOO_REQUESTS: int(LIMITS.qlooRequestsPerJob),
   JOB_MAX_RESEARCH_REFS: int(LIMITS.researchedReferencesMax),
-  JOB_MAX_PROVIDER_RETRIES: int(LIMITS.providerRetriesPerStage),
+  JOB_MAX_PROVIDER_RETRIES: z.coerce.number().int().min(0).default(LIMITS.providerRetriesPerStage),
   ANON_DAILY_ANALYSES: int(10),
   ANON_DAILY_PLANS: int(5),
   ACCOUNT_DAILY_ANALYSES: int(100),

@@ -153,7 +153,7 @@ struct CaptureStyleSection: View {
     }
   }
 
-  /// Long-press "Show more like this style": scroll to the subject's rail and pulse its header.
+  /// Long-press "Explore Qloo connections": scroll to the subject's rail and pulse its header.
   private func showMore(_ subject: StyleSubject) {
     let key = subject.rail ?? "more_like_this:\(subject.id)"
     guard model.rails.contains(where: { $0.rail.key == key }) else { return }
@@ -596,7 +596,7 @@ struct CitySheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 14) {
       Text("Your city").font(.system(.title3, design: .serif))
-      Text("Used only to find places with this style.").font(.footnote).foregroundStyle(AtlasTheme.muted)
+      Text("Used only to explore places in the city you enter.").font(.footnote).foregroundStyle(AtlasTheme.muted)
       TextField("Los Angeles, CA", text: $city)
         .textContentType(.addressCity)
         .textFieldStyle(.roundedBorder)

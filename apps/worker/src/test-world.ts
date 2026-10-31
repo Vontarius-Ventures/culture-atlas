@@ -35,11 +35,14 @@ export async function testJpeg(width = 64, height = 48): Promise<Uint8Array> {
 }
 
 const entity = (id: string, name: string, type: string, extra: Partial<QlooEntity> = {}): QlooEntity => ({ entity_id: id, name, types: [type], properties: {}, tags: [], ...extra });
+const racingTag = { id: 'urn:tag:style:qloo:fixture_vintage_racing', name: 'Vintage Racing' };
+const fashionTag = { id: 'urn:tag:genre:brand:fashion:clothing', name: 'Clothing' };
+const musicTag = { id: 'urn:tag:genre:music:jazz', name: 'Jazz' };
 
 /** Search/tag catalogue matching the VLM fixtures. Shape-only, Fixture-prefixed. */
 export const CATALOG = {
   search: {
-    'fixture denim co': [entity('FIXTURE-BRAND-0001', 'Fixture Denim Co', 'urn:entity:brand')],
+    'fixture denim co': [entity('FIXTURE-BRAND-0001', 'Fixture Denim Co', 'urn:entity:brand', { tags: [fashionTag, racingTag] })],
   } as Record<string, QlooEntity[]>,
   tags: {
     'vintage racing': [{ id: 'urn:tag:style:qloo:fixture_vintage_racing', name: 'Vintage Racing', type: 'urn:tag:style:qloo' }],
@@ -48,16 +51,16 @@ export const CATALOG = {
   } as Record<string, QlooTag[]>,
   insights: {
     'urn:entity:brand': [
-      entity('FIXTURE-BRAND-0101', 'Fixture Racing Knitwear', 'urn:entity:brand', { query: { affinity: 0.9, explainability: [{ entity_id: 'FIXTURE-BRAND-0001', score: 0.8 }] } }),
+      entity('FIXTURE-BRAND-0101', 'Fixture Racing Knitwear', 'urn:entity:brand', { tags: [fashionTag, racingTag], query: { affinity: 0.9, explainability: [{ entity_id: 'FIXTURE-BRAND-0001', score: 0.8 }] } }),
       entity('FIXTURE-BRAND-0001', 'Fixture Denim Co', 'urn:entity:brand'), // the anchor itself: never recommended back
-      entity('FIXTURE-BRAND-0102', 'Fixture Driving Shoes', 'urn:entity:brand'),
-      entity('FIXTURE-BRAND-0103', 'Fixture Leather Goods', 'urn:entity:brand'),
-      entity('FIXTURE-BRAND-0104', 'Fixture Fourth Brand', 'urn:entity:brand'),
+      entity('FIXTURE-BRAND-0102', 'Fixture Driving Shoes', 'urn:entity:brand', { tags: [fashionTag, racingTag] }),
+      entity('FIXTURE-BRAND-0103', 'Fixture Leather Goods', 'urn:entity:brand', { tags: [fashionTag, racingTag] }),
+      entity('FIXTURE-BRAND-0104', 'Fixture Fourth Brand', 'urn:entity:brand', { tags: [fashionTag, racingTag] }),
     ],
-    'urn:entity:artist': [entity('FIXTURE-ARTIST-0001', 'Fixture Artist One', 'urn:entity:artist'), entity('FIXTURE-ARTIST-0002', 'Fixture Artist Two', 'urn:entity:artist')],
+    'urn:entity:artist': [entity('FIXTURE-ARTIST-0001', 'Fixture Artist One', 'urn:entity:artist', { tags: [musicTag, racingTag] }), entity('FIXTURE-ARTIST-0002', 'Fixture Artist Two', 'urn:entity:artist', { tags: [musicTag, racingTag] })],
     'urn:entity:movie': [
-      entity('FIXTURE-MOVIE-0001', 'Fixture Film One', 'urn:entity:movie', { properties: { release_year: 1966 } }),
-      entity('FIXTURE-MOVIE-0002', 'Fixture Film Two', 'urn:entity:movie', { properties: { release_year: 1971 } }),
+      entity('FIXTURE-MOVIE-0001', 'Fixture Film One', 'urn:entity:movie', { tags: [racingTag], properties: { release_year: 1966 } }),
+      entity('FIXTURE-MOVIE-0002', 'Fixture Film Two', 'urn:entity:movie', { tags: [racingTag], properties: { release_year: 1971 } }),
     ],
   } as Record<string, QlooEntity[]>,
 };
@@ -138,6 +141,22 @@ export async function anonCtx(providers: ServiceContext['providers'], config = t
 
 export async function accountCtx(providers: ServiceContext['providers'], config = testConfig()): Promise<ServiceContext> {
   return testContext(await insertAccount(), { providers, config });
+}
+
+/** Historical fixture contract, NOT the production default or a v10 evidence waiver.
+ * Old readings intentionally lack grounded observations/images and include creative Eat.
+ * New v10 tests must use accountCtx/anonCtx with an explicit v10 config instead.
+ */
+export function legacyTestConfig(overrides: Partial<Record<string, string>> = {}) {
+  return testConfig({ ...overrides, COMPILER_VERSION: 'compiler-2026-10-27-intent-quality-v9' });
+}
+
+export async function legacyAccountCtx(providers: ServiceContext['providers'], config = legacyTestConfig()): Promise<ServiceContext> {
+  return accountCtx(providers, config);
+}
+
+export async function legacyAnonCtx(providers: ServiceContext['providers'], config = legacyTestConfig()): Promise<ServiceContext> {
+  return anonCtx(providers, config);
 }
 
 /** Runs the real Worker until the given jobs (and anything they enqueue by id) are done. */

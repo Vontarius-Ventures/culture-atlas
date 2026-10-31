@@ -23,6 +23,42 @@ import { storedAesthetic, storedSubject } from './test-support';
 
 const lineage = (name: string) => ({ name, certainty: 0.7, wording: 'resembles' as const, display: name, strength: null as never, corroborated_by: [], held: false, basis: 'visible' as const, region: null, qloo: null });
 
+describe('typed subject topic retrieval', () => {
+  it.each([
+    ['media', 'Carved marble statue', ['sculpture', 'museum']],
+    ['interior', 'Terracotta face vessel fragment', ['pottery', 'ceramics']],
+    ['place', 'Ornate tower building', ['architecture', 'interior design']],
+    ['media', 'Flat vector cafe illustration', ['coffee', 'cafe']],
+    ['food', 'Bowl of noodles', ['cooking', 'food']],
+    ['interior', 'Four-poster canopy bed', ['interior design', 'furniture']],
+  ] as const)('retrieves the subject of %s / %s without active aesthetics', (category, label, queries) => {
+    const subject = storedSubject({ category, label, aesthetics: [] });
+    const plan = topicTagPlan([subject], undefined, 'urn:entity:movie');
+    expect(plan.map((q) => q.query)).toEqual(queries);
+    expect(plan).toHaveLength(TOPIC_TAG_QUERIES_MAX);
+    expect(plan.every((q) => q.subject?.id === subject.id)).toBe(true);
+  });
+
+  it('does not promote sculpture into music or hidden materials into an about-topic', () => {
+    const sculpture = storedSubject({ category: 'media', label: 'Carved statue', aesthetics: [] });
+    const plan = topicTagPlan([sculpture], undefined, 'urn:entity:artist');
+    expect(plan.map((q) => q.query)).not.toContain('sculpture');
+    const hidden = storedSubject({ category: 'interior', label: 'Object', aesthetics: [], materials: [
+      { ...lineage('Terracotta'), texture: '', held: true },
+    ] });
+    expect(topicTagPlan([hidden], undefined, 'urn:entity:movie')).toEqual([]);
+  });
+
+  it('still requires actual target-compatible tags and rejects coincidental plot keywords', () => {
+    const subject = storedSubject({ category: 'interior', label: 'Terracotta face vessel fragment', aesthetics: [] });
+    const plan = topicTagPlan([subject], undefined, 'urn:entity:movie');
+    const tag: QlooTag = { id: 'urn:tag:theme:qloo:pottery', name: 'Pottery', type: 'urn:tag:theme', parents: ['urn:entity:movie'] };
+    expect(resolveTopicTags(plan, new Map([['pottery', [tag]]]), 'urn:entity:movie')).toHaveLength(1);
+    expect(resolveTopicTags(plan, new Map([['pottery', [{ ...tag, parents: ['urn:entity:artist'] }]]]), 'urn:entity:movie')).toEqual([]);
+    expect(resolveTopicTags(plan, new Map([['pottery', [{ ...tag, id: 'urn:tag:keyword:qloo:pottery' }]]]), 'urn:entity:movie')).toEqual([]);
+  });
+});
+
 describe('topic source sense survives lookup', () => {
   it('permits an explicitly typed ceramics-to-pottery topic without asserting historical identity', () => {
     const subject = storedSubject({ category: 'interior', label: 'Glazed ceramic bowls', aesthetics: [storedAesthetic('Persian ceramics', { wording: 'resembles' })] });

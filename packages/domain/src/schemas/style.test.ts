@@ -40,11 +40,11 @@ describe('style wire contract (style design §E.2, R-16)', () => {
   it('keeps the D.4 copy verbatim', () => {
     expect(STYLE_COPY.experimental).toEqual({
       badge: 'Experimental',
-      note: 'Photo and video readings are experimental. They can miss or misread details.',
+      note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
       rail_caption: 'From an experimental reading',
       why_line: 'Suggested from an experimental reading of your photo.',
     });
-    expect(STYLE_COPY.style.no_city).toBe('Add a city to see places with this style.');
-    expect(STYLE_COPY.style.rail_empty).toBe('Qloo found nothing close to this style yet.');
+    expect(STYLE_COPY.style.no_city).toBe('Add a city to explore places.');
+    expect(STYLE_COPY.style.rail_empty).toBe('No supported Qloo connection was found for this reading on this route.');
   });
 });

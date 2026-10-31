@@ -1498,7 +1498,7 @@
           "created_at": "2026-10-23T18:00:00.000Z",
           "experimental": {
             "label": "Experimental",
-            "note": "Photo and video readings are experimental. They can miss or misread details."
+            "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
           }
         },
         "references": [],
@@ -1515,7 +1515,7 @@
             "saved_item_id": null,
             "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
             "evidence_available": true,
-            "reason": "Shares a taste with Dickies, from your workwear rail",
+            "reason": "A Qloo brand connection to explore.",
             "style_match": {
               "subject_id": "s1",
               "attributes": [],
@@ -1644,7 +1644,7 @@
           {
             "key": "more_like_this:s1",
             "kind": "more_like_this",
-            "title": "More like this",
+            "title": "Brands to explore",
             "subtitle": "Workwear · duck canvas",
             "subject_id": "s1",
             "status": "ready",
@@ -1663,7 +1663,7 @@
                 "saved_item_id": null,
                 "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
                 "evidence_available": true,
-                "reason": "Because of the workwear and duck canvas and the tobacco brown palette",
+                "reason": "A workwear brand to explore, not a matching product.",
                 "style_match": {
                   "subject_id": "s1",
                   "attributes": [
@@ -1689,7 +1689,7 @@
                 "saved_item_id": null,
                 "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
                 "evidence_available": true,
-                "reason": "For the workwear and heritage look your photo resembles",
+                "reason": "A heritage brand to explore, not a matching product.",
                 "style_match": {
                   "subject_id": "s1",
                   "attributes": [
@@ -1727,7 +1727,7 @@
                 "saved_item_id": null,
                 "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
                 "evidence_available": true,
-                "reason": "Shares a taste with Dickies, from your workwear rail",
+                "reason": "A Qloo brand connection to explore.",
                 "style_match": {
                   "subject_id": "s1",
                   "attributes": [],
@@ -1811,7 +1811,7 @@
           "created_at": "2026-10-23T18:00:00.000Z",
           "experimental": {
             "label": "Experimental",
-            "note": "Photo and video readings are experimental. They can miss or misread details."
+            "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
           }
         },
         "references": [],
@@ -1871,7 +1871,7 @@
           "created_at": "2026-10-23T18:00:00.000Z",
           "experimental": {
             "label": "Experimental",
-            "note": "Photo and video readings are experimental. They can miss or misread details."
+            "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
           }
         },
         "references": [],
@@ -1888,7 +1888,7 @@
             "saved_item_id": null,
             "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
             "evidence_available": true,
-            "reason": "Shares a taste with Dickies, from your workwear rail",
+            "reason": "A Qloo brand connection to explore.",
             "style_match": {
               "subject_id": "s1",
               "attributes": [],
@@ -2007,11 +2007,11 @@
           {
             "key": "more_like_this:s1",
             "kind": "more_like_this",
-            "title": "More like this",
+            "title": "Qloo connections",
             "subtitle": "Japandi",
             "subject_id": "s1",
             "status": "empty",
-            "empty_message": "Add a city to see places with this style.",
+            "empty_message": "Add a city to explore places.",
             "caption": null,
             "cards": []
           },
@@ -2037,7 +2037,7 @@
                 "saved_item_id": null,
                 "recommendation_id": "e8f90a1b-2c3d-4e4f-9051-6273849506a7",
                 "evidence_available": true,
-                "reason": "Shares a taste with Dickies, from your workwear rail",
+                "reason": "A Qloo brand connection to explore.",
                 "style_match": {
                   "subject_id": "s1",
                   "attributes": [],
@@ -2121,7 +2121,7 @@
           "created_at": "2026-10-23T18:00:00.000Z",
           "experimental": {
             "label": "Experimental",
-            "note": "Photo and video readings are experimental. They can miss or misread details."
+            "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
           }
         },
         "references": [],
@@ -2206,7 +2206,7 @@
         "error_code": null,
         "experimental": {
           "label": "Experimental",
-          "note": "Photo and video readings are experimental. They can miss or misread details."
+          "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
         },
         "result": {
           "mode": "photo",

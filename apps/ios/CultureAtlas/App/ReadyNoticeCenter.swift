@@ -46,7 +46,10 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
   private var foregroundTask: Task<Void, Never>?
   private var presence: ReadyNoticePolicy.AppPresence = .foreground
 
-  init(api: AtlasAPI, sessions: SessionStore, directory: URL) {
+  private let remoteNotificationsEnabled: Bool
+
+  init(api: AtlasAPI, sessions: SessionStore, directory: URL, remoteNotificationsEnabled: Bool = true) {
+    self.remoteNotificationsEnabled = remoteNotificationsEnabled
     self.api = api
     self.sessions = sessions
     self.store = ReadyNoticeStore(directory: directory)
@@ -68,7 +71,7 @@ final class ReadyNoticeCenter: NSObject, ObservableObject {
 
   /// Silent pushes need no permission; the token is registered once signed in.
   func signedIn() {
-    UIApplication.shared.registerForRemoteNotifications()
+    if remoteNotificationsEnabled { UIApplication.shared.registerForRemoteNotifications() }
     sceneActive()
   }
 

@@ -5,6 +5,8 @@ import { z } from 'zod';
 import type { ModelRole } from '../model-gateway/types';
 import { GUARDRAIL_VERSION } from '../vlm/guardrails';
 import { EVAL_BINDING } from './eval-binding';
+import { CONNECTION_ASSET_PROMPT_VERSION, CONNECTION_ASSET_SCHEMA_VERSION } from '../connection-asset/schema';
+import { VISUAL_SIMILARITY_PROMPT_VERSION, VISUAL_SIMILARITY_SCHEMA_VERSION } from '../visual-similarity/schema';
 
 /** Every model role a profile can qualify (ModelRole). */
 export const MODEL_ROLE_VALUES = [
@@ -21,6 +23,8 @@ export const MODEL_ROLE_VALUES = [
   'vision_verify',
   /** Style reading (style design §B.2): parallel to stage 1, its own prompt, schema and image size. */
   'vision_style',
+  'vision_similarity',
+  'vision_connection_asset',
 ] as const satisfies readonly ModelRole[];
 
 /**
@@ -75,6 +79,20 @@ export const ModelProfileSchema = z
       ctx.addIssue({ code: 'custom', message: 'Profile must pin one exact provider/model' });
     }
     const vision = p.role.startsWith('vision_');
+    if (p.role === 'vision_connection_asset' &&
+        (p.promptVersion !== CONNECTION_ASSET_PROMPT_VERSION || p.schemaVersion !== CONNECTION_ASSET_SCHEMA_VERSION ||
+         p.timeoutMs > 15_000 || p.maxOutputTokens > 400 || p.image.maxBytes > 200_000 ||
+         p.image.maxPixels > 262_144 || p.image.maxDimension > 512)) {
+      ctx.addIssue({ code: 'custom', message: 'Connection asset role requires its own bounded prompt/schema' });
+    }
+    if (p.role === 'vision_similarity' &&
+        (p.promptVersion !== VISUAL_SIMILARITY_PROMPT_VERSION || p.schemaVersion !== VISUAL_SIMILARITY_SCHEMA_VERSION)) {
+      ctx.addIssue({ code: 'custom', message: 'Visual similarity requires its independently versioned prompt and schema' });
+    }
+    if (p.role === 'vision_similarity' &&
+        (p.image.maxDimension < 512 || p.image.maxPixels < 512 * 272 || p.image.maxBytes < 4096)) {
+      ctx.addIssue({ code: 'custom', message: 'Visual similarity must retain a legible bounded contact sheet' });
+    }
     if (
       vision &&
       (p.image.maxCount !== 1 || !p.image.maxBytes || !p.image.maxPixels || !p.image.maxDimension)
@@ -205,6 +223,11 @@ export type EvalBlock = z.infer<typeof EvalBlockSchema>;
  * blind split no failed blind run has consumed (`blind_set_consumed`).
  */
 export function evalGateFailure(role: ModelRole, block: EvalBlock | undefined, binding: EvalBindingLike = EVAL_BINDING): string | null {
+  // There is not yet a frozen, independently scored source/candidate pair set.
+  // Existing photo/text/style artifacts must NEVER qualify this new task.
+  // Operator-permitted catalog-compatible experiments remain explicitly experimental.
+  if (role === 'vision_similarity') return 'visual_pair_evaluation_not_bound';
+  if (role === 'vision_connection_asset') return 'connection_asset_evaluation_not_bound';
   const required = REQUIRED_GOLDEN_SET[role];
   if (!required) return null;
   if (!block) return 'missing_eval';
@@ -334,6 +357,8 @@ export const QUALIFICATION_MINIMUM_FIXTURES: Record<ModelRole, number> = {
   vision_verify: 10,
   // Style design §B.2: the style reading qualifies on >= 10 photos (eval set style-v1).
   vision_style: 10,
+  vision_similarity: 10,
+  vision_connection_asset: 10,
 };
 
 function findString(value: unknown, needle: string): boolean {

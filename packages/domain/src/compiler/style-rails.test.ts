@@ -17,11 +17,11 @@ const PS = 'urn:tag:personal_style:qloo:rugged';
 const BRAND = { id: 'E-1', name: 'Carhartt', types: ['urn:entity:brand'] };
 
 describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
-  it('fashion with an identified brand: filter F, entity signal, personal_style at 0.5; secondary drops F', () => {
+  it('fashion with an identified brand: filter F, entity signal, unweighted personal_style; secondary drops F', () => {
     const p = plan({ entity: BRAND, filterTag: F, accepted: [tag(F), tag(PS, { use: 'signal', wording: 'resembles' })] });
     expect(p.recipe).toBe('fashion_entity');
-    expect(p.primary).toEqual({ filterType: 'urn:entity:brand', explainability: true, take: 20, filterTags: [F], signalEntities: ['E-1'], signalTags: [{ id: PS, weight: 0.5 }] });
-    expect(p.secondary).toEqual({ ...p.primary, filterTags: ['urn:tag:genre:brand:fashion'] });
+    expect(p.primary).toEqual({ filterType: 'urn:entity:brand', explainability: true, take: 20, filterTagsOperator: 'union', filterTags: [F], signalEntities: ['E-1'], signalTagsOperator: 'union', signalTags: [{ id: PS }] });
+    expect(p.secondary).toEqual({ ...p.primary, filterTagsOperator: 'union', filterTags: ['urn:tag:genre:brand:fashion'] });
     expect(p.bridgeable).toBe(true);
   });
 
@@ -29,7 +29,7 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
     const exemplars = [{ id: 'X1', name: 'a', score: 2, popularity: 0.9, shared: [F] }, { id: 'X2', name: 'b', score: 2, popularity: 0.9, shared: [F] }];
     const p = plan({ filterTag: F, accepted: [tag(F)], exemplars });
     expect(p.recipe).toBe('fashion_exemplar');
-    expect(p.primary).toEqual({ filterType: 'urn:entity:brand', explainability: true, take: 20, filterTags: [F], signalEntities: ['X1', 'X2'] });
+    expect(p.primary).toEqual({ filterType: 'urn:entity:brand', explainability: true, take: 20, filterTagsOperator: 'union', filterTags: [F], signalEntities: ['X1', 'X2'] });
     expect(p.entity).toBeNull();
   });
 
@@ -38,7 +38,7 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
     expect(p.recipe).toBe('fashion_tag_only');
     expect(p.tagOnly).toBe(true);
     expect(p.bridgeable).toBe(false);
-    expect(p.primary).toMatchObject({ filterTags: ['urn:tag:genre:brand:fashion'], signalTags: [{ id: PS, weight: 0.5 }], filterPopularityMin: 0.7 });
+    expect(p.primary).toMatchObject({ filterTagsOperator: 'union', filterTags: ['urn:tag:genre:brand:fashion'], signalTagsOperator: 'union', signalTags: [{ id: PS }], filterPopularityMin: 0.7 });
     expect(plan({ accepted: [] }).emptyReason).toBe('no_signal');
   });
 
@@ -65,7 +65,7 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
   it('interior: places with the decor tag in the user city; with brand rails off, an honest no_city', () => {
     const interior = storedSubject({ category: 'interior' });
     const decor = 'urn:tag:decor:qloo:japandi';
-    expect(plan({ subject: interior, accepted: [tag(decor, { use: 'signal' })], city: 'Brooklyn, NY' }).primary).toEqual({ filterType: 'urn:entity:place', explainability: true, take: 20, filterTags: [decor], filterLocationQuery: 'Brooklyn, NY' });
+    expect(plan({ subject: interior, accepted: [tag(decor, { use: 'signal' })], city: 'Brooklyn, NY' }).primary).toEqual({ filterType: 'urn:entity:place', explainability: true, take: 20, filterTagsOperator: 'union', filterTags: [decor], filterLocationQuery: 'Brooklyn, NY' });
     expect(plan({ subject: interior, accepted: [tag(decor)] })).toMatchObject({ primary: null, emptyReason: 'no_city' });
   });
 
@@ -81,7 +81,7 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
       filterType: 'urn:entity:brand',
       explainability: true,
       take: 20,
-      filterTags: ['urn:tag:industry:qloo:interior_design'],
+      filterTagsOperator: 'union', filterTags: ['urn:tag:industry:qloo:interior_design'],
       signalEntities: ['X1'],
     });
     // An object (a chair) is a brand question even with a city and a decor tag.
@@ -98,7 +98,7 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
   it('food: restaurant-genre places in the city; a coffee drink without a city is a brand question, a dish keeps no_city', () => {
     const food = storedSubject({ category: 'food' });
     const genre = 'urn:tag:genre:place:restaurant:ramen';
-    expect(plan({ subject: food, accepted: [tag(genre)], city: 'Los Angeles, CA' }).primary).toEqual({ filterType: 'urn:entity:place', explainability: true, take: 20, filterTags: [genre], filterLocationQuery: 'Los Angeles, CA' });
+    expect(plan({ subject: food, accepted: [tag(genre)], city: 'Los Angeles, CA' }).primary).toEqual({ filterType: 'urn:entity:place', explainability: true, take: 20, filterTagsOperator: 'union', filterTags: [genre], filterLocationQuery: 'Los Angeles, CA' });
     expect(plan({ subject: food, accepted: [tag(genre)] })).toMatchObject({ primary: null, emptyReason: 'no_city' });
     const espresso = storedSubject({ category: 'food', label: 'Espresso in a ceramic cup' });
     const exemplars = [{ id: 'C1', name: 'a', score: 2, popularity: 1, shared: [] }];
@@ -106,7 +106,7 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
       filterType: 'urn:entity:brand',
       explainability: true,
       take: 20,
-      filterTags: ['urn:tag:industry:qloo:coffee'],
+      filterTagsOperator: 'union', filterTags: ['urn:tag:industry:qloo:coffee'],
       signalEntities: ['C1'],
     });
     expect(plan({ subject: espresso, interiorBrandsEnabled: true, homeKind: 'coffee' })).toMatchObject({ primary: null, emptyReason: 'no_signal' });
@@ -122,9 +122,9 @@ describe('"More like this" recipes (style design §C.3, R-1, R-4, R-9)', () => {
       explainability: true,
       take: 20,
       signalEntities: ['M-1'],
-      signalTags: [{ id: style, weight: 0.5 }],
+      signalTagsOperator: 'union', signalTags: [{ id: style }],
     });
-    expect(plan({ subject: media, accepted: [tag(style, { use: 'signal' })] }).primary).toEqual({ filterType: 'urn:entity:movie', explainability: true, take: 20, filterTags: [style], filterPopularityMin: 0.9 });
+    expect(plan({ subject: media, accepted: [tag(style, { use: 'signal' })] }).primary).toEqual({ filterType: 'urn:entity:movie', explainability: true, take: 20, filterTagsOperator: 'union', filterTags: [style], filterPopularityMin: 0.9 });
   });
 
   it('other subjects get no "More like this"', () => {
@@ -183,6 +183,9 @@ describe('result hygiene on recorded probe responses (C.3, R-10)', () => {
     expect(selectRail(pool, 8, echo).map((c) => c.entity.name)).toEqual(['Fila', 'Solid Brand', 'Fourth Brand', 'Fifth Brand']);
     // Without echo names the selection is unchanged.
     expect(selectRail(pool, 8).map((c) => c.entity.name)).toEqual(['Fila', 'Solid Brand', 'Wilson', 'Fourth Brand', 'Fifth Brand']);
+    // The exploratory evidence tier shares the direct tier's echo allowance.
+    expect(selectRail(pool.slice(2), 3, echo, pool.slice(0, 2)).map((c) => c.entity.name)).toEqual(['Fourth Brand', 'Fifth Brand']);
+    expect(selectRail(pool, 0, echo)).toEqual([]);
   });
 
   it('"Qloo also links" uses the similar_brand tags\' own names only', () => {

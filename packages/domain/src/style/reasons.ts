@@ -1,6 +1,7 @@
 import { lowerFirst } from './text';
 import type { AcceptedTag } from './map-tags';
 import type { StoredSubject } from './types';
+import type { CandidateProof } from './discovery-evidence';
 import { activeEvidence } from './product-evidence';
 
 /**
@@ -25,6 +26,9 @@ export interface StyleMatchClaim {
 /** recommendations.style_match (C.4). */
 export interface StyleMatch {
   subject_id: string;
+  discovery_proof?: CandidateProof;
+  /** Persisted actual Qloo entity types, required by the feature-bound projector. */
+  actual_candidate_types?: string[];
   claims: StyleMatchClaim[];
   palette: string[];
   via_entity: string | null;

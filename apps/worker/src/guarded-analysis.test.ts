@@ -14,7 +14,7 @@ import {
   type VlmProvider,
   type VlmResult,
 } from '@culture-atlas/providers';
-import { accountCtx, fakeQloo, runJobs, testJpeg, world } from './test-world';
+import { legacyAccountCtx as accountCtx, fakeQloo, runJobs, testJpeg, world } from './test-world';
 
 /**
  * Reading guardrails in the compiler (docs/quality-plan.md §4) on a real

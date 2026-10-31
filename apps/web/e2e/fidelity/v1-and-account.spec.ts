@@ -21,6 +21,7 @@ interface Seed {
   email: string;
   settings_email: string;
   password: string;
+  sign_in: { claim_session: false };
   collections: { slow_sunday: string; after_dark: string; everyday_favorites: string; quiet_weekends: string };
   items: { vintage_racing: string };
   plan_id: string;
@@ -61,10 +62,12 @@ async function signIn(page: Page, account: 'library' | 'settings') {
   const s = seed();
   const token = await csrf(page.request);
   const res = await page.request.post('/v1/session/sign-in', {
-    data: { email: account === 'library' ? s.email : s.settings_email, password: s.password },
+    // Claiming even an empty anonymous session changes taste revision. This
+    // fixture is a curated example snapshot, not an anonymous-history journey.
+    data: { email: account === 'library' ? s.email : s.settings_email, password: s.password, ...s.sign_in },
     headers: { 'x-csrf-token': token },
   });
-  expect(res.ok(), await res.text()).toBeTruthy();
+  expect(res.ok(), `Fixture sign-in returned HTTP ${res.status()}`).toBeTruthy();
 }
 
 /** Revoke every live share of a collection so it starts as "Currently private". */
@@ -96,6 +99,17 @@ test.beforeEach(async ({ page }, info) => {
 });
 
 test('01/04 Discover', async ({ page }, info) => {
+  // Fidelity seeds an explicitly curated example snapshot, never fictional
+  // provider-backed recommendations. Check the API as well as the rendering.
+  const response = await page.request.get('/v1/discoveries');
+  expect(response.ok()).toBe(true);
+  const feed = await response.json() as {
+    is_example_feed: boolean;
+    items: Array<{ is_example: boolean; recommendation_id: string | null }>;
+  };
+  expect(feed.is_example_feed).toBe(true);
+  expect(feed.items).toHaveLength(8);
+  expect(feed.items.every((item) => item.is_example && item.recommendation_id === null)).toBe(true);
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1, name: 'Find more of what you love.' })).toBeVisible();
   const grid = page.getByRole('list', { name: /discoveries/i }).first();
@@ -105,6 +119,7 @@ test('01/04 Discover', async ({ page }, info) => {
     'Vintage racing', 'Quiet corners', 'Sunday listening', 'Around the table',
     'Night wanderings', 'Sculptural forms', 'Linen days', 'Tea rituals',
   ]);
+  await expect(grid.getByText('Example result', { exact: true })).toHaveCount(8);
   await expectNoHorizontalScroll(page);
   await shot(page, info, '01-discover');
   await expectTargets(page, '.filter-row button, .save-chip, .header__capture, .mobile-dock__capture, .bottom-nav__link');

@@ -23,7 +23,7 @@ final class StyleReadingTests: XCTestCase {
      "analysis":{"id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f30","version":1,"title":"Canvas work jacket","interpretation":"A jacket.",
        "sections":{"observations":"ready","references":"ready","style":"ready","wear":"ready","play":"running","watch":"pending","eat":"empty"},
        "question":null,"warnings":[],"created_at":"2026-10-23T10:00:05Z",
-       "experimental":{"label":"Experimental","note":"Photo and video readings are experimental. They can miss or misread details."}},
+       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."}},
      "style_reading":{
        "version":"atlas_style_reading_v1",
        "summary":"A heavyweight canvas work jacket with a rugged, utilitarian look.",
@@ -55,7 +55,7 @@ final class StyleReadingTests: XCTestCase {
        {"key":"wear","kind":"cross_domain","title":"Wear","subtitle":null,"subject_id":null,"status":"ready","empty_message":null,"cards":[]},
        {"key":"play","kind":"cross_domain","title":"Play","subtitle":null,"subject_id":null,"status":"running","empty_message":null,"cards":[]},
        {"key":"eat","kind":"cross_domain","title":"Eat","subtitle":null,"subject_id":null,"status":"empty",
-        "empty_message":"Add a city to see places with this style.","cards":[]}],
+        "empty_message":"Add a city to explore places.","cards":[]}],
      "references":[],"recommendations":[],"available_categories":["wear"],"job_id":null}
     """
 
@@ -177,7 +177,7 @@ final class StyleReadingTests: XCTestCase {
     let response = try decode(AnalysisResultResponse.self, """
       {"analysis_id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f21","state":"complete","capture_id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f23",
        "result_url":"/captures/6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f23",
-       "experimental":{"label":"Experimental","note":"Photo and video readings are experimental. They can miss or misread details."},
+       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."},
        "result":{"mode":"photo","note":null,"frames":1,
          "candidates":[{"name":"Canvas jacket","type":"object","relation":"depicted","cited_frames":[0]}],
          "reading":"quick",
@@ -212,7 +212,7 @@ final class StyleReadingTests: XCTestCase {
     let caps = try decode(Capabilities.self, """
       {"contract_version":"2","flags":{},"limits":{},
        "availability":{"analysis":{"available":true,"experimental":true,"label":"Experimental",
-         "note":"Photo and video readings are experimental. They can miss or misread details.","reason":"experimental_production"}}}
+         "note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.","reason":"experimental_production"}}}
       """)
     let gate = CapabilityGate.photoAnalysis(caps)
     XCTAssertTrue(gate.available)
@@ -405,8 +405,8 @@ final class StyleReadingTests: XCTestCase {
     XCTAssertEqual(StyleCopy.experimentalBadge, "Experimental")
     XCTAssertEqual(StyleCopy.railCaption, "From an experimental reading")
     XCTAssertEqual(StyleCopy.failed, "We couldn't read the style of this one.")
-    XCTAssertEqual(StyleCopy.noCity, "Add a city to see places with this style.")
-    XCTAssertEqual(StyleCopy.railEmpty, "Qloo found nothing close to this style yet.")
+    XCTAssertEqual(StyleCopy.noCity, "Add a city to explore places.")
+    XCTAssertEqual(StyleCopy.railEmpty, "No supported Qloo connection was found for this reading on this route.")
     // Lowercase product name and no model talk anywhere in the copy.
     for copy in [StyleCopy.experimentalNote, StyleCopy.paused, StyleCopy.limit, StyleCopy.whyLine] {
       XCTAssertFalse(copy.lowercased().contains("model"))

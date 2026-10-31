@@ -42,10 +42,15 @@ const WORDS: Record<HomeKind, RegExp> = {
 
 /** The kind of home thing a subject is, from its own words (label first, then materials, construction, aesthetics). */
 export function homeKindOf(subject: Pick<StoredSubject, 'label' | 'materials' | 'construction' | 'aesthetics'>): HomeKind | null {
-  const text = [subject.label, ...activeEvidence(subject.materials).map((m) => m.name), ...activeEvidence(subject.construction).map((c) => c.name), ...activeEvidence(subject.aesthetics).map((a) => a.name)].join(' ; ');
-  for (const kind of ['tableware', 'kitchenware', 'furniture', 'decor', 'coffee'] as const) if (WORDS[kind].test(text)) return kind;
-  if (WORDS.ceramics.test(text)) return 'ceramics';
-  if (WORDS.interior.test(text)) return 'interior';
+  // Materials describe observations, not shopping intent. A clay head is not
+  // tableware; a derelict room does not intentionally use distressed decor.
+  const label = subject.label;
+  if (/\b(?:sculptures?|statues?|busts?|figurines?|artworks?|paintings?|portraits?|illustrations?|ceramic heads?|(?:head|face) vessels?|effig(?:y|ies))\b/i.test(label)) return null;
+  if (/\b(?:derelict|abandoned|ruined|ruins|decay|dilapidated)\b/i.test([label, ...activeEvidence(subject.aesthetics).map((a) => a.name)].join(' '))) return null;
+  for (const kind of ['tableware', 'kitchenware', 'furniture', 'decor', 'coffee'] as const) if (WORDS[kind].test(label)) return kind;
+  if (WORDS.interior.test(label)) return 'interior';
+  // A collection explicitly described as functional ceramics may still explore brands.
+  if (/\b(?:ceramics?|pottery)\s+(?:tableware|dinnerware|vessels?|display|collection)\b/i.test(label)) return 'ceramics';
   return null;
 }
 
@@ -116,7 +121,7 @@ export function rankHomeCatalogue(
     // tags with it (a bridal-gown house tagged tableware is not a tableware exemplar).
     if (!homeFamilyGenreAllowed(b.genre_ids)) continue;
     if (options.exclude?.has(b.id)) continue;
-    const m = scoreMatch(q, entityProfile(homeBrandTags(b)), { fashion: false, v });
+    const m = homeMatch(q, { name: b.name, tags: homeBrandTags(b) }, v);
     if (m.score <= 0 || !m.styleHit) continue;
     const key = b.name.toLowerCase().replace(/[^a-z0-9]+/g, '');
     if (seenNames.has(key)) continue;
@@ -392,6 +397,30 @@ export interface HomeEvidence {
   score: number;
   /** Whether the card carries something reason-worthy (empty beats junk). */
   carries: boolean;
+  styleHit: boolean;
+}
+
+/** Relational adjectives need shared phrase context, not a lone matching word. */
+const CONTEXT_WORDS = new Set('side back fine base top end open raw'.split(' '));
+
+function homeProductWord(token: string): boolean {
+  return (['tableware', 'kitchenware', 'furniture', 'decor', 'interior'] as const).some((kind) => WORDS[kind].test(token));
+}
+
+function homeHitAllowed(h: MatchHit, entity: Pick<QlooEntity, 'name'>): boolean {
+  const source = h.source ?? h.claim;
+  if (!(tokenStandsAloneInLabel(h.token, h.label) || sameCompound(source, h.label))) return false;
+  if (labelEchoesCandidate(h.label, h.token, new Set(styleTokens(entity.name)))) return false;
+  if (!CONTEXT_WORDS.has(h.token)) return true;
+  const sourceWords = new Set(styleTokens(source));
+  return styleTokens(h.label).some((word) => word !== h.token && !CONTEXT_WORDS.has(word) && sourceWords.has(word));
+}
+
+/** One shared policy for catalogue seeds, carried cards, and their final rank. */
+export function homeMatch(q: SubjectProfile, entity: Pick<QlooEntity, 'name' | 'tags'>, v: StyleVocabulary = homeVocabulary()): StyleMatchResult {
+  const match = scoreMatch(q, entityProfile(entity.tags ?? []), { fashion: false, v, acceptHit: (hit) => homeHitAllowed(hit, entity) });
+  const evidence = homeEvidence(match, entity);
+  return { ...match, hits: [...evidence.hits], score: evidence.score, styleHit: evidence.styleHit };
 }
 
 /**
@@ -402,12 +431,14 @@ export interface HomeEvidence {
  * card is not shown (empty beats junk).
  */
 export function homeEvidence(match: StyleMatchResult, entity: Pick<QlooEntity, 'name'>): HomeEvidence {
-  const nameTokens = new Set(styleTokens(entity.name));
-  const hits = match.hits.filter((h) => (tokenStandsAloneInLabel(h.token, h.label) || sameCompound(h.claim, h.label)) && !labelEchoesCandidate(h.label, h.token, nameTokens));
+  const hits = match.hits.filter((h) => homeHitAllowed(h, entity));
   const all = match.hits.reduce((t, h) => t + h.contribution, 0);
   const kept = hits.reduce((t, h) => t + h.contribution, 0);
   const score = match.score * (all > 0 ? kept / all : 0);
-  return { hits, score, carries: score >= MIN_ABSOLUTE && reasonHit(hits) !== null };
+  const named = hits.filter((h) => h.level === 'name' && !['entity', 'mood', 'details'].includes(h.slot) && !homeProductWord(h.token))
+    .reduce((sum, h) => sum + h.contribution, 0);
+  const styleHit = named > 0 && named >= 0.35 * kept;
+  return { hits, score, styleHit, carries: score >= MIN_ABSOLUTE && styleHit && reasonHit(hits) !== null };
 }
 
 export interface HomeRailCarry {
@@ -438,7 +469,7 @@ export function homeRailCarry(list: readonly QlooEntity[], q: SubjectProfile, ki
       gated[gate] = (gated[gate] ?? 0) + 1;
       continue;
     }
-    const ev = homeEvidence(scoreMatch(q, entityProfile(e.tags ?? []), { fashion: false, v }), e);
+    const ev = homeEvidence(homeMatch(q, e, v), e);
     if (!ev.carries) {
       gated.evidence = (gated.evidence ?? 0) + 1;
       continue;

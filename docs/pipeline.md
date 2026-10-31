@@ -10,6 +10,12 @@ How a photo becomes discoveries. The behavior rules live in the [build spec](../
 
 ## Compiler (`packages/domain/src/compiler/analyze.ts`)
 
+Photo discovery follows the [Qloo-native connection contract](qloo-discovery.md):
+catalogue exploration and attributable taste connections, not verified
+visual matching. The relation-specific admission rules apply before ranking
+and publication, including early and cross-domain paths. The stage table
+below describes orchestration, not permission to bypass those rules.
+
 Each stage runs through `ctx.runStage`, so a retried attempt (lost lease, crash, deadline) reads completed outputs back from `job_stages` instead of calling providers again. Publishing is idempotent and always goes through `publishForCapture`: `ctx.ensureActive()` and then a transaction holding the capture row lock (`SELECT ... FOR UPDATE` where `deleted_at IS NULL`). `deleteCapture` takes the same lock, so a delete either wins and nothing is published, or runs after and removes what was published.
 
 | Stage | Public stage | What happens | Section(s) |

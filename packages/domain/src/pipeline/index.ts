@@ -9,6 +9,7 @@ import { sensorPoll } from './sensor-poll';
 import { interestExpand } from './interest-expand';
 import { tasteSeed } from './taste-seed';
 import { styleRetry } from './style-retry';
+import { visualReferenceDiscovery } from '../style/visual-references';
 
 /** JobType -> handler. apps/worker dispatches through this map. */
 export const JOB_HANDLERS: JobHandlerMap = {
@@ -22,4 +23,5 @@ export const JOB_HANDLERS: JobHandlerMap = {
   interest_expand: interestExpand,
   analyze_audio: analyzeAudio,
   style_retry: styleRetry,
+  visual_reference_discovery: visualReferenceDiscovery,
 };

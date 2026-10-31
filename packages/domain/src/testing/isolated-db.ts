@@ -63,16 +63,18 @@ export async function createIsolatedDatabase(
   const url = databaseUrl(name);
   if (migrate) await runMigrations(url, migrationsDir ? { dir: migrationsDir } : undefined);
   const db = createDb(url, 5);
+  let closePool: Promise<void> | undefined;
   return {
     name,
     url,
     db,
     async drop() {
-      await db.end().catch(() => undefined);
+      await (closePool ??= db.end());
       const c = new pg.Client({ connectionString: BASE_URL() });
-      await c.connect();
       try {
-        await c.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+        await c.connect();
+        // Close our own pool, never terminate other clients or background workers.
+        await c.query(`DROP DATABASE IF EXISTS ${name}`);
       } finally {
         await c.end();
       }

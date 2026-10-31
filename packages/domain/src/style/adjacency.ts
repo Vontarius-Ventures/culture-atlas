@@ -17,19 +17,25 @@ export type CrossDomainCategory = Extract<Category, 'wear' | 'play' | 'watch'>;
 
 /** An artwork in the reading's own words (painting, illustration, poster of a person, ...). */
 const ARTWORK_RE =
-  /\b(?:paintings?|painted|portraits?|portraiture|oil paint|oil on canvas|illustrations?|posters?|artworks?|murals?|watercolou?rs?|engravings?|etchings?|sketch(?:es)?|fresco(?:es)?|lithographs?|old masters?|tronie)\b/i;
+  /(?<![\p{L}\p{N}-])(?:paintings?|portraits?|portraiture|oil on canvas|illustrations?|posters?|artworks?|sculptures?|statues?|busts?|figurines?|ceramic heads?|(?:head|face) vessels?|effig(?:y|ies)|murals?|watercolou?rs?|engravings?|etchings?|sketch(?:es)?|fresco(?:es)?|lithographs?|old masters?|tronie)(?![\p{L}\p{N}-])/iu;
 /** Reproductions that are media questions, not works of visual art: their own rail is films, music or books. */
 const REPRODUCTION_RE = /\b(?:posters?|albums?|book covers?|movies?|films?|cinema|screens?|soundtracks?|tv)\b/i;
 
-/** True when the subject is an artwork, whatever category the reading filed it under (a painted garment is a painting). */
+function artworkText(s: Pick<StoredSubject, 'label' | 'aesthetics' | 'lineage'>): string {
+  // Normalize compound separators, keeping compounds intact. A spaced "four poster"
+  // is the same furniture form, not a standalone poster.
+  return [s.label, ...s.aesthetics.filter(activeClaim).map((a) => a.name), ...s.lineage.filter(activeClaim).map((l) => l.name)]
+    .join(' ; ').replace(/[\u2010-\u2015]/g, '-').replace(/\bfour\s+poster\b/gi, 'four-poster');
+}
+
+/** Explicit art forms, not a painted finish or a fragment inside a compound word. */
 export function isArtworkSubject(s: Pick<StoredSubject, 'label' | 'aesthetics' | 'lineage'>): boolean {
-  const text = [s.label, ...s.aesthetics.filter(activeClaim).map((a) => a.name), ...s.lineage.filter(activeClaim).map((l) => l.name)].join(' ; ');
-  return ARTWORK_RE.test(text);
+  return ARTWORK_RE.test(artworkText(s));
 }
 
 /** True for a work of visual art (a painting or illustration), false for a reproduction of media (a film poster). */
 export function isFineArtSubject(s: Pick<StoredSubject, 'label' | 'aesthetics' | 'lineage'>): boolean {
-  const text = [s.label, ...s.aesthetics.filter(activeClaim).map((a) => a.name), ...s.lineage.filter(activeClaim).map((l) => l.name)].join(' ; ');
+  const text = artworkText(s);
   return ARTWORK_RE.test(text) && !REPRODUCTION_RE.test(text);
 }
 
@@ -78,6 +84,8 @@ export const ART_TOPIC_WORDS: readonly string[] = [
   'gallery',
   'artwork',
   'sculptor',
+  'sculpture',
+  'sculptures',
   'curator',
 ];
 
@@ -114,7 +122,7 @@ function entityWords(entity: Pick<QlooEntity, 'name' | 'tags'>, topicOnly = fals
 /** Art-medium words carried by anything about art ("painting", "portrait", "oil"): never distinctive evidence. */
 const GENERIC_ART_WORDS: ReadonlySet<string> = new Set(
   `art arts artist artists painter painters painting paintings portrait portraits portraiture
-   artwork artworks museum museums gallery galleries sculptor sculptors curator curators oil`
+   artwork artworks museum museums gallery galleries sculptor sculptors sculpture sculptures curator curators oil`
     .split(/\s+/)
     .filter(Boolean),
 );
