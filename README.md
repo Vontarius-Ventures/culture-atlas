@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/culture-atlas-feed.png" alt="The culture atlas feed: floating cards for sesame noodles, summer linen, a tetsubin teapot and the film In the Mood for Love" width="100%">
+</p>
+
 <h1 align="center">culture atlas</h1>
 
 <p align="center"><strong>Point at what catches your eye. Find what else you'll love.</strong></p>
@@ -7,7 +11,8 @@
   <a href="#how-it-works">How it works</a> ·
   <a href="#run-it-yourself">Run it yourself</a> ·
   <a href="docs/agents.md">Agent tools</a> ·
-  <a href="docs/README-engineering.md">Engineering guide</a>
+  <a href="docs/README-engineering.md">Engineering guide</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
 </p>
 
 <p align="center">
@@ -30,6 +35,10 @@ An LLM alone can describe a photo. It can't tell you what people who love that t
 5. **Keep growing.** Results join a floating feed that expands from what you save and capture.
 
 **Nothing is invented.** Every suggestion traces to a Qloo response. Artists and films with no owned image get a typographic poster, never a generated portrait. An empty answer stays empty.
+
+![The capture screen: this camera, music with the camera off, Meta glasses marked Experimental, and file upload](docs/assets/culture-atlas-capture.png)
+
+<sub>The signed-out web app, showing project-made example images. Signed-in feeds use real Qloo results.</sub>
 
 ## What's Qloo-powered
 
@@ -65,6 +74,12 @@ A hackathon build, under active development.
 - Photo and video readings are labeled **Experimental**: the vision models haven't passed this project's own accuracy gate, and readings can miss details.
 - Song recognition uses Apple's ShazamKit, so it works in the iOS app only. Web and Android report no match.
 - The live demo runs on the author's own machine through Tailscale Funnel, so its availability depends on that machine.
+
+## Contributing and policies
+
+- [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+- [Privacy](PRIVACY.md)
 
 ## License
 
