@@ -126,7 +126,7 @@ describe('related discovery job', () => {
     expect(after.item.is_example).toBe(false);
   });
 
-  it('holds Similar with interest-pool cards until the card's own search has run', async () => {
+  it('holds Similar with interest-pool cards until the search for this card has run', async () => {
     const { principal, ctx } = await accountCtx();
     const owner = { accountId: principal.accountId };
     const film = await insertItem(owner, { kind: 'film', title: 'Playtime' });
