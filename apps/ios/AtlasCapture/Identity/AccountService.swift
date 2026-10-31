@@ -65,9 +65,20 @@ public actor AccountService {
     public var accepted: Bool
   }
 
-  /// Parses `cultureatlas://identity/callback#challenge_id=…&token=…&state=…&nonce=…`.
-  public static func parseCallback(_ url: URL) -> [String: String]? {
-    guard url.scheme == AtlasContract.callbackURL.scheme, url.host == "identity", url.path == "/callback",
+  /// The HTTPS email link, accepted only from the server this app talks to.
+  public static func isUniversalCallback(_ url: URL, appHost: String?) -> Bool {
+    guard url.scheme == "https", let appHost, url.host?.lowercased() == appHost.lowercased(),
+      url.port == nil, url.path == "/identity/callback",
+      let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems
+    else { return false }
+    return items.count == 1 && items[0].name == "destination" && items[0].value == "ios"
+  }
+
+  /// Parses `cultureatlas://identity/callback#challenge_id=…&token=…&state=…&nonce=…`,
+  /// or the same proof on the HTTPS email link from `appHost`.
+  public static func parseCallback(_ url: URL, appHost: String? = nil) -> [String: String]? {
+    let appCallback = url.scheme == AtlasContract.callbackURL.scheme && url.host == "identity" && url.path == "/callback"
+    guard appCallback || isUniversalCallback(url, appHost: appHost),
       let fragment = url.fragment, !fragment.isEmpty
     else { return nil }
     var components = URLComponents()
@@ -82,7 +93,7 @@ public actor AccountService {
   /// verified account. Returns the signed-in account UUID.
   public func completeSignIn(callback url: URL) async throws -> UUID {
     guard let pending = keychain.codable(PendingSignIn.self, for: pendingKey) else { throw CallbackError.noPendingSignIn }
-    guard let values = Self.parseCallback(url), let challengeID = values["challenge_id"], let token = values["token"]
+    guard let values = Self.parseCallback(url, appHost: baseURL.host), let challengeID = values["challenge_id"], let token = values["token"]
     else { throw CallbackError.malformedCallback }
     guard values["state"] == pending.state, values["nonce"] == pending.nonce else { throw CallbackError.stateMismatch }
     let completion: NativeEmailCompletion = try await transport.json(

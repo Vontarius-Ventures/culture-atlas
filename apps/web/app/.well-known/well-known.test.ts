@@ -1,15 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GET as aasa } from './apple-app-site-association/route';
 
 describe('Apple App Site Association', () => {
-  it('lists iOS App IDs for identity callback paths', async () => {
-    const body = (await aasa().json()) as {
-      applinks: { details: { appID: string; paths: string[] }[] };
+  afterEach(() => vi.unstubAllEnvs());
+  const read = async () =>
+    (await aasa().json()) as {
+      applinks: { details: { appIDs: string[]; components: Record<string, unknown>[] }[] };
     };
-    const ids = body.applinks.details.map((d) => d.appID);
-    expect(ids.some((id) => id.endsWith('.com.cultureatlas.app'))).toBe(true);
-    expect(ids.some((id) => id.endsWith('.com.aomg.cultureatlas'))).toBe(true);
-    expect(body.applinks.details[0]?.paths).toContain('/identity/callback');
+
+  it('claims only iOS email links, leaving web sign-in callbacks in the browser', async () => {
+    const [detail] = (await read()).applinks.details;
+    expect(detail?.appIDs).toContain('U9XG3X374H.com.cultureatlas.app');
+    expect(detail?.appIDs).toContain('U9XG3X374H.com.aomg.cultureatlas');
+    expect(detail?.components).toEqual([{ '/': '/identity/callback', '?': { destination: 'ios' } }]);
+  });
+
+  it('never publishes an App ID with a blank team when Compose passes an empty value', async () => {
+    vi.stubEnv('APPLE_TEAM_ID', '  ');
+    expect((await read()).applinks.details[0]?.appIDs[0]).toBe('U9XG3X374H.com.cultureatlas.app');
+    vi.stubEnv('APPLE_TEAM_ID', 'ABCDE12345');
+    expect((await read()).applinks.details[0]?.appIDs[0]).toBe('ABCDE12345.com.cultureatlas.app');
   });
 });
 

@@ -83,6 +83,26 @@ final class ContractTests: XCTestCase {
     XCTAssertNil(AccountService.parseCallback(URL(string: "https://app.cultureatlas.com/identity/callback#challenge_id=a&token=b&state=c&nonce=d")!))
   }
 
+  func testUniversalCallbackAcceptsOnlyTheConfiguredHost() {
+    let proof = "challenge_id=4f1d9a52-7b8c-4e3d-9a10-2b3c4d5e6f70&token=t0k&state=s&nonce=n"
+    let host = "culture-atlas.example.ts.net"
+    let good = URL(string: "https://\(host)/identity/callback?destination=ios#\(proof)")!
+    XCTAssertEqual(AccountService.parseCallback(good, appHost: host)?["token"], "t0k")
+    XCTAssertNil(AccountService.parseCallback(good))
+    XCTAssertNil(AccountService.parseCallback(good, appHost: "other.example"))
+    for bad in [
+      "https://evil.example/identity/callback?destination=ios#\(proof)",
+      "http://\(host)/identity/callback?destination=ios#\(proof)",
+      "https://\(host):8443/identity/callback?destination=ios#\(proof)",
+      "https://\(host)/identity/other?destination=ios#\(proof)",
+      "https://\(host)/identity/callback#\(proof)",
+      "https://\(host)/identity/callback?destination=web#\(proof)",
+      "https://\(host)/identity/callback?destination=ios&next=x#\(proof)",
+    ] {
+      XCTAssertNil(AccountService.parseCallback(URL(string: bad)!, appHost: host), bad)
+    }
+  }
+
   func testPKCEChallengeIsS256Base64URL() {
     // RFC 7636 appendix B.
     XCTAssertEqual(

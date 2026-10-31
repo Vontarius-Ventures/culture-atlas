@@ -5,20 +5,22 @@ const STORE_BUNDLES = [
 ] as const;
 
 function teamId(): string {
-  return (process.env.APPLE_TEAM_ID ?? 'U9XG3X374H').trim();
+  // Compose passes an unset variable as an empty string.
+  return process.env.APPLE_TEAM_ID?.trim() || 'U9XG3X374H';
 }
 
 /** Apple App Site Association for iOS identity universal links. */
 export function GET() {
   const team = teamId();
-  const details = STORE_BUNDLES.map((bundle) => ({
-    appID: `${team}.${bundle}`,
-    paths: ['/identity/callback', '/identity/*'],
-  }));
+  // Only iOS email links open the app; web sign-in callbacks stay in the browser.
   const body = {
     applinks: {
-      apps: [] as string[],
-      details,
+      details: [
+        {
+          appIDs: STORE_BUNDLES.map((bundle) => `${team}.${bundle}`),
+          components: [{ '/': '/identity/callback', '?': { destination: 'ios' } }],
+        },
+      ],
     },
   };
   return Response.json(body, {

@@ -222,7 +222,8 @@ final class CaptureController: ObservableObject {
         break
       }
     }
-    guard url.scheme == AtlasContract.callbackURL.scheme, url.host == "identity", url.path == "/callback" else { return }
+    let appCallback = url.scheme == AtlasContract.callbackURL.scheme && url.host == "identity" && url.path == "/callback"
+    guard appCallback || AccountService.isUniversalCallback(url, appHost: api.baseURL.host) else { return }
     let pendingEmail: String? = if case .awaitingEmail(let address) = phase { address } else { nil }
     do {
       let account = try await accounts.completeSignIn(callback: url)
