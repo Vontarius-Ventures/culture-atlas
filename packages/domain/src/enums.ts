@@ -182,7 +182,7 @@ export const LIMITS = {
   /** Style subjects with a rail (atlas_style_reading_v1 allows at most 2). */
   styleSubjectsMax: 2,
   initialRenderedRecommendations: 6,
-  relatedCachedMax: 6,
+  relatedCachedMax: 18,
   /** Amendment 2.2: Qloo resolution is capped at 5 candidates per analysis (stage 1 reads 3-5). */
   vlmCandidatesToResolve: 5,
   /** Concurrent Qloo resolve requests per analysis (the hackathon key throttles bursts). */

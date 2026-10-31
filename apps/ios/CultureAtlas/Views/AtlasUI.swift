@@ -1,3 +1,4 @@
+import CryptoKit
 import AtlasCapture
 import SwiftUI
 import UIKit
@@ -57,6 +58,7 @@ final class ImagePipeline {
   private let memory = NSCache<NSString, UIImage>()
   private let session: URLSession
   private var inflight: [String: Task<UIImage?, Never>] = [:]
+  private let privateCache = PrivateImageCache()
 
   private init() {
     memory.countLimit = 300
@@ -89,7 +91,12 @@ final class ImagePipeline {
     let id = key(url, tier)
     if let running = inflight[id] { return await running.value }
     let session = self.session
+    let privateCache = self.privateCache
     let task = Task<UIImage?, Never> {
+      if authorize != nil, let saved = await privateCache.data(for: url),
+        let image = await Self.decode(saved, maxPixelSize: tier.rawValue) {
+        return image
+      }
       var request = URLRequest(url: url, timeoutInterval: 30)
       if let authorize, let token = await authorize() {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -99,6 +106,7 @@ final class ImagePipeline {
       guard let (data, response) = try? await session.data(for: request),
         let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
       else { return nil }
+      if authorize != nil { await privateCache.store(data, for: url) }
       return await Self.decode(data, maxPixelSize: tier.rawValue)
     }
     inflight[id] = task
@@ -110,12 +118,49 @@ final class ImagePipeline {
     return image
   }
 
+  /// Sign-out removes this account's private pictures from the phone.
+  func clearPrivate() {
+    memory.removeAllObjects()
+    let cache = privateCache
+    Task { await cache.removeAll() }
+  }
+
   /// Decode and downsample off the main thread so scrolling never hitches.
   nonisolated private static func decode(_ data: Data, maxPixelSize: Int) async -> UIImage? {
     await Task.detached(priority: .userInitiated) {
       ImageDownsampler.image(from: data, maxPixelSize: maxPixelSize)
     }.value
   }
+}
+
+/// The owner's private pictures, so reopening Library doesn't refetch them.
+/// Encrypted while the phone is locked, never backed up, cleared on sign-out.
+/// Keeps downloaded derivatives only, up to a size limit.
+private actor PrivateImageCache {
+  private let directory: URL = {
+    let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+    return base.appendingPathComponent("private-images", isDirectory: true)
+  }()
+  private static let maxBytes = 12 * 1024 * 1024
+
+  private func file(for url: URL) -> URL {
+    let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+    return directory.appendingPathComponent(digest.map { String(format: "%02x", $0) }.joined())
+  }
+
+  func data(for url: URL) -> Data? { try? Data(contentsOf: file(for: url)) }
+
+  func store(_ data: Data, for url: URL) {
+    guard data.count <= Self.maxBytes else { return }
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    var target = file(for: url)
+    guard (try? data.write(to: target, options: [.atomic, .completeFileProtection])) != nil else { return }
+    var values = URLResourceValues()
+    values.isExcludedFromBackup = true
+    try? target.setResourceValues(values)
+  }
+
+  func removeAll() { try? FileManager.default.removeItem(at: directory) }
 }
 
 /// Cached remote image with a placeholder and a soft crossfade on arrival.

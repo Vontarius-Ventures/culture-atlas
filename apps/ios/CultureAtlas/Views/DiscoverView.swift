@@ -213,7 +213,7 @@ struct FeedView: View {
   private func apply(_ feed: DiscoveriesResponse, refresh: Bool) {
     exampleFeed = feed.isExampleFeed
     pollSeconds = feed.nextPollSeconds
-    ImagePipeline.shared.prefetch(feed.items.prefix(24).compactMap { $0.image?.resolved(against: controller.api.baseURL) })
+    ImagePipeline.shared.prefetch(feed.items.prefix(48).compactMap { $0.image?.resolved(against: controller.api.baseURL) })
     if feed.items.isEmpty {
       if pool.isEmpty {
         emptyMessage = "Still looking for things that match your interests. Pull to try again."
@@ -799,8 +799,9 @@ struct FeedCardDetail: View {
   }
 
   private func pollRelated() async {
-    for _ in 0..<12 {
-      try? await Task.sleep(nanoseconds: 2_500_000_000)
+    // Similar results usually land within about 8 s.
+    for attempt in 0..<24 {
+      try? await Task.sleep(nanoseconds: attempt < 15 ? 1_000_000_000 : 2_500_000_000)
       guard !Task.isCancelled else { return }
       do {
         let loaded = try await controller.api.item(card.id)

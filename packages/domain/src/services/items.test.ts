@@ -28,7 +28,7 @@ function qloo(prefix: string, opts: { failArtists?: boolean; replay?: boolean } 
 }
 
 describe('related discovery job', () => {
-  it('stores at most six Qloo-traceable results across categories and serves them from cache', async () => {
+  it('stores Qloo-traceable results across categories and serves them from cache', async () => {
     const { principal, ctx } = await accountCtx();
     const prefix = randomUUID().slice(0, 6);
     const film = await insertItem({ accountId: principal.accountId }, { kind: 'film', title: 'Playtime', qloo: `${prefix}-origin` });
@@ -40,7 +40,7 @@ describe('related discovery job', () => {
 
     const detail = await getItem(ctx, { id: film, query: {} });
     expect(detail.related_state).toBe('cached');
-    expect(detail.related.length).toBe(4);
+    expect(detail.related.length).toBe(8);
     expect(detail.related.map((r) => r.category).sort()).toEqual(['watch', 'watch', 'wear', 'wear']);
     expect(detail.related.every((r) => !r.is_example)).toBe(true);
     const recs = await db.query<{ origin: string; provider_query_ids: string[] }>(
@@ -126,7 +126,7 @@ describe('related discovery job', () => {
     expect(after.item.is_example).toBe(false);
   });
 
-  it('fills Similar from pictured interest-pool cards when no related job has run', async () => {
+  it('holds Similar with interest-pool cards until the card's own search has run', async () => {
     const { principal, ctx } = await accountCtx();
     const owner = { accountId: principal.accountId };
     const film = await insertItem(owner, { kind: 'film', title: 'Playtime' });
@@ -148,7 +148,8 @@ describe('related discovery job', () => {
       [similar, run.rows[0]!.id],
     );
     const detail = await getItem(ctx, { id: film, query: {} });
-    expect(detail.related_state).toBe('cached');
+    // Pool cards hold the rail, but 'none' still tells the client to run the real search.
+    expect(detail.related_state).toBe('none');
     expect(detail.related.map((r) => r.id)).toContain(similar);
     expect(detail.related.every((r) => r.id !== film)).toBe(true);
   });

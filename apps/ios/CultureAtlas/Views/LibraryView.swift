@@ -190,7 +190,7 @@ struct MediaTile: View {
       .overlay {
         RemoteImage(
           url: item.thumbnailPath.flatMap { URL(string: $0, relativeTo: controller.api.baseURL)?.absoluteURL },
-          authorize: controller.api.imageAuthorizer
+          authorize: controller.api.imageAuthorizer, tier: .tile
         ) {
           ZStack {
             AtlasTheme.quiet

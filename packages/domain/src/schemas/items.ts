@@ -25,7 +25,7 @@ export const ItemDetailResponse = z.object({
   destination_url: z.url().nullable(),
   references: z.array(ReferenceSummary),
   /** Cached related discoveries (at most 6). Opening never triggers generation. */
-  related: z.array(DiscoveryCard).max(6),
+  related: z.array(DiscoveryCard).max(18),
   related_state: z.enum(['none', 'cached', 'pending']),
   related_job_id: Uuid.nullable(),
   /** Collections (visible to the principal) this item belongs to. */

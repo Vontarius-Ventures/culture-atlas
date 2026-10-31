@@ -223,7 +223,7 @@ struct BoardCoverMosaic: View {
     Color.clear
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .overlay {
-        RemoteImage(url: url) { AtlasTheme.quiet }
+        RemoteImage(url: url, tier: .tile) { AtlasTheme.quiet }
       }
       .clipped()
   }

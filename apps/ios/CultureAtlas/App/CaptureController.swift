@@ -302,6 +302,7 @@ final class CaptureController: ObservableObject {
     if choice == .delete { draftStore.deleteAll(owner: account) }
     await beforeSignOut?()
     await accounts.signOut()
+    ImagePipeline.shared.clearPrivate()
     await uploads.setSignedInAccount(nil)
     signedInEmail = nil
     phase = .signedOut

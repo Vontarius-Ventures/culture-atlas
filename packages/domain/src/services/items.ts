@@ -177,7 +177,7 @@ async function interestPoolRelatedIds(
         AND di.canonical_key <> $3
       ORDER BY (di.category IS NOT DISTINCT FROM $4) DESC,
                (di.display_metadata ? 'image') DESC,
-               ts.updated_at DESC, r.rank
+               md5(di.id::text || $2::text)
       LIMIT $5`,
     [owner.accountId, item.id, item.canonical_key, item.category, take * 8],
   );
@@ -254,6 +254,7 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   let relatedIds: string[] = [];
   let relatedState: ItemDetailResponse['related_state'] = 'none';
   let relatedJobId: string | null = null;
+  let relatedSearched = false;
   if (item.is_sample) {
     const { rows } = await ctx.db.query<{ id: string; canonical_key: string; category: Category | null }>(
       `SELECT id, canonical_key, category FROM discovery_items WHERE is_sample AND canonical_key = ANY($1::text[])`,
@@ -267,6 +268,7 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
     const jobs = await latestDiscoveryJobs(ctx, owner, item.id);
     const active = jobs.find((j) => j.job_state === 'queued' || j.job_state === 'running');
     const done = jobs.find((j) => j.status === 'complete' || j.status === 'partial');
+    relatedSearched = Boolean(done);
     if (active) {
       relatedState = 'pending';
       relatedJobId = active.job_id;
@@ -294,7 +296,9 @@ export async function getItem(ctx: ServiceContext, input: { id: string; query: I
   const visibleRelated = await visibleItemIds(ctx, relatedIds);
   const relatedCards = await loadCards(ctx, relatedIds.filter((id) => visibleRelated.has(id)).slice(0, LIMITS.relatedCachedMax));
   const related = preferPicturedCards(relatedCards);
-  if (related.length > 0 && relatedState === 'none') relatedState = 'cached';
+  // Pool cards only hold the rail until this card has its own search: they must
+  // not read as finished, or the client never asks for real similar items.
+  if (related.length > 0 && relatedState === 'none' && (relatedSearched || item.is_sample)) relatedState = 'cached';
 
   let collectionIds: string[] = [];
   if (card.saved_item_id) collectionIds = (await membershipsFor(ctx, [card.saved_item_id])).get(card.saved_item_id)?.collectionIds ?? [];

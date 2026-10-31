@@ -191,7 +191,7 @@ export const discoverRelated: JobHandler<'discover_related'> = async (ctx) => {
     newId: randomUUID,
   });
   const categories = (ctx.payload.category ? [ctx.payload.category] : [...CATEGORIES]) as Category[];
-  const perCategory = ctx.payload.category ? LIMITS.relatedCachedMax : 2;
+  const perCategory = ctx.payload.category ? LIMITS.relatedCachedMax : 5;
   const statuses: Record<string, SectionStatus> = {};
 
   // 1. Signals: real provider ids only.
