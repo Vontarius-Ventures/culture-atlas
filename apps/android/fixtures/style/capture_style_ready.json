@@ -12,7 +12,7 @@
     "question": null,
     "warnings": [],
     "created_at": "2026-10-23T10:00:00Z",
-    "experimental": { "label": "Experimental", "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches." },
+    "experimental": { "label": "Experimental", "note": "Readings can miss details." },
     "a_field_this_client_does_not_know": { "x": 1 }
   },
   "style_reading": {

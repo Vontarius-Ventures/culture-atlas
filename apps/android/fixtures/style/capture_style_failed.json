@@ -7,7 +7,7 @@
     "title": "Ceramic bowl",
     "interpretation": "A hand-thrown ceramic bowl on a linen cloth.",
     "sections": { "observations": "ready", "references": "ready", "style": "failed", "wear": "ready", "play": "empty", "watch": "empty", "eat": "a_status_from_the_future" },
-    "experimental": { "label": "Experimental", "note": "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches." }
+    "experimental": { "label": "Experimental", "note": "Readings can miss details." }
   },
   "style_reading": null,
   "rails": [
