@@ -1,12 +1,10 @@
-#if canImport(SHShazamKit)
+#if canImport(ShazamKit)
 import AVFoundation
 import Foundation
-import SHShazamKit
+import ShazamKit
 
-/// On-device song recognition against the Shazam Music catalog (ShazamKit).
-/// The whole file disappears from builds without the xcframework; add it in
-/// Xcode (Frameworks, Libraries → SHShazamKit.xcframework, "Embed & Sign")
-/// and this becomes the recognizer `SongRecognizerFactory.make()` returns.
+/// Song recognition against the Shazam catalog, using Apple's ShazamKit from
+/// the iOS SDK. Matching needs the ShazamKit service on the App ID.
 ///
 /// Only the vendor's own words ever leave the device: the recognized artist
 /// name and song title, as a hint with the analysis request. No audio, no
@@ -95,8 +93,7 @@ extension ShazamSongRecognizer: SHSessionDelegate {
     }
     // The vendor's own fields only. Match offset (when present) locates the
     // song inside the recording; the Shazam id is the vendor's recording id.
-    let offsetMS = (item.value(forProperty: .matchOffset) as? NSNumber)
-      .map { max(0, Int($0.doubleValue * 1000)) }
+    let offsetMS = max(0, Int(item.matchOffset * 1000))
     let song = ClientRecognizedSong(
       artistName: item.artist ?? "",
       title: item.title,

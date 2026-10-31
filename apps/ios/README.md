@@ -134,37 +134,19 @@ is requested on Record. If camera permission is denied, Music Mode still works
 3. **Keep** stores an encrypted local draft. **Explore music** (screen 20)
    authorizes upload and `music_match` analysis. Speech stays off.
 
-## On-device song recognition (ShazamKit, optional)
+## Song recognition (ShazamKit)
 
-When the recording finishes, the app tries to recognize the song on-device in
-the background (`AtlasCapture/Audio/ShazamSongRecognizer.swift`). A recognized
-song becomes the `client_recognition` hint on the analyze request — the artist
-name and title the vendor returned, nothing else: no audio, transcript, or
-confidence leaves the phone. The hint never decides the match: the server
-searches its own catalog for the recognized artist and only a catalog result
-resolves (the same rule as the fingerprint and transcript tiers). When it
-resolves, the paid transcription tier is skipped; when it does not, everything
-behaves exactly as before. Android and the web do not send the hint; the field
-is optional on the contract.
+Shazam is how the app identifies music. When a recording finishes, the app
+matches it with Apple's ShazamKit (`AtlasCapture/Audio/ShazamSongRecognizer.swift`).
+A recognized song becomes the `client_recognition` hint on the analyze request:
+the artist name and title Shazam returned, nothing else. The hint never decides
+the match by itself: the server searches Qloo for the artist, and only a catalog
+result resolves. Android and the web do not send the hint.
 
-**The repo builds and tests without the framework.** Apple distributes ShazamKit
-behind developer sign-in, so the xcframework is never vendored. All ShazamKit
-code sits behind `#if canImport(SHShazamKit)`
-(`SongRecognizerFactory.isShazamKitAvailable` reports which build you have);
-CI and simulator runs compile the unavailable path, and
-`ClientRecognizedSongTests` covers the wire shape and the honest no-hint
-answer.
-
-To enable it in your own build:
-
-1. Download ShazamKit from developer.apple.com (Apple ID required).
-2. Drag `ShazamKit.xcframework` into the Xcode project → the **AtlasCapture**
-   target (which owns the recognizer) → *Frameworks, Libraries, and Embedded
-   Content* → **Embed & Sign**.
-3. Re-run `xcodegen generate` **after** adding it to `project.yml`
-   (`dependencies: - framework: path/to/ShazamKit.xcframework`) so the checked-in
-   project stays reproducible; `canImport(SHShazamKit)` then compiles the
-   recognizer in.
+ShazamKit is part of the iOS SDK, so nothing needs downloading. Catalog matching
+needs the **ShazamKit** service enabled on the App ID:
+developer.apple.com → Certificates, Identifiers & Profiles → Identifiers →
+the app's identifier → App Services → ShazamKit.
 
 ## Remaining physical-device and store gates
 

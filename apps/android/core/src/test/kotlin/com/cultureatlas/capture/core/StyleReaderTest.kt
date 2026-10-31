@@ -87,7 +87,7 @@ class StyleReaderTest {
     fun itemDetailCarriesStyleMatchAndExperimentalLine() {
         val body = """{"item":{"id":"m1","kind":"qloo_entity","title":"Filson","is_example":false,"saved":false,"evidence_available":true},
             "related_state":"ready","style_match":{"subject_id":"s1","attributes":["Workwear"],"experimental":true},
-            "experimental_line":"Suggested from an experimental reading of your photo."}"""
+            "experimental_line":"From your photo."}"""
         val d = json.decodeFromString(ItemDetailResponse.serializer(), body)
         assertEquals(listOf("Workwear"), d.styleMatch!!.attributes)
         assertEquals(StyleCopy.WHY_LINE, d.experimentalLine)
@@ -136,7 +136,7 @@ class StyleReaderTest {
     fun retractedMoodIsRemovedAndMoodIsOneLine() {
         val jacket = AnalysisResultReader.readStyle(capture("capture_style_ready.json"))!!.subjects.first()
         assertEquals("Feels rugged, utilitarian", jacket.moodLine)
-        assertEquals("Qloo also links: Filson, Patagonia, Pendleton", jacket.qlooLinks)
+        assertEquals("Related: Filson, Patagonia, Pendleton", jacket.qlooLinks)
         assertNull(StyleReader.moodLine(emptyList()))
     }
 
@@ -240,7 +240,7 @@ class StyleReaderTest {
             json.decodeFromString(
                 Capabilities.serializer(),
                 """{"contract_version":"2","flags":{},"limits":{},"availability":{"analysis":{"available":true,"experimental":true,
-                   "label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.",
+                   "label":"Experimental","note":"Readings can miss details.",
                    "reason":"experimental_production"}}}""",
             ),
         )

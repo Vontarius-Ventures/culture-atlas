@@ -447,38 +447,32 @@ struct AnalysisResultView: View {
       VStack(alignment: .leading, spacing: 20) {
         header
         if let experimentalLabel {
-          ExperimentalNotice(label: experimentalLabel)
+          ExperimentalBadge(label: experimentalLabel.label, note: experimentalLabel.note)
         }
         if let result {
           if result.stillWorking {
             AnalysisLookingBanner()
-            Text(result.waitingReason == "ai_paused"
-              ? "Exploring is paused for a moment. It will pick up again on its own."
-              : "Still looking. This usually takes a few seconds.")
-              .font(.footnote)
-              .foregroundStyle(AtlasTheme.muted)
+            if result.waitingReason == "ai_paused" {
+              Text("Paused for a moment.")
+                .font(.footnote)
+                .foregroundStyle(AtlasTheme.muted)
+            }
           } else if result.state == .failed || result.state == .cancelled {
             InlineBanner(text: "We couldn't finish exploring this one. It's still saved privately.", systemImage: "exclamationmark.circle")
           } else if isAudio {
             musicResult(result.result ?? AnalysisResult())
           } else {
-            photoResult(result.result ?? AnalysisResult())
             if let styleModel {
-              // Style-era capture (rails present): the style reading and rails replace the
-              // plain suggestions row; older analyses keep the compiled suggestions.
+              // The style reading replaces the plain findings; older analyses keep them.
               StyleOrSuggestions(model: styleModel) {
-                if let capture { captureSuggestions(capture, includeCards: false) }
                 CaptureStyleSection(
                   model: styleModel, highlight: $styleHighlight, baseURL: controller.api.baseURL,
                   scrollProxy: reader, setCity: { [api = controller.api] city in try await api.setCity(city) })
               } fallback: {
-                if let capture { captureSuggestions(capture) }
-                else if let preview = result.result?.style { StylePreviewView(preview: preview) }
+                plainResult(result)
               }
-            } else if let capture {
-              captureSuggestions(capture)
-            } else if let preview = result.result?.style {
-              StylePreviewView(preview: preview)
+            } else {
+              plainResult(result)
             }
           }
           if result.finished {
@@ -495,6 +489,8 @@ struct AnalysisResultView: View {
         }
       }
       .padding(20)
+      // Exactly the screen's width: nothing inside can push the page sideways.
+      .containerRelativeFrame(.horizontal, alignment: .leading)
       .animation(AtlasMotion.spring, value: result)
       .animation(AtlasMotion.spring, value: capture)
     }
@@ -547,7 +543,7 @@ struct AnalysisResultView: View {
       let path = media.flatMap { $0.links.playback ?? $0.links.original ?? $0.links.poster }
       let ratio = media.map { CGFloat($0.media.width ?? 4) / CGFloat(max(1, $0.media.height ?? 5)) } ?? 4 / 5
       Color.clear
-        .aspectRatio(max(0.6, min(1.8, ratio)), contentMode: .fit)
+        .aspectRatio(max(0.95, min(1.8, ratio)), contentMode: .fit)
         .overlay {
           RemoteImage(url: path.flatMap { URL(string: $0, relativeTo: controller.api.baseURL)?.absoluteURL },
                       authorize: controller.api.imageAuthorizer) {
@@ -562,11 +558,20 @@ struct AnalysisResultView: View {
     }
   }
 
+  @ViewBuilder private func plainResult(_ result: AnalysisResultResponse) -> some View {
+    photoResult(result.result ?? AnalysisResult())
+    if let capture {
+      captureSuggestions(capture)
+    } else if let preview = result.result?.style {
+      StylePreviewView(preview: preview)
+    }
+  }
+
   private func photoResult(_ reading: AnalysisResult) -> some View {
     VStack(alignment: .leading, spacing: 12) {
-      Text("What we noticed").font(.system(.title3, design: .serif))
+      Text("In this photo").font(.system(.title3, design: .serif))
       if reading.candidates.isEmpty {
-        Text("Nothing we could name with confidence. Your photo still helps your feed learn what you like.")
+        Text("Nothing clear enough to name.")
           .foregroundStyle(AtlasTheme.muted)
       } else {
         FlowLayout(spacing: 8) {
@@ -575,7 +580,7 @@ struct AnalysisResultView: View {
               if candidate.isResemblance {
                 Text("Resembles").font(.caption2).foregroundStyle(AtlasTheme.muted)
               }
-              Text(candidate.name).font(.callout.weight(.medium))
+              Text(candidate.name).font(.callout.weight(.medium)).lineLimit(2)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -585,11 +590,6 @@ struct AnalysisResultView: View {
             .animation(AtlasMotion.spring.delay(Double(index) * 0.06), value: revealed)
           }
         }
-        if reading.reading == "quick" {
-          Text("A quick first read. More detail is still on the way.")
-            .font(.footnote)
-            .foregroundStyle(AtlasTheme.muted)
-        }
       }
     }
     .onAppear { revealed = true }
@@ -597,26 +597,10 @@ struct AnalysisResultView: View {
 
   /// Sourced references and the recommendations made from them, exactly as
   /// the server compiled them (never filled in on the phone).
-  @ViewBuilder private func captureSuggestions(_ capture: CaptureResultResponse, includeCards: Bool = true) -> some View {
-    if capture.references.isEmpty == false {
-      VStack(alignment: .leading, spacing: 8) {
-        Text("References").font(.footnote.weight(.semibold)).foregroundStyle(AtlasTheme.muted)
-        FlowLayout(spacing: 6) {
-          ForEach(capture.references) { ref in
-            Text(ref.phrase)
-              .font(.footnote)
-              .padding(.horizontal, 10)
-              .padding(.vertical, 6)
-              .background(Capsule().fill(AtlasTheme.quiet))
-              .accessibilityHint(ref.attribution ?? "")
-          }
-        }
-      }
-      .transition(.opacity.combined(with: .move(edge: .bottom)))
-    }
-    if includeCards, capture.recommendations.isEmpty == false {
+  @ViewBuilder private func captureSuggestions(_ capture: CaptureResultResponse) -> some View {
+    if capture.recommendations.isEmpty == false {
       VStack(alignment: .leading, spacing: 10) {
-        Text("Suggestions from this photo").font(.system(.title3, design: .serif))
+        Text("More like this").font(.system(.title3, design: .serif))
         ScrollView(.horizontal, showsIndicators: false) {
           LazyHStack(alignment: .top, spacing: 12) {
             ForEach(capture.recommendations) { card in
@@ -662,10 +646,6 @@ struct AnalysisResultView: View {
 
   private var nextSteps: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Divider()
-      Text("Suggestions from this float into your feed as they're found.")
-        .font(.callout)
-        .foregroundStyle(AtlasTheme.muted)
       Button {
         dismiss()
         controller.popToRoot(.feed)
@@ -675,12 +655,6 @@ struct AnalysisResultView: View {
           .frame(maxWidth: .infinity, minHeight: 48)
       }
       .buttonStyle(.borderedProminent)
-      if let web = route.webPath ?? result?.resultURL, !isAudio, result?.captureID != nil {
-        Button("Open the full result on the web") { notices.openWeb(path: web) }
-          .font(.footnote)
-          .foregroundStyle(AtlasTheme.muted)
-          .frame(maxWidth: .infinity)
-      }
     }
   }
 

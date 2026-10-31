@@ -31,29 +31,29 @@ import {
 export const STYLE_COPY = {
   'experimental.badge': 'Experimental',
   'experimental.note':
-    'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
-  'experimental.rail_caption': 'From an experimental reading',
-  'experimental.why_line': 'Suggested from an experimental reading of your photo.',
+    'Readings can miss details.',
+  'experimental.rail_caption': 'From your photo',
+  'experimental.why_line': 'From your photo.',
   'style.paused':
-    "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back.",
+    "Paused for now. Your photo is saved.",
   'style.limit':
-    "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow.",
-  'style.failed': "We couldn't read the style of this one.",
-  'style.empty': 'No clear style to read here.',
+    "That's all the readings for today. Your photo is saved for tomorrow.",
+  'style.failed': "Couldn't read this one.",
+  'style.empty': 'No clear style here.',
   'style.no_city': 'Add a city to explore places.',
-  'style.rail_empty': 'No supported Qloo connection was found for this reading on this route.',
+  'style.rail_empty': 'Nothing close enough yet.',
   'style.unsupported':
-    'No supported connection was found for this reading on this route. Explore Qloo brands, media and places, not matching products or art objects.',
+    'Nothing close enough yet.',
   'style.reading': 'Reading the style…',
-  'style.rail_running': 'Exploring Qloo connections…',
-  'style.updated': 'Style reading updated',
+  'style.rail_running': 'Finding more…',
+  'style.updated': 'Style updated',
   'style.try_again': 'Try again',
   'style.add_city': 'Add city',
-  'style.qloo_links': 'Qloo also links: {names}',
+  'style.qloo_links': 'Related: {names}',
   'style.show_details': 'Show all details',
   // Web-only supporting copy (not part of the D.4 table).
   'style.title': 'Style reading',
-  'style.more_like_this_style': 'Explore Qloo connections',
+  'style.more_like_this_style': 'More like this',
 } as const;
 
 /** Normalizes apostrophes so server copy compares equal to the D.4 table. */

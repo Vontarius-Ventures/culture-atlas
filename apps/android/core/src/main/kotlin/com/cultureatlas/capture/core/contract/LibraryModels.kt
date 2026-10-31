@@ -185,7 +185,7 @@ data class ItemDetailResponse(
     @SerialName("collection_ids") val collectionIds: List<String> = emptyList(),
     @SerialName("capture_id") val captureId: String? = null,
     @SerialName("style_match") val styleMatch: StyleMatch? = null,
-    /** "Suggested from an experimental reading of your photo." when the card came from one. */
+    /** "From your photo." when the card came from one. */
     @SerialName("experimental_line") val experimentalLine: String? = null,
 )
 

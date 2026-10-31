@@ -379,10 +379,7 @@ export async function captureV2Route(request: NextRequest): Promise<Response> {
                     : caps.availability.analysis,
               }
             : {}),
-          music_match: musicMatchAvailability({
-            ELEVENLABS_API_KEY: getDomainConfig().ELEVENLABS_API_KEY,
-            QLOO_API_KEY: process.env.QLOO_API_KEY,
-          }),
+          music_match: musicMatchAvailability({ QLOO_API_KEY: process.env.QLOO_API_KEY }),
         },
       };
     } else if (keepAudio) {

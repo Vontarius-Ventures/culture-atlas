@@ -5,7 +5,7 @@ import Foundation
 /// or rail is pending or running, then stops (design B.4). Publishes the
 /// style card state and the rails, plus two counters the view turns into a
 /// haptic (the reading first landed) and a VoiceOver announcement (a claim
-/// was retracted: "Style reading updated").
+/// was retracted: "Style updated").
 @MainActor
 public final class CaptureStyleViewModel: ObservableObject {
   public typealias Loader = @Sendable () async throws -> CaptureDetailResponse

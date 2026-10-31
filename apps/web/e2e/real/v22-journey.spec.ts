@@ -216,13 +216,13 @@ test('taste onboarding, personal feed and fast analysis on the real stack', asyn
     // satisfy the older blanket provider-name assertion.
     const allowedQlooCopy = new Set([
       'Qloo connections',
-      'Explore Qloo connections',
-      'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
-      'No supported Qloo connection was found for this reading on this route.',
-      'Wear: No supported Qloo connection was found for this reading on this route.',
-      'Play: No supported Qloo connection was found for this reading on this route.',
-      'No supported connection was found for this reading on this route. Explore Qloo brands, media and places, not matching products or art objects.',
-      'Exploring Qloo connections…',
+      'More like this',
+      'Readings can miss details.',
+      'Nothing close enough yet.',
+      'Wear: Nothing close enough yet.',
+      'Play: Nothing close enough yet.',
+      'Nothing close enough yet.',
+      'Finding more…',
     ]);
     for (const copy of await page.getByText(/qloo/i).allTextContents())
       expect(allowedQlooCopy.has(copy.replace(/\s+/g, ' ').trim()), `unexpected provider copy: ${copy}`).toBe(true);

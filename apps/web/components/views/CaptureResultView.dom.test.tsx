@@ -154,7 +154,7 @@ describe('capture visual polling lifecycle', () => {
       await advance(250);
       expect(screen.queryByText('Resembles vintage motorsport')).toBeNull();
       expect(screen.queryByRole('link', { name: 'Retro paddock wear' })).toBeNull();
-      expect(screen.getByText('Style reading updated')).toBeTruthy();
+      expect(screen.getByText('Style updated')).toBeTruthy();
       await advance(180_000);
       expect(read).toHaveBeenCalledTimes(4);
     },

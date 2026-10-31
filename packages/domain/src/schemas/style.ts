@@ -46,7 +46,7 @@ export const StyleSubjectDto = z.object({
   mood: z.array(StyleMoodDto),
   details: z.array(StyleDetailDto),
   brand: z.object({ name: z.string(), read_text: z.string() }).nullable(),
-  /** Qloo's own similar_brand tag names, rendered as text only ("Qloo also links: …"); [] if none. */
+  /** Qloo's own similar_brand tag names, rendered as text only ("Related: …"); [] if none. */
   qloo_links: z.array(z.string()),
   /** The rail key for this subject's "More like this". */
   rail: z.string(),
@@ -97,24 +97,24 @@ export const AnalysisExperimental = z.object({ label: z.string(), note: z.string
 export const STYLE_COPY = {
   experimental: {
     badge: 'Experimental',
-    note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
-    rail_caption: 'From an experimental reading',
-    why_line: 'Suggested from an experimental reading of your photo.',
+    note: 'Readings can miss details.',
+    rail_caption: 'From your photo',
+    why_line: 'From your photo.',
   },
   style: {
-    paused: "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back.",
-    limit: "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow.",
-    failed: "We couldn't read the style of this one.",
-    empty: 'No clear style to read here.',
+    paused: "Paused for now. Your photo is saved.",
+    limit: "That's all the readings for today. Your photo is saved for tomorrow.",
+    failed: "Couldn't read this one.",
+    empty: 'No clear style here.',
     no_city: 'Add a city to explore places.',
-    rail_empty: 'No supported Qloo connection was found for this reading on this route.',
-    unsupported: 'No supported connection was found for this reading on this route. Explore Qloo brands, media and places, not matching products or art objects.',
+    rail_empty: 'Nothing close enough yet.',
+    unsupported: 'Nothing close enough yet.',
     reading: 'Reading the style…',
-    rail_running: 'Exploring Qloo connections…',
-    updated: 'Style reading updated',
+    rail_running: 'Finding more…',
+    updated: 'Style updated',
     try_again: 'Try again',
     add_city: 'Add city',
-    qloo_links: 'Qloo also links: {names}',
+    qloo_links: 'Related: {names}',
     show_details: 'Show all details',
   },
 } as const;

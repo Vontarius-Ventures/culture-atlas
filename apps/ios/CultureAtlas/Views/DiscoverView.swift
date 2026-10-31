@@ -213,6 +213,7 @@ struct FeedView: View {
   private func apply(_ feed: DiscoveriesResponse, refresh: Bool) {
     exampleFeed = feed.isExampleFeed
     pollSeconds = feed.nextPollSeconds
+    ImagePipeline.shared.prefetch(feed.items.prefix(24).compactMap { $0.image?.resolved(against: controller.api.baseURL) })
     if feed.items.isEmpty {
       if pool.isEmpty {
         emptyMessage = "Still looking for things that match your interests. Pull to try again."
@@ -321,7 +322,7 @@ private struct FeedSkeleton: View {
   }
 }
 
-struct FeedCardTile: View {
+struct FeedCardTile: View, Equatable {
   let card: DiscoveryCard
   let baseURL: URL
   /// Poster tiles already show their title inside the poster; small rails hide the caption.
@@ -331,7 +332,7 @@ struct FeedCardTile: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      FeedCardVisual(card: card, baseURL: baseURL)
+      FeedCardVisual(card: card, baseURL: baseURL, tier: .tile)
         .frame(maxWidth: .infinity)
         // With a reason under it, the picture keeps its full 4:5 size and the
         // text truncates instead, so every tile on a rail lines up.
@@ -372,6 +373,7 @@ struct FeedCardVisual: View {
   let card: DiscoveryCard
   let baseURL: URL
   var cornerRadius: CGFloat = 14
+  var tier: ImagePipeline.Tier = .full
 
   var body: some View {
     Color.clear
@@ -380,7 +382,7 @@ struct FeedCardVisual: View {
         if let url = card.image?.resolved(against: baseURL) {
           // While the photo loads, the typographic poster holds the space,
           // then the picture crossfades in (never a bare colour block).
-          RemoteImage(url: url) { posterFallback }
+          RemoteImage(url: url, tier: tier) { posterFallback }
             .accessibilityLabel(card.image?.alt ?? card.title)
         } else {
           posterFallback

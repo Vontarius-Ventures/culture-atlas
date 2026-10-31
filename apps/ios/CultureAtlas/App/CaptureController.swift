@@ -70,6 +70,7 @@ final class CaptureController: ObservableObject {
   /// the hint (restart, missing framework) just means the server uses its own
   /// fingerprint and transcript tiers.
   private var recognizedSongs: [UUID: ClientRecognizedSong] = [:]
+  private var recognitions: [UUID: Task<Void, Never>] = [:]
   /// Music Mode Explore: start analysis after the audio draft commits.
   var afterCommittedExplore: ((DraftRecord) async -> Void)?
   private var finishingExplores = false
@@ -250,6 +251,7 @@ final class CaptureController: ObservableObject {
     // Drafts that wait for this account (and only this account) resume.
     await uploads.unlockAll(owner: account)
     reloadDrafts()
+    Task { await uploadKeptAudio(account) }
     capabilities = try? await api.capabilities()
     await arming.setAppState(.foreground)
     await commands.reconcileAfterLaunch(account: account)
@@ -422,8 +424,14 @@ final class CaptureController: ObservableObject {
   /// The song this phone recognized for a Music Mode draft, when it did and
   /// the build carries a recognizer (ShazamKit). A hint only: the server
   /// still resolves the artist through its own catalog.
-  func recognizedSong(for draftID: UUID) -> ClientRecognizedSong? {
-    recognizedSongs[draftID]
+  func recognizedSong(for draftID: UUID) async -> ClientRecognizedSong? {
+    // Explore can arrive before Shazam answers; give it a moment, not forever.
+    var waited = 0
+    while recognitions[draftID] != nil, waited < 40 {
+      try? await Task.sleep(nanoseconds: 200_000_000)
+      waited += 1
+    }
+    return recognizedSongs[draftID]
   }
 
   /// Best-effort on-device recognition, off the review flow: the hint is
@@ -432,7 +440,8 @@ final class CaptureController: ObservableObject {
   private func recognizeSongInBackground(_ draft: DraftRecord) {
     guard draft.kind == .audio, !draft.interrupted else { return }
     let id = draft.id
-    Task { [songRecognizer, draftStore] in
+    recognitions[id] = Task { [songRecognizer, draftStore] in
+      defer { recognitions[id] = nil }
       guard let url = try? draftStore.openForPlayback(draft) else { return }
       let song = await songRecognizer.recognize(fileURL: url)
       try? FileManager.default.removeItem(at: url)
@@ -463,9 +472,13 @@ final class CaptureController: ObservableObject {
 
   func keep(_ draft: DraftRecord, allowCellular: Bool = false) async {
     guard let account = signedInAccount else { return }
-    if draft.kind == .audio, !allowCellular, draft.status == .awaitingReview || draft.status == .keptLocal {
+    if draft.kind == .audio, draft.status == .awaitingReview || draft.status == .keptLocal {
+      // Keep saves privately to the account; only Explore starts analysis.
       _ = try? draftStore.update(draft.id, owner: account) { $0.status = .keptLocal }
       reloadDrafts()
+      if await uploadAudio(draft, account: account) == nil {
+        message = "Saved on this phone. It will upload to your library when the connection is back."
+      }
       return
     }
     _ = try? draftStore.update(draft.id, owner: account) {
@@ -492,6 +505,13 @@ final class CaptureController: ObservableObject {
       await finishExplores([latest])
       return
     }
+    if await uploadAudio(draft, account: account) == nil {
+      message = "Exploring isn't available right now. Your recording is safe on this phone."
+    }
+  }
+
+  /// Saves a recording to the account (`/v2/media/audio`, WAV). Never starts analysis.
+  private func uploadAudio(_ draft: DraftRecord, account: UUID) async -> UUID? {
     do {
       let preview = try draftStore.openForPlayback(draft)
       defer { try? FileManager.default.removeItem(at: preview) }
@@ -503,17 +523,23 @@ final class CaptureController: ObservableObject {
           capturedAt: draft.capturedAt, captureSessionID: draft.captureSessionID,
           sourceRoute: draft.sourceRoute ?? AudioInputRoute.phoneMicrophone.rawValue),
         wav: wav, expectedAccount: account)
-      guard let assetID = kept.resolvedAssetID else {
-        message = "Exploring isn't available right now. Your recording is safe on this phone."
-        return
-      }
+      guard let assetID = kept.resolvedAssetID else { return nil }
       _ = try? draftStore.update(draft.id, owner: account) {
         $0.status = .committed
         $0.assetID = assetID
       }
       reloadDrafts()
+      return assetID
     } catch {
-      message = "Exploring isn't available right now. Your recording is safe on this phone."
+      NSLog("[atlas] audio keep failed: %@", String(describing: error))
+      return nil
+    }
+  }
+
+  /// Retries recordings kept while the server was unreachable.
+  private func uploadKeptAudio(_ account: UUID) async {
+    for draft in draftStore.drafts(owner: account) where draft.kind == .audio && draft.status == .keptLocal {
+      _ = await uploadAudio(draft, account: account)
     }
   }
 

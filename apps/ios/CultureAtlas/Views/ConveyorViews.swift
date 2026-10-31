@@ -167,10 +167,19 @@ struct FeedConveyorColumns: View {
 
   @ScaledMetric(relativeTo: .callout) private var textBlock: CGFloat = FeedTileMetrics.textBlock
   @State private var lastDrag: CGFloat = 0
-  @State private var dragging = false
+  @State private var touchActive = false
+  @State private var scrubbing = false
+  @State private var stoppedFlick = false
+  @State private var touchStarted = Date.distantPast
+  @State private var pressedID: UUID?
   @State private var pullArmed = false
+  @GestureState private var fingerDown = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   static var pullThreshold: CGFloat { 150 }
+  /// Movement that turns a touch into a scroll. A scroll can never open a card.
+  static var scrollSlop: CGFloat { 10 }
+  static var longestTap: TimeInterval { 0.5 }
 
   private var laneCount: Int { max(1, driver.conveyor.lanes.count) }
   private var columnWidth: CGFloat {
@@ -181,21 +190,24 @@ struct FeedConveyorColumns: View {
   var body: some View {
     TimelineView(.animation(minimumInterval: nil, paused: paused && !driver.coasting)) { context in
       let state = driver.frame(at: context.date, running: !paused)
-      let placements = state.placements
+      let placements = Dictionary(grouping: state.placements, by: \.lane)
       HStack(alignment: .top, spacing: FeedTileMetrics.spacing) {
         ForEach(0..<state.lanes.count, id: \.self) { lane in
           ZStack(alignment: .top) {
-            ForEach(placements.filter { $0.lane == lane }, id: \.id) { placement in
+            ForEach(placements[lane] ?? [], id: \.id) { placement in
               if let card = state.card(placement.id) {
-                Button { onOpen(card) } label: {
-                  FeedCardTile(card: card, baseURL: baseURL)
-                    .frame(width: columnWidth, height: tileHeight, alignment: .top)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.pressableCard)
-                .atlasZoomSource(id: card.id, in: zoom)
-                .accessibilityIdentifier("feed.card.\(card.id.uuidString)")
-                .offset(y: placement.offset)
+                FeedCardTile(card: card, baseURL: baseURL)
+                  .equatable()
+                  .frame(width: columnWidth, height: tileHeight, alignment: .top)
+                  .contentShape(Rectangle())
+                  .scaleEffect(pressedID == card.id && !reduceMotion ? 0.965 : 1)
+                  .opacity(pressedID == card.id ? 0.88 : 1)
+                  .animation(AtlasMotion.press, value: pressedID == card.id)
+                  .atlasZoomSource(id: card.id, in: zoom)
+                  .accessibilityAddTraits(.isButton)
+                  .accessibilityAction { onOpen(card) }
+                  .accessibilityIdentifier("feed.card.\(card.id.uuidString)")
+                  .offset(y: placement.offset)
               }
             }
           }
@@ -222,7 +234,17 @@ struct FeedConveyorColumns: View {
     }
     .animation(AtlasMotion.spring, value: pullArmed)
     .sensoryFeedback(.impact(weight: .light), trigger: pullArmed) { _, armed in armed }
+    .contentShape(Rectangle())
     .gesture(scrubGesture)
+    // The system can cancel a touch without ending the gesture.
+    .onChange(of: fingerDown) { _, down in
+      guard !down else { return }
+      DispatchQueue.main.async {
+        guard touchActive else { return }
+        resetTouch()
+        pause.release(after: 2)
+      }
+    }
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier("feed.conveyor")
     .onAppear { resize() }
@@ -236,15 +258,34 @@ struct FeedConveyorColumns: View {
     driver.resize(itemLength: Double(tileHeight), viewport: Double(height))
   }
 
-  /// Vertical drag scrubs every lane; release with velocity coasts.
+  private func card(at point: CGPoint) -> DiscoveryCard? {
+    let pitch = columnWidth + FeedTileMetrics.spacing
+    guard point.x >= 0, pitch > 0 else { return nil }
+    let lane = Int(point.x / pitch)
+    guard point.x - CGFloat(lane) * pitch <= columnWidth else { return nil }
+    return driver.conveyor.cardID(lane: lane, at: Double(point.y)).flatMap { driver.conveyor.card($0) }
+  }
+
+  /// One gesture owns every touch on the feed, so a touch is either a tap or
+  /// a scroll, never both. A touch freezes the cards under the finger, and a
+  /// touch that stops a coasting flick only stops it.
   private var scrubGesture: some Gesture {
-    DragGesture(minimumDistance: 10)
+    DragGesture(minimumDistance: 0)
+      .updating($fingerDown) { _, down, _ in down = true }
       .onChanged { value in
-        if !dragging {
-          dragging = true
-          lastDrag = 0
+        if !touchActive {
+          touchActive = true
+          stoppedFlick = driver.coasting
+          touchStarted = value.time
           driver.grab()
           pause.touch()
+          if !stoppedFlick { pressedID = card(at: value.startLocation)?.id }
+        }
+        if !scrubbing {
+          guard hypot(value.translation.width, value.translation.height) >= Self.scrollSlop else { return }
+          scrubbing = true
+          pressedID = nil
+          lastDrag = value.translation.height
         }
         // Dragging up moves content up (toward the leading edge).
         driver.scrub(by: Double(lastDrag - value.translation.height))
@@ -253,16 +294,27 @@ struct FeedConveyorColumns: View {
         if armed != pullArmed { pullArmed = armed }
       }
       .onEnded { value in
-        dragging = false
-        lastDrag = 0
+        let wasScrubbing = scrubbing
+        let isTap = !wasScrubbing && !stoppedFlick && value.time.timeIntervalSince(touchStarted) <= Self.longestTap
+        let tapped = isTap ? card(at: value.startLocation) : nil
         if pullArmed {
-          pullArmed = false
           onPullToRefresh()
-        } else {
+        } else if wasScrubbing {
           driver.fling(velocity: Double(-value.velocity.height))
         }
+        resetTouch()
         pause.release(after: 2)
+        if let tapped { onOpen(tapped) }
       }
+  }
+
+  private func resetTouch() {
+    touchActive = false
+    scrubbing = false
+    stoppedFlick = false
+    pressedID = nil
+    pullArmed = false
+    lastDrag = 0
   }
 }
 
@@ -311,6 +363,9 @@ struct SimilarConveyorRail: View {
   @StateObject private var pause = DriftPause()
   @State private var lastDrag: CGFloat = 0
   @State private var dragging = false
+  @State private var verticalTouch = false
+  @State private var opened: DiscoveryCard?
+  @State private var tapsBlockedUntil = Date.distantPast
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
 
@@ -352,8 +407,21 @@ struct SimilarConveyorRail: View {
     // Container identifier on a wrapper that keeps each card addressable.
     .accessibilityElement(children: .contain)
     .accessibilityIdentifier(identifier)
-    .onAppear { driver.setPool(cards, fresh: []) }
-    .onChange(of: cards.map(\.id)) { _, _ in driver.setPool(cards, fresh: Set(cards.map(\.id))) }
+    .navigationDestination(isPresented: Binding(get: { opened != nil }, set: { if !$0 { opened = nil } })) {
+      if let opened { destination(opened) }
+    }
+    .onAppear {
+      driver.setPool(cards, fresh: [])
+      prefetch()
+    }
+    .onChange(of: cards.map(\.id)) { _, _ in
+      driver.setPool(cards, fresh: Set(cards.map(\.id)))
+      prefetch()
+    }
+  }
+
+  private func prefetch() {
+    ImagePipeline.shared.prefetch(cards.compactMap { $0.image?.resolved(against: baseURL) })
   }
 
   private func fitsWithoutDrift(width: CGFloat) -> Bool {
@@ -381,8 +449,13 @@ struct SimilarConveyorRail: View {
       DragGesture(minimumDistance: 8)
         .onChanged { value in
           if !dragging {
+            // A mostly vertical drag belongs to the page scroll around the rail.
+            if verticalTouch || abs(value.translation.height) > abs(value.translation.width) {
+              verticalTouch = true
+              return
+            }
             dragging = true
-            lastDrag = 0
+            lastDrag = value.translation.width
             driver.grab()
             pause.touch()
           }
@@ -391,6 +464,9 @@ struct SimilarConveyorRail: View {
           lastDrag = value.translation.width
         }
         .onEnded { value in
+          tapsBlockedUntil = Date().addingTimeInterval(0.25)
+          verticalTouch = false
+          guard dragging else { return }
           dragging = false
           lastDrag = 0
           driver.fling(velocity: Double(-value.velocity.width))
@@ -400,14 +476,20 @@ struct SimilarConveyorRail: View {
   }
 
   private func tile(_ card: DiscoveryCard) -> some View {
-    NavigationLink {
-      destination(card)
-    } label: {
-      FeedCardTile(card: card, baseURL: baseURL, captionForPosters: showsReason, showsReason: showsReason)
-        .frame(width: tileWidth, height: tileHeight, alignment: .top)
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(.pressableCard)
-    .accessibilityIdentifier("\(cardPrefix)\(card.id.uuidString)")
+    FeedCardTile(card: card, baseURL: baseURL, captionForPosters: showsReason, showsReason: showsReason)
+      .equatable()
+      .frame(width: tileWidth, height: tileHeight, alignment: .top)
+      .contentShape(Rectangle())
+      // A tap gesture fails once the finger moves, so scrubbing never opens a card.
+      .onTapGesture {
+        if driver.coasting {
+          driver.grab()
+        } else if !dragging, Date() >= tapsBlockedUntil {
+          opened = card
+        }
+      }
+      .accessibilityAddTraits(.isButton)
+      .accessibilityAction { opened = card }
+      .accessibilityIdentifier("\(cardPrefix)\(card.id.uuidString)")
   }
 }

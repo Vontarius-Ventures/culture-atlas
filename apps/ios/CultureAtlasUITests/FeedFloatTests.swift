@@ -44,6 +44,32 @@ final class FeedFloatTests: XCTestCase {
     try assertFloatingCards(in: app)
   }
 
+  /// A scroll that stays inside one tall card must not open it; a tap must.
+  func testFixtureScrollNeverOpensACardButATapDoes() throws {
+    #if targetEnvironment(simulator)
+    let app = XCUIApplication()
+    app.launchArguments = ["-AtlasNativeUITestFixture"]
+    app.launch()
+    let feedTab = app.tabBars.buttons["Feed"]
+    XCTAssertTrue(feedTab.waitForExistence(timeout: 15))
+    feedTab.tap()
+    let conveyor = app.descendants(matching: .any)["feed.conveyor"]
+    XCTAssertTrue(conveyor.waitForExistence(timeout: 10))
+    let start = conveyor.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+    let detail = app.descendants(matching: .any)["detail.hero"]
+    for _ in 0..<4 {
+      start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -60)))
+      XCTAssertTrue(feedTab.isHittable && conveyor.exists)
+      XCTAssertFalse(detail.waitForExistence(timeout: 1), "scrolling opened a card")
+    }
+    sleep(1)
+    start.tap()
+    XCTAssertTrue(detail.waitForExistence(timeout: 6), "a tap should open the card")
+    #else
+    throw XCTSkip("The isolated native UI fixture is simulator-only")
+    #endif
+  }
+
   /// Deterministic UI coverage through the normal session/onboarding/feed path.
   /// Synthetic owner data only; this does not qualify live authentication.
   func testFixtureFeedCardsFloatByIdentityAndNeverOverlap() throws {

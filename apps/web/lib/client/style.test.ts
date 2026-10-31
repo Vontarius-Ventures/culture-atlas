@@ -140,7 +140,7 @@ describe('StyledCaptureResponse (E.2 additive fields)', () => {
         sections: { observations: 'complete', style: 'ready', wear: 'ready', eat: 'empty' },
         experimental: {
           label: 'Experimental',
-          note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
+          note: 'Readings can miss details.',
         },
       },
     );
@@ -333,16 +333,16 @@ describe('copy (D.4, verbatim)', () => {
   it('matches the design table', () => {
     expect(STYLE_COPY['experimental.badge']).toBe('Experimental');
     expect(STYLE_COPY['experimental.note']).toBe(
-      'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
+      'Readings can miss details.',
     );
     expect(STYLE_COPY['experimental.why_line']).toBe(
-      'Suggested from an experimental reading of your photo.',
+      'From your photo.',
     );
     expect(STYLE_COPY['style.limit']).toBe(
-      "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow.",
+      "That's all the readings for today. Your photo is saved for tomorrow.",
     );
     expect(qlooLinksLine(['Filson', 'Patagonia', 'Pendleton'])).toBe(
-      'Qloo also links: Filson, Patagonia, Pendleton',
+      'Related: Filson, Patagonia, Pendleton',
     );
     expect(qlooLinksLine([])).toBeNull();
   });

@@ -171,7 +171,7 @@ struct AudioDetailView: View {
     exploring = true
     // The on-device recognized song (ShazamKit), when the phone found one:
     // a hint the server still grounds through its own catalog.
-    let recognized = controller.recognizedSong(for: live.id)
+    let recognized = await controller.recognizedSong(for: live.id)
     let started = await notices.exploreMusic(
       assetID: assetID, startMS: selection.startMS, endMS: selection.endMS, recognized: recognized)
     exploring = false

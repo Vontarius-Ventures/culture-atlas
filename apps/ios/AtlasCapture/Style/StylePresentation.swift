@@ -5,27 +5,27 @@ import Foundation
 /// every platform; keep in sync with web and Android.
 public enum StyleCopy {
   public static let experimentalBadge = "Experimental"
-  public static let experimentalNote = "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
-  public static let railCaption = "From an experimental reading"
-  public static let whyLine = "Suggested from an experimental reading of your photo."
-  public static let paused = "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back."
-  public static let limit = "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow."
-  public static let failed = "We couldn't read the style of this one."
-  public static let empty = "No clear style to read here."
+  public static let experimentalNote = "Readings can miss details."
+  public static let railCaption = "From your photo"
+  public static let whyLine = "From your photo."
+  public static let paused = "Paused for now. Your photo is saved."
+  public static let limit = "That's all the readings for today. Your photo is saved for tomorrow."
+  public static let failed = "Couldn't read this one."
+  public static let empty = "No clear style here."
   public static let noCity = "Add a city to explore places."
-  public static let railEmpty = "No supported Qloo connection was found for this reading on this route."
+  public static let railEmpty = "Nothing close enough yet."
   public static let reading = "Reading the style…"
-  public static let railRunning = "Exploring Qloo connections…"
-  public static let updated = "Style reading updated"
+  public static let railRunning = "Finding more…"
+  public static let updated = "Style updated"
   public static let tryAgain = "Try again"
   public static let addCity = "Add city"
   public static let showDetails = "Show all details"
-  public static let header = "Style reading"
-  public static let moreLikeThisStyle = "Explore Qloo connections"
+  public static let header = "Style"
+  public static let moreLikeThisStyle = "More like this"
 
-  /// `style.qloo_links`: "Qloo also links: {names}".
+  /// `style.qloo_links`: "Related: {names}".
   public static func qlooLinks(_ names: [String]) -> String? {
-    names.isEmpty ? nil : "Qloo also links: \(names.joined(separator: ", "))"
+    names.isEmpty ? nil : "Related: \(names.joined(separator: ", "))"
   }
 }
 
@@ -181,7 +181,7 @@ public enum StylePresentation {
     return min(56, max(28, 28 + share * 112))
   }
 
-  /// All claim ids currently visible (to announce "Style reading updated"
+  /// All claim ids currently visible (to announce "Style updated"
   /// when one disappears after a retraction).
   public static func visibleClaimKeys(_ reading: StyleReading) -> Set<String> {
     var keys = Set<String>()
@@ -196,7 +196,7 @@ public enum StylePresentation {
 
   public struct RailItem: Equatable, Sendable, Identifiable {
     public var rail: CaptureRail
-    /// "From an experimental reading" above this rail.
+    /// "From your photo" above this rail.
     public var caption: String?
     public var id: String { rail.id }
 

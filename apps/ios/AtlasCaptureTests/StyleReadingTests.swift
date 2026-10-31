@@ -23,7 +23,7 @@ final class StyleReadingTests: XCTestCase {
      "analysis":{"id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f30","version":1,"title":"Canvas work jacket","interpretation":"A jacket.",
        "sections":{"observations":"ready","references":"ready","style":"ready","wear":"ready","play":"running","watch":"pending","eat":"empty"},
        "question":null,"warnings":[],"created_at":"2026-10-23T10:00:05Z",
-       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."}},
+       "experimental":{"label":"Experimental","note":"Readings can miss details."}},
      "style_reading":{
        "version":"atlas_style_reading_v1",
        "summary":"A heavyweight canvas work jacket with a rugged, utilitarian look.",
@@ -177,7 +177,7 @@ final class StyleReadingTests: XCTestCase {
     let response = try decode(AnalysisResultResponse.self, """
       {"analysis_id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f21","state":"complete","capture_id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f23",
        "result_url":"/captures/6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f23",
-       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."},
+       "experimental":{"label":"Experimental","note":"Readings can miss details."},
        "result":{"mode":"photo","note":null,"frames":1,
          "candidates":[{"name":"Canvas jacket","type":"object","relation":"depicted","cited_frames":[0]}],
          "reading":"quick",
@@ -212,7 +212,7 @@ final class StyleReadingTests: XCTestCase {
     let caps = try decode(Capabilities.self, """
       {"contract_version":"2","flags":{},"limits":{},
        "availability":{"analysis":{"available":true,"experimental":true,"label":"Experimental",
-         "note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.","reason":"experimental_production"}}}
+         "note":"Readings can miss details.","reason":"experimental_production"}}}
       """)
     let gate = CapabilityGate.photoAnalysis(caps)
     XCTAssertTrue(gate.available)
@@ -328,7 +328,7 @@ final class StyleReadingTests: XCTestCase {
     XCTAssertEqual(subject.visibleRows(expanded: true).count, 5)
     XCTAssertTrue(subject.hasMoreRows)
     XCTAssertEqual(subject.moodLine, "Feels rugged, utilitarian")
-    XCTAssertEqual(subject.qlooLine, "Qloo also links: Filson, Patagonia, Pendleton")
+    XCTAssertEqual(subject.qlooLine, "Related: Filson, Patagonia, Pendleton")
     XCTAssertEqual(subject.palette.map(\.diameter), [56, 48.16].map { min(56, $0) }, accuracy: 0.01)
     XCTAssertEqual(StylePresentation.swatchDiameter(share: nil), 28)
     XCTAssertEqual(StylePresentation.swatchDiameter(share: 0), 28)
@@ -381,7 +381,7 @@ final class StyleReadingTests: XCTestCase {
        "why_this":null,"destination_url":null,"references":[],"related":[],"related_state":"none","related_job_id":null,
        "collection_ids":[],"capture_id":null,
        "style_match":{"subject_id":"s1","attributes":["Workwear","duck canvas"],"palette":[],"via":null,"experimental":true},
-       "experimental_line":"Suggested from an experimental reading of your photo."}
+       "experimental_line":"From your photo."}
       """)
     let why = StylePresentation.whyThis(styleMatch: detail.styleMatch, experimentalLine: detail.experimentalLine)
     XCTAssertEqual(why.attributes, ["Workwear", "duck canvas"])
@@ -403,10 +403,10 @@ final class StyleReadingTests: XCTestCase {
 
   func testCopyIsTheSharedContractText() {
     XCTAssertEqual(StyleCopy.experimentalBadge, "Experimental")
-    XCTAssertEqual(StyleCopy.railCaption, "From an experimental reading")
-    XCTAssertEqual(StyleCopy.failed, "We couldn't read the style of this one.")
+    XCTAssertEqual(StyleCopy.railCaption, "From your photo")
+    XCTAssertEqual(StyleCopy.failed, "Couldn't read this one.")
     XCTAssertEqual(StyleCopy.noCity, "Add a city to explore places.")
-    XCTAssertEqual(StyleCopy.railEmpty, "No supported Qloo connection was found for this reading on this route.")
+    XCTAssertEqual(StyleCopy.railEmpty, "Nothing close enough yet.")
     // Lowercase product name and no model talk anywhere in the copy.
     for copy in [StyleCopy.experimentalNote, StyleCopy.paused, StyleCopy.limit, StyleCopy.whyLine] {
       XCTAssertFalse(copy.lowercased().contains("model"))

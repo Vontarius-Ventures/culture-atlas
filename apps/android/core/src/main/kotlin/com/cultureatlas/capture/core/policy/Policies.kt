@@ -129,8 +129,8 @@ object CapabilityGate {
     )
 
     const val EXPERIMENTAL_BADGE = "Experimental"
-    const val EXPERIMENTAL_NOTE = "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
-    const val PAUSED_MESSAGE = "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back."
+    const val EXPERIMENTAL_NOTE = "Readings can miss details."
+    const val PAUSED_MESSAGE = "Paused for now. Your photo is saved."
 
     fun photoAnalysis(capabilities: Capabilities?): PhotoAnalysis {
         if (capabilities == null) return PhotoAnalysis(true, "")

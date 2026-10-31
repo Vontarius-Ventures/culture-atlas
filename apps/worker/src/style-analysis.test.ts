@@ -232,7 +232,7 @@ describe('style reading and "More like this" (style design §H.2)', () => {
     expect(a.section_statuses.observations).toBe('complete');
     expect(a.experimental).toBe(true);
     const view = await captures.getCapture(ctx, { id: capture_id });
-    expect(view.analysis!.experimental).toEqual({ label: 'Experimental', note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.' });
+    expect(view.analysis!.experimental).toEqual({ label: 'Experimental', note: 'Readings can miss details.' });
   });
 
   it('food and places use only the user\'s own city (C.6); without one the rail is an honest no_city', async () => {

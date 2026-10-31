@@ -46,27 +46,48 @@ extension ButtonStyle where Self == PressableCardStyle {
 /// out and back in never refetch or pop.
 @MainActor
 final class ImagePipeline {
+  /// Decode sizes in pixels. Tiles never pay for a full-screen decode.
+  enum Tier: Int, CaseIterable {
+    case tile = 700
+    case full = 1600
+  }
+
   static let shared = ImagePipeline()
 
-  private let memory = NSCache<NSURL, UIImage>()
+  private let memory = NSCache<NSString, UIImage>()
   private let session: URLSession
-  private var inflight: [URL: Task<UIImage?, Never>] = [:]
+  private var inflight: [String: Task<UIImage?, Never>] = [:]
 
   private init() {
     memory.countLimit = 300
-    memory.totalCostLimit = 120 * 1024 * 1024
+    memory.totalCostLimit = 200 * 1024 * 1024
     let config = URLSessionConfiguration.default
     config.urlCache = URLCache(memoryCapacity: 32 * 1024 * 1024, diskCapacity: 256 * 1024 * 1024)
     config.requestCachePolicy = .returnCacheDataElseLoad
     session = URLSession(configuration: config)
   }
 
-  func cached(_ url: URL) -> UIImage? { memory.object(forKey: url as NSURL) }
+  private func key(_ url: URL, _ tier: Tier) -> String { "\(tier.rawValue)|\(url.absoluteString)" }
+
+  func cached(_ url: URL, tier: Tier) -> UIImage? { memory.object(forKey: key(url, tier) as NSString) }
+
+  /// The requested size, or any other size already decoded to show meanwhile.
+  func bestCached(_ url: URL, tier: Tier) -> UIImage? {
+    cached(url, tier: tier) ?? Tier.allCases.lazy.compactMap { self.cached(url, tier: $0) }.first
+  }
+
+  /// Start loading public pictures before their cards scroll into view.
+  func prefetch(_ urls: [URL], tier: Tier = .tile) {
+    for url in urls where cached(url, tier: tier) == nil {
+      Task { _ = await image(for: url, tier: tier) }
+    }
+  }
 
   /// `authorize` adds the bearer for our own private `/v2/media` content.
-  func image(for url: URL, authorize: (@Sendable () async -> String?)? = nil) async -> UIImage? {
-    if let hit = cached(url) { return hit }
-    if let running = inflight[url] { return await running.value }
+  func image(for url: URL, tier: Tier = .full, authorize: (@Sendable () async -> String?)? = nil) async -> UIImage? {
+    if let hit = cached(url, tier: tier) { return hit }
+    let id = key(url, tier)
+    if let running = inflight[id] { return await running.value }
     let session = self.session
     let task = Task<UIImage?, Never> {
       var request = URLRequest(url: url, timeoutInterval: 30)
@@ -78,22 +99,21 @@ final class ImagePipeline {
       guard let (data, response) = try? await session.data(for: request),
         let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode)
       else { return nil }
-      return await Self.decode(data)
+      return await Self.decode(data, maxPixelSize: tier.rawValue)
     }
-    inflight[url] = task
+    inflight[id] = task
     let image = await task.value
-    inflight[url] = nil
+    inflight[id] = nil
     if let image {
-      memory.setObject(image, forKey: url as NSURL, cost: Int(image.size.width * image.size.height * image.scale * 4))
+      memory.setObject(image, forKey: id as NSString, cost: Int(image.size.width * image.size.height * image.scale * image.scale * 4))
     }
     return image
   }
 
-  /// Decode (and downsample) off the main thread so scrolling never hitches.
-  nonisolated private static func decode(_ data: Data) async -> UIImage? {
+  /// Decode and downsample off the main thread so scrolling never hitches.
+  nonisolated private static func decode(_ data: Data, maxPixelSize: Int) async -> UIImage? {
     await Task.detached(priority: .userInitiated) {
-      guard let image = UIImage(data: data) else { return nil }
-      return image.preparingForDisplay() ?? image
+      ImageDownsampler.image(from: data, maxPixelSize: maxPixelSize)
     }.value
   }
 }
@@ -102,6 +122,7 @@ final class ImagePipeline {
 struct RemoteImage<Placeholder: View, Failure: View>: View {
   let url: URL?
   var authorize: (@Sendable () async -> String?)?
+  var tier: ImagePipeline.Tier
   @ViewBuilder var placeholder: () -> Placeholder
   @ViewBuilder var failure: () -> Failure
 
@@ -110,16 +131,17 @@ struct RemoteImage<Placeholder: View, Failure: View>: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   init(
-    url: URL?, authorize: (@Sendable () async -> String?)? = nil,
+    url: URL?, authorize: (@Sendable () async -> String?)? = nil, tier: ImagePipeline.Tier = .full,
     @ViewBuilder placeholder: @escaping () -> Placeholder,
     @ViewBuilder failure: @escaping () -> Failure
   ) {
     self.url = url
     self.authorize = authorize
+    self.tier = tier
     self.placeholder = placeholder
     self.failure = failure
     // A cache hit renders on the first frame: no placeholder flash.
-    _image = State(initialValue: url.flatMap { ImagePipeline.shared.cached($0) })
+    _image = State(initialValue: url.flatMap { ImagePipeline.shared.bestCached($0, tier: tier) })
   }
 
   var body: some View {
@@ -140,8 +162,13 @@ struct RemoteImage<Placeholder: View, Failure: View>: View {
         failed = true
         return
       }
-      if image != nil { return }
-      let loaded = await ImagePipeline.shared.image(for: url, authorize: authorize)
+      if ImagePipeline.shared.cached(url, tier: tier) != nil, image != nil { return }
+      let showingSmaller = image != nil
+      let loaded = await ImagePipeline.shared.image(for: url, tier: tier, authorize: authorize)
+      if showingSmaller {
+        if let loaded { image = loaded }
+        return
+      }
       withAnimation(reduceMotion ? nil : AtlasMotion.fade) {
         if let loaded { image = loaded } else { failed = true }
       }
@@ -150,8 +177,8 @@ struct RemoteImage<Placeholder: View, Failure: View>: View {
 }
 
 extension RemoteImage where Failure == Placeholder {
-  init(url: URL?, authorize: (@Sendable () async -> String?)? = nil, @ViewBuilder placeholder: @escaping () -> Placeholder) {
-    self.init(url: url, authorize: authorize, placeholder: placeholder, failure: placeholder)
+  init(url: URL?, authorize: (@Sendable () async -> String?)? = nil, tier: ImagePipeline.Tier = .full, @ViewBuilder placeholder: @escaping () -> Placeholder) {
+    self.init(url: url, authorize: authorize, tier: tier, placeholder: placeholder, failure: placeholder)
   }
 }
 
@@ -168,21 +195,21 @@ extension AtlasAPI {
 
 extension View {
   /// Soft fade at the leading/trailing (or top/bottom) edge instead of a hard clip line.
+  /// Paper-coloured overlays, not a mask: a mask re-renders every moving card offscreen each frame.
   func edgeFade(_ axis: Axis, length: CGFloat = 24) -> some View {
-    mask {
-      GeometryReader { geo in
-        let extent = axis == .vertical ? geo.size.height : geo.size.width
-        let fraction = extent > 0 ? min(0.45, length / extent) : 0
-        LinearGradient(
-          stops: [
-            .init(color: .clear, location: 0),
-            .init(color: .black, location: fraction),
-            .init(color: .black, location: 1 - fraction),
-            .init(color: .clear, location: 1),
-          ],
-          startPoint: axis == .vertical ? .top : .leading,
-          endPoint: axis == .vertical ? .bottom : .trailing)
+    overlay {
+      let vertical = axis == .vertical
+      let fade = { (start: UnitPoint, end: UnitPoint) in
+        LinearGradient(colors: [AtlasTheme.ivory, AtlasTheme.ivory.opacity(0)], startPoint: start, endPoint: end)
+          .frame(width: vertical ? nil : length, height: vertical ? length : nil)
       }
+      ZStack(alignment: vertical ? .top : .leading) {
+        fade(vertical ? .top : .leading, vertical ? .bottom : .trailing)
+        fade(vertical ? .bottom : .trailing, vertical ? .top : .leading)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: vertical ? .bottom : .trailing)
+      }
+      .allowsHitTesting(false)
+      .accessibilityHidden(true)
     }
   }
 }

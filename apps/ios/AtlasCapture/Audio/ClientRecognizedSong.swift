@@ -46,15 +46,11 @@ struct UnavailableSongRecognizer: SongRecognizer {
   func recognize(fileURL: URL) async -> ClientRecognizedSong? { nil }
 }
 
-/// Builds the recognizer for this build. Apple ships ShazamKit through the
-/// developer downloads (behind sign-in), so the xcframework is never
-/// vendored in the repo: `canImport(SHShazamKit)` is true only in builds
-/// where it was added to the project, and this file (plus the whole app)
-/// compiles and tests without it.
+/// Builds the recognizer for this build. ShazamKit is part of the iOS SDK.
 public enum SongRecognizerFactory {
-  /// True when the ShazamKit xcframework is present in this build.
+  /// True when this build links ShazamKit.
   public static var isShazamKitAvailable: Bool {
-    #if canImport(SHShazamKit)
+    #if canImport(ShazamKit)
       return true
     #else
       return false
@@ -62,7 +58,7 @@ public enum SongRecognizerFactory {
   }
 
   public static func make() -> SongRecognizer {
-    #if canImport(SHShazamKit)
+    #if canImport(ShazamKit)
       return ShazamSongRecognizer()
     #else
       return UnavailableSongRecognizer()

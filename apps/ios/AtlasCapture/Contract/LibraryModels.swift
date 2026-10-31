@@ -269,7 +269,7 @@ public struct ItemDetailResponse: Codable, Sendable, Equatable {
   public var captureID: UUID?
   /// Style attributes that connected a capture-rail card (non-interactive chips).
   public var styleMatch: StyleMatch? = nil
-  /// "Suggested from an experimental reading of your photo." when it applies.
+  /// "From your photo." when it applies.
   public var experimentalLine: String? = nil
 
   enum CodingKeys: String, CodingKey {

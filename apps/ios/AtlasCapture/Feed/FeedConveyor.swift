@@ -103,6 +103,11 @@ public struct FeedConveyor<Card: ConveyorCard> {
     retired = [:]
   }
 
+  /// The card under a point along a lane's main axis.
+  public func cardID(lane: Int, at offset: Double) -> Card.ID? {
+    placements.first { $0.lane == lane && offset >= $0.offset && offset < $0.offset + itemLength }?.id
+  }
+
   public func card(_ id: Card.ID) -> Card? { pool.first { $0.id == id } ?? retired[id] }
 
   /// Cards that left the pool while still on screen; kept so they can render

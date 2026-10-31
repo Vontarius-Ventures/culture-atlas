@@ -56,7 +56,7 @@ test.describe('Style reading', () => {
     await card.getByRole('button', { name: 'Show all details' }).click();
     await expect(card.getByText('Snap-button collar')).toBeVisible();
     await expect(card.getByText('Feels sporty, nostalgic')).toBeVisible();
-    await expect(card.getByText('Qloo also links: Fila, Ellesse')).toBeVisible();
+    await expect(card.getByText('Related: Fila, Ellesse')).toBeVisible();
 
     // A claim with a region outlines it on the photo; selecting again clears it.
     await chips.getByRole('button', { name: 'Sportswear, clear' }).click();
@@ -77,7 +77,7 @@ test.describe('Style reading', () => {
     await badge.click();
     await expect(
       card.getByText(
-        'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
+        'Readings can miss details.',
       ),
     ).toBeVisible();
     await page.keyboard.press('Escape');
@@ -114,9 +114,9 @@ test.describe('Style reading', () => {
     await expect(
       styleCard(page).getByRole('button', { name: 'Resembles vintage motorsport, likely' }),
     ).toBeVisible();
-    // "From an experimental reading": on the first rail and once above the cross-domain group.
-    await expect(page.getByText('From an experimental reading')).toHaveCount(2);
-    await expect(rail.getByText('From an experimental reading')).toBeVisible();
+    // "From your photo": on the first rail and once above the cross-domain group.
+    await expect(page.getByText('From your photo')).toHaveCount(2);
+    await expect(rail.getByText('From your photo')).toBeVisible();
     // Cross-domain rails reuse the Discoveries grid and filter.
     const grid = page.getByRole('list', { name: 'Discoveries from your photo' });
     await expect(grid.getByRole('listitem')).toHaveCount(6);
@@ -136,11 +136,11 @@ test.describe('Style reading', () => {
     await expect(attrs.getByText('Sportswear')).toBeVisible();
     await expect(attrs.getByText('nylon shell')).toBeVisible();
     await expect(
-      page.getByText('Suggested from an experimental reading of your photo.'),
+      page.getByText('From your photo.'),
     ).toBeVisible();
   });
 
-  test('subject tabs flash the subject; "Explore Qloo connections" jumps to the rail; Add city', async ({
+  test('subject tabs flash the subject; "More like this" jumps to the rail; Add city', async ({
     page,
   }) => {
     const api = await openOutfit(page, { style: 'ready' });
@@ -160,7 +160,7 @@ test.describe('Style reading', () => {
 
     await tabs.getByRole('button', { name: 'Cream racing jacket' }).click();
     await card.getByRole('button', { name: 'More for Sportswear' }).click();
-    await page.getByRole('button', { name: 'Explore Qloo connections' }).click();
+    await page.getByRole('button', { name: 'More like this' }).click();
     const rail = page.getByRole('region', { name: 'Brands to explore' }).first();
     await expect(rail).toBeFocused();
     await expect(rail).toBeInViewport();
@@ -182,7 +182,7 @@ test.describe('Style reading', () => {
   test('a failed reading offers one Try again, then shows the reading', async ({ page }) => {
     const api = await openOutfit(page, { style: 'failed' });
     const card = styleCard(page);
-    await expect(card.getByText("We couldn't read the style of this one.")).toBeVisible({
+    await expect(card.getByText("Couldn't read this one.")).toBeVisible({
       timeout: 15_000,
     });
     // Everything else still renders.
@@ -221,7 +221,7 @@ test.describe('Style reading', () => {
     await expect(card.getByText('Resembles vintage motorsport')).toHaveCount(0, {
       timeout: 10_000,
     });
-    await expect(page.getByText('Style reading updated')).toBeAttached();
+    await expect(page.getByText('Style updated')).toBeAttached();
     const rail = page.getByRole('region', { name: 'Brands to explore' }).first();
     await expect(
       rail.getByText('For the vintage motorsport look your photo resembles'),
@@ -231,7 +231,7 @@ test.describe('Style reading', () => {
 
   test('empty, daily limit and paused readings use the D.4 copy', async ({ page }) => {
     await openOutfit(page, { style: 'empty' });
-    await expect(styleCard(page).getByText('No clear style to read here.')).toBeVisible({
+    await expect(styleCard(page).getByText('No clear style here.')).toBeVisible({
       timeout: 15_000,
     });
   });
@@ -240,7 +240,7 @@ test.describe('Style reading', () => {
     await openOutfit(page, { style: 'limit' });
     await expect(
       styleCard(page).getByText(
-        "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow.",
+        "That's all the readings for today. Your photo is saved for tomorrow.",
       ),
     ).toBeVisible({ timeout: 15_000 });
   });
@@ -249,7 +249,7 @@ test.describe('Style reading', () => {
     await openOutfit(page, { style: 'paused' });
     await expect(
       styleCard(page).getByText(
-        "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back.",
+        "Paused for now. Your photo is saved.",
       ),
     ).toBeVisible({ timeout: 15_000 });
   });
@@ -261,7 +261,7 @@ test.describe('Style reading', () => {
     ).toHaveCount(6, { timeout: 15_000 });
     await expect(page.getByRole('heading', { name: 'Style reading' })).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Brands to explore' })).toHaveCount(0);
-    await expect(page.getByText('From an experimental reading')).toHaveCount(0);
+    await expect(page.getByText('From your photo')).toHaveCount(0);
   });
 
   test('a qualified (non-experimental) reading shows no badge or caption', async ({ page }) => {
@@ -270,7 +270,7 @@ test.describe('Style reading', () => {
       timeout: 15_000,
     });
     await expect(styleCard(page).getByRole('button', { name: 'Experimental' })).toHaveCount(0);
-    await expect(page.getByText('From an experimental reading')).toHaveCount(0);
+    await expect(page.getByText('From your photo')).toHaveCount(0);
   });
 
   test('reduced motion renders instantly; no serious axe violations; no horizontal scroll', async ({
@@ -316,7 +316,7 @@ test.describe('Experimental label on media detail', () => {
     await badge.click();
     await expect(
       page.getByText(
-        'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
+        'Readings can miss details.',
       ),
     ).toBeVisible();
   });

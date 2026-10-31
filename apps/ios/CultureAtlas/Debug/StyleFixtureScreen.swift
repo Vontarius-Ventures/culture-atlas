@@ -24,7 +24,7 @@ enum StyleFixture {
      "image":{"url":"/fixture/outfit.jpg","width":1000,"height":1250,"alt":"Cream zip jacket on a chair"},
      "analysis":{"id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f30","version":1,"title":"Cream zip jacket",
        "interpretation":null,"sections":{"observations":"ready","references":"ready","style":"running","wear":"pending"},
-       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."}},
+       "experimental":{"label":"Experimental","note":"Readings can miss details."}},
      "style_reading":null,
      "rails":[{"key":"more_like_this:s1","kind":"more_like_this","title":"Qloo connections","subtitle":null,
        "subject_id":"s1","status":"running","empty_message":null,"cards":[]}],
@@ -36,7 +36,7 @@ enum StyleFixture {
      "image":{"url":"/fixture/outfit.jpg","width":1000,"height":1250,"alt":"Cream zip jacket on a chair"},
      "analysis":{"id":"6b1f0c2a-3d4e-4f50-9a61-7b8c9d0e1f30","version":1,"title":"Cream zip jacket",
        "interpretation":null,"sections":{"observations":"ready","references":"ready","style":"ready","wear":"ready","eat":"empty"},
-       "experimental":{"label":"Experimental","note":"Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."}},
+       "experimental":{"label":"Experimental","note":"Readings can miss details."}},
      "style_reading":{
        "version":"atlas_style_reading_v1",
        "summary":"A cream zip jacket with red and slate racing stripes and a round target badge.",

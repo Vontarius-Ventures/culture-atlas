@@ -133,7 +133,7 @@ class StyleScreensTest {
         rule.onNodeWithText("Looks like triple-stitched seams").assertExists()
         rule.onNodeWithText("Feels rugged, utilitarian").assertExists()
         assertTrue("retracted claim is gone", rule.onAllNodesWithText("austere", substring = true).fetchSemanticsNodes().isEmpty())
-        scrollTo("Qloo also links: Filson, Patagonia, Pendleton")
+        scrollTo("Related: Filson, Patagonia, Pendleton")
         settle(400)
         shot("style_reading_details")
 
@@ -262,7 +262,7 @@ class StyleScreensTest {
                "description":"An outfitter known for heavy canvas and wool.","reason":"Because of the workwear cut and duck canvas",
                "references":[],"related":[],"related_state":"ready","collection_ids":[],
                "style_match":{"subject_id":"s1","attributes":["Workwear","duck canvas"],"palette":["tobacco brown"],"via":null,"experimental":true},
-               "experimental_line":"Suggested from an experimental reading of your photo."}"""
+               "experimental_line":"From your photo."}"""
         }
         val feed = FeedModel(backend.api)
         val card = DiscoveryCard("m1", "qloo_entity", null, "Filson", "Outdoor outfitter", null, false, false, null, null, true)

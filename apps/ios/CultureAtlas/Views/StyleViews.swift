@@ -127,13 +127,14 @@ struct CaptureStyleSection: View {
     VStack(alignment: .leading, spacing: 24) {
       StyleReadingCard(
         state: model.cardState,
-        experimental: model.experimental,
+        experimental: nil,
         highlight: $highlight,
         retryAvailable: model.retryAvailable,
         retrying: model.retrying,
         onRetry: { Task { await model.retry() } },
         onShowMore: showMore)
-      ForEach(model.rails) { item in
+      // A rail with nothing to show is left out, unless it can be filled by adding a city.
+      ForEach(model.rails.filter { !$0.showsEmpty || $0.offersAddCity }) { item in
         StyleRailSection(
           item: item, baseURL: baseURL, pulsing: pulsedRail == item.rail.key,
           citySaved: citySaved, onAddCity: setCity == nil ? nil : { addingCity = true })
@@ -153,7 +154,7 @@ struct CaptureStyleSection: View {
     }
   }
 
-  /// Long-press "Explore Qloo connections": scroll to the subject's rail and pulse its header.
+  /// Long-press "More like this": scroll to the subject's rail and pulse its header.
   private func showMore(_ subject: StyleSubject) {
     let key = subject.rail ?? "more_like_this:\(subject.id)"
     guard model.rails.contains(where: { $0.rail.key == key }) else { return }
@@ -330,7 +331,7 @@ struct StyleReadingCard: View {
         detailRows(subject)
       }
       if let brand = subject.subject.brand {
-        Text("\(brand.name) · reads “\(brand.readText)”")
+        Text(brand.name)
           .font(.footnote)
           .foregroundStyle(AtlasTheme.muted)
       }
@@ -338,12 +339,6 @@ struct StyleReadingCard: View {
         Text(mood)
           .font(.system(.callout, design: .serif).italic())
           .foregroundStyle(AtlasTheme.ink)
-      }
-      if let qloo = subject.qlooLine {
-        Text(qloo)
-          .font(.footnote)
-          .foregroundStyle(AtlasTheme.muted)
-          .accessibilityIdentifier("style.qloo-links")
       }
     }
   }
@@ -521,19 +516,11 @@ struct StyleRailSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      if let caption = item.caption {
-        Text(caption)
-          .font(.system(size: 14))
-          .foregroundStyle(AtlasTheme.muted)
-      }
       VStack(alignment: .leading, spacing: 2) {
         Text(item.rail.title)
           .font(.system(.title3, design: .serif))
           .foregroundStyle(AtlasTheme.ink)
           .accessibilityAddTraits(.isHeader)
-        if let subtitle = item.rail.subtitle {
-          Text(subtitle).font(.footnote).foregroundStyle(AtlasTheme.muted)
-        }
       }
       .scaleEffect(pulsing && !reduceMotion ? 1.04 : 1, anchor: .leading)
       .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.5), value: pulsing)
@@ -557,7 +544,7 @@ struct StyleRailSection: View {
         ) { card in
           FeedCardDetail(card: card)
         }
-        .padding(.horizontal, -16)
+        .padding(.horizontal, -20)
         if item.isRunning {
           Text(StyleCopy.railRunning).font(.footnote).foregroundStyle(AtlasTheme.muted)
         }

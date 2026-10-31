@@ -146,7 +146,7 @@ struct MusicView: View {
   }
 }
 
-/// Keep is local. Explore music on screen 20 authorizes upload and analysis.
+/// Keep saves to the account. Explore music on screen 20 authorizes analysis.
 private struct MusicReviewSheet: View {
   @EnvironmentObject private var controller: CaptureController
   @Environment(\.dismiss) private var dismiss
@@ -156,7 +156,7 @@ private struct MusicReviewSheet: View {
   var body: some View {
     VStack(spacing: 16) {
       Text("Keep this recording?").font(.system(.title2, design: .serif))
-      Text("Keep saves it on this phone. Explore music uploads it and starts looking.")
+      Text("Keep saves it privately to your library. Explore music starts looking for the song.")
         .foregroundStyle(AtlasTheme.muted)
       if draft.interrupted {
         Text("Recording was interrupted. The part before the interruption was kept.")

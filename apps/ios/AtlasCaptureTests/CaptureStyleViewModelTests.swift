@@ -71,7 +71,7 @@ final class CaptureStyleViewModelTests: XCTestCase {
     // Same claims again (for example a resembles → asserted upgrade): no announcement.
     model.apply(capture(style: "ready", reading: reading(aesthetics: ["Workwear", "Americana"])))
     XCTAssertEqual(model.updatedCount, 0)
-    // Stage-2 veto retracts one claim: announce "Style reading updated".
+    // Stage-2 veto retracts one claim: announce "Style updated".
     model.apply(capture(style: "ready", reading: reading(aesthetics: ["Workwear", "Americana"], retracted: ["subjects[0].aesthetics[1]"])))
     XCTAssertEqual(model.updatedCount, 1)
     XCTAssertEqual(model.landedCount, 1)

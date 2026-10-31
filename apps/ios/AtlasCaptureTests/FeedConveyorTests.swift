@@ -1,4 +1,5 @@
 @testable import AtlasCapture
+import UIKit
 import XCTest
 
 /// The living feed must flow, never stack cards on top of each other, and key
@@ -54,6 +55,26 @@ final class FeedConveyorTests: XCTestCase {
     XCTAssertGreaterThan(seen.count, firstVisible.count + 4, "new suggestions should float through")
     XCTAssertGreaterThan(c.lanes[0].scroll, 1000)
     XCTAssertNotEqual(c.lanes[0].speed, c.lanes[1].speed, "lanes must not move in lockstep")
+  }
+
+  func testHitTestFindsOnlyTheCardUnderThePoint() throws {
+    var conveyor = FeedConveyor<Card>(laneSpeeds: [20, 14], itemLength: 100, spacing: 10, viewport: 400)
+    conveyor.setPool((0..<12).map { Card(id: $0, hasPicture: true) }, fresh: [])
+    let placement = try XCTUnwrap(conveyor.placements.first { $0.lane == 0 && $0.offset >= 0 })
+    XCTAssertEqual(conveyor.cardID(lane: 0, at: placement.offset + 50), placement.id)
+    XCTAssertNil(conveyor.cardID(lane: 0, at: placement.offset + 105), "the gap between cards opens nothing")
+    XCTAssertNil(conveyor.cardID(lane: 9, at: placement.offset + 50))
+  }
+
+  func testDownsamplingBoundsTheDecodedSize() throws {
+    let source = UIGraphicsImageRenderer(size: CGSize(width: 2000, height: 1000), format: {
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = 1
+      return format
+    }()).image { $0.fill(CGRect(x: 0, y: 0, width: 2000, height: 1000)) }
+    let image = try XCTUnwrap(ImageDownsampler.image(from: try XCTUnwrap(source.pngData()), maxPixelSize: 700))
+    XCTAssertEqual(max(image.size.width, image.size.height), 700)
+    XCTAssertNil(ImageDownsampler.image(from: Data("not an image".utf8), maxPixelSize: 700))
   }
 
   func testLanesAreStaggered() {

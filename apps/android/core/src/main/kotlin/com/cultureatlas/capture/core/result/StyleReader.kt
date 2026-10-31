@@ -401,7 +401,7 @@ data class PresentedRail(
     /** The empty state is `style.no_city`: offer "Add city". */
     val offerCity: Boolean,
     val cards: List<DiscoveryCard>,
-    /** "From an experimental reading" on the first More-like-this rail and once above the cross-domain group. */
+    /** "From your photo" on the first More-like-this rail and once above the cross-domain group. */
     val caption: String?,
 )
 
@@ -415,23 +415,23 @@ data class StylePreviewPresentation(
 object StyleCopy {
     const val TITLE = "Style reading"
     const val BADGE = "Experimental"
-    const val NOTE = "Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches."
-    const val RAIL_CAPTION = "From an experimental reading"
-    const val WHY_LINE = "Suggested from an experimental reading of your photo."
-    const val PAUSED = "Photo reading is paused right now. Your photo is saved, and we'll read it when it's back."
-    const val LIMIT = "We've hit today's limit for experimental readings. Your photo is saved, and you can read it tomorrow."
-    const val FAILED = "We couldn't read the style of this one."
-    const val EMPTY = "No clear style to read here."
+    const val NOTE = "Readings can miss details."
+    const val RAIL_CAPTION = "From your photo"
+    const val WHY_LINE = "From your photo."
+    const val PAUSED = "Paused for now. Your photo is saved."
+    const val LIMIT = "That's all the readings for today. Your photo is saved for tomorrow."
+    const val FAILED = "Couldn't read this one."
+    const val EMPTY = "No clear style here."
     const val NO_CITY = "Add a city to explore places."
-    const val RAIL_EMPTY = "No supported Qloo connection was found for this reading on this route."
+    const val RAIL_EMPTY = "Nothing close enough yet."
     const val READING = "Reading the style…"
-    const val RAIL_RUNNING = "Exploring Qloo connections…"
-    const val UPDATED = "Style reading updated"
+    const val RAIL_RUNNING = "Finding more…"
+    const val UPDATED = "Style updated"
     const val TRY_AGAIN = "Try again"
     const val ADD_CITY = "Add city"
     const val SHOW_DETAILS = "Show all details"
     const val MORE_LIKE_THIS = "Qloo connections"
-    const val SHOW_MORE_LIKE_THIS_STYLE = "Explore Qloo connections"
+    const val SHOW_MORE_LIKE_THIS_STYLE = "More like this"
 
     /** Not in D.4: a failed rail is not "nothing found", so it says so plainly. */
     const val RAIL_FAILED = "We couldn't load these suggestions."
@@ -443,7 +443,7 @@ object StyleCopy {
     const val GROUP_CONSTRUCTION = "Construction"
     const val GROUP_DETAILS = "Details"
 
-    fun qlooLinks(names: List<String>): String = "Qloo also links: ${names.joinToString(", ")}"
+    fun qlooLinks(names: List<String>): String = "Related: ${names.joinToString(", ")}"
 
     fun strengthLabel(strength: String?): String? = when (strength) {
         "clear" -> "clear"

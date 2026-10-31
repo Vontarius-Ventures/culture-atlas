@@ -13,10 +13,10 @@ export type StyleMode = 'ready' | 'failed' | 'empty' | 'limit' | 'paused' | 'ret
 
 export const EXPERIMENTAL = {
   label: 'Experimental',
-  note: 'Photo and video readings can miss details. Qloo explores entity-level taste and catalogue connections, not verified visual matches.',
+  note: 'Readings can miss details.',
 } as const;
 
-export const WHY_LINE = 'Suggested from an experimental reading of your photo.';
+export const WHY_LINE = 'From your photo.';
 
 const img = (name: string) =>
   name.startsWith('/') ? `/samples${name}.jpg` : `/samples/feed/${name}.jpg`;
