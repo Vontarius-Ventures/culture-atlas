@@ -52,6 +52,8 @@ struct CultureAtlasApp: App {
         .environmentObject(controller)
         .environmentObject(onboarding)
         .environmentObject(notices)
+        // The fixed ivory palette needs light system text, fields, and sheets.
+        .preferredColorScheme(.light)
         .task { await controller.launch() }
         // Email sign-in callback and Meta AI registration return both arrive here.
         .onOpenURL { url in Task { await controller.handle(url: url) } }

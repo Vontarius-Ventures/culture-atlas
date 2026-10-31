@@ -398,3 +398,79 @@ final class MusicCapturePolicyTests: XCTestCase {
     XCTAssertTrue(draft.audioPresent)
   }
 }
+
+final class SignInFeedbackTests: XCTestCase {
+  func testEmailNormalizationAndValidation() {
+    XCTAssertEqual(SignInFeedback.normalizedEmail(" \nreader@example.com\r\n"), "reader@example.com")
+    XCTAssertTrue(SignInFeedback.isValidEmail(" reader+tag@example.com\n"))
+    for value in ["", "reader", "@example.com", "reader@", "reader@example", "a@@example.com", "a b@example.com", "a@.com", "a@-example.com"] {
+      XCTAssertFalse(SignInFeedback.isValidEmail(value))
+    }
+  }
+
+  func testSafeTypedFeedbackAndDiagnostics() {
+    let offline = AtlasClientError.transport("NSURLErrorDomain:-1009")
+    XCTAssertTrue(SignInFeedback.message(for: offline).contains("offline"))
+    XCTAssertEqual(SignInFeedback.diagnostic(for: offline), "url_error_-1009")
+    XCTAssertTrue(SignInFeedback.message(for: AtlasClientError.transport("NSURLErrorDomain:-1003")).contains("reach"))
+    XCTAssertTrue(SignInFeedback.message(for: AtlasClientError.decoding("private payload")).contains("unexpected"))
+    let unavailable = AtlasClientError.server(status: 503, code: "private-code", message: "private provider payload", retryable: true, retryAfter: nil)
+    XCTAssertTrue(SignInFeedback.message(for: unavailable).contains("temporarily unavailable"))
+    XCTAssertFalse(SignInFeedback.message(for: unavailable).contains("private"))
+    XCTAssertEqual(SignInFeedback.diagnostic(for: unavailable), "http_status_503")
+    XCTAssertTrue(SignInFeedback.message(for: KeychainStore.KeychainError.writeFailed(-34018)).contains("don't delete"))
+    XCTAssertTrue(SignInFeedback.message(for: AccountService.CallbackError.stateMismatch, callback: true).contains("latest"))
+    XCTAssertTrue(SignInFeedback.message(for: AccountService.CallbackError.noPendingSignIn, callback: true).contains("this iPhone"))
+    let expired = AtlasClientError.server(status: 410, code: "token_expired", message: "", retryable: false, retryAfter: nil)
+    XCTAssertTrue(SignInFeedback.message(for: expired, callback: true).contains("expired"))
+    let invalid = AtlasClientError.server(status: 422, code: "invalid_email", message: "", retryable: false, retryAfter: nil)
+    XCTAssertTrue(SignInFeedback.message(for: invalid).contains("address"))
+  }
+
+  func testRetryCooldownHonorsServerAndHasMinimum() {
+    for (value, expected) in [(TimeInterval?.none, 30.0), (5, 30), (75, 75), (.infinity, 30)] {
+      let error = AtlasClientError.server(status: 429, code: "rate_limited", message: "", retryable: true, retryAfter: value)
+      XCTAssertEqual(SignInFeedback.retryDelay(for: error), expected)
+    }
+    XCTAssertNil(SignInFeedback.retryDelay(for: AtlasClientError.transport("offline")))
+  }
+
+  func testActualHTTPTransportMapsStatusAndRetryAfterWithoutNetwork() async throws {
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [SignInResponseProtocol.self]
+    let session = URLSession(configuration: config)
+    defer { session.invalidateAndCancel() }
+    let transport = HTTPTransport(session: session)
+    for status in [422, 429, 503] {
+      do {
+        let _: AccountService.StartAccepted = try await transport.json(
+          baseURL: URL(string: "https://sign-in-test.invalid")!, method: "POST", path: "/\(status)",
+          body: EmptyBody(), bearer: nil, idempotencyKey: nil, expectedAccount: nil)
+        XCTFail("Expected a typed server error")
+      } catch let error as AtlasClientError {
+        guard case .server(let actual, _, _, _, let delay) = error else { return XCTFail("Wrong error type") }
+        XCTAssertEqual(actual, status)
+        XCTAssertEqual(delay, 75)
+        XCTAssertFalse(SignInFeedback.message(for: error).contains("private provider"))
+        if status == 429 { XCTAssertEqual(SignInFeedback.retryDelay(for: error), 75) }
+      }
+    }
+  }
+}
+
+/// All requests are intercepted locally. This test never contacts a mail provider.
+private final class SignInResponseProtocol: URLProtocol {
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    let status = Int(request.url!.lastPathComponent)!
+    let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Retry-After": "75"])!
+    let data = Data("""
+      {"error":{"code":"rate_limited","message":"private provider payload","retryable":true,"request_id":"test-only","retry_after_ms":5000}}
+      """.utf8)
+    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: data)
+    client?.urlProtocolDidFinishLoading(self)
+  }
+  override func stopLoading() {}
+}

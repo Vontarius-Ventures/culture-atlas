@@ -19,6 +19,10 @@ final class CaptureController: ObservableObject {
   @Published private(set) var lockedDraftsExist = false
   @Published private(set) var capabilities: Capabilities?
   @Published private(set) var armed: RemoteArming.Armed?
+  @Published var signInEmail = ""
+  @Published private(set) var signInSending = false
+  @Published private(set) var signInError: String?
+  @Published private(set) var signInRetryAt = Date.distantPast
   @Published var message: String?
   @Published var rootTab: RootTab = .feed
   @Published var openCamera = false
@@ -93,16 +97,39 @@ final class CaptureController: ObservableObject {
     }
   }
 
+  /// Inline feedback owns the email flow; unrelated features keep the global alert.
   func sendLink(email: String) async {
+    guard signedInAccount == nil, !signInSending, Date() >= signInRetryAt else { return }
+    let address = SignInFeedback.normalizedEmail(email)
+    signInEmail = address
+    guard SignInFeedback.isValidEmail(address) else {
+      signInError = "Enter a valid email address, such as name@example.com."
+      return
+    }
+    signInSending = true
+    signInError = nil
+    defer { signInSending = false }
     do {
-      try await accounts.startSignIn(email: email)
-      phase = .awaitingEmail(email)
-      message = "Check your email for a sign-in link. Open it on this phone."
+      try await accounts.startSignIn(email: address)
+      guard signedInAccount == nil else { return }
+      phase = .awaitingEmail(address)
+      signInRetryAt = Date().addingTimeInterval(30)
+      NSLog("[atlas] email start accepted")
     } catch {
-      message = "We couldn't send the link. Check your connection and try again."
+      signInError = SignInFeedback.message(for: error)
+      if let delay = SignInFeedback.retryDelay(for: error) {
+        signInRetryAt = Date().addingTimeInterval(delay)
+      }
+      NSLog("[atlas] email start failed: %@", SignInFeedback.diagnostic(for: error))
     }
   }
 
+  func useDifferentEmail() {
+    guard !signInSending, signedInAccount == nil else { return }
+    // Presentation only: keep pending PKCE and every Keychain/account item intact.
+    if case .awaitingEmail = phase { phase = .signedOut }
+    signInError = nil
+  }
   func handle(url: URL) async {
     if await wearables.handleURL(url) { return }
     if url.scheme == "cultureatlas" {
@@ -128,16 +155,19 @@ final class CaptureController: ObservableObject {
         break
       }
     }
-    guard AccountService.parseCallback(url) != nil else { return }
+    guard url.scheme == AtlasContract.callbackURL.scheme, url.host == "identity", url.path == "/callback" else { return }
     do {
       let account = try await accounts.completeSignIn(callback: url)
       await becomeSignedIn(account)
     } catch {
-      message = "That sign-in link didn't work. Request a new one."
+      let feedback = SignInFeedback.message(for: error, callback: true)
+      if signedInAccount == nil { signInError = feedback } else { message = feedback }
+      NSLog("[atlas] email callback failed: %@", SignInFeedback.diagnostic(for: error))
     }
   }
 
   private func becomeSignedIn(_ account: UUID) async {
+    signInError = nil
     phase = .signedIn(account)
     await uploads.setSignedInAccount(account)
     // Drafts that wait for this account (and only this account) resume.

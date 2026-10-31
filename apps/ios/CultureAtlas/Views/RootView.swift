@@ -106,51 +106,150 @@ enum AtlasTheme {
 
 struct SignInView: View {
   @EnvironmentObject private var controller: CaptureController
-  @State private var email = ""
-  @State private var sending = false
+  @FocusState private var emailFocused: Bool
+
+  private var requestedAddress: String? {
+    if case .awaitingEmail(let address) = controller.phase { return address }
+    return nil
+  }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 20) {
-      Text("culture atlas").font(.system(.largeTitle, design: .serif))
-      Text("Keep what catches your eye.").font(.system(.title3, design: .serif))
-      Text("Sign in with your email to capture and keep photos, videos and music in your private library.")
-        .foregroundStyle(.secondary)
-      Text("This test build doesn't send email. After you tap, the sign-in link opens on this phone.")
-        .font(.footnote)
-        .foregroundStyle(AtlasTheme.muted)
-      TextField("Email address", text: $email)
-        .textContentType(.emailAddress)
-        .keyboardType(.emailAddress)
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).stroke(.secondary))
-      Button {
-        sending = true
-        Task {
-          await controller.sendLink(email: email.trimmingCharacters(in: .whitespaces))
-          sending = false
+    ScrollView {
+      VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 12) {
+          Text("culture atlas").font(.system(.largeTitle, design: .serif))
+          Text("Keep what catches your eye.").font(.system(.title3, design: .serif))
         }
-      } label: {
-        Text(sending ? "Sending…" : "Email me a sign-in link").frame(maxWidth: .infinity, minHeight: 44)
+        .foregroundStyle(AtlasTheme.ink)
+
+        if let address = requestedAddress {
+          SignInRequestedState(address: address)
+        } else {
+          VStack(alignment: .leading, spacing: 16) {
+            Text("Sign in with your email to capture and keep photos, videos and music in your private library.")
+              .foregroundStyle(AtlasTheme.muted)
+            TextField("Email address", text: $controller.signInEmail,
+                      prompt: Text("Email address").foregroundStyle(AtlasTheme.muted))
+              .foregroundStyle(AtlasTheme.ink)
+              .textContentType(.emailAddress)
+              .keyboardType(.emailAddress)
+              .textInputAutocapitalization(.never)
+              .autocorrectionDisabled()
+              .focused($emailFocused)
+              .submitLabel(.send)
+              .onSubmit { send(controller.signInEmail) }
+              .disabled(controller.signInSending)
+              .padding(14)
+              .background(.white.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+              .overlay(RoundedRectangle(cornerRadius: 12).stroke(emailFocused ? AtlasTheme.olive : AtlasTheme.line))
+              .accessibilityIdentifier("signInEmail")
+          }
+        }
+
+        if let error = controller.signInError {
+          Label(error, systemImage: "exclamationmark.circle")
+            .font(.callout)
+            .foregroundStyle(AtlasTheme.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AtlasTheme.quiet, in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityAddTraits(.updatesFrequently)
+            .accessibilityIdentifier("signInError")
+        }
+
+        SignInRequestButton(
+          sending: controller.signInSending,
+          retryAt: controller.signInRetryAt,
+          isResend: requestedAddress != nil,
+          validAddress: SignInFeedback.isValidEmail(requestedAddress ?? controller.signInEmail)
+        ) { send(requestedAddress ?? controller.signInEmail) }
+
+        if requestedAddress != nil {
+          Button("Use a different email") {
+            controller.useDifferentEmail()
+            emailFocused = true
+          }
+          .font(.callout.weight(.semibold))
+          .foregroundStyle(AtlasTheme.olive)
+          .frame(minHeight: 44)
+          .disabled(controller.signInSending)
+        }
+        if controller.lockedDraftsExist { LockedDraftsNotice() }
       }
-      .buttonStyle(.borderedProminent)
-      .disabled(sending || !email.contains("@"))
-      if case .awaitingEmail(let address) = controller.phase {
-        Text("We sent a link to \(address) if it can sign in. Open it on this phone.")
-          .font(.callout)
-          .accessibilityAddTraits(.updatesFrequently)
-      }
-      if controller.lockedDraftsExist {
-        LockedDraftsNotice()
-      }
-      Spacer()
+      .padding(20)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(20)
+    .scrollDismissesKeyboard(.interactively)
     .background(AtlasTheme.ivory.ignoresSafeArea())
+  }
+
+  private func send(_ address: String) {
+    emailFocused = false
+    Task { await controller.sendLink(email: address) }
   }
 }
 
+private struct SignInRequestedState: View {
+  let address: String
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      Image(systemName: "envelope")
+        .font(.title)
+        .foregroundStyle(AtlasTheme.olive)
+        .accessibilityHidden(true)
+      Text("Check your email")
+        .font(.system(.title2, design: .serif))
+        .foregroundStyle(AtlasTheme.ink)
+        .accessibilityAddTraits(.isHeader)
+      Text("A sign-in link was requested for \(address). Check your inbox and spam folder, then open the latest link on this iPhone.")
+        .foregroundStyle(AtlasTheme.muted)
+      Text("If it hasn't arrived, you can request another link below.")
+        .font(.footnote)
+        .foregroundStyle(AtlasTheme.muted)
+    }
+    .fixedSize(horizontal: false, vertical: true)
+    .accessibilityIdentifier("signInRequested")
+  }
+}
+
+private struct SignInRequestButton: View {
+  let sending: Bool
+  let retryAt: Date
+  let isResend: Bool
+  let validAddress: Bool
+  let send: () -> Void
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let remaining = max(0, Int(ceil(retryAt.timeIntervalSince(context.date))))
+      VStack(alignment: .leading, spacing: 8) {
+        Button(action: send) {
+          HStack(spacing: 8) {
+            if sending { ProgressView().tint(.white) }
+            if sending {
+              Text("Requesting link…")
+            } else if isResend {
+              Text("Request another link")
+            } else {
+              Text("Email me a sign-in link")
+            }
+          }
+          .frame(maxWidth: .infinity, minHeight: 48)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(sending || !validAddress || remaining > 0)
+        .accessibilityIdentifier("signInRequest")
+        if remaining > 0 {
+          Text("You can request another link in \(remaining) seconds.")
+            .font(.footnote)
+            .foregroundStyle(AtlasTheme.muted)
+        }
+      }
+    }
+  }
+}
 /// Another account's drafts are never listed; this generic notice is all that shows.
 struct LockedDraftsNotice: View {
   var body: some View {
